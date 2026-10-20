@@ -11,13 +11,19 @@ pub mod error;
 pub mod event;
 pub mod event_decode;
 pub mod history;
+pub mod meals;
 pub mod qr;
 pub mod recurrence;
 pub mod replay;
 pub mod request;
+pub mod rotations;
 pub mod sections;
+pub mod simple;
+pub mod sitter;
 pub mod state;
 pub mod state_encode;
+pub mod store_sections;
+pub mod week;
 pub mod wire;
 
 #[cfg(test)]
@@ -70,6 +76,16 @@ mod chat_tests;
 
 #[cfg(test)]
 mod board_tests;
+#[cfg(test)]
+mod meals_tests;
+#[cfg(test)]
+mod rotation_tests;
+#[cfg(test)]
+mod shopping_section_tests;
+#[cfg(test)]
+mod simple_tests;
+#[cfg(test)]
+mod sitter_tests;
 
 #[cfg(test)]
 mod recurring_task_tests;
@@ -97,3 +113,6 @@ mod history_tests;
 
 #[cfg(test)]
 mod convergence_tests;
+
+#[cfg(test)]
+mod week_tests;

@@ -139,11 +139,14 @@ export const identityMethods = {
           kind: row.kind ?? "adult",
           ...(row.expires_at == null ? {} : { expiresAt: row.expires_at }),
           ...(row.household_admin === 1 ? { householdAdmin: true } : {}),
+          ...(row.simple_view === 1 ? { simpleView: true } : {}),
           credentials: new Set(credentialIds),
         };
         if (!["adult", "limited", "temporary"].includes(member.kind) ||
             ![0, 1].includes(row.household_admin ?? 0) ||
             (member.householdAdmin && member.kind !== "adult") ||
+            ![0, 1].includes(row.simple_view ?? 0) ||
+            (member.simpleView && member.kind !== "limited") ||
             !["active", "removed", "expired"].includes(member.memberStatus) ||
             (member.memberStatus === "expired" && member.kind !== "temporary") ||
             (member.kind === "temporary" && !Number.isSafeInteger(member.expiresAt)) ||
@@ -261,7 +264,7 @@ export const identityMethods = {
           throw new DurableStoreError("Kin server membership data is invalid.");
         this.db
           .prepare(
-            "INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status, household_admin) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET active = excluded.active, credential_ids = excluded.credential_ids, kind = excluded.kind, expires_at = excluded.expires_at, member_status = excluded.member_status, household_admin = excluded.household_admin",
+            "INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status, household_admin, simple_view) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET active = excluded.active, credential_ids = excluded.credential_ids, kind = excluded.kind, expires_at = excluded.expires_at, member_status = excluded.member_status, household_admin = excluded.household_admin, simple_view = excluded.simple_view",
           )
           .run(
             member.id,
@@ -272,6 +275,7 @@ export const identityMethods = {
             member.expiresAt ?? null,
             member.memberStatus ?? (member.active ? "active" : "removed"),
             Number(member.householdAdmin === true),
+            Number(member.simpleView === true && member.kind === "limited"),
           );
         for (const credentialId of member.credentials) {
           const credential = service.credentials.get(credentialId);

@@ -126,8 +126,7 @@ export class ConversationCommands {
   }
   // Kept for callers that switched the former Handoff/Talk tabs directly.
   showHandoffPanel(id, focus = false) {
-    const segment = id === "talk" ? "talk" : "handoffs";
-    this.ctx.navigation.navigate(routeHash("updates", segment));
+    this.ctx.navigation.navigate(id === "talk" ? "#updates/talk" : routeHash("updates", "handoffs"));
     if (focus) this.app.segmentNavs.get("updates")?.focusCurrent();
   }
 }

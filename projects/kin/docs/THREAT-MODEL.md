@@ -210,6 +210,20 @@ The live channel has a closed seam for short-lived messages ([SYNC](SYNC.md#ephe
 - **Flooding.** A per-category rate, a payload limit, the 1 MiB socket backpressure bound (a receiver that cannot take a message misses it) and closing of abusive connections.
 - **Not claimed.** The service sees envelope metadata (who sent what category to whom, when) for the instant it relays it. A media connection's own encryption is not Kin's household end-to-end claim.
 
+## Sharing into Kin (#389)
+
+Another app's share sheet POSTs the shared title, text, link and files to
+`/share`. The service worker answers that request itself: the content stays
+in the worker's memory under a random 128-bit id for at most five minutes and
+is handed, once, to the Kin page that asks for that id. It is never written
+to the Cache API, IndexedDB or any other storage, and it reaches household
+data only when the member chooses a destination after unlock, through the
+ordinary encrypted commands. When no service worker is in control, the POST
+reaches the server, which discards the body unread and redirects to `/`.
+Limits: while waiting, the shared content is plaintext in the browser's
+memory (as it is in the sharing app); any page of Kin's origin that guesses
+or learns the id could take it first, so the id is random and taken once.
+
 ## Security principles
 
 - Assume household text and imported/persisted bytes are untrusted.
@@ -583,6 +597,36 @@ screen, and the rail states which applies on this device, including when
 automatic lock is off. Households that keep a shared screen should turn
 automatic lock on; Kin does not force it. A kiosk mode limited to the fridge
 would need its own credential and is out of scope.
+
+### Simple view is a layout, not a lock (#341)
+
+An admin can turn on Simple view for a Limited member
+([ADR 0013](decisions/0013-simple-view.md)). The service enforces who changes
+that switch, and Chat and Fridge access; it can't enforce anything else,
+because household events are end-to-end encrypted and it can't tell a
+child's "done" from any other change. A child's device holds the household
+key, so with other software it could write any household event, and the
+service would accept it. Simple view hides the rest of Kin; it doesn't
+prevent it. The flag is cached on the child's device so an offline unlock
+keeps Simple view; turning it off reaches that device only when it next
+connects. A device belongs to one member, so a tablet registered to an Adult
+shows the Adult's Kin; a child needs their own device.
+
+### The sitter page is a layout, not a lock (#442)
+
+The sitter page ([ADR 0017](decisions/0017-sitter-page.md)) chooses what a
+Temporary member's Kin shows first; it doesn't limit what that device can
+read. While access lasts, a Temporary member's device holds the household key
+and the whole household history, so with other software it could read every
+note, reference record and routine, not only those on the page. Access ends
+with the existing Temporary expiry.
+
+Only Adults may change the page, and the app enforces that, not replay: Rust
+doesn't know member kinds, so a Limited or Temporary member running a
+modified client could write a `SITTER_PAGE_SET` event and other devices would
+accept it, as for attachment removal above. The page can only point at
+records already in the household, so the worst case is a rearranged or
+emptied page that an Adult sets again.
 
 ### v1.0 was not tested across every browser and device
 

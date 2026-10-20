@@ -209,10 +209,37 @@ pub enum HouseholdCommand {
     CloseChatPoll {
         id: ChatMessageId,
     },
+    /// "Talk later" (#312): opens, resolves or clears the topic on a message.
+    /// Open needs a message that shows, no topic or a resolved one, and room
+    /// under `MAX_TOPICS`; resolved needs a message that shows and an open
+    /// topic; cleared needs a topic on a message not deleted. Anyone who may
+    /// post may set it (the host and the relay check that, as for pins).
+    SetChatTopic {
+        id: ChatMessageId,
+        state: crate::chat::ChatTopicState,
+    },
     /// A fridge event (#317, board.rs), against the board log only. KCMD
     /// actions 52–58 carry the event's exact payload; the board's rules
     /// (`BoardState::check_command`) decide whether it applies.
     Board(EventKind),
+    /// A meals event (#333, kinds 59–63), carried whole like a board event;
+    /// `MealsState::check_command` decides whether it applies.
+    Meal(EventKind),
+    /// An item's emoji (#344, kind 64), carried whole like a meals event;
+    /// `PicturesState::check_command` decides whether it applies.
+    Picture(EventKind),
+    /// A store-sections event (#411, kinds 66–67), carried whole like a
+    /// meals event; `StoreSectionsState::check_command` decides whether it
+    /// applies.
+    StoreSection(EventKind),
+    /// A routine rotation or turn (#429, kinds 68–69), carried whole like a
+    /// meals event; `RotationsState::check_command` decides whether it
+    /// applies.
+    Rotation(EventKind),
+    /// The sitter page (#442, kind 70), carried whole like a meals event;
+    /// `SitterPageState::check_command` decides whether it applies. Only an
+    /// Adult may send it; the host checks that (sitter.rs).
+    SitterPage(EventKind),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -484,8 +511,42 @@ pub fn create_event(
             options: *options,
         },
         CloseChatPoll { id } => EventKind::ChatPollClosed { message_id: *id },
+        SetChatTopic { id, state } => EventKind::ChatTopicSet {
+            message_id: *id,
+            state: *state,
+        },
         Board(kind) => {
             if !kind.is_board() {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
+        Meal(kind) => {
+            if !crate::meals::is_meals_code(crate::codec::kind_code(kind)) {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
+        Picture(kind) => {
+            if !crate::simple::is_simple_code(crate::codec::kind_code(kind)) {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
+        StoreSection(kind) => {
+            if !crate::store_sections::is_sections_code(crate::codec::kind_code(kind)) {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
+        Rotation(kind) => {
+            if !crate::rotations::is_rotation_code(crate::codec::kind_code(kind)) {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
+        SitterPage(kind) => {
+            if !crate::sitter::is_sitter_code(crate::codec::kind_code(kind)) {
                 return Err(KinError::InvalidEvent);
             }
             kind.clone()
@@ -711,6 +772,7 @@ pub fn execute_with(
             | HouseholdCommand::PinChatMessage { .. }
             | HouseholdCommand::VoteChatPoll { .. }
             | HouseholdCommand::CloseChatPoll { .. }
+            | HouseholdCommand::SetChatTopic { .. }
     );
     let board_command = matches!(command, HouseholdCommand::Board(_));
     if history.event_count() >= history.limit()
@@ -734,6 +796,23 @@ pub fn execute_with(
     if let HouseholdCommand::Board(kind) = command {
         current.board.check_command(kind)?;
     }
+    if let HouseholdCommand::Meal(kind) = command {
+        current.meals.check_command(kind, &current.items)?;
+    }
+    if let HouseholdCommand::Picture(kind) = command {
+        current.pictures.check_command(kind, &current.items)?;
+    }
+    if let HouseholdCommand::StoreSection(kind) = command {
+        current.store_sections.check_command(kind, &current.items)?;
+    }
+    if let HouseholdCommand::Rotation(kind) = command {
+        current.rotations.check_command(kind, &current.routines)?;
+    }
+    if let HouseholdCommand::SitterPage(kind) = command {
+        current
+            .sitter_page
+            .check_command(kind, current.sitter_records())?;
+    }
     if let HouseholdCommand::ChangeResponsibility {
         target_kind,
         target_id,
@@ -753,7 +832,11 @@ pub fn execute_with(
                 .iter()
                 .any(|routine| routine.routine_id.0 == *target_id && !routine.archived),
         };
+        // A rotating routine's owner is whoever's turn it is (#429).
+        let rotating = *target_kind == ResponsibilityTargetKind::Routine
+            && current.rotations.is_rotating(&RoutineId(*target_id));
         if !active
+            || rotating
             || current
                 .responsibilities
                 .iter()
@@ -967,6 +1050,33 @@ pub fn execute_with(
                     crate::chat::ChatMessageStatus::Live
                 )
             {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        // A topic (#312) must change where the message stands. Opening or
+        // resolving needs a message that shows; clearing needs only a
+        // message not deleted, so a topic whose message an admin removed can
+        // still be taken off the list.
+        HouseholdCommand::SetChatTopic { id, state } => {
+            use crate::chat::{ChatMessageStatus, ChatTopicState};
+            let message = current.chat.get(id).ok_or(KinError::InvalidEvent)?;
+            let shows = matches!(
+                current.chat.shown_status(message, history.chat_admins()),
+                ChatMessageStatus::Live | ChatMessageStatus::Edited
+            );
+            let now = current.chat.topic(id).map(|topic| topic.state);
+            let allowed = match state {
+                ChatTopicState::Open => {
+                    shows
+                        && match now {
+                            None => current.chat.topics.len() < crate::chat::MAX_TOPICS,
+                            Some(now) => now == ChatTopicState::Resolved,
+                        }
+                }
+                ChatTopicState::Resolved => shows && now == Some(ChatTopicState::Open),
+                ChatTopicState::Cleared => now.is_some(),
+            };
+            if message.status == ChatMessageStatus::Deleted || !allowed {
                 return Err(KinError::InvalidEvent);
             }
         }
@@ -1284,7 +1394,59 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         let event_kind = crate::board::decode_payload(kind, &bytes[128..])?;
         return Ok((HouseholdCommand::Board(event_kind), command_context(bytes)?));
     }
-    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48..=50) {
+    // Meals (#333): likewise, the text is the event's exact payload.
+    if crate::meals::is_meals_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::meals::decode_payload(kind, &bytes[128..])?;
+        return Ok((HouseholdCommand::Meal(event_kind), command_context(bytes)?));
+    }
+    // Item emoji (#344): likewise.
+    if crate::simple::is_simple_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::simple::decode_payload(kind, &bytes[128..])?;
+        return Ok((
+            HouseholdCommand::Picture(event_kind),
+            command_context(bytes)?,
+        ));
+    }
+    // Store sections (#411): likewise.
+    if crate::store_sections::is_sections_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::store_sections::decode_payload(kind, &bytes[128..])?;
+        return Ok((
+            HouseholdCommand::StoreSection(event_kind),
+            command_context(bytes)?,
+        ));
+    }
+    // Routine rotations (#429): likewise.
+    if crate::rotations::is_rotation_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::rotations::decode_payload(kind, &bytes[128..])?;
+        return Ok((
+            HouseholdCommand::Rotation(event_kind),
+            command_context(bytes)?,
+        ));
+    }
+    // The sitter page (#442): likewise.
+    if crate::sitter::is_sitter_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::sitter::decode_payload(kind, &bytes[128..])?;
+        return Ok((
+            HouseholdCommand::SitterPage(event_kind),
+            command_context(bytes)?,
+        ));
+    }
+    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48..=50 | 65) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
@@ -1303,7 +1465,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || !(matches!(kind, 14..=16 | 30 | 49) || kind == 44 && option == 3) && date != 0
         || !matches!(
             kind,
-            1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46 | 47 | 48
+            1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46 | 47 | 48 | 65
         ) && option != 0
         || kind != 12 && expires != 0
         || matches!(kind, 12 | 13 | 29) && id != [0; 16]
@@ -1322,7 +1484,8 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 43 && id == [0; 16]
         || matches!(kind, 42 | 43 | 51) && text_length > crate::state::MAX_DEVICE_NAME_BYTES
         || kind == 51 && id != [0; 16]
-        || matches!(kind, 44..=50) && id == [0; 16]
+        || matches!(kind, 44..=50 | 65) && id == [0; 16]
+        || kind == 65 && (text_length != 0 || option > 2)
         || kind == 49 && date > u32::from(u16::MAX)
         || matches!(kind, 49 | 50) && text_length != 0
         || kind == 47
@@ -1729,6 +1892,11 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         },
         50 => CloseChatPoll {
             id: ChatMessageId(id),
+        },
+        65 => SetChatTopic {
+            id: ChatMessageId(id),
+            state: crate::chat::ChatTopicState::from_code(option)
+                .ok_or(KinError::MalformedProtocol)?,
         },
         _ => return Err(KinError::UnsupportedVersion),
     };

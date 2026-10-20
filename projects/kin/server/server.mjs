@@ -177,6 +177,15 @@ export function createKinServer(options = {}) {
           return;
         }
       }
+      // Sharing into Kin (#389): the service worker answers /share itself.
+      // Without one (first visit, or a browser that skipped it), the shared
+      // content is not read, kept or logged: the app just opens.
+      if (request.method === "POST" && url.pathname === "/share") {
+        request.resume();
+        response.writeHead(303, { Location: "/", "Cache-Control": "no-store" });
+        response.end();
+        return;
+      }
       serve(response, url.pathname);
     } catch (error) {
       if (request.kinPasskeyFlow)
@@ -1430,6 +1439,34 @@ async function api(request, response, url, context) {
         service.setHouseholdAdmin(session, flow.targetMemberId, flow.admin, auth.member.id),
       ),
     );
+    return;
+  }
+  // Simple view (#343, ADR 0013): the household-admin flow for one Limited member.
+  if (request.method === "POST" && url.pathname === "/api/household/simple-view/options") {
+    if (typeof body?.simpleView !== "boolean" || typeof body?.memberId !== "string") throw badRequest();
+    const change = service.simpleViewContext(session, body.memberId);
+    json(response, 200, issueAuthenticationFlow(
+      { purpose: "set-simple-view", targetMemberId: body.memberId, simpleView: body.simpleView, memberId: change.memberId, deviceId: change.deviceId },
+      change.credentialIds,
+      context,
+    ));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/household/simple-view/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "set-simple-view") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = service.credentials.get(body.credential?.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const result = withTransaction(context, () =>
+      service.setSimpleView(session, flow.targetMemberId, flow.simpleView, auth.member.id),
+    );
+    // The member's devices learn it on their next status poll; a hint makes that now.
+    if (result.changed) syncService.hintHousehold(auth.household.id);
+    json(response, 200, result);
     return;
   }
   // Who can use the fridge (#323): the chat policy's flow, its own purpose.

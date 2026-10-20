@@ -107,6 +107,20 @@ pub struct Replay {
     pub(super) chat: Arc<crate::chat::ChatState>,
     /// The fridge (board.rs), shared with finalized states until it changes.
     pub(super) board: Arc<crate::board::BoardState>,
+    /// Meals (meals.rs), shared with finalized states until it changes.
+    pub(super) meals: Arc<crate::meals::MealsState>,
+    /// Item emoji (simple.rs), shared with finalized states until it changes.
+    pub(super) pictures: Arc<crate::simple::PicturesState>,
+    /// Store sections (store_sections.rs), shared with finalized states
+    /// until they change.
+    pub(super) store_sections: Arc<crate::store_sections::StoreSectionsState>,
+    /// Routine rotations (rotations.rs), shared with finalized states until
+    /// they change. Applied in routines.rs, which also moves the routine's
+    /// responsibility with the turn.
+    pub(super) rotations: Arc<crate::rotations::RotationsState>,
+    /// The sitter page (sitter.rs), shared with finalized states until it
+    /// changes.
+    pub(super) sitter_page: Arc<crate::sitter::SitterPageState>,
     /// Canonical bytes per applied event: an exact duplicate is skipped, a conflicting one fails. Shared, so cloning a Replay does not copy them.
     pub(super) event_bytes: BTreeMap<EventId, Arc<[u8]>>,
     /// Logical time of the last applied event; replay order never goes back.
@@ -261,6 +275,8 @@ impl Replay {
             | K::RoutineOccurrenceCompleted { .. }
             | K::RoutineOccurrenceReopened { .. }
             | K::RoutineArchived { .. }
+            | K::RoutineRotationSet { .. }
+            | K::RoutineTurnSet { .. }
             | K::PlaybookSaved { .. }
             | K::PlaybookArchived { .. } => routines::apply(self, event)?,
             K::AreaCreated { .. }
@@ -288,7 +304,8 @@ impl Replay {
             | K::ChatReactionSet { .. }
             | K::ChatPinSet { .. }
             | K::ChatPollVote { .. }
-            | K::ChatPollClosed { .. } => chat::apply(self, event)?,
+            | K::ChatPollClosed { .. }
+            | K::ChatTopicSet { .. } => chat::apply(self, event)?,
             K::BoardStrokeAdded { .. }
             | K::BoardStrokeHidden { .. }
             | K::BoardMagnetPlaced { .. }
@@ -296,6 +313,16 @@ impl Replay {
             | K::BoardMagnetHidden { .. }
             | K::BoardCleared { .. }
             | K::BoardClearUndone { .. } => crate::board::apply(&mut self.board, event)?,
+            K::RecipeSaved { .. }
+            | K::RecipeArchived { .. }
+            | K::DinnerSet { .. }
+            | K::DinnerCleared { .. }
+            | K::DinnerCookSet { .. } => crate::meals::apply(&mut self.meals, event)?,
+            K::ItemEmojiSet { .. } => crate::simple::apply(&mut self.pictures, event)?,
+            K::ShoppingSectionsSet { .. } | K::ItemSectionSet { .. } => {
+                crate::store_sections::apply(&mut self.store_sections, event)?
+            }
+            K::SitterPageSet { .. } => crate::sitter::apply(&mut self.sitter_page, event)?,
         }
         self.last_logical_time = event.logical_time;
         self.event_bytes
@@ -394,6 +421,11 @@ impl Replay {
                 .collect(),
             chat: Arc::clone(&self.chat),
             board: Arc::clone(&self.board),
+            meals: Arc::clone(&self.meals),
+            pictures: Arc::clone(&self.pictures),
+            store_sections: Arc::clone(&self.store_sections),
+            rotations: Arc::clone(&self.rotations),
+            sitter_page: Arc::clone(&self.sitter_page),
         })
     }
 }

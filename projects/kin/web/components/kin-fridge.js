@@ -84,6 +84,9 @@ class KinFridge extends HTMLElement {
     this.landscapeMedia?.addEventListener?.("change", this.onLayout);
     document.addEventListener("fullscreenchange", this.onLayout);
     this.updateLayout();
+    // Before any room arrives (no sync yet) the line under the board still
+    // says why the fridge can't be drawn on (#372); it used to stay blank.
+    this.render();
   }
 
   disconnectedCallback() {
@@ -273,7 +276,9 @@ class KinFridge extends HTMLElement {
   updateTools() {
     if (!this.tools) return;
     // Look only (#323): the fridge shows, its tools don't.
-    const drawing = !this.room || this.room.access === "write";
+    // Without a room (no sync yet) there's nothing to draw on, so no tools:
+    // showing them made the door look drawable when it wasn't (#372).
+    const drawing = this.room?.access === "write";
     this.tools.hidden = !drawing;
     this.colourButtons.forEach((button, index) => button.setAttribute("aria-pressed", String(this.tool === "pen" && index === this.colour)));
     this.widthButtons.forEach((button, index) => button.setAttribute("aria-pressed", String(index === this.width)));
@@ -298,7 +303,11 @@ class KinFridge extends HTMLElement {
     const room = this.room;
     if (!room) {
       this.state = null;
-      this.summary.textContent = "The fridge opens once this device syncs with your household.";
+      this.summary.replaceChildren(
+        "The fridge is shared through household sync, so it opens once this device syncs. Turn on sync under ",
+        Object.assign(document.createElement("a"), { href: "#household/people", textContent: "Household → People & devices" }),
+        ".",
+      );
       this.door.setAttribute("aria-disabled", "true");
       this.drawInk();
       this.updateTools();

@@ -28,6 +28,14 @@
 // - The event arena's `generation` and `epoch`: see storage/event-arena.js.
 import { captureInvitationCode } from "../../pairing-link.js";
 import { AppearanceController } from "./appearance.js";
+import { MealsController } from "./meals.js";
+import { SimpleController } from "./simple.js";
+import { ShareController } from "./share.js";
+import { WeekController } from "./week.js";
+import { SitterController } from "./sitter.js";
+import { RotationsController } from "./rotations.js";
+import { ImportController } from "./import.js";
+import { SectionsController } from "./sections.js";
 import { AppendCommands } from "./commands/append.js";
 import { AttachmentController } from "./attachments.js";
 import { ChatShareController } from "./chat-share.js";
@@ -45,6 +53,7 @@ import { SessionController } from "./session.js";
 import { ShellBuilder } from "./shell.js";
 import { StatusController } from "./status.js";
 import { SyncController } from "./sync.js";
+import { UndoController } from "./undo.js";
 import { ViewBuilder } from "./views.js";
 import { LocalReminders } from "../../reminders.js";
 import { EventStore } from "../../storage/event-store.js";
@@ -64,12 +73,21 @@ export function createAppContext(app) {
   ctx.conversations = new ConversationCommands(ctx);
   ctx.routines = new RoutineCommands(ctx);
   ctx.records = new RecordCommands(ctx);
+  ctx.meals = new MealsController(ctx);
+  ctx.simple = new SimpleController(ctx);
   ctx.attachments = new AttachmentController(ctx);
   ctx.chatShare = new ChatShareController(ctx);
+  ctx.share = new ShareController(ctx);
+  ctx.week = new WeekController(ctx);
+  ctx.sitter = new SitterController(ctx);
+  ctx.rotations = new RotationsController(ctx);
+  ctx.importList = new ImportController(ctx);
+  ctx.sections = new SectionsController(ctx);
   ctx.navigation = new NavigationController(ctx);
   ctx.detail = new DetailController(ctx);
   ctx.appearance = new AppearanceController(ctx);
   ctx.status = new StatusController(ctx);
+  ctx.undo = new UndoController(ctx);
   ctx.render = new RenderController(ctx);
   ctx.shell = new ShellBuilder(ctx);
   ctx.views = new ViewBuilder(ctx);
@@ -125,7 +143,7 @@ export function initializeAppState(app) {
     app.pendingScheduleChange = null;
     app.householdStatus = null;
     app.passkeyPromptDismissed = false;
-    app.onHouseholdStatus = (event) => { app.householdStatus = event.detail; app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
+    app.onHouseholdStatus = (event) => { app.householdStatus = event.detail; app.ctx.sitter.landTemporaryMember(); app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
     app.onSecurityChanged = () => app.ctx.status.renderOnboarding();
     app.autoLockMinutes = readAutoLockPreference();
     app.autoLockTimer = null;
@@ -136,6 +154,10 @@ export function initializeAppState(app) {
     app.onActivity = () => { if (app.autoLockTimer) app.ctx.session.scheduleAutoLock(); };
     app.onRetryAttachments = () => { if (app.syncCoordinator) void app.syncCoordinator.syncNow(); else void app.ctx.sync.configureSyncCoordinator(); };
     app.onChangeResponsibility = (event) => app.ctx.items.handleChangeResponsibility(event);
+    // Simple view (#346): Done and Undo on a card.
+    app.onSimpleDone = (event) => void app.ctx.simple.markDone(event.detail);
+    // Item picture (#347), from the item details.
+    app.onSetItemEmoji = (event) => void app.ctx.simple.setItemEmoji(event.detail);
     app.onReplenishStaple = (event) => app.ctx.items.handleReplenishStaple(event);
     app.syncState = null;
     // Follows the browser's own offline/online events, like the state notice.
@@ -187,6 +209,27 @@ export function initializeAppState(app) {
       app.ctx.conversations.saveTalk({ type: "archive-talk", talkId: event.detail.talkId });
     // Several handlers derive the command type from the event name: every
     // component event is "kin:<command>", so `event.type.slice(4)` drops "kin:".
+    app.onImportList = (event) => app.ctx.importList.open(event.detail ?? {});
+    app.onSetItemSection = (event) => void app.ctx.sections.setItemSection(event.detail.itemId, event.detail.sectionId);
+    app.onSaveShoppingSections = async (event) => {
+      const outcome = await app.ctx.sections.saveSections(event.detail.sections ?? []);
+      event.detail.done?.(outcome);
+    };
+    app.onSetRoutineRotation = async (event) => {
+      const outcome = await app.ctx.rotations.setRotation(event.detail.routineId, event.detail.memberIds ?? []);
+      event.detail.done?.(outcome);
+    };
+    app.onSetRoutineTurn = async (event) => {
+      const outcome = await app.ctx.rotations.setTurn(event.detail.routineId, event.detail.memberId);
+      event.detail.done?.(outcome);
+    };
+    app.onSaveSitterPage = async (event) => {
+      const outcome = await app.ctx.sitter.save(event.detail ?? {});
+      event.detail?.done?.(outcome);
+    };
+    app.onStartShopping = (event) => {
+      if (!app.simpleView && app.state) app.shoppingMode?.open({ opener: event.detail?.opener ?? null });
+    };
     app.onRoutineIntent = (event) => app.ctx.routines.saveRoutine({ ...event.detail, type: event.type.slice(4) });
     app.onChangeRoutineSchedule = (event) => app.ctx.routines.changeRoutineSchedule(event.detail);
     app.onOpenRoutineSchedule = (event) => app.ctx.routines.openRoutineSchedule(event.detail.routineId);

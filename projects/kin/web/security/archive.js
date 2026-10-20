@@ -44,6 +44,18 @@ const boardSections = new WeakMap();
  *
  * `board` (a BoardRoom.exportPlan(), #363) adds the family fridge's events.
  */
+/**
+ * A sync ID from the local context as lowercase hex, or null. The context
+ * keeps sync IDs as 16 bytes (event-store.js); hex is accepted as well. The
+ * chat and fridge sections once tested for hex only, so a synced household's
+ * export refused its own chat and fridge (#372).
+ */
+function syncId(value) {
+  if (typeof value === "string") return /^[a-f0-9]{32}$/.test(value) && !/^0+$/.test(value) ? value : null;
+  if (!(value instanceof Uint8Array) || value.length !== 16 || !value.some(Boolean)) return null;
+  return [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export async function exportHouseholdArchive({ store, engine, vault, portableMembership, chat = null, board = null, report = null, onProgress }) {
   await assertCurrentProtection(vault);
   const parts = await store.archiveParts({ portableMembership });
@@ -60,7 +72,7 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
   const household = await EventStore.validateArchiveParts({ parts, engine, vault });
   let included = null;
   if (chat?.view?.length > 0) {
-    if (!/^[a-f0-9]{32}$/.test(context?.sync_household_id ?? ""))
+    if (!syncId(context?.sync_household_id))
       throw new VaultError("Connect to your household before exporting its chat.");
     // Everything below comes from the plan's own snapshot of the chat, so the
     // counts in the manifest are the events the stream carries.
@@ -78,7 +90,7 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
   }
   let boardView = null;
   if (board?.view?.length > 0) {
-    if (!/^[a-f0-9]{32}$/.test(context?.sync_household_id ?? ""))
+    if (!syncId(context?.sync_household_id))
       throw new VaultError("Connect to your household before exporting its fridge.");
     boardView = boardEventsView(board.view);
     if (boardView.length > MAX_ARCHIVE_BOARD_EVENTS) throw new VaultError("This household's fridge is too large to export.");
@@ -155,9 +167,10 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
     const chatSection = chatSections.get(parts);
     if (chatSection) {
       const context = parts.local_context[0];
-      if (!/^[a-f0-9]{32}$/.test(context?.sync_household_id ?? "")) throw new VaultError("This file is damaged or incomplete.");
+      const householdId = syncId(context?.sync_household_id);
+      if (!householdId) throw new VaultError("This file is damaged or incomplete.");
       chatSummary = await validateChatSection(chatSection, {
-        engine, householdId: context.sync_household_id, memberId: typeof context.sync_member_id === "string" ? context.sync_member_id : null,
+        engine, householdId, memberId: syncId(context.sync_member_id),
         counts: { eventCount: packageManifest.chatEventCount, blobCount: packageManifest.chatBlobCount },
       });
       if (chatSummary.blobBytes !== packageManifest.chatBlobBytes) throw new VaultError("This file is damaged or incomplete.");
@@ -167,8 +180,9 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
     const boardSection = boardSections.get(parts);
     if (boardSection) {
       const context = parts.local_context[0];
-      if (!/^[a-f0-9]{32}$/.test(context?.sync_household_id ?? "")) throw new VaultError("This file is damaged or incomplete.");
-      boardSummary = validateBoardSection(boardSection, { engine, eventCount: packageManifest.boardEventCount, householdId: context.sync_household_id });
+      const householdId = syncId(context?.sync_household_id);
+      if (!householdId) throw new VaultError("This file is damaged or incomplete.");
+      boardSummary = validateBoardSection(boardSection, { engine, eventCount: packageManifest.boardEventCount, householdId });
     }
 
     parts.attachments = await rewrapLocalAttachments(parts.attachments, sourceVault, vault);
@@ -382,13 +396,13 @@ export async function restoreValidatedHouseholdArchive({ stage, engine, vault, s
 
 async function restoreChat(staged, vault) {
   if (!staged.chatSection || !staged.chatSummary) return null;
-  const householdId = staged.parts.local_context[0].sync_household_id;
+  const householdId = syncId(staged.parts.local_context[0].sync_household_id);
   return importChatSection(staged.chatSection, { householdId, vault, hidden: staged.chatSummary.hidden });
 }
 
 async function restoreBoard(staged, vault) {
   if (!staged.boardSection || !staged.boardSummary) return null;
-  const householdId = staged.parts.local_context[0].sync_household_id;
+  const householdId = syncId(staged.parts.local_context[0].sync_household_id);
   return importBoardSection(staged.boardSection, { householdId, vault });
 }
 

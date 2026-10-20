@@ -74,13 +74,17 @@ export class SessionController {
       this.app.hasLocalSyncBinding = Boolean(snapshot.syncIdentity);
       this.ctx.refresh.applyCatchUpSnapshot(snapshot);
       await this.ctx.appearance.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
+      // The household and security panels go in place first, then Simple
+      // view (#345, ADR 0013) applies the cached layout before anything shows.
+      this.app.peoplePage.append(this.app.household, this.app.notifications, this.app.chatSettings);
+      this.app.privacyPage.append(this.app.security);
+      await this.ctx.simple.restore(snapshot.syncIdentity, session);
+      this.assertCurrentSession(session);
       this.ctx.render.renderState();
       void this.ctx.attachments.refreshAttachmentRows();
       this.app.main.hidden = false;
       this.app.nav.hidden = false;
       this.app.siteTools.hidden = false;
-      this.app.peoplePage.append(this.app.household, this.app.notifications, this.app.chatSettings);
-      this.app.privacyPage.append(this.app.security);
       this.ctx.navigation.showPageFromLocation();
       this.ctx.status.setStatus("Ready.");
       // Reminders suspended by a lock of this same vault come back with
@@ -142,6 +146,8 @@ export class SessionController {
     this.scheduleAutoLock();
     this.ctx.status.renderOnboarding();
     this.app.main.focus();
+    // A share or shortcut waiting for this unlock (#389).
+    void this.ctx.share.afterUnlock().catch(() => {});
     // Seal this unlock for a refresh of this tab; a lock meanwhile undoes it.
     void this.app.reloadResume?.arm(vault).then(() => this.app.reloadResume.sweep()).catch(() => {});
   }
@@ -188,6 +194,15 @@ export class SessionController {
     this.app.commandPalette?.dismiss();
     this.app.commandGeneration = null;
     this.ctx.bulk.clearBulkOutcome();
+    this.ctx.undo.clear();
+    this.app.shoppingMode?.close();
+    this.app.importer?.close();
+    this.app.pendingImport = null;
+    this.app.shoppingSections = null;
+    this.app.sitterPage = null;
+    this.app.sitterLanded = false;
+    this.app.rotations = null;
+    if (this.ctx.rotations) this.ctx.rotations.raw = null;
     this.app.pendingCapture = null;
     this.app.pendingShares?.clear();
     // pendingScheduleChange holds only random ids and a cadence. It survives
@@ -228,6 +243,7 @@ export class SessionController {
     clearTimeout(this.app.focusTimer);
     this.ctx.status.clearAlert();
     clearLegacyDrafts();
+    this.ctx.simple?.reset();
     this.app.quickAdd?.reset();
     this.app.chatShare?.reset();
     if (this.app.main) {
@@ -251,7 +267,11 @@ export class SessionController {
         ["routines", "kin-routines"],
         ["areas", "kin-areas"],
         ["detail", "kin-item-detail"],
+        // Meals (#333): recipes, notes and dinners leave with the lock.
+        ["meals", "kin-meals"],
+        ["tonight", "kin-tonight"],
       ];
+      this.ctx.meals?.reset();
       for (const [field, name] of components)
         this.app[field] = document.createElement(name);
       this.app.detailMode = null;

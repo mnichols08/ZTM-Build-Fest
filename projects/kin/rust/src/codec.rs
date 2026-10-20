@@ -64,6 +64,18 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::BoardMagnetHidden { .. } => crate::board::MAGNET_HIDDEN,
         EventKind::BoardCleared { .. } => crate::board::CLEARED,
         EventKind::BoardClearUndone { .. } => crate::board::CLEAR_UNDONE,
+        EventKind::RecipeSaved { .. } => crate::meals::RECIPE_SAVED,
+        EventKind::RecipeArchived { .. } => crate::meals::RECIPE_ARCHIVED,
+        EventKind::DinnerSet { .. } => crate::meals::DINNER_SET,
+        EventKind::DinnerCleared { .. } => crate::meals::DINNER_CLEARED,
+        EventKind::DinnerCookSet { .. } => crate::meals::DINNER_COOK_SET,
+        EventKind::ItemEmojiSet { .. } => crate::simple::ITEM_EMOJI_SET,
+        EventKind::ChatTopicSet { .. } => crate::chat::CHAT_TOPIC_SET,
+        EventKind::ShoppingSectionsSet { .. } => crate::store_sections::SHOPPING_SECTIONS_SET,
+        EventKind::ItemSectionSet { .. } => crate::store_sections::ITEM_SECTION_SET,
+        EventKind::RoutineRotationSet { .. } => crate::rotations::ROUTINE_ROTATION_SET,
+        EventKind::RoutineTurnSet { .. } => crate::rotations::ROUTINE_TURN_SET,
+        EventKind::SitterPageSet { .. } => crate::sitter::SITTER_PAGE_SET,
     }
 }
 
@@ -433,6 +445,15 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(&message_id.0);
             payload.extend_from_slice(&[0; 4]);
         }
+        // Topic (#312): message ID, state u8 (1 open, 2 resolved, 0 cleared)
+        // and 3 reserved.
+        EventKind::ChatTopicSet { message_id, state } => {
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&[state.code(), 0, 0, 0]);
+        }
         // The fridge (#317): board.rs owns the payloads.
         kind @ (EventKind::BoardStrokeAdded { .. }
         | EventKind::BoardStrokeHidden { .. }
@@ -442,6 +463,30 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
         | EventKind::BoardCleared { .. }
         | EventKind::BoardClearUndone { .. }) => {
             payload = crate::board::encode_payload(kind)?;
+        }
+        // Meals (#333): meals.rs owns the payloads.
+        kind @ (EventKind::RecipeSaved { .. }
+        | EventKind::RecipeArchived { .. }
+        | EventKind::DinnerSet { .. }
+        | EventKind::DinnerCleared { .. }
+        | EventKind::DinnerCookSet { .. }) => {
+            payload = crate::meals::encode_payload(kind)?;
+        }
+        // Item emoji (#344): simple.rs owns the payload.
+        kind @ EventKind::ItemEmojiSet { .. } => {
+            payload = crate::simple::encode_payload(kind)?;
+        }
+        // Store sections (#411): store_sections.rs owns the payloads.
+        kind @ (EventKind::ShoppingSectionsSet { .. } | EventKind::ItemSectionSet { .. }) => {
+            payload = crate::store_sections::encode_payload(kind)?;
+        }
+        // Taking turns (#429): rotations.rs owns the payloads.
+        kind @ (EventKind::RoutineRotationSet { .. } | EventKind::RoutineTurnSet { .. }) => {
+            payload = crate::rotations::encode_payload(kind)?;
+        }
+        // The sitter page (#442): sitter.rs owns the payload.
+        kind @ EventKind::SitterPageSet { .. } => {
+            payload = crate::sitter::encode_payload(kind)?;
         }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());

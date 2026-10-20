@@ -41,12 +41,20 @@
 //!   to a deleted message is kept and left out of the page. A message holds
 //!   at most `MAX_REACTION_GROUPS` different emoji; a further one changes
 //!   nothing, in replay as in commands.
+//! - A topic (#312, "Talk later") sets where a message stands on the "To
+//!   talk about" list: the latest event in replay order wins, whatever the
+//!   state before it. One for a message this log lacks or that its author
+//!   deleted changes nothing, and the author's deletion drops the topic. A
+//!   new topic past `MAX_TOPICS` changes nothing, in replay as in commands.
 //!
 //! Actors and devices are the event header's, after identity bindings.
 use std::sync::Arc;
 
 use super::*;
-use crate::chat::{ChatMessage, ChatMessageStatus, ReactionGroup, MAX_REACTION_GROUPS};
+use crate::chat::{
+    ChatMessage, ChatMessageStatus, ChatTopic, ChatTopicState, ReactionGroup, MAX_REACTION_GROUPS,
+    MAX_TOPICS,
+};
 use crate::event::ChatContentKind;
 
 pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinError> {
@@ -134,6 +142,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 message.status = ChatMessageStatus::Deleted;
                 chat.retired.push(old);
                 chat.pins.retain(|pin| pin.message_id != *message_id);
+                chat.topics.retain(|topic| topic.message_id != *message_id);
                 // Deleting a poll deletes its votes too (#135).
                 chat.polls.remove(message_id);
             } else if *by_admin {
@@ -242,6 +251,45 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                     .is_some_and(|m| m.author == event.actor_id)
             {
                 chat.polls.entry(*message_id).or_default().closed = true;
+            }
+        }
+        EventKind::ChatTopicSet { message_id, state } => {
+            if !chat
+                .get(message_id)
+                .is_some_and(|message| message.status != ChatMessageStatus::Deleted)
+            {
+                return Ok(());
+            }
+            let found = chat
+                .topics
+                .iter()
+                .position(|topic| topic.message_id == *message_id);
+            match (state, found) {
+                (ChatTopicState::Cleared, Some(at)) => {
+                    chat.topics.remove(at);
+                }
+                (ChatTopicState::Cleared, None) => {}
+                (_, Some(at)) => {
+                    if chat.topics[at].state != *state {
+                        chat.topic_clock += 1;
+                        let topic = &mut chat.topics[at];
+                        topic.state = *state;
+                        topic.changed_by = event.actor_id;
+                        topic.changed = chat.topic_clock;
+                    }
+                }
+                (_, None) => {
+                    if chat.topics.len() < MAX_TOPICS {
+                        chat.topic_clock += 1;
+                        chat.topics.push(ChatTopic {
+                            message_id: *message_id,
+                            state: *state,
+                            flagged_by: event.actor_id,
+                            changed_by: event.actor_id,
+                            changed: chat.topic_clock,
+                        });
+                    }
+                }
             }
         }
         _ => return Err(KinError::Internal),

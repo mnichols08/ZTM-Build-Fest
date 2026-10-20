@@ -1167,6 +1167,88 @@ shared board, decided in [ADR 0011](decisions/0011-family-fridge.md).
   that it can be turned on in Security. Locking (by time, by Lock or from
   another tab) leaves full screen and shows the unlock screen.
 - Drawing is a path-based gesture and has no keyboard equivalent.
+- **Without sync** (#372) the fridge has nowhere to save a drawing, so it
+  shows no tools and the line under the board says it's shared through
+  household sync, with a link to Household → People & devices.
+
+## 8.11 Meals (#333)
+
+Lists → Meals plans the week's dinners, decided in
+[ADR 0012](decisions/0012-meals.md).
+
+- **The week** is seven day rows, Monday to Sunday, headed "This week · 19–25
+  Oct" (or "Week of …"), with Previous week, This week and Next week. Each row
+  says the day, the dinner or "Nothing planned", "Cooking: You" (or a name, or
+  "No one yet") and one **Plan** / **Change** button, at least 44 px, whose
+  accessible name names the day ("Change dinner for Monday 19 Oct"). Tonight's
+  row is marked **Tonight**.
+- **Planning** opens a dialog (a bottom sheet on phones) with **Find a
+  recipe** focused, recent recipes first; **Something else…** takes any short
+  name ("Leftovers"); **Who's cooking** lists You first, then members by
+  preferred name. Anyone may cook; nothing is counted. **Clear this dinner**
+  and **Done**; Esc or Done returns focus to the day's button.
+- **Recipes** are a name, "Ingredients (one per line)" and optional notes. An
+  ingredient that exactly matches an active Staple is linked to it and the
+  editor says "Matched to Staple “Milk”."; each line's Staple select changes or
+  removes the link. A line typed twice is kept once. A problem is shown beside
+  its field and focus goes there.
+- **Add ingredients to Shopping** (per recipe, and per planned day with a
+  recipe) adds what's missing, re-adds linked Staples, skips what's already on
+  Shopping, and says so: "Added 2 · Re-added 1 Staple (Milk) · Already on
+  Shopping 1 (Bread)", with **Open Shopping**. Adding twice never duplicates.
+  If saving stops part-way, Kin says how many were added and **Try again**
+  adds only what's missing.
+- **Tonight on Today** is one quiet line: "Tacos · Sam is cooking", or
+  "Nothing planned for tonight." with **Plan dinner**. It never nags.
+- **Layout.** Phones: one column, recipes below the week. When the Meals view
+  is 560 px or wider (tablets), the days sit in two columns. At 1180 px and
+  up the recipes sit beside a single list of days, and each recipe offers
+  **Put on** a day of the week shown, without a dialog; with the detail panel
+  open beside the list, Meals falls back to one list. Long names wrap and the
+  page never scrolls sideways, from 320 × 568 to desktop and at 200% zoom.
+- Dark mode uses the app's tokens; under forced colours tonight's row keeps a
+  system-coloured border. Planning works offline and is saved on the device;
+  with sync on, the status says it will sync when connected.
+
+## 8.12 Simple view (#341)
+
+A calmer layout a household admin turns on for a Limited member, decided in
+[ADR 0013](decisions/0013-simple-view.md). It is a layout, not a lock: the
+service enforces only the switch and Chat and Fridge access.
+
+- **The switch.** In People & devices, an admin sees **Turn on Simple view
+  for …** on each active Limited member's row, confirmed with their passkey;
+  the row then says "Simple view on". The copy says it hides the rest of Kin
+  and can't prevent it. The child can't turn it off. Their device switches
+  on its next sync, and an offline unlock keeps it. Turning it off reloads
+  their Kin into the full layout. A device belongs to one member: a child
+  needs their own device.
+- **What shows.** Today, Chat and the Fridge; the rest of the workspace is
+  out of the document (the household panel stays, hidden, so a removed
+  device still locks). Every other address, alias, `/pair` and search link
+  opens Today. No Quick add, Search, command palette, keyboard shortcuts,
+  bulk selection, item details, or turning a chat message into a record;
+  the brand, sync status and Lock stay. Chat and the Fridge appear once
+  they're open on the device. The navigation is a
+  bottom bar on phones and a side list wider, with Chat or the Fridge left
+  out when the child has no access; with neither, there is no bar.
+- **Today.** "Tonight: Tacos" when a dinner is planned, then one large card
+  per thing: the child's own items planned for today or earlier (or not
+  dated) and their routines open today. Each card shows the picture (the
+  item's emoji, else its first downloaded photo) beside the words, never
+  instead of them, and a full-width **Done** at least 56 px tall named
+  "Done: …". Done becomes **Undo** in the same place for the session, and the
+  polite status says "Marked “…” done." (with "It will sync when you're
+  connected." offline). With nothing to do: "Nothing for you today." No
+  counts, streaks, totals or celebrations.
+- **Layout.** Phones: one card per row, a 96 px picture, 1.25rem text,
+  stacked above the words on narrow screens. 720 px and up: a grid of cards
+  (`minmax(18rem, 1fr)`) with a 128 px picture above the words. Sizes are in
+  rem so text zoom grows them; nothing has a fixed height or moves.
+- **Pictures for adults.** An Adult picks an item's picture in its details
+  (Picture: type or pick one emoji, **Save picture**, **Remove picture**). It
+  shows small beside the item's text in lists and large on a child's Simple
+  view.
 
 # 9. States every relevant screen must handle
 
@@ -2093,3 +2175,176 @@ tried them.
 - **Consistent identity forms (#268).** Path statements, next steps and the
   name and nickname forms share spacing, 48 px targets and theme tokens; long
   names and device labels wrap rather than widening a 320 px screen.
+
+# 32. Chat on a phone: fits the screen, one-row composer, message actions (#310, #311)
+
+- **Fits the screen.** On the Chat page the message list is the only thing
+  that scrolls. `web/chat/chat-layout.js` sizes the chat to the visible area
+  below its top (the visual viewport, so the on-screen keyboard counts),
+  above the phone's bottom bar and leaving room for anything below it. Chat
+  opens at the newest message (or the first unread); **Jump to latest**
+  shows once you scroll up more than half a screen. Below 720px the page
+  title and description collapse; while you type on a touch screen the bottom
+  bar steps aside. On a short screen (a phone held sideways, a short window)
+  the header, page title and Updates tabs step aside on the Chat page (the
+  title stays for screen readers). Toasts sit above the composer.
+- **One-row composer (#311).** [+] [message] [emoji] [Send]. **+** holds
+  photo, file, camera and poll; Escape closes it and returns to +. While the
+  box is empty, Send gives way to **Voice**. The box grows to at most
+  min(7.5 lines, 30% of the screen).
+- **Message actions (#311).** Every message has one sheet of actions: quick
+  reactions first, then Copy, Reply, the records it can become, Pin, Edit,
+  Delete, and Delete for me, as permitted.
+  - On a touch screen: no action column; messages take up to 85% of the
+    width, with a 44px **⋯** in the time line (or at the end of a grouped
+    message). A long press (500 ms) or ⋯ opens a bottom sheet, at most 480px
+    wide on a tablet. A swipe down, the backdrop or Escape closes it, and
+    focus returns to the message's ⋯. Copy replaces native text selection.
+  - With a mouse (720px and wider): ⋯ and 🙂 show on hover and keyboard
+    focus. ⋯ or a right-click opens the sheet by the ⋯, flipping above it
+    near the bottom of the screen so it never clips.
+  - It is a modal dialog: focus moves to the first action and stays in the
+    sheet until it closes.
+
+# 33. Talk later and two Updates tabs (#312, #313, ADR 0014)
+
+- **Talk later.** A message's actions include **Talk later**; the message
+  then shows "🗨 To talk about" in the conversation and goes on Chat's **To
+  talk about** list. From there or the message's actions it can be marked
+  **talked about** (still listed, "✓ Talked about") or talked about again,
+  and the list can **Remove** it. Choosing a topic goes to its message.
+  Read-only members see the list but can't change it; Simple view has none.
+- **The list.** Open topics first, each with its message's author and first
+  line and who marked it. The older Talk topics (household events 8–11) sit
+  below in the same panel, with Add a topic, Resolve, Reopen and Archive as
+  before. At 1180px and wider the list is a side column (390px); elsewhere
+  the chat toolbar's **To talk about** button opens it, with the open count
+  in words ("To talk about · 2 open"); Escape closes it.
+- **Without chat access** the older topics have their own **To talk about**
+  section under Handoffs; chat topics never appear there.
+- **Updates** has two tabs, Handoffs and Chat. `#talk`, `#handoff/talk` and
+  `#updates/talk` open Chat with the list (or the Handoffs section without
+  chat access); Simple view sends them to Today.
+
+# 34. Sharing into Kin and home-screen shortcuts (#389)
+
+- **Share into Kin.** The installed app is a share target: in another app's
+  share sheet, choose Kin. After unlock, **Add to Kin** shows what was shared
+  (its first line, link and file names) and offers **Add to To do**, **Add to
+  Shopping**, **Save as a note**, **Make a handoff** and, when chat is open to
+  you, **Send in Chat**. Each opens the same dialog used to turn a chat message
+  into a record (prefilled and editable; photos and PDFs offered as
+  attachments), or puts the text and files in Chat's composer. Nothing is
+  saved until you confirm; Cancel says "Nothing was added."
+- **Privacy.** The service worker answers the share itself, so the shared
+  content never reaches the server; it waits in the worker's memory under a
+  random id until the page takes it, once (five minutes at most), and in the
+  page's memory until unlock. Nothing is written to storage or the cache. A
+  share that reaches the server (no service worker yet) is discarded unread
+  and the app simply opens. Simple view doesn't take shares.
+- **Shortcuts.** A long press on the home-screen icon offers Quick add,
+  Shopping, Chat and Today. Quick add opens after unlock.
+- Support: Android and desktop Chrome/Edge support share targets for
+  installed apps; Safari on iOS doesn't offer installed web apps in the share
+  sheet yet. Shortcuts work where the platform supports manifest shortcuts.
+
+# 35. Shopping mode (#403)
+
+- **Start shopping** on Lists › Shopping opens the list for use in the shop:
+  full screen, one large native checkbox per item (rows at least 56px, text
+  19px), what's left in words ("3 things to buy"), and **Done shopping**.
+- Ticking an item completes it with the ordinary command (the toast offers
+  Undo) and moves it to **In the basket**; unticking it there reopens it.
+  Everything works offline and syncs later.
+- **Keep the screen on while shopping** (on where the browser supports the
+  Screen Wake Lock API; remembered per device) stops the phone sleeping
+  between aisles. The lock is released on Done, Escape, lock, or when the
+  page is hidden, and asked for again when it comes back.
+- **Store sections** (#411, [ADR 0015](decisions/0015-store-sections.md)):
+  **Sections** in shopping mode opens a small editor to name the parts of
+  the shop and put them in the order you walk it (move up/down, remove, add;
+  duplicate names are refused). Each item then has a **Section** control on
+  its row, and the list groups by section in that order with **Other** last.
+  A Staple's section goes with it when it is replenished. With no sections,
+  the list looks as before.
+
+# 36. Bring a list into Kin (#452)
+
+- **Paste a list.** Pasting two or more lines into a capture field (Today,
+  To do, Shopping) opens **Bring a list into Kin** instead of squashing the
+  lines into one item. Bullets, numbers and checkboxes are removed; a ticked
+  box (`[x]`, ☑, ✓) comes in as done.
+- **Import a file.** Lists › List actions › **Import a list…** takes pasted
+  text or a CSV/text file exported from another app or a spreadsheet. A CSV's
+  columns are guessed from common headers (Title, List, Due date, Completed)
+  and can be changed. A list column mentioning shopping or groceries goes to
+  Shopping; dates are read only in unambiguous year-first forms (2026-11-02).
+- **Preview.** Every row has a checkbox. Repeats within the import and items
+  already open in Kin start unticked and say why. The summary says how many
+  will be added; **Add N items** saves exactly the ticked rows.
+- **Saving.** Each row is an ordinary capture (add, planned date, complete)
+  with an id fixed when the import starts: a failure partway says how many
+  were added and Try again (or Add again) resumes without duplicates. At most
+  200 rows per import; files are read on the device and never uploaded.
+
+# 37. This week (#416)
+
+- **Where.** Today's heading links to **This week** (`#week`), a page of its
+  own that keeps Today marked in the navigation; no sixth destination.
+- **What.** Seven days from today, each a headed section ("Today",
+  "Tomorrow", then the weekday and date): items planned for that day,
+  routine occurrences (shown on the day each occurrence opens), the planned
+  dinner and maintenance due. Overdue items stay on Today. Rust supplies the
+  days and what falls on them (`kin_week`, [ABI](ABI.md)); the page only
+  names them. Days with nothing say "Nothing planned."
+- **Actions.** Items complete and reopen with a checkbox (Undo applies),
+  **Move to…** another day of the week or "No date", and **Details** opens
+  the item. Routines complete for the current period only; later occurrences
+  show without a checkbox. Household modes other than Normal pause routines
+  for the whole week, as on Today.
+
+# 38. For the sitter (#441, [ADR 0017](decisions/0017-sitter-page.md))
+
+- **Where.** Household → **For the sitter** (`#household/sitter`) is where an
+  Adult builds the page; **For you** (`#foryou`) is the page itself, a page of
+  its own that keeps Today marked in the navigation. A Temporary member lands
+  on For you once per unlock (not in Simple view); everyone else reaches it
+  from the editor's "See it as the sitter does".
+- **The editor.** A short welcome (up to 500 characters), then "On the page":
+  the chosen notes, reference records and routines in order, each with ↑, ↓
+  and Remove (named for screen readers, focus kept on the moved control).
+  Below, a checkbox per existing note, reference record and routine, grouped
+  by kind; at most 30 things. "Save the sitter page" saves the whole page.
+  Only Adults (and a household that doesn't sync) can change it; others see
+  "Only Adults can change the sitter page."
+- **The page.** The welcome, then a card per entry, live: a note's title and
+  text, a reference record's fields (a value that looks like a phone number
+  is a tap-to-call link, "Call Mum: +44 …", at least 44 px tall), a routine's
+  cadence and whether it's done for now. Archived records drop out. An Adult
+  previewing it sees a note that it is a layout, not a lock: while a
+  Temporary member's access lasts, their device can read the household.
+- **Empty.** "The family hasn't added anything here yet."
+
+# 39. Taking turns on routines (#428, [ADR 0016](decisions/0016-routine-rotations.md))
+
+- **Start.** Each routine under Routines has **Take turns…** when the
+  household has two or more people. It opens a list of the household's
+  members: tick them in the order they take turns (2–12); "Turn order" shows
+  the order, each with ↑ to move earlier. **Start taking turns** saves; the
+  first person takes the next turn.
+- **Whose turn.** A rotating routine shows "Your turn · Sam next" (or
+  "Sam's turn · You next") and "Taking turns: You → Sam → Jo" in place of the
+  owner buttons: whoever's turn it is owns the routine, so This week, Simple
+  view and "my things" follow it. Today's routine rows add "Your turn" or
+  "Sam's turn" to their line.
+- **Passing on.** The turn passes when the routine is done for its period
+  (the owner's decision, "when it's done"), not by the calendar; Undo gives
+  it back. **Skip to next** gives it to the next person; **Give this turn
+  to…** (with three or more) to anyone listed. **Change who takes turns**
+  reopens the list starting from whose turn it is; **Stop taking turns**
+  leaves the last person as the ordinary owner.
+- **People leaving.** Someone removed, or whose access ended, is passed
+  over; if it was their turn, the next person's turn is recorded so every
+  device agrees. With fewer than two people left, the routine says taking
+  turns is paused.
+- **No scores.** Kin never counts turns per person or shows who did more.

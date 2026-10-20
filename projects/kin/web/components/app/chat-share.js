@@ -16,12 +16,14 @@ export class ChatShareController {
 
   open(detail) {
     const dialog = this.app.chatShare;
-    if (!dialog || !detail) return;
+    // Simple view (#341, ADR 0013) adds nothing.
+    if (!dialog || !detail || this.app.simpleView) return;
     dialog.open({ ...detail, submit: (payload) => this.save(payload) });
   }
 
   async save({ kind, text, title, body, files = [] }) {
     const { app } = this;
+    if (app.simpleView) return { ok: false, message: "Simple view doesn't add things." };
     if (!app.store || !app.engine || app.vault?.locked) return { ok: false, message: "Unlock Kin first." };
     if (app.busy) return { ok: false, message: "Kin is still saving another change. Try again in a moment." };
     if (app.pendingCapture) return { ok: false, message: "An earlier item is only partly saved. Finish it from Today first." };

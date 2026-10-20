@@ -29,6 +29,14 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_project: status,
       kin_device_names: status,
       kin_member_names: status,
+      kin_meals: status,
+      kin_meal_shopping_plan: status,
+      kin_item_emojis: status,
+      kin_my_things: status,
+      kin_week: status,
+      kin_shopping_sections: status,
+      kin_routine_rotations: status,
+      kin_sitter_page: status,
       kin_event_metadata: status,
       kin_event_metadata_batch: status,
       kin_audio_peaks: status,
@@ -287,6 +295,54 @@ test("a chat page carries the quote of a reply after its reactions (#129)", () =
   ]) assert.throws(() => decode(bytes), (error) => error instanceof KinEngineError && error.code === 6);
 });
 
+test("a chat page ends with the topics a request for them asked for (#312)", () => {
+  const base = kchp({
+    total: 1, start: 0,
+    messages: [{ id: 0x01, author: 0x11, device: 0x21, postedAt: 1_791_475_200_001, status: 0, blob: 0xb1, key: 0xc1 }],
+  });
+  const quote = ({ id = 0x01, state = 1 } = {}) => {
+    const out = new Uint8Array(108);
+    out.fill(id, 0, 16); out[16] = state; out[17] = 1;
+    out.fill(0x11, 20, 36); out.fill(0xb1, 36, 68); out.fill(0xc1, 68, 100);
+    return out;
+  };
+  const entry = ({ id = 0x01, state = 1, by = 0x12, reserved = 0, quoted = quote({ id }) } = {}) =>
+    Uint8Array.of(...new Array(16).fill(id), state, reserved, 0, 0, ...new Array(16).fill(by), ...quoted);
+  const page = (count, ...entries) => Uint8Array.of(...base, count & 0xff, count >> 8, 0, 0, ...entries.flatMap((part) => [...part]));
+  const decode = (bytes, includeTopics = true) => createEngine(substituteExports({ operation: () => 0, result: bytes }).exports)
+    .chatPage([], { includeTopics }, 1_760_000_000_000, 20261003);
+  const decoded = decode(page(2, entry({ state: 2 }), entry({ id: 0x02, by: 0x13 })));
+  assert.deepEqual(decoded.topics[0], {
+    messageId: "01".repeat(16), state: "resolved", flaggedBy: "12".repeat(16),
+    quote: { messageId: "01".repeat(16), state: "live", contentKind: "text", authorId: "11".repeat(16), index: 0, blobRef: "b1".repeat(32), blobKey: new Uint8Array(32).fill(0xc1), text: null },
+  });
+  assert.deepEqual(decoded.topics.map((topic) => [topic.state, topic.flaggedBy]), [["resolved", "12".repeat(16)], ["open", "13".repeat(16)]]);
+  assert.deepEqual(decode(page(0)).topics, []);
+  assert.deepEqual(decode(base, false).topics, [], "none unless asked for");
+  for (const bytes of [
+    base,
+    page(1),
+    Uint8Array.of(...page(0), 0),
+    page(1, entry({ state: 0 })),
+    page(1, entry({ state: 3 })),
+    page(1, entry({ reserved: 1 })),
+    page(1, entry({ by: 0 })),
+    page(1, entry({ quoted: quote({ id: 0x02 }) })),
+    page(1, entry({ quoted: quote({ state: 3 }) })),
+    page(2, entry(), entry()),
+    page(201),
+  ]) assert.throws(() => decode(bytes), (error) => error instanceof KinEngineError && error.code === 6);
+  // The request asks for them with flag bit 5.
+  let request = null;
+  const fake = substituteExports({ operation: () => 0, result: page(0) });
+  const exports = { ...fake.exports, kin_chat_page: (...args) => {
+    request = new Uint8Array(fake.exports.memory.buffer.slice(POINTER, POINTER + fake.allocations.at(-1)));
+    return fake.exports.kin_chat_page(...args);
+  } };
+  createEngine(exports).chatPage([], { includeTopics: true }, 1_760_000_000_000, 20261003);
+  assert.equal(request[14], 1 | 32);
+});
+
 test("chat pages decode from KCHP and malformed pages are refused (#109)", () => {
   const page = kchp({
     total: 5,
@@ -470,4 +526,187 @@ test("chat search requests and results are checked (#124)", () => {
     (() => { const copy = good.slice(); copy[copy.length - 1] = 0xff; return copy; })(),
   ];
   broken.forEach((bytes, index) => assert.throws(() => run(bytes), /invalid chat search result|invalid/i, `broken result ${index}`));
+});
+
+// Store sections (#411): KSHS v1 decodes into ordered sections and a Map of
+// item sections; the two commands travel as KCMD 66 and 67 carrying their
+// canonical payloads.
+test("store sections decode from KSHS and their commands encode as KCMD 66 and 67", () => {
+  const text = new TextEncoder();
+  const idOf = (byte) => new Uint8Array(16).fill(byte);
+  const hexOf = (byte) => byte.toString(16).padStart(2, "0").repeat(16);
+  const name = (value) => { const bytes = text.encode(value); return [bytes.length, 0, ...bytes]; };
+  const kshs = Uint8Array.from([
+    ...text.encode("KSHS"), 1, 0, 0, 0,
+    2, 0, 0, 0, ...idOf(0x22), ...name("Dairy"), ...idOf(0x11), ...name("Produce"),
+    1, 0, 0, 0, ...idOf(0x31), ...idOf(0x22),
+  ]);
+  const read = (bytes) => createEngine(substituteExports({ operation: () => 0, result: bytes }).exports)
+    .shoppingSections([], 1_760_000_000_000, 20261003);
+  assert.deepEqual(read(kshs), {
+    sections: [{ sectionId: hexOf(0x22), name: "Dairy" }, { sectionId: hexOf(0x11), name: "Produce" }],
+    itemSections: new Map([[hexOf(0x31), hexOf(0x22)]]),
+  });
+  const unlisted = kshs.slice();
+  unlisted.fill(0x33, kshs.length - 16);
+  for (const broken of [kshs.slice(0, -1), Uint8Array.of(...kshs, 0), (() => { const t = kshs.slice(); t[4] = 2; return t; })(), unlisted]) {
+    assert.throws(() => read(broken), (error) => error instanceof KinEngineError && error.code === 6);
+  }
+
+  let request = null;
+  const fake = substituteExports({ operation: () => 0 });
+  const engine = createEngine({ ...fake.exports, kin_execute: () => {
+    request = new Uint8Array(fake.exports.memory.buffer.slice(POINTER, POINTER + fake.allocations.at(-1)));
+    return 0;
+  } });
+  const identity = {
+    eventId: idOf(1), householdId: idOf(2), actorId: idOf(3), deviceId: idOf(4), timestamp: 1, logicalTime: 1n,
+  };
+  const packetOf = (command) => {
+    request = null;
+    // The substitute returns no KCMT, so the call fails after sending.
+    assert.throws(() => engine.executeCommand(command, identity, [], 1_760_000_000_000, null, 20261003), KinEngineError);
+    const length = new DataView(request.buffer).getUint32(0, true);
+    return request.subarray(4, 4 + length);
+  };
+  const list = packetOf({ type: "set-shopping-sections", sections: [
+    { sectionId: hexOf(0x11), name: "  Produce " }, { sectionId: hexOf(0x22), name: "Dairy" },
+  ] });
+  const view = new DataView(list.buffer, list.byteOffset);
+  assert.equal(String.fromCharCode(...list.subarray(0, 4)), "KCMD");
+  assert.equal(view.getUint16(8, true), 66);
+  assert.ok(list.subarray(92, 124).every((byte) => byte === 0), "no entity, date, option or expiry");
+  assert.deepEqual([...list.subarray(128)], [2, 0, 0, 0, ...idOf(0x11), ...name("Produce"), ...idOf(0x22), ...name("Dairy")]);
+  assert.equal(view.getUint32(124, true), list.length - 128);
+  const put = packetOf({ type: "set-item-section", itemId: hexOf(0x31), sectionId: hexOf(0x22) });
+  assert.equal(new DataView(put.buffer, put.byteOffset).getUint16(8, true), 67);
+  assert.deepEqual([...put.subarray(128)], [...idOf(0x31), ...idOf(0x22)]);
+  const clear = packetOf({ type: "set-item-section", itemId: hexOf(0x31), sectionId: null });
+  assert.deepEqual([...clear.subarray(128)], [...idOf(0x31), ...new Uint8Array(16)]);
+  for (const bad of [
+    { type: "set-shopping-sections", sections: [{ sectionId: hexOf(0x11), name: "   " }] },
+    { type: "set-shopping-sections", sections: [{ sectionId: hexOf(0x11), name: "x".repeat(41) }] },
+    { type: "set-shopping-sections", sections: Array.from({ length: 31 }, (_, n) => ({ sectionId: hexOf(n + 1), name: `S${n}` })) },
+    { type: "set-item-section", itemId: hexOf(0), sectionId: null },
+  ]) {
+    assert.throws(() => engine.executeCommand(bad, identity, [], 1_760_000_000_000, null, 20261003),
+      (error) => error instanceof KinEngineError && error.code === 2);
+  }
+});
+
+// Taking turns (#429): KRRS v1 decodes into rotations with whose turn it is
+// and who is next; the two commands travel as KCMD 68 and 69 carrying their
+// canonical payloads.
+test("routine rotations decode from KRRS and their commands encode as KCMD 68 and 69", () => {
+  const text = new TextEncoder();
+  const idOf = (byte) => new Uint8Array(16).fill(byte);
+  const hexOf = (byte) => byte.toString(16).padStart(2, "0").repeat(16);
+  const krrs = Uint8Array.from([
+    ...text.encode("KRRS"), 1, 0, 0, 0, 1, 0, 0, 0,
+    ...idOf(0x20), 3, 1, 2, 0, ...idOf(0x01), ...idOf(0x02), ...idOf(0x03),
+  ]);
+  const read = (bytes) => createEngine(substituteExports({ operation: () => 0, result: bytes }).exports)
+    .routineRotations([], 1_760_000_000_000, 20261003);
+  assert.deepEqual(read(krrs), [
+    { routineId: hexOf(0x20), memberIds: [hexOf(1), hexOf(2), hexOf(3)], current: hexOf(2), next: hexOf(3) },
+  ]);
+  for (const broken of [krrs.slice(0, -1), Uint8Array.of(...krrs, 0), (() => { const t = krrs.slice(); t[30] = 1; return t; })()]) {
+    assert.throws(() => read(broken), (error) => error instanceof KinEngineError && error.code === 6);
+  }
+
+  let request = null;
+  const fake = substituteExports({ operation: () => 0 });
+  const engine = createEngine({ ...fake.exports, kin_execute: () => {
+    request = new Uint8Array(fake.exports.memory.buffer.slice(POINTER, POINTER + fake.allocations.at(-1)));
+    return 0;
+  } });
+  const identity = {
+    eventId: idOf(1), householdId: idOf(2), actorId: idOf(3), deviceId: idOf(4), timestamp: 1, logicalTime: 1n,
+  };
+  const packetOf = (command) => {
+    request = null;
+    // The substitute returns no KCMT, so the call fails after sending.
+    assert.throws(() => engine.executeCommand(command, identity, [], 1_760_000_000_000, null, 20261003), KinEngineError);
+    const length = new DataView(request.buffer).getUint32(0, true);
+    return request.subarray(4, 4 + length);
+  };
+  const set = packetOf({ type: "set-routine-rotation", routineId: hexOf(0x20), memberIds: [hexOf(1), hexOf(2)], currentIndex: 1 });
+  const view = new DataView(set.buffer, set.byteOffset);
+  assert.equal(String.fromCharCode(...set.subarray(0, 4)), "KCMD");
+  assert.equal(view.getUint16(8, true), 68);
+  assert.ok(set.subarray(92, 124).every((byte) => byte === 0), "no entity, date, option or expiry");
+  assert.deepEqual([...set.subarray(128)], [...idOf(0x20), 2, 1, 0, 0, ...idOf(1), ...idOf(2)]);
+  const end = packetOf({ type: "set-routine-rotation", routineId: hexOf(0x20), memberIds: [], currentIndex: 0 });
+  assert.deepEqual([...end.subarray(128)], [...idOf(0x20), 0, 0, 0, 0]);
+  const skip = packetOf({ type: "set-routine-turn", routineId: hexOf(0x20), memberId: hexOf(2) });
+  assert.equal(new DataView(skip.buffer, skip.byteOffset).getUint16(8, true), 69);
+  assert.deepEqual([...skip.subarray(128)], [...idOf(0x20), ...idOf(2)]);
+  for (const bad of [
+    { type: "set-routine-rotation", routineId: hexOf(0x20), memberIds: [hexOf(1)], currentIndex: 0 },
+    { type: "set-routine-rotation", routineId: hexOf(0x20), memberIds: [hexOf(1), hexOf(1)], currentIndex: 0 },
+    { type: "set-routine-rotation", routineId: hexOf(0x20), memberIds: [hexOf(1), hexOf(2)], currentIndex: 2 },
+    { type: "set-routine-turn", routineId: hexOf(0x20), memberId: hexOf(0) },
+  ]) {
+    assert.throws(() => engine.executeCommand(bad, identity, [], 1_760_000_000_000, null, 20261003),
+      (error) => error instanceof KinEngineError && error.code === 2);
+  }
+});
+
+// The sitter page (#442): KSIT v1 decodes into the intro and the entries in
+// order; "set-sitter-page" travels as KCMD 70 carrying its canonical payload,
+// and kind 70 names SITTER_PAGE_SET in event metadata.
+test("the sitter page decodes from KSIT and its command encodes as KCMD 70", () => {
+  const text = new TextEncoder();
+  const idOf = (byte) => new Uint8Array(16).fill(byte);
+  const hexOf = (byte) => byte.toString(16).padStart(2, "0").repeat(16);
+  const ksit = Uint8Array.from([
+    ...text.encode("KSIT"), 1, 0, 0, 0,
+    2, 0, 0, 0, 3, 0, 0, 0, ...idOf(0x33), 1, 0, 0, 0, ...idOf(0x11),
+    2, 0, ...text.encode("Hi"),
+  ]);
+  const read = (bytes) => createEngine(substituteExports({ operation: () => 0, result: bytes }).exports)
+    .sitterPage([], 1_760_000_000_000, 20261003);
+  assert.deepEqual(read(ksit), {
+    intro: "Hi",
+    entries: [{ kind: "routine", id: hexOf(0x33) }, { kind: "note", id: hexOf(0x11) }],
+  });
+  for (const broken of [ksit.slice(0, -1), Uint8Array.of(...ksit, 0), (() => { const t = ksit.slice(); t[12] = 9; return t; })()]) {
+    assert.throws(() => read(broken), (error) => error instanceof KinEngineError && error.code === 6);
+  }
+
+  const kmet = new Uint8Array(92);
+  kmet.set(text.encode("KMET"));
+  kmet[4] = 1;
+  new DataView(kmet.buffer).setUint16(90, 70, true);
+  const metadata = createEngine(substituteExports({ operation: () => 0, result: kmet }).exports).eventMetadata(new Uint8Array(92));
+  assert.equal(metadata.kind, "SITTER_PAGE_SET");
+
+  let request = null;
+  const fake = substituteExports({ operation: () => 0 });
+  const engine = createEngine({ ...fake.exports, kin_execute: () => {
+    request = new Uint8Array(fake.exports.memory.buffer.slice(POINTER, POINTER + fake.allocations.at(-1)));
+    return 0;
+  } });
+  const identity = {
+    eventId: idOf(1), householdId: idOf(2), actorId: idOf(3), deviceId: idOf(4), timestamp: 1, logicalTime: 1n,
+  };
+  // The substitute returns no KCMT, so the call fails after sending.
+  assert.throws(() => engine.executeCommand({ type: "set-sitter-page", intro: " Hi ", entries: [
+    { kind: "reference-record", id: hexOf(0x22) },
+  ] }, identity, [], 1_760_000_000_000, null, 20261003), KinEngineError);
+  const length = new DataView(request.buffer).getUint32(0, true);
+  const packet = request.subarray(4, 4 + length);
+  const view = new DataView(packet.buffer, packet.byteOffset);
+  assert.equal(String.fromCharCode(...packet.subarray(0, 4)), "KCMD");
+  assert.equal(view.getUint16(8, true), 70);
+  assert.ok(packet.subarray(92, 124).every((byte) => byte === 0), "no entity, date, option or expiry");
+  assert.deepEqual([...packet.subarray(128)], [1, 0, 0, 0, 2, 0, 0, 0, ...idOf(0x22), 2, 0, ...text.encode("Hi")]);
+  for (const bad of [
+    { type: "set-sitter-page", intro: "x".repeat(501), entries: [] },
+    { type: "set-sitter-page", intro: "", entries: [{ kind: "item", id: hexOf(1) }] },
+    { type: "set-sitter-page", intro: "", entries: Array.from({ length: 31 }, (_, n) => ({ kind: "note", id: hexOf(n + 1) })) },
+  ]) {
+    assert.throws(() => engine.executeCommand(bad, identity, [], 1_760_000_000_000, null, 20261003),
+      (error) => error instanceof KinEngineError && error.code === 2);
+  }
 });

@@ -1461,6 +1461,39 @@ test("chat pins are commands, limited to ten, and listed by a page that asks for
   assert.equal(engine.chatPage(chat, { includePins: true }, asOf, day).pins.length, 9);
 });
 
+test("chat topics are opened, resolved and cleared by command and listed newest change first (#312)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb), friend = new Uint8Array(16).fill(0xbc);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  let sequence = 0;
+  const as = (actorId) => { sequence += 1; return { eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId: new Uint8Array(16).fill(0xab), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) }; };
+  const asOf = 1_791_475_200_900, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const run = (command, actor = member) => { const result = engine.executeChatCommand(command, as(actor), chat, asOf, day); chat.push(result.encodedEvent); return result; };
+  const [first, second] = ["01".repeat(16), "02".repeat(16)];
+  run({ type: "post-chat-message", messageId: first, blobRef: blob(0xa1), blobKey: blob(0xc1) });
+  run({ type: "post-chat-message", messageId: second, blobRef: blob(0xa2), blobKey: blob(0xc2) });
+  const opened = run({ type: "set-chat-topic", messageId: first, state: "open" }, friend);
+  assert.equal(new DataView(opened.encodedEvent.buffer).getUint16(2, true), 65);
+  assert.equal(opened.metadata.kind, "CHAT_TOPIC_SET");
+  run({ type: "set-chat-topic", messageId: second, state: "open" });
+  // A repeat, a message the log lacks and an unknown state are refused.
+  assert.throws(() => run({ type: "set-chat-topic", messageId: first, state: "open" }), (error) => error.code === 4);
+  assert.throws(() => run({ type: "set-chat-topic", messageId: "09".repeat(16), state: "open" }), (error) => error.code === 4);
+  assert.throws(() => run({ type: "set-chat-topic", messageId: first, state: "talk" }), (error) => error.code === 2);
+  run({ type: "set-chat-topic", messageId: first, state: "resolved" });
+  assert.throws(() => run({ type: "set-chat-topic", messageId: first, state: "resolved" }), (error) => error.code === 4);
+  const topics = () => engine.chatPage(chat, { includeTopics: true }, asOf, day).topics;
+  assert.deepEqual(topics().map((topic) => [topic.messageId, topic.state, topic.flaggedBy]), [[first, "resolved", hex(friend)], [second, "open", hex(member)]]);
+  assert.equal(topics()[0].quote.messageId, first);
+  assert.equal(topics()[0].quote.state, "live");
+  assert.deepEqual(engine.chatPage(chat, {}, asOf, day).topics, [], "topics only when asked for");
+  run({ type: "set-chat-topic", messageId: second, state: "cleared" });
+  run({ type: "delete-chat-message", messageId: first, byAdmin: false });
+  assert.deepEqual(topics(), []);
+});
+
 test("chat polls are posted, voted in and closed through the engine, and a page lists the votes (#135)", async () => {
   const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
   const author = new Uint8Array(16).fill(0xbb), friend = new Uint8Array(16).fill(0xbc);

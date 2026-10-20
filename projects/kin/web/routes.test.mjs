@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { listSegmentForClassification, PRIMARY_DESTINATIONS, resolveRoute, routeHash, SEGMENTS } from "./routes.js";
+import { listSegmentForClassification, PRIMARY_DESTINATIONS, resolveRoute, resolveSimpleRoute, routeHash, SEGMENTS } from "./routes.js";
 
 test("five primary destinations in a fixed order", () => {
   assert.deepEqual(PRIMARY_DESTINATIONS.map((entry) => entry.id), ["today", "lists", "routines", "updates", "household"]);
@@ -26,8 +26,14 @@ test("lists default to To do and accept each list segment", () => {
 
 test("legacy Handoff, More, Needs and tab hashes alias onto Updates, Household and Lists", () => {
   assert.equal(resolveRoute({ hash: "#handoff" }).canonical, "updates/handoffs");
-  assert.equal(resolveRoute({ hash: "#handoff/talk" }).canonical, "updates/talk");
-  assert.equal(resolveRoute({ hash: "#talk" }).canonical, "updates/talk");
+  // The Talk tab moved into Chat's To talk about list (#312).
+  for (const hash of ["#handoff/talk", "#talk", "#updates/talk"]) {
+    const route = resolveRoute({ hash });
+    assert.equal(route.canonical, "updates/chat", hash);
+    assert.equal(route.hash, "#updates/chat", hash);
+    assert.equal(route.topics, true, hash);
+  }
+  assert.equal("topics" in resolveRoute({ hash: "#updates/chat" }), false);
   assert.equal(resolveRoute({ hash: "#more" }).canonical, "household/hub");
   assert.equal(resolveRoute({ hash: "#more/security" }).canonical, "household/privacy");
   assert.equal(resolveRoute({ hash: "#needs" }).canonical, "lists/todo");
@@ -52,7 +58,7 @@ test("routeHash produces the short form for page defaults and the segment form o
   assert.equal(routeHash("household"), "#household");
   assert.equal(routeHash("household", "privacy"), "#household/privacy");
   assert.equal(routeHash("lists"), "#lists/todo");
-  assert.equal(routeHash("updates", "talk"), "#updates/talk");
+  assert.equal(routeHash("updates", "talk"), "#updates/handoffs", "no Talk tab: the page default");
   assert.equal(routeHash("updates", "chat"), "#updates/chat");
   assert.equal(resolveRoute({ hash: "#updates/chat" }).canonical, "updates/chat");
   assert.equal(routeHash("routines"), "#routines");
@@ -74,4 +80,35 @@ test("an invitation link's fragment on /pair is not taken for a route (#97)", ()
   assert.equal(resolveRoute({ hash: "#code=F7KM-Q2DX", pathname: "/pair" }).canonical, "household/people");
   assert.equal(resolveRoute({ hash: "", pathname: "/pair" }).canonical, "household/people");
   assert.equal(resolveRoute({ hash: "#code=F7KM-Q2DX", pathname: "/" }).canonical, "today", "only on /pair");
+});
+
+test("Simple view allows only Today, Chat and the Fridge, and sends everything else to Today (#345)", () => {
+  const both = { chat: true, fridge: true };
+  assert.equal(resolveSimpleRoute({ hash: "#updates/chat" }, both).canonical, "updates/chat");
+  assert.equal(resolveSimpleRoute({ hash: "#household/fridge" }, both).canonical, "household/fridge");
+  for (const hash of ["", "#lists", "#lists/shopping", "#lists/meals", "#routines", "#search", "#updates", "#updates/handoffs",
+    "#updates/talk", "#household", "#household/people", "#household/privacy", "#household/appearance", "#more/security",
+    "#needs", "#talk", "#handoff", "#nonsense"])
+    assert.equal(resolveSimpleRoute({ hash }, both).canonical, "today", hash);
+  assert.equal(resolveSimpleRoute({ hash: "", pathname: "/pair" }, both).canonical, "today", "/pair goes to Today");
+  assert.equal(resolveSimpleRoute({ hash: "#code=ABCD", pathname: "/pair" }, both).canonical, "today");
+  assert.equal(resolveSimpleRoute({ hash: "#updates/chat" }, { chat: false, fridge: true }).canonical, "today", "no chat access");
+  assert.equal(resolveSimpleRoute({ hash: "#household/fridge" }, { chat: true, fridge: false }).canonical, "today", "no fridge access");
+});
+
+test("This week is its own page, reached from Today, which stays marked (#416)", () => {
+  const route = resolveRoute({ hash: "#week" });
+  assert.equal(route.canonical, "week");
+  assert.equal(route.title, "This week");
+  assert.equal(route.destination, "today");
+  assert.equal(resolveSimpleRoute({ hash: "#week" }, { chat: true, fridge: true }).canonical, "today", "Simple view has no week page");
+});
+
+test("For you and For the sitter (#441)", () => {
+  const foryou = resolveRoute({ hash: "#foryou" });
+  assert.equal(foryou.canonical, "foryou");
+  assert.equal(foryou.title, "For you");
+  assert.equal(foryou.destination, "today");
+  assert.equal(resolveRoute({ hash: "#household/sitter" }).canonical, "household/sitter");
+  assert.equal(resolveSimpleRoute({ hash: "#foryou" }, { chat: true, fridge: true }).canonical, "today");
 });

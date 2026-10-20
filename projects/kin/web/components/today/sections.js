@@ -3,6 +3,7 @@
 // the empty states. composeToday() (today-view.js) decides what goes where.
 // Part of <kin-today>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-today.js lists them).
+import { assigneeLabel } from "../shared/assignee-label.js";
 import { composeToday, ROUTINE_PERIOD_LABELS } from "../../today-view.js";
 import { describeNextOccurrence, describeRepeat } from "../../recurrence.js";
 
@@ -181,6 +182,14 @@ export class TodaySections {
     return empty;
   }
 
+  // "Your turn" or "Sam's turn" on a routine people take turns at (#437).
+  turnLabel(routineId) {
+    const current = this.host.turnMap?.get(routineId)?.current;
+    if (!current) return null;
+    const context = this.host.ownerContext ?? {};
+    return current === context.memberId ? "Your turn" : `${assigneeLabel(current, context)}'s turn`;
+  }
+
   createRoutines(view) {
     const section = document.createElement("section");
     section.className = "today-routines";
@@ -258,7 +267,7 @@ export class TodaySections {
       // Rust supplies the next occurrence; only one row per task, never one
       // per future occurrence.
       const next = describeNextOccurrence(routine.nextOn, this.host.civilDate);
-      meta.textContent = [state === "done" ? `Done ${period.toLowerCase()}` : describeRepeat(routine.cadence), next].filter(Boolean).join(" · ");
+      meta.textContent = [state === "done" ? `Done ${period.toLowerCase()}` : describeRepeat(routine.cadence), next, this.turnLabel(routine.routineId)].filter(Boolean).join(" · ");
       body.append(text, meta);
       const actions = document.createElement("div");
       actions.className = "item-row-actions";

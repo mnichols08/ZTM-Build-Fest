@@ -431,6 +431,36 @@ pub struct HouseholdState {
     /// The fridge (board.rs). Not part of the KINS projection; hosts read it
     /// through `kin_board_state`. Shared with the replay, not copied.
     pub board: std::sync::Arc<crate::board::BoardState>,
+    /// Meals (meals.rs, #333). Not part of the KINS projection; hosts read
+    /// them through `kin_meals`. Shared with the replay, not copied.
+    pub meals: std::sync::Arc<crate::meals::MealsState>,
+    /// Item emoji (simple.rs, #344). Hosts read them through
+    /// `kin_item_emojis`. Shared with the replay, not copied.
+    pub pictures: std::sync::Arc<crate::simple::PicturesState>,
+    /// Store sections and each item's section (store_sections.rs, #411).
+    /// Not part of the KINS projection; hosts read them through
+    /// `kin_shopping_sections`. Shared with the replay, not copied.
+    pub store_sections: std::sync::Arc<crate::store_sections::StoreSectionsState>,
+    /// Routine rotations (rotations.rs, #429). Not part of the KINS
+    /// projection; hosts read them through `kin_routine_rotations`. The
+    /// current member also shows as the routine's responsibility. Shared
+    /// with the replay, not copied.
+    pub rotations: std::sync::Arc<crate::rotations::RotationsState>,
+    /// The sitter page as last set (sitter.rs, #442). Not part of the KINS
+    /// projection; hosts read it through `kin_sitter_page`. Shared with the
+    /// replay, not copied.
+    pub sitter_page: std::sync::Arc<crate::sitter::SitterPageState>,
+}
+
+impl HouseholdState {
+    /// The records a sitter-page entry may point at.
+    pub fn sitter_records(&self) -> crate::sitter::SitterRecords<'_> {
+        crate::sitter::SitterRecords {
+            notes: &self.notes,
+            reference_records: &self.reference_records,
+            routines: &self.routines,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

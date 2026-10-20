@@ -379,6 +379,24 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
   transition: opacity .3s;
 }
 .status-message:empty, .status-message[data-stale] { opacity: 0; visibility: hidden; }
+/* Undo and redo (#315): the toast stays until the next action or Dismiss. The
+   status line still announces the change; it steps out of sight while the
+   toast shows the same words. */
+.status-message.status-in-toast { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; padding: 0; border: 0; }
+.undo-toast { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); color: var(--ink); box-shadow: 0 6px 18px rgba(0, 0, 0, .14); }
+.undo-toast[hidden] { display: none; }
+.undo-toast-text { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.undo-toast-action { flex: none; min-height: var(--tap); padding-inline: 14px; font-weight: 650; color: var(--accent); }
+.undo-toast-dismiss { flex: none; min-width: var(--tap); min-height: var(--tap); padding: 0; font-size: 1.25rem; line-height: 1; }
+/* A row's ⋯ menu on a phone (Delete routine, #314). */
+.row-more { position: relative; }
+.row-more > summary { display: inline-flex; align-items: center; justify-content: center; min-width: var(--tap); min-height: var(--tap); border: 1px solid var(--line-strong); border-radius: var(--r-control); cursor: pointer; list-style: none; font-size: 1.25rem; }
+.row-more > summary::-webkit-details-marker { display: none; }
+.row-more[open] > summary { border-color: var(--accent); }
+.row-more > button { position: absolute; z-index: 5; inset-inline-end: 0; top: calc(100% + 4px); white-space: nowrap; box-shadow: 0 6px 18px rgba(0, 0, 0, .14); }
+@media (forced-colors: active) {
+  .undo-toast, .row-more > summary { border: 1px solid CanvasText; }
+}
 .error-message {
   padding: 10px 14px;
   border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line));
@@ -1345,6 +1363,7 @@ kin-app > .security-panel {
     grid-template-columns: minmax(0, 1.62fr) minmax(280px, 1fr);
     grid-template-areas:
       "intro intro"
+      "capture tonight"
       "capture quick"
       "catchup routines"
       "onboarding updates"
@@ -1363,10 +1382,13 @@ kin-app > .security-panel {
   #today [data-section="upcoming"] { grid-area: upcoming; }
   #today > kin-compose { grid-area: capture; min-width: 0; }
   #today > kin-catch-up { grid-area: catchup; min-width: 0; }
+  #today > kin-tonight { grid-area: tonight; min-width: 0; }
+  #today .tonight-section { margin-bottom: 16px; }
   #today > .onboarding-card { grid-area: onboarding; }
   #today.compact-onboarding {
     grid-template-areas:
       "intro intro"
+      "capture tonight"
       "capture quick"
       "catchup routines"
       "summary summary"
@@ -1804,3 +1826,377 @@ kin-fridge:fullscreen:not([data-layout="rail"]) .fridge-door { inline-size: min(
   .fridge-kin-choice:has(input:checked) { outline: 3px solid Highlight; }
 }
 .fridge-dialog .danger-action { background: var(--danger); border-color: var(--danger); color: var(--surface); }
+
+/* Meals (#333): Tonight on Today, and Lists › Meals. */
+.tonight-section { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.tonight-section h2 { flex: 1 0 100%; margin: 0; font-size: 18px; }
+.tonight-line { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.tonight-line.tonight-empty { font-weight: 400; color: var(--ink-muted); }
+.tonight-link { display: inline-flex; align-items: center; min-height: var(--tap); color: var(--accent); font-weight: 600; }
+
+kin-meals { display: block; container-type: inline-size; container-name: meals; }
+.meals-result { margin: 0 0 14px; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface-secondary); overflow-wrap: anywhere; }
+.meals-result a { color: var(--accent); font-weight: 600; }
+.meals-layout { display: grid; gap: 22px; }
+.meals-week-head, .meals-recipes-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-bottom: 12px; }
+.meals-week-head h2, .meals-recipes-head h2 { margin: 0; }
+.meals-week-head h2:focus { outline: none; }
+.meals-week-head h2:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.meals-week-nav { display: flex; flex-wrap: wrap; gap: 6px; }
+.meals-week-nav button, .recipe-actions button, .recipe-put-on select { min-height: var(--tap); }
+.meal-days { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.meal-day { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); }
+.meal-day.is-today { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
+.meal-day-name { margin: 0; font-size: 15px; color: var(--ink-muted); }
+.meal-today { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; }
+.meal-dinner { margin: 0; font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
+.meal-dinner.is-empty { font-weight: 400; color: var(--ink-muted); }
+.meal-cook { margin: 0; color: var(--ink-muted); font-size: 14px; }
+.meal-day-actions, .recipe-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.meal-plan, .meal-ingredients { min-height: var(--tap); }
+.meal-plan { min-width: 88px; }
+.recipe-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.recipe { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); }
+.recipe-name { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.recipe-meta { margin: 2px 0 0; }
+/* "Put on…" is a wide-screen shortcut; the day's Plan button does it everywhere. */
+.recipe-put-on { display: none; align-items: center; gap: 6px; }
+.meal-dialog { inline-size: min(34rem, calc(100vw - 32px)); max-block-size: calc(100dvh - 32px); padding: 18px; border: 1px solid var(--line-strong); border-radius: var(--r-card); background: var(--surface); color: var(--ink); }
+.meal-dialog::backdrop { background: rgba(10, 16, 12, .52); }
+.meal-dialog h2 { margin-top: 0; }
+.meal-dialog label { display: grid; gap: 4px; margin-bottom: 12px; }
+.meal-dialog input, .meal-dialog select, .meal-dialog textarea { min-height: var(--tap); }
+.meal-dialog textarea { min-height: 8em; resize: vertical; }
+.meal-plan-recipes { display: grid; gap: 6px; margin: 0 0 12px; padding: 0; list-style: none; }
+.meal-plan-recipes button { inline-size: 100%; min-height: var(--tap); text-align: start; overflow-wrap: anywhere; }
+.meal-plan-other { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.recipe-staples { margin: 0 0 12px; padding: 0; border: 0; }
+.recipe-staple-rows { display: grid; gap: 8px; }
+.recipe-staple-note { margin: 0; color: var(--ink-muted); font-size: 14px; }
+.meal-dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+@container meals (min-width: 560px) {
+  .meal-days { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1180px) {
+  .meals-layout { grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr); align-items: start; }
+  .meals-layout .meal-days { grid-template-columns: minmax(0, 1fr); }
+  .recipe-put-on { display: flex; flex-wrap: wrap; }
+  /* With a detail side panel open there's no room for two columns. */
+  .has-detail-side .meals-layout { grid-template-columns: minmax(0, 1fr); }
+  .has-detail-side .recipe-put-on { display: none; }
+}
+@media (max-width: 719px) {
+  .meal-dialog { margin: auto 0 0; inline-size: 100%; max-inline-size: 100%; border-radius: 16px 16px 0 0; }
+}
+@media (forced-colors: active) {
+  .meal-day.is-today { border: 2px solid Highlight; box-shadow: none; }
+  .meal-today { border: 1px solid CanvasText; }
+}
+
+/* Simple view (#345, ADR 0013): big cards, two or three destinations, no
+   motion. Sizes are in rem so 200% text grows them; nothing has a fixed
+   height. */
+[data-kin-simple] .nav-link[hidden],
+[data-kin-simple] .header-search[hidden],
+[data-kin-simple] kin-quick-add[hidden] { display: none; }
+[data-kin-simple] .primary-nav.simple-nav-single { display: none; }
+[data-kin-simple] .nav-link { min-height: 4rem; font-size: 1rem; }
+[data-kin-simple] .nav-link svg { inline-size: 1.75rem; block-size: 1.75rem; }
+.simple-view > h1 { margin: 0 0 1rem; font-size: 1.75rem; }
+.simple-view > h1:focus { outline: none; }
+.simple-view > h1:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+kin-simple { display: block; }
+.simple-tonight { margin: 0 0 1rem; padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); font-size: 1.25rem; font-weight: 600; overflow-wrap: anywhere; }
+.simple-empty { margin: 0; padding: 1.5rem 1.25rem; border: 1px dashed var(--line-strong); border-radius: var(--r-card); font-size: 1.25rem; color: var(--ink-muted); }
+.simple-cards { display: grid; gap: 1rem; margin: 0; padding: 0; list-style: none; }
+.simple-card { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding: 1rem; border: 2px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
+.simple-picture { flex: 0 0 6rem; inline-size: 6rem; block-size: 6rem; display: grid; place-items: center; overflow: hidden; border-radius: var(--r-row); background: var(--surface-secondary); }
+.simple-picture.is-empty { display: none; }
+.simple-picture img { inline-size: 100%; block-size: 100%; object-fit: cover; }
+.simple-emoji { font-size: 4rem; line-height: 1; }
+.simple-text { flex: 1 1 12rem; min-inline-size: 0; margin: 0; font-size: 1.25rem; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.simple-done, .simple-undo { flex: 1 1 100%; min-block-size: 3.5rem; font-size: 1.125rem; font-weight: 700; border-radius: var(--r-control); }
+.simple-done { border: 2px solid var(--accent); background: var(--accent); color: var(--accent-ink); }
+.simple-undo { border: 2px solid var(--line-strong); background: var(--surface); color: var(--ink); }
+.simple-card.is-done { border-style: dashed; }
+.simple-card.is-done .simple-text { color: var(--ink-muted); }
+@media (min-width: 720px) {
+  .simple-cards { grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); }
+  .simple-card { flex-direction: column; align-items: stretch; text-align: center; }
+  .simple-picture { flex-basis: auto; inline-size: 8rem; block-size: 8rem; align-self: center; }
+  .simple-text { flex: 1 1 auto; }
+  .simple-done, .simple-undo { flex: 0 0 auto; }
+}
+@media (forced-colors: active) {
+  .simple-card { border: 2px solid CanvasText; }
+  .simple-card.is-done { border-style: dashed; }
+  .simple-done { border: 2px solid ButtonText; }
+}
+
+/* Item picture (#347): small beside the text in lists, never instead of it. */
+.item-emoji { margin-inline-end: 0.35em; font-size: 1.15em; line-height: 1; }
+.item-picture-label { display: inline-flex; align-items: center; gap: 6px; min-height: var(--tap); }
+.item-picture-input { inline-size: 4.5rem; min-height: var(--tap); font-size: 1.5rem; text-align: center; }
+
+/* Chat fits the screen (#310): on the Chat page the message list is the only
+   thing that scrolls. web/chat/chat-layout.js sets --chat-height to the
+   visible height below the section's top (above the phone's bottom bar and
+   keyboard). */
+.chat-section.chat-fit { display: flex; flex-direction: column; gap: 8px; height: var(--chat-height); min-height: 0; }
+.chat-section.chat-fit > * { flex: none; }
+.chat-section.chat-fit .chat-scroll { flex: 1 1 0; height: auto; min-height: 48px; }
+/* Pinned messages never push the composer off screen; their list scrolls. */
+.chat-section.chat-fit .chat-pins { max-height: 7rem; overflow: auto; }
+.chat-section.chat-fit .chat-form textarea { max-height: min(7.5em, 30vh); resize: none; }
+kin-app[data-route="updates/chat"] main { padding-bottom: 0; }
+kin-app[data-route="updates/chat"] .app-feedback { bottom: calc(var(--chat-composer-height, 0px) + 84px + env(safe-area-inset-bottom)); }
+@media (max-width: 719px) {
+  /* The page title and tabs take one short row while Chat is open. */
+  kin-app[data-route="updates/chat"] #updates > .page-intro .page-lead { display: none; }
+  kin-app[data-route="updates/chat"] #updates > .page-intro h1 { font-size: 1.25rem; margin-bottom: 4px; }
+  kin-app[data-route="updates/chat"] .chat-section.chat-fit { padding: 8px; }
+  kin-app[data-route="updates/chat"] .chat-section.chat-fit #chat-heading { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+}
+@media (max-width: 719px) and (pointer: coarse) {
+  /* Typing: the bottom bar steps aside for the keyboard. */
+  [data-chat-composing] .primary-nav { display: none; }
+  [data-chat-composing] kin-app[data-route="updates/chat"] .app-feedback { bottom: calc(var(--chat-composer-height, 0px) + 12px); }
+}
+@media (max-height: 500px) {
+  /* A phone held sideways, or a short window: Chat takes the screen. The
+     header, page title and tabs step aside (the bottom bar stays, and the
+     title stays for screen readers); turn the phone upright for them. */
+  kin-app[data-route="updates/chat"] .site-header,
+  kin-app[data-route="updates/chat"] #updates .page-lead,
+  kin-app[data-route="updates/chat"] #updates kin-segment-nav { display: none; }
+  kin-app[data-route="updates/chat"] #updates > .page-intro { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip: rect(0 0 0 0); }
+  kin-app[data-route="updates/chat"] main { padding-top: 8px; }
+  kin-app[data-route="updates/chat"] .chat-section.chat-fit { gap: 4px; padding: 6px; }
+}
+@media (max-height: 500px) and (pointer: coarse) {
+  /* Phone landscape with the keyboard: the header steps aside too. */
+  [data-chat-composing] .site-header { display: none; }
+}
+
+/* The composer is one row (#311): [+] [message] [emoji] [Send or Voice]. */
+.chat-compose-row { display: flex; align-items: flex-end; gap: 6px; min-width: 0; }
+.chat-compose-row textarea { flex: 1 1 auto; min-width: 0; min-height: var(--tap); }
+.chat-form .chat-compose-row textarea { min-height: var(--tap); }
+.chat-more, .chat-voice-open { flex: none; min-width: var(--tap); min-height: var(--tap); padding-inline: 10px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+.chat-more { font-size: 1.4rem; line-height: 1; }
+.chat-more[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.chat-compose-row .add-button { flex: none; min-height: var(--tap); }
+.chat-compose-row .emoji-toggle { flex: none; }
+.chat-voice-open[hidden], .chat-compose-row .add-button[hidden] { display: none; }
+.chat-add-menu { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-add-menu[hidden] { display: none; }
+.chat-form-buttons:not(:has(> :not([hidden]))) { display: none; }
+@media (forced-colors: active) {
+  .chat-more, .chat-voice-open { border: 1px solid ButtonText; }
+}
+
+/* Message actions (#311): one sheet for every message. With a mouse it opens
+   by the message's ⋯ (kin-chat.js placeSheet); on a touch screen it rises
+   from the bottom, at most 480px wide. */
+.chat-action-sheet { position: fixed; inset: auto; margin: 0; width: max-content; min-width: 220px; max-width: calc(100vw - 16px); max-height: min(70vh, 520px); overflow: auto; padding: 6px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); box-shadow: 0 10px 30px rgb(0 0 0 / .2); overscroll-behavior: contain; }
+.chat-action-sheet::backdrop { background: transparent; }
+.chat-action-sheet.chat-sheet-bottom { inset: auto 0 0; margin: 0 auto; width: 100%; max-width: 480px; max-height: 75vh; padding: 6px 10px calc(10px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; }
+.chat-action-sheet.chat-sheet-bottom::backdrop { background: rgb(0 0 0 / .32); }
+.chat-sheet-grip { width: 40px; height: 4px; margin: 4px auto 8px; border-radius: 2px; background: var(--line-strong); }
+.chat-sheet-reactions { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.chat-sheet-reactions button { min-width: var(--tap); min-height: var(--tap); border: 0; border-radius: 999px; background: var(--surface-secondary); font: inherit; font-size: 1.3rem; }
+.chat-sheet-reactions button[aria-pressed="true"] { outline: 2px solid var(--accent); }
+.chat-sheet-reactions .chat-sheet-more { font-size: 14px; padding-inline: 12px; }
+.chat-action-sheet .chat-menu { position: static; display: grid; min-width: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
+.chat-sheet-bottom .chat-menu button { min-height: 52px; font-size: 16px; }
+@media (pointer: coarse) {
+  /* No action column: the bubble takes the width, the ⋯ sits in the time
+     line (or at the end of a grouped message), and a long press opens the
+     sheet. Copy replaces native selection there. */
+  .chat-row { grid-template-columns: minmax(0, 1fr); max-width: min(85%, 640px); }
+  .chat-row:not(.grouped) .chat-meta { padding-inline-end: 40px; }
+  .chat-row.grouped { padding-inline-end: 40px; }
+  .chat-row .chat-menu-wrap { position: absolute; top: 0; inset-inline-end: 0; }
+  .chat-row .chat-menu-button { min-width: 44px; min-height: 44px; }
+  .chat-row .chat-react-button { display: none; }
+  .chat-row .chat-text { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+}
+@media (hover: hover) and (pointer: fine) and (min-width: 720px) {
+  /* With a mouse: the ⋯ and 🙂 show on hover and keyboard focus. */
+  .chat-row .chat-menu-wrap { opacity: 0; transition: opacity .12s; }
+  .chat-row:hover .chat-menu-wrap, .chat-row:focus-within .chat-menu-wrap, .chat-row:has([aria-expanded="true"]) .chat-menu-wrap { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .chat-row .chat-menu-wrap { transition: none; } }
+@media (forced-colors: active) { .chat-action-sheet { border: 1px solid CanvasText; } }
+
+/* To talk about (#312, ADR 0014): a side column at 1180px and wider (the
+   detail panel's width); elsewhere a panel the chat toolbar opens. */
+.chat-tools { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; min-width: 0; }
+.chat-topics-toggle { white-space: nowrap; }
+@media (max-width: 719px) {
+  /* One toolbar row on a phone: the tools never wrap under the list. */
+  .chat-top { gap: 6px; }
+  .chat-tools { flex-wrap: nowrap; }
+  .chat-tools button { padding-inline: 10px; white-space: nowrap; }
+}
+@media (max-height: 500px) {
+  /* Typing on a short screen: the toolbar steps aside for the messages. */
+  [data-chat-composing] kin-app[data-route="updates/chat"] .chat-top { display: none; }
+}
+.chat-topics { display: grid; align-content: start; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); overflow: auto; overscroll-behavior: contain; }
+.chat-topics[hidden] { display: none; }
+.chat-topics h3 { margin: 0; font-size: 16px; }
+.chat-topics .section-hint { margin: 0; }
+.chat-section.chat-fit .chat-topics:not(.chat-topics-side) { max-height: 45%; }
+.chat-topic-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.chat-topic { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-row); }
+.chat-topic.chat-topic-resolved { color: var(--ink-muted); }
+.chat-topic-jump { justify-self: stretch; min-height: var(--tap); padding: 6px 8px; border: 0; border-radius: var(--r-control); background: transparent; color: inherit; font: inherit; text-align: start; overflow-wrap: anywhere; }
+.chat-topic-jump:hover, .chat-topic-jump:focus-visible { background: var(--surface-secondary); }
+.chat-topic-meta { font-size: 13px; color: var(--ink-muted); }
+.chat-topic-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-topic-actions button { min-height: var(--tap); padding-inline: 12px; }
+.chat-topics-legacy .today-section { margin: 4px 0 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
+.chat-topic-mark { margin: 4px 0 0; color: var(--accent); font-size: 13px; font-weight: 640; }
+.chat-topic-mark.chat-topic-resolved { color: var(--ink-muted); font-weight: 500; }
+@media (min-width: 1180px) {
+  .chat-section.chat-has-side { position: relative; padding-inline-end: calc(390px + 28px); }
+  .chat-topics.chat-topics-side { position: absolute; inset-block: 12px; inset-inline-end: 12px; width: 390px; }
+}
+@media (forced-colors: active) { .chat-topics, .chat-topic { border: 1px solid CanvasText; } }
+
+/* The undo toast stays until the next action (#315): keep the newest
+   messages and focused rows from sitting under it (WCAG 2.4.11). */
+kin-app:has(.undo-toast:not([hidden])) .chat-section.chat-fit .chat-scroll { padding-bottom: 72px; scroll-padding-bottom: 72px; }
+html:has(kin-app .undo-toast:not([hidden])) { scroll-padding-bottom: calc(160px + env(safe-area-inset-bottom)); }
+
+/* Updates' two tabs stay on one row at 320px and 200% text (#313): the row
+   scrolls sideways within itself rather than wrapping. */
+@media (max-width: 719px) {
+  #updates kin-segment-nav ul { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  #updates kin-segment-nav li, #updates kin-segment-nav .segment-link { flex: none; white-space: nowrap; }
+}
+
+/* Add to Kin (#389): what was shared, then where it should go. */
+.share-sheet-preview { display: grid; gap: 4px; margin: 0 0 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface-secondary); }
+.share-sheet-preview p, .share-sheet-files { margin: 0; overflow-wrap: anywhere; }
+.share-sheet-text { font-weight: 600; }
+.share-sheet-link { color: var(--ink-muted); font-size: 14px; }
+.share-sheet-files { padding-inline-start: 1.2em; font-size: 14px; }
+.share-sheet-choices { display: grid; gap: 8px; margin: 12px 0; }
+.share-sheet-choices button, .share-sheet-cancel { min-height: var(--tap); justify-content: flex-start; text-align: start; }
+
+/* Shopping mode (#403): the list for use in the shop. Full screen, one hand,
+   big targets, nothing else. */
+.start-shopping { margin: 0 0 12px; }
+.shopping-mode { width: 100%; max-width: 640px; height: 100%; max-height: 100%; margin: 0 auto; padding: 0; border: 0; border-radius: 0; background: var(--bg, var(--surface)); color: var(--ink); }
+.shopping-mode[open] { display: flex; flex-direction: column; }
+.shopping-mode::backdrop { background: var(--bg, var(--surface)); }
+.shopping-mode-top { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: calc(12px + env(safe-area-inset-top)) 16px 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.shopping-mode-top h2 { margin: 0; font-size: 22px; }
+.shopping-mode-count { margin: 2px 0 0; color: var(--ink-muted); font-size: 15px; }
+.shopping-mode-done { flex: none; min-height: var(--tap); }
+.shopping-mode-list { display: grid; gap: 0; margin: 0; padding: 0 8px; list-style: none; }
+.shopping-mode-item label { display: flex; align-items: center; gap: 16px; min-height: 56px; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 19px; line-height: 1.35; cursor: pointer; }
+.shopping-mode-item input { flex: none; width: 30px; height: 30px; margin: 0; accent-color: var(--accent); }
+.shopping-mode-text { min-width: 0; overflow-wrap: anywhere; }
+.shopping-mode-basket { margin: 12px 8px; }
+.shopping-mode-basket summary { min-height: var(--tap); display: flex; align-items: center; padding: 0 10px; font-weight: 640; cursor: pointer; }
+.shopping-mode-basket .shopping-mode-text { color: var(--ink-muted); text-decoration: line-through; }
+.shopping-mode-empty { margin: 24px 16px; }
+.shopping-mode-wake { display: flex; align-items: center; gap: 10px; min-height: var(--tap); margin: auto 16px calc(12px + env(safe-area-inset-bottom)); color: var(--ink-muted); font-size: 15px; }
+.shopping-mode-wake input { width: 22px; height: 22px; }
+@media (forced-colors: active) { .shopping-mode-item label { border-bottom: 1px solid CanvasText; } }
+
+/* This week (#416): one section per day, today first. */
+.today-week-link { display: inline-flex; align-items: center; min-height: var(--tap); font-size: 15px; }
+.week-days { display: grid; gap: 14px; }
+.week-day { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
+.week-day h2 { margin: 0 0 8px; font-size: 18px; }
+.week-date { color: var(--ink-muted); font-weight: 500; }
+.week-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.week-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: var(--tap); padding: 6px 0; border-top: 1px solid var(--line); }
+.week-row:first-child { border-top: 0; }
+.week-check { display: inline-flex; align-items: center; gap: 10px; flex: 1 1 14em; min-width: 0; cursor: pointer; }
+.week-check input { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+.week-text { flex: 1 1 14em; min-width: 0; overflow-wrap: anywhere; }
+.week-later { color: var(--ink-muted); }
+.week-meta { color: var(--ink-muted); font-size: 13px; }
+.week-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.week-tools select, .week-tools button { min-height: var(--tap); }
+.week-meal .week-text, .week-maintenance .week-text { font-style: italic; }
+.week-empty { margin: 0; color: var(--ink-muted); }
+@media (forced-colors: active) { .week-day { border: 1px solid CanvasText; } }
+/* Bring a list into Kin (#452). */
+.import-source, .import-review { display: grid; gap: 8px; }
+.import-source textarea { width: 100%; min-height: 8em; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; resize: vertical; }
+.import-source select, .import-source input[type="file"] { min-height: var(--tap); }
+.import-source .primary-action { justify-self: start; }
+.import-mapping { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-row); }
+.import-mapping label { display: inline-flex; align-items: center; gap: 6px; }
+.import-mapping select { min-height: var(--tap); }
+.import-summary { margin: 0; font-weight: 600; }
+.import-rows { display: grid; max-height: min(45vh, 420px); margin: 0; padding: 0; overflow: auto; list-style: none; border: 1px solid var(--line); border-radius: var(--r-row); }
+.import-rows label { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: var(--tap); padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.import-rows input { width: 22px; height: 22px; flex: none; }
+.import-row-text { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+.import-row-meta { color: var(--ink-muted); font-size: 13px; }
+.import-list-button { margin-top: 8px; }
+/* Store sections in shopping mode (#411). */
+.shopping-mode-buttons { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.shopping-mode-sections-toggle { min-height: var(--tap); }
+.shopping-mode-group h3 { margin: 14px 10px 4px; color: var(--ink-muted); font-size: 14px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; }
+.shopping-mode-item { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; border-bottom: 1px solid var(--line); }
+.shopping-mode-item label { flex: 1 1 14em; border-bottom: 0; }
+.shopping-mode-section { min-height: var(--tap); max-width: 12em; margin: 4px 10px 4px 0; }
+.shopping-sections-editor { display: grid; gap: 10px; margin: 10px 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); }
+.shopping-sections-editor[hidden] { display: none; }
+.shopping-sections-editor h3 { margin: 0; font-size: 17px; }
+.shopping-sections-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.shopping-sections-list li, .shopping-sections-add { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.shopping-sections-list input, .shopping-sections-add input { flex: 1 1 10em; min-width: 0; min-height: var(--tap); padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); }
+.shopping-sections-list button, .shopping-sections-add button { min-width: var(--tap); min-height: var(--tap); }
+.shopping-sections-add label { flex-basis: 100%; font-weight: 600; }
+
+/* The sitter page (#441): For the sitter (editor) and For you (the page). */
+.sitter-editor { display: grid; gap: 10px; }
+.sitter-editor textarea { width: 100%; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+.sitter-editor h3 { margin: 8px 0 0; font-size: 16px; }
+.sitter-chosen { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.sitter-chosen li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: var(--tap); padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--r-row); }
+.sitter-chosen-label { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+.sitter-chosen button { min-width: var(--tap); min-height: var(--tap); }
+.sitter-available { display: grid; gap: 10px; }
+.sitter-available fieldset { display: grid; gap: 2px; margin: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r-row); }
+.sitter-available label { display: flex; align-items: center; gap: 8px; min-height: var(--tap); }
+.sitter-available input { width: 20px; height: 20px; }
+.sitter-editor .primary-action { justify-self: start; }
+.sitter-preview-link { display: inline-flex; align-items: center; min-height: var(--tap); }
+kin-sitter-page { display: grid; gap: 12px; }
+.sitter-intro { margin: 0; padding: 12px 14px; border-radius: var(--r-card); background: var(--accent-soft); white-space: pre-wrap; font-size: 17px; }
+.sitter-card { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
+.sitter-card h2 { margin: 0 0 6px; font-size: 19px; }
+.sitter-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sitter-fields { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: 6px 14px; margin: 0; }
+.sitter-fields dt { color: var(--ink-muted); }
+.sitter-fields dd { margin: 0; overflow-wrap: anywhere; }
+.sitter-call { display: inline-flex; align-items: center; min-height: var(--tap); font-weight: 650; font-size: 18px; }
+.sitter-routine { margin: 0; color: var(--ink-muted); }
+.sitter-preview-note { margin: 0; }
+@media (max-width: 420px) { .sitter-fields { grid-template-columns: minmax(0, 1fr); } .sitter-fields dt { margin-top: 6px; } }
+@media (forced-colors: active) { .sitter-card { border: 1px solid CanvasText; } }
+
+/* Taking turns on routines (#433, #437). */
+kin-rotation { display: grid; gap: 6px; margin-top: 6px; }
+.rotation-turn { margin: 0; font-weight: 650; }
+.rotation-order { margin: 0; overflow-wrap: anywhere; }
+.rotation-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.rotation-actions button, .rotation-actions select, kin-rotation > button { min-height: var(--tap); }
+kin-rotation > button { justify-self: start; }
+.rotation-editor { display: grid; gap: 2px; margin: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r-row); }
+.rotation-editor label { display: flex; align-items: center; gap: 8px; min-height: var(--tap); }
+.rotation-editor input { width: 20px; height: 20px; }
+.rotation-draft { display: grid; gap: 4px; margin: 0; padding-left: 1.4em; }
+.rotation-draft li { display: list-item; }
+.rotation-draft li span { margin-right: 8px; }
+.rotation-draft button { min-width: var(--tap); min-height: var(--tap); }

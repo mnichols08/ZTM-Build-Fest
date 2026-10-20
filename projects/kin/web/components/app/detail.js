@@ -11,7 +11,8 @@ export class DetailController {
   }
 
   openItemDetail(itemId, { opener = null, stepId = null, origin = null } = {}) {
-    if (!this.app.state || !this.app.vault || this.app.vault.locked) return;
+    // Simple view has no item details (#345).
+    if (!this.app.state || !this.app.vault || this.app.vault.locked || this.app.simpleView) return;
     const record = this.app.state.items.find((item) => item.itemId === itemId) ?? null;
     const page = this.app.route?.page ?? "today";
     const sameItem = this.app.selection?.itemId === itemId;
@@ -44,6 +45,11 @@ export class DetailController {
       attachments: this.app.attachmentRows,
       responsibilityContext: this.responsibilityContext(),
       reminder: this.app.localReminders.entries.get(`item:${this.app.selection.itemId}`) ?? null,
+      // Item picture (#347): Adults set it; on a device without sync the
+      // person is the household's only member.
+      emoji: this.app.itemEmojis?.get(this.app.selection.itemId) ?? null,
+      // Unknown kind on a synced device: not until the status says Adult.
+      canSetPicture: (this.app.householdStatus?.memberKind ?? (this.app.hasLocalSyncBinding ? null : "adult")) === "adult",
       item,
     });
   }
@@ -53,10 +59,12 @@ export class DetailController {
     const memberId = this.app.syncCoordinator?.identity?.memberId ?? this.app.store?.actorId ?? null;
     const responsibilities = this.app.state?.responsibilities ?? NONE;
     const active = this.app.activeMemberIds ?? null;
+    // Preferred names (#224) where the device syncs; labels fall back (#344).
+    const names = this.app.memberNameMap ?? null;
     const cached = this.cachedResponsibility;
-    if (cached?.responsibilities === responsibilities && cached.memberId === memberId && cached.active === active) return cached.context;
-    const context = { responsibilities, memberId, memberIds: active ?? (memberId ? [memberId] : []) };
-    this.cachedResponsibility = { responsibilities, memberId, active, context };
+    if (cached?.responsibilities === responsibilities && cached.memberId === memberId && cached.active === active && cached.names === names) return cached.context;
+    const context = { responsibilities, memberId, memberIds: active ?? (memberId ? [memberId] : []), names };
+    this.cachedResponsibility = { responsibilities, memberId, active, names, context };
     return context;
   }
   // Lock drops every reference into the closed session's state.

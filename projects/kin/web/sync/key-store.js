@@ -14,13 +14,16 @@ import { encryptedDatabase, snapshotStores, protectRows, replaceStores, protectR
   unprotectRecord, recordIdentity, valuesEqual } from "../storage/encrypted-idb.js";
 
 const DATABASE_NAME = "kin-crypto-keys";
-const DATABASE_VERSION = 5;
+const DATABASE_VERSION = 6;
 const SECURITY_STORE = "security_state";
 const KEY_DEFINITIONS = {
   devices: { keyPath: "deviceId" },
   epochs: { keyPath: "key", indexes: { household_id: "householdId" } },
   trusted_devices: { keyPath: "key" },
   household_settings: { keyPath: "householdId" },
+  // Simple view (#343, ADR 0013): this device's member's last layout, so an
+  // offline unlock opens the same view. One record per household.
+  member_view: { keyPath: "householdId" },
 };
 const DEVICE_STORE = "devices";
 const EPOCH_STORE = "epochs";
@@ -30,6 +33,7 @@ const EPOCH_STORE = "epochs";
 const deviceHouseholdOf = (label) => (typeof label === "string" && label.startsWith("chat:") ? label.slice(5) : label);
 const TRUSTED_DEVICE_STORE = "trusted_devices";
 const HOUSEHOLD_SETTINGS_STORE = "household_settings";
+const MEMBER_VIEW_STORE = "member_view";
 const PENDING_DEVICE_ID = "pending";
 const MAX_KEY_EPOCHS = 128;
 
@@ -360,6 +364,37 @@ export class SyncKeyStore {
     });
   }
 
+  /** Saves this device's member's layout ({ householdId, memberId,
+   * simpleView }) as the service last reported it (ADR 0013). */
+  cacheMemberView(record) {
+    validateMemberView(record);
+    const transaction = this.database.transaction(MEMBER_VIEW_STORE, "readwrite");
+    const request = transaction.objectStore(MEMBER_VIEW_STORE).put({ householdId: record.householdId, memberId: record.memberId, simpleView: record.simpleView });
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => finish(record);
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
+  /** The cached layout for `memberId` in `householdId`, or null. A record for
+   * another member (the device changed hands) counts as none. */
+  getCachedMemberView(householdId, memberId) {
+    if (!/^[a-f0-9]{32}$/.test(householdId ?? "") || !/^[a-f0-9]{32}$/.test(memberId ?? ""))
+      throw new SyncKeyStoreError("Kin could not identify this device's member.");
+    const transaction = this.database.transaction(MEMBER_VIEW_STORE, "readonly");
+    const request = transaction.objectStore(MEMBER_VIEW_STORE).get(householdId);
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => {
+        try {
+          const record = request.result ?? null;
+          if (record) validateMemberView(record);
+          finish(record && record.memberId === memberId ? record : null);
+        } catch (error) { abortWith(transaction, error); }
+      };
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
   getCachedHouseholdSettings(householdId) {
     if (!/^[a-f0-9]{32}$/.test(householdId ?? "")) throw new SyncKeyStoreError("Kin could not identify the cached household settings.");
     const transaction = this.database.transaction(HOUSEHOLD_SETTINGS_STORE, "readonly");
@@ -495,6 +530,7 @@ async function openRawDatabase() {
       }
       if (!db.objectStoreNames.contains(TRUSTED_DEVICE_STORE)) db.createObjectStore(TRUSTED_DEVICE_STORE, { keyPath: "key" });
       if (!db.objectStoreNames.contains(HOUSEHOLD_SETTINGS_STORE)) db.createObjectStore(HOUSEHOLD_SETTINGS_STORE, { keyPath: "householdId" });
+      if (!db.objectStoreNames.contains(MEMBER_VIEW_STORE)) db.createObjectStore(MEMBER_VIEW_STORE, { keyPath: "householdId" });
       if (!db.objectStoreNames.contains(SECURITY_STORE)) db.createObjectStore(SECURITY_STORE, { keyPath: "key" });
     };
     request.onsuccess = () => { if (settled) request.result.close(); else { settled = true; resolve(request.result); } };
@@ -503,6 +539,13 @@ async function openRawDatabase() {
   });
   database.onversionchange = () => database.close();
   return database;
+}
+
+function validateMemberView(record) {
+  if (!record || !/^[a-f0-9]{32}$/.test(record.householdId ?? "") || !/^[a-f0-9]{32}$/.test(record.memberId ?? "") ||
+      typeof record.simpleView !== "boolean")
+    throw new SyncKeyStoreError("Kin found an invalid cached layout.");
+  return record;
 }
 
 function validateSettingsCache(record, expectedHouseholdId = record?.householdId) {
@@ -713,7 +756,8 @@ export async function commitRootRotationKeys({ candidateVault, rotation, check =
     const original = await snapshotStores(database, Object.keys(KEY_DEFINITIONS));
     const replacements = {}, stageKeys = [], recovered = {};
     for (const [store, rows] of Object.entries(original)) {
-      if (rows.length !== marker.stagedCounts[store]) throw new SyncKeyStoreError("The saved sync keys changed during replacement.");
+      // A store added since the rotation was prepared (member_view, v6) had none.
+      if (rows.length !== (marker.stagedCounts[store] ?? 0)) throw new SyncKeyStoreError("The saved sync keys changed during replacement.");
       replacements[store] = []; recovered[store] = [];
       for (const row of rows) {
         candidateVault.assertUnlocked(); await check();

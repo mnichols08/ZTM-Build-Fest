@@ -14,6 +14,14 @@ kin_history_truncate(count) -> status   keep the first `count` records
 kin_project(ptr, len)                replay the history: KINE context -> KINS
 kin_device_names(ptr, len)           replay the history: KINE context -> KDEV (v1.1)
 kin_member_names(ptr, len)           replay the history: KINE context -> KMNM (v1.3)
+kin_meals(ptr, len)                  replay the history: KINE context -> KMLS (#333)
+kin_meal_shopping_plan(ptr, len)     KMPQ + KINE context -> KMSP (#333)
+kin_item_emojis(ptr, len)            replay the history: KINE context -> KIEM (#344)
+kin_my_things(ptr, len)              KMTQ + KINE context -> KMTD (#344)
+kin_week(ptr, len)                   KWKQ + KINE context -> KWKD (#417)
+kin_shopping_sections(ptr, len)      replay the history: KINE context -> KSHS (#411)
+kin_routine_rotations(ptr, len)      replay the history: KINE context -> KRRS (#429)
+kin_sitter_page(ptr, len)            replay the history: KINE context -> KSIT (#442)
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
@@ -242,6 +250,18 @@ N  payload
 | 49 | CHAT_POLL_VOTE (v1.1, chat log) | message ID, choice u16 (bit n is option n; 0 clears), 2 reserved: 20 bytes |
 | 50 | CHAT_POLL_CLOSED (v1.1, chat log) | message ID, 4 reserved: 20 bytes |
 | 51 | MEMBER_NAMED (v1.3) | name length u32 (zero clears), the header actor's own preferred name (1–32 characters) |
+| 59 | RECIPE_SAVED (#333) | recipe ID [16], name (u16 length + UTF-8), ingredient count u8, reserved u8, each ingredient: staple flag u8 (0 or 1) + 3 reserved, staple item ID [16] when flagged, text (u16 + UTF-8); notes (u16 + UTF-8). At most 4,352 bytes after the ID |
+| 60 | RECIPE_ARCHIVED (#333) | recipe ID [16] |
+| 61 | DINNER_SET (#333) | civil date u32 (YYYYMMDD), recipe flag u8 (0 or 1) + 3 reserved, recipe ID [16] when flagged, name (u16 + UTF-8) |
+| 62 | DINNER_CLEARED (#333) | civil date u32 |
+| 63 | DINNER_COOK_SET (#333) | civil date u32, member flag u8 (0 or 1) + 3 reserved, member ID [16] when flagged (absent: "No one yet") |
+| 64 | ITEM_EMOJI_SET (#344) | item ID [16], emoji flag u8 (0 or 1) + 3 reserved, emoji (u16 + UTF-8, one grapheme, at most 32 bytes) when flagged (absent: cleared) |
+| 65 | CHAT_TOPIC_SET (#312, chat log) | message ID, state u8 (0 cleared, 1 open, 2 resolved), 3 reserved: 20 bytes |
+| 66 | SHOPPING_SECTIONS_SET (#411) | section count u16 (0–30), reserved u16, then each section: section ID [16] (non-zero, unique), name (u16 length + UTF-8; trimmed, 1–40 bytes, no controls) |
+| 67 | ITEM_SECTION_SET (#411) | item ID [16] (non-zero), section ID [16] (all zero: none): 32 bytes |
+| 68 | ROUTINE_ROTATION_SET (#429) | routine ID [16] (non-zero), member count u8 (0, or 2–12), current index u8 (below the count; 0 when the count is 0), reserved u16, then each member ID [16] (non-zero, no repeats): 20 + 16 × count bytes. An empty list ends the rotation |
+| 69 | ROUTINE_TURN_SET (#429) | routine ID [16] (non-zero), member ID [16] (non-zero): 32 bytes |
+| 70 | SITTER_PAGE_SET (#442) | entry count u16 (0–30), reserved u16, then each entry: kind u8 (1 note, 2 reference record, 3 routine), 3 reserved, record ID [16] (non-zero; no entry twice); then the intro (u16 length + UTF-8; trimmed, 0–500 bytes, no controls but newline) |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -488,6 +508,150 @@ tuned for printed codes under heavy blur.
   with a zero entity ID and no option, date or expiry; `kin_board_execute`
   takes a u32 command length, the KCMD and the context, and only the board
   log accepts them.
+- **Meals** (#333, [ADR 0012](decisions/0012-meals.md), `meals.rs`): kinds
+  59–63 above are decoded strictly — text already canonical (whitespace runs
+  collapsed and trimmed; notes keep their lines), flags 0 or 1 with zero
+  reserved bytes, IDs non-zero, nothing left over — so they re-encode to the
+  same bytes. Once decoded, a meals event never fails replay: a dinner naming
+  a recipe the history lacks and an archive of an unknown recipe change
+  nothing, an archived recipe stays archived, and caps are command rules.
+  KCMD actions 59–63 carry the exact payload as their text, with a zero
+  entity ID and no option, date or expiry, through `kin_execute`; Rust checks
+  them against the current meals and items (`MealsState::check_command`).
+- **KMLS v1** (meals, `kin_meals`): `"KMLS"`, version 1, reserved u16, recipe
+  count u32, dinner count u32; then each active recipe in the order first
+  saved: ID [16], name (u16 + UTF-8), ingredient count u8 + 3 reserved, each
+  ingredient: staple status u8 (0 none, 1 active staple, 2 archived or
+  missing) + 3 reserved, staple ID [16] (zero when none), text (u16 + UTF-8);
+  notes (u16 + UTF-8); then each dinner from 35 days before the context's
+  civil date to 370 after, ascending: date u32, flags u8 (bit 0 recipe, bit 1
+  cook) + 3 reserved, recipe ID [16], cook member ID [16] (zero when absent),
+  name as shown (an active recipe's current name, else the snapshot).
+- **KMPQ v1 / KMSP v1** (the Shopping plan, `kin_meal_shopping_plan`): the
+  32-byte query `"KMPQ"`, version 1, reserved u16, source u8 (1 recipe, 2 a
+  date's dinner) + 3 reserved, recipe ID [16] (zero for a date), date u32
+  (zero for a recipe), then a record-less KINE context. The result `"KMSP"`,
+  version 1, reserved u16, line count u32, then each line: outcome u8 (1 add,
+  2 re-add staple, 3 already on Shopping) + 3 reserved, staple ID [16] (zero
+  unless re-added), text (u16 + UTF-8). Lines with the same text (collapsed,
+  lowercased) count once; "already on Shopping" compares against active
+  Shopping items the same way. A one-off dinner or an unknown or archived
+  recipe fails with code 4.
+- **Item pictures (kind 64, #344).** The payload is strict like meals: a
+  non-zero item ID, a 0/1 flag word with zero reserved bytes, and one emoji
+  as `chat::check_emoji` accepts it; it re-encodes to the same bytes. KCMD
+  action 64 (`set-item-emoji`) carries the exact payload as its text with a
+  zero entity ID and no option, date or expiry; Rust checks it against the
+  current items (`PicturesState::check_command`).
+- **KIEM v1** (item emoji, `kin_item_emojis`): `"KIEM"`, version 1, reserved
+  u16, count u32, then for each item that exists and isn't archived, in item
+  ID order: item ID [16], emoji (u16 + UTF-8).
+- **Store sections (kinds 66–67, #411).** The payloads are strict like
+  meals: they re-encode to the same bytes, so an untrimmed name, a zero or
+  repeated section ID or more than 30 sections fail with code 2. KCMD actions
+  66 (`set-shopping-sections`) and 67 (`set-item-section`) carry the exact
+  payload as their text with a zero entity ID and no option, date or expiry;
+  the host trims names first (`kin-sections.js`). Rust checks them against
+  the current state (`StoreSectionsState::check_command`, code 4): names
+  unique ignoring case, the list changed; the item exists and isn't archived,
+  the section is listed (or none), and the item's shown section changes.
+- **KSHS v1** (store sections, `kin_shopping_sections`): `"KSHS"`, version 1,
+  reserved u16, section count u32, then each section in the household's
+  order: section ID [16], name (u16 + UTF-8); then item count u32 and, for
+  each item that exists, isn't archived and whose section is in the list, in
+  item ID order: item ID [16], section ID [16]. Items without a listed section
+  are absent. The KINS projection is unchanged: its section table is part of
+  replay protocol 24, so new domains get their own export, as item pictures
+  did.
+- **Routine rotations (kinds 68–69, #429).** The payloads are strict like
+  store sections: they re-encode to the same bytes, so one member, more than
+  12, a repeated or zero member, an index outside the list, or a non-zero
+  index with an empty list fail with code 2. KCMD actions 68
+  (`set-routine-rotation` `{ routineId, memberIds, currentIndex }`) and 69
+  (`set-routine-turn` `{ routineId, memberId }`) carry the exact payload as
+  their text with a zero entity ID and no option, date or expiry
+  (`kin-rotations.js`). Rust checks them against the current state
+  (`RotationsState::check_command`, code 4): the routine exists and isn't
+  archived; a rotation changes the list or the turn, and ending one needs
+  one; a turn needs a rotation that lists the member, who isn't already
+  current. While a routine rotates, `change-responsibility` for it fails with
+  code 4: its owner is whoever's turn it is.
+- **KRRS v1** (routine rotations, `kin_routine_rotations`): `"KRRS"`,
+  version 1, reserved u16, count u32, then for each routine that exists,
+  isn't archived and rotates, in routine ID order: routine ID [16], member
+  count u8 (2–12), current index u8, next index u8 (the one after current,
+  wrapping), reserved u8, then each member ID [16] in turn order. JavaScript
+  decodes it as `[{ routineId, memberIds, current, next }]` (member IDs).
+  Every listed member counts: membership isn't in the history, so the host
+  passes over inactive members (`turnAmong`, [ADR 0016](decisions/0016-routine-rotations.md)).
+  The current member is also the routine's responsibility in KINS, so
+  KMTD and KWKD follow the turn; KINS is unchanged.
+- **The sitter page (kind 70, #442).** The payload is strict like store
+  sections: it re-encodes to the same bytes, so an untrimmed intro, a control
+  character other than newline, more than 500 intro bytes, an unknown entry
+  kind, a zero ID, an entry twice or more than 30 entries fail with code 2.
+  KCMD action 70 (`set-sitter-page`) carries the exact payload as its text
+  with a zero entity ID and no option, date or expiry; the host trims the
+  intro and turns line breaks into `\n` first (`kin-sitter.js`). Rust checks
+  it against the current state (`SitterPageState::check_command`, code 4):
+  every entry names a note, reference record or routine of its kind that
+  exists and isn't archived, and the page changes. Only Adults may send it:
+  Rust can't tell member kinds apart, so the host's command append path
+  refuses it for anyone else (`canChangeSitterPage`); replay accepts a page
+  from any member ([THREAT-MODEL](THREAT-MODEL.md)).
+- **KSIT v1** (the sitter page, `kin_sitter_page`): `"KSIT"`, version 1,
+  reserved u16, entry count u32, then each entry whose record exists and
+  isn't archived, in the page's order: kind u8 (1 note, 2 reference record,
+  3 routine), 3 reserved, record ID [16]; then the intro (u16 + UTF-8; length
+  0 for none). The host takes titles, fields and text from the KINS
+  projection by ID, so nothing is copied. A household that never set a page
+  reports no entries and no intro.
+- **KMTQ v1 / KMTD v1** (a member's things today, `kin_my_things`): the
+  24-byte query `"KMTQ"`, version 1, reserved u16, member ID [16] (non-zero),
+  then a record-less KINE context. The result `"KMTD"`, version 1, reserved
+  u16, count u32, then 28 bytes per thing: kind u8 (1 item, 2 routine), done
+  u8 (0 or 1; 0 for an item), reserved u16, ID [16], occurrence date u32
+  (YYYYMMDD; 0 for an item). Items are active, non-Staple, assigned to the
+  member and planned for the context's date or earlier, or undated, soonest
+  first (undated last), then by text; routines are assigned to the member
+  with an occurrence open that day, by text, and none while the household
+  mode pauses routines ([ADR 0013](decisions/0013-simple-view.md)).
+- **KWKQ v1 / KWKD v1** (the household's week, `kin_week`, #417,
+  `rust/src/week.rs`): the 16-byte query `"KWKQ"`, version 1, reserved u16,
+  start date u32 (YYYYMMDD; a valid date with six more days before
+  9999-12-31, else code 2), reserved u32, then a record-less KINE context.
+  The result `"KWKD"`, version 1, reserved u16, start date u32, day count u8
+  (always 7), flags u8 (bit 0: the household mode pauses routines), reserved
+  u16; then for each of the seven consecutive days from the start: date
+  u32, item count u16, routine count u16, meal count u8 (0 or 1),
+  maintenance count u8, omitted u16 (entries dropped by the caps, saturating),
+  then that day's entries in that order:
+  - item, 36 bytes: item ID [16], classification u8 (0 Today, 1 Need,
+    2 Shopping, 3 Staple), flags u8 (bit 0 owner), reserved u16, owner member
+    ID [16] (zero when none). Active items whose planning date is that day.
+    Overdue items (planned before the start) are **not** included: Today
+    shows those. Undated, completed and archived items are left out.
+  - routine, 40 bytes: routine ID [16], occurrence key u32, cadence u8 (as
+    KINS), flags u8 (bit 0 owner, bit 1 current, bit 2 done), reserved u16,
+    owner member ID [16] (zero when none). Each occurrence appears once, on
+    the day it opens by the routine's cadence (`Cadence::current_key` and
+    `next_start`); one already open on the start date appears on the start
+    date. Weekdays routines have none on Saturday and Sunday. Archived
+    routines have none, and none at all while the household mode isn't
+    Normal (flag bit 0). "Current" is the occurrence open on the context's
+    civil date; "done" is reported only for it (never without current).
+  - meal: flags u8 (bit 0 recipe, bit 1 cook), 3 reserved, recipe ID [16]
+    (zero when none), cook member ID [16] (zero when none), name as shown
+    (u16 + UTF-8), as a KMLS dinner without its date.
+  - maintenance, 36 bytes: maintenance ID [16], reference record ID [16],
+    performed date u32. Entries not archived, on a reference record that
+    isn't archived, whose next date is that day.
+  Items, routines and maintenance sort by text (summary), then ID. Caps per
+  day: 64 items, 64 routine occurrences, 32 maintenance entries (one dinner
+  per date by the meals model); the rest of that kind are dropped and
+  counted in `omitted`. The household mode is the history's at the context's
+  as-of and applies to the whole week. Texts other than a dinner's name come
+  from KINS by ID. Output is deterministic for a log, context and start.
 - **KMNM v1** (preferred member names, `kin_member_names`, #224): `"KMNM"`,
   version 1, reserved u16, member count u32, then per member in member-ID
   order: member ID (16 bytes, after identity bindings), name length u16
@@ -497,7 +661,14 @@ tuned for printed codes under heavy blur.
   (`name-member`) carries the name as its payload, a zero entity ID and no
   option or date (empty clears); there is no target, because a member can
   only name themselves. Executing it rejects a name that would change nothing.
-- **Chat commands (KCMD 44–50, v1.1).** The entity ID is the message ID. Action 48 (`pin-chat-message`) carries `on` (0 or 1) in the u8 field and no payload.
+- **Chat commands (KCMD 44–50 and 65, v1.1).** The entity ID is the message ID. Action 48 (`pin-chat-message`) carries `on` (0 or 1) in the u8 field and no payload.
+  Action 65 (`set-chat-topic`, #312) carries the topic state in the u8 field
+  (0 cleared, 1 open, 2 resolved; 3 and above are malformed) and no payload,
+  date or expiry. Executing needs a message the log holds and its author has
+  not deleted, and a change: open from no topic or a resolved one (refused
+  past 200 open or resolved topics), resolved from open, both only on a
+  message that shows (not removed by a named admin); cleared from either.
+  Every refusal is code 4.
   Poll commands (#135): action 44 with content kind 3 posts a poll: the
   `date` field carries the option count in its low byte (2–10) and 1 in the
   next byte for multiple choice; the payload is the blob pair as for text (the
@@ -530,7 +701,7 @@ tuned for printed codes under heavy blur.
 - **KCHQ v1** (chat page request, `kin_chat_page`): `"KCHQ"`, version 1,
   reserved u16, before u32 (the page ends before this message index;
   `0xFFFFFFFF` for the newest), limit u16 (1–500), flags u8 (bit 0: texts the
-  arena holds; bit 1: retired blobs; bit 2: reactions; bit 3: pins; bit 4: polls), reserved u8, admin count u32 (at most
+  arena holds; bit 1: retired blobs; bit 2: reactions; bit 3: pins; bit 4: polls; bit 5: topics, #312), reserved u8, admin count u32 (at most
   16), the admins' member IDs (16 bytes each, non-zero), then a record-less
   KINE context as for `kin_project`.
 - **KCHF v1** (chat search request, `kin_chat_search`, #124): `"KCHF"`,
@@ -607,6 +778,12 @@ tuned for printed codes under heavy blur.
   record order: per voter, in ascending member order, the member ID (16), the
   chosen options as a u16 bit set and 2 zero bytes (20 bytes). At most 64
   voters are kept per poll. A member's vote is their latest, by logical time.
+  When the request asked for topics (#312, flag bit 5), the page ends with
+  the "To talk about" list, after the votes: a count u32 (at most 200), then
+  per topic, newest change first: the message ID (16), state u8 (1 open, 2
+  resolved), 3 zero bytes, who flagged it (16), then the message as a quote
+  entry (same layout and rules as a pin's). Only topics whose message still
+  shows are listed; a topic is never cleared in a page.
 - **KAPQ v1 / KAPR v1** (voice waveform, `kin_audio_peaks`, #134):
   `"KAPQ"`, version 1, 3 reserved zero bytes, sample count u32 (1–16,000,000),
   then that many little-endian f32 samples (mono, -1.0 to 1.0); the byte length

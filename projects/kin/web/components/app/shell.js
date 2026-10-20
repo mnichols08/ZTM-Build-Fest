@@ -113,6 +113,8 @@ export class ShellBuilder {
     this.app.needs = document.createElement("kin-today");
     this.app.shopping = document.createElement("kin-today");
     this.app.staples = document.createElement("kin-today");
+    this.app.meals = document.createElement("kin-meals");
+    this.app.tonight = document.createElement("kin-tonight");
     this.app.compose = document.createElement("kin-compose");
     this.app.handoffs = document.createElement("kin-handoff-list");
     this.app.talks = document.createElement("kin-talk-list");
@@ -153,6 +155,7 @@ export class ShellBuilder {
     this.app.retryButton.textContent = "Try again";
     this.app.retryButton.hidden = true;
     feedback.append(this.app.status, this.app.alert, this.app.retryButton);
+    this.ctx.undo.buildToast(feedback);
     this.app.feedback = feedback;
 
     this.app.security = document.createElement("kin-security");
@@ -220,6 +223,15 @@ export class ShellBuilder {
     this.app.append(this.app.commandPalette);
     this.app.chatShare = document.createElement("kin-chat-share");
     this.app.append(this.app.chatShare);
+    // "Add to Kin" for things shared from other apps (#389).
+    this.app.shareSheet = document.createElement("kin-share-sheet");
+    this.app.append(this.app.shareSheet);
+    // Shopping mode (#403): the Shopping list for use in the shop.
+    this.app.shoppingMode = document.createElement("kin-shopping-mode");
+    this.app.append(this.app.shoppingMode);
+    // Bring a list into Kin (#452).
+    this.app.importer = document.createElement("kin-import");
+    this.app.append(this.app.importer);
     this.app.attachmentInput = this.ctx.attachments.buildAttachmentInput();
     this.app.append(this.app.attachmentInput);
     this.ctx.navigation.showPageFromLocation();

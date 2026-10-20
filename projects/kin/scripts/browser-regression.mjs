@@ -1,5 +1,6 @@
 // Node 22+ and a Chromium-family executable; no npm packages required.
 // Uses a fresh temporary profile and loopback server, never an existing Kin DB.
+import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { setViewport } from "./cdp-viewport.mjs";
 import { applyRegressionDefaults, captureFailure } from "./cdp-page.mjs";
 import {
@@ -10,6 +11,7 @@ import {
 } from "./pulse-regression.mjs";
 import { talkRegressions, talkPeerRegressions } from "./talk-regression.mjs";
 import { chatRegressions } from "./chat-regression.mjs";
+import { chatLayoutRegressions } from "./chat-layout-regression.mjs";
 import assert from "node:assert/strict";
 import {
   routineRegressions,
@@ -17,6 +19,9 @@ import {
   routineKeyboardRegressions,
 } from "./routine-regression.mjs";
 import { shoppingRegressions } from "./shopping-regression.mjs";
+import { mealsRegressions } from "./meals-regression.mjs";
+import { mealsAcceptanceRegressions } from "./meals-acceptance-regression.mjs";
+import { simpleRegressions } from "./simple-regression.mjs";
 import { planningDateRegressions } from "./planning-date-regression.mjs";
 import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
 import { fridgeRegressions } from "./fridge-regression.mjs";
@@ -27,6 +32,14 @@ import { qrRegressions, writeQrCamera } from "./qr-regression.mjs";
 import { todayActionableRegressions, todayLifecycleRegressions } from "./today-actionable-regression.mjs";
 import { keyboardCommandRegressions } from "./keyboard-commands-regression.mjs";
 import { bulkActionRegressions } from "./bulk-actions-regression.mjs";
+import { undoRegressions } from "./undo-regression.mjs";
+import { shareRegressions } from "./share-regression.mjs";
+import { shoppingModeRegressions } from "./shopping-mode-regression.mjs";
+import { weekRegressions } from "./week-regression.mjs";
+import { importRegressions } from "./import-regression.mjs";
+import { sitterRegressions } from "./sitter-regression.mjs";
+import { rotationsRegressions } from "./rotations-regression.mjs";
+import { storeSectionsRegressions } from "./store-sections-regression.mjs";
 import { recurringTaskRegressions } from "./recurring-tasks-regression.mjs";
 import { dailyUxHardeningRegressions } from "./daily-ux-hardening-regression.mjs";
 import {
@@ -111,7 +124,7 @@ const browser = spawn(
     `--user-data-dir=${profile}`,
     "about:blank",
   ],
-  { windowsHide: true, stdio: "ignore" },
+  BROWSER_STDIO,
 );
 let launchError;
 browser.on("error", (error) => {
@@ -1157,15 +1170,7 @@ async function regressions() {
 }
 
 try {
-  const port = await until(async () => {
-    try {
-      return (
-        await readFile(join(profile, "DevToolsActivePort"), "utf8")
-      ).split("\n")[0];
-    } catch {
-      return false;
-    }
-  });
+  const port = await waitForDevTools(browser, profile);
   const endpoint = `http://127.0.0.1:${port}`;
   const version = await (await fetch(`${endpoint}/json/version`)).json();
   console.log(
@@ -1296,7 +1301,7 @@ try {
           ),
         );
       }
-      await visit(first, "updates/talk");
+      await visit(first, "updates/chat");
       await first.evaluate("window.scrollTo(0,0)");
       await delay(80);
       await writeFile(
@@ -1359,21 +1364,29 @@ try {
   await visit(first, "today");
   await visit(first, "updates/handoffs");
   console.log(await first.evaluate(`(${handoffRegressions.toString()})()`));
-  assert.equal(await first.evaluate(`(()=>{
+  assert.deepEqual(await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
     const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
-    links[1].click();
-    return location.hash==='#updates/talk' && links[1].getAttribute('aria-current')==='true' && !links[0].hasAttribute('aria-current') &&
-      document.querySelector('#handoffs-panel').hidden && !document.querySelector('#talk-panel').hidden &&
-      app.talks.querySelector('.talk-hint').textContent.includes('Topics to discuss');
-  })()`), true, "Handoffs/Talk segments switch by route and keep the concepts distinct");
+    const labels=links.map((link)=>link.textContent.trim().split(/\\s/)[0]).join();
+    app.ctx.navigation.navigate('#updates/talk');
+    for (let i=0;i<5;i++) await new Promise((r)=>requestAnimationFrame(r));
+    const current=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
+    return { labels, hash: location.hash, current: current[1]?.getAttribute('aria-current'),
+      handoffsHidden: document.querySelector('#handoffs-panel').hidden, chatShown: !document.querySelector('#chat-panel').hidden,
+      inList: Boolean(app.talks.closest('.chat-topics')), shown: !app.talks.closest('[hidden]'),
+      hint: Boolean(app.talks.querySelector('.talk-hint')?.textContent.includes('Topics to discuss')) };
+  })()`), { labels: "Handoffs,Chat", hash: "#updates/chat", current: "true", handoffsHidden: true, chatShown: true, inList: true, shown: true, hint: true },
+    "Updates has Handoffs and Chat; an old Talk link opens Chat's To talk about list with the older topics (#312, #313)");
   console.log(await first.evaluate(`(${talkRegressions.toString()})()`));
+  // The list the old Talk link opened closes again, leaving Chat its room.
+  await first.evaluate(`document.querySelector('kin-app').chat.toggleTopics(false)`);
   await visit(first, "updates/chat");
   assert.equal(await first.evaluate(`(()=>{const app=document.querySelector('kin-app');const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
-    return location.hash==='#updates/chat' && links[2]?.getAttribute('aria-current')==='true' && !document.querySelector('#chat-panel').hidden &&
-      document.querySelector('#talk-panel').hidden && Boolean(document.querySelector('kin-chat .chat-scroll'));
-  })()`), true, "Updates → Chat is the third segment");
-  console.log(await first.evaluate(`(${chatRegressions.toString()})()`));
+    return location.hash==='#updates/chat' && links[1]?.getAttribute('aria-current')==='true' && !document.querySelector('#chat-panel').hidden &&
+      !document.querySelector('#talk-panel') && Boolean(document.querySelector('kin-chat .chat-scroll'));
+  })()`), true, "Updates → Chat is the second segment");
+  console.log(await first.evaluate(`(${chatRegressions.toString()})({ keepRoom: true })`));
+  console.log(await chatLayoutRegressions(first, { until }));
   await visit(first, "household/areas");
   console.log(await first.evaluate(`(${pulseRegressions.toString()})()`));
   console.log(
@@ -1383,8 +1396,25 @@ try {
   console.log(await first.evaluate(`(${catchUpRegressions.toString()})()`));
   await visit(first, "lists/shopping");
   console.log(await first.evaluate(`(${shoppingRegressions.toString()})()`));
+  console.log(await first.evaluate(`(${mealsRegressions.toString()})()`));
+  console.log(await mealsAcceptanceRegressions(first, until));
   await visit(first, "today");
   console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${shareRegressions.toString()})()`));
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${weekRegressions.toString()})()`));
+  console.log(await first.evaluate(`(${sitterRegressions.toString()})()`));
+  console.log(await first.evaluate(`(${rotationsRegressions.toString()})()`));
+  console.log(await first.evaluate(`(${importRegressions.toString()})()`));
+  console.log(await first.evaluate(`(${storeSectionsRegressions.toString()})()`));
+  await visit(first, "today");
+  await setViewport(first, { width: 320, height: 640, deviceScaleFactor: 2, mobile: true });
+  try {
+    console.log(await first.evaluate(`(${shoppingModeRegressions.toString()})()`));
+  } finally {
+    await first.send("Emulation.clearDeviceMetricsOverride");
+  }
   await visit(first, "today");
   console.log(await first.evaluate(`(${quickAddRegressions.toString()})()`));
   await visit(first, "today");
@@ -1406,6 +1436,7 @@ try {
   problems.push(...problems.splice(offlineWindowStart).filter((entry) => !offlineStatusProbe(entry)));
   if (heavy) console.log(await keyboardCommandRegressions(first, { visit: (id) => visit(first, id), ready }));
   if (heavy) console.log(await bulkActionRegressions(first, { visit: (id) => visit(first, id), ready }));
+  if (heavy) { await visit(first, "today"); console.log(await first.evaluate(`(${undoRegressions.toString()})()`)); }
   if (heavy) console.log(await recurringTaskRegressions(first, { visit: (id) => visit(first, id), ready }));
   // The hardening suite also unlocks offline; the same probe filter applies.
   const hardeningOfflineStart = problems.length;
@@ -1601,6 +1632,7 @@ try {
     console.log("PASS refresh keeps Kin unlocked in the same tab; Lock, navigation and the setting still lock (#351)");
   }
   if (heavy) console.log(await fridgeRegressions(first, until));
+  console.log(await simpleRegressions(first, { until, ready }));
   await first.evaluate(
     'sessionStorage.setItem("kin.test.expectedState", JSON.stringify(document.querySelector("kin-app").state))',
   );
@@ -2347,7 +2379,7 @@ try {
       await first.evaluate(`(()=>{
       const app=document.querySelector('kin-app'),capture=app.talks;
       capture.input.focus();
-      return capture.querySelector('h2').textContent==='Talk' &&
+      return capture.querySelector('h2').textContent==='Other topics' &&
         capture.input.labels[0].textContent==='What should we talk about?' &&
         capture.querySelectorAll('ul > li').length>0 &&
         [...capture.querySelectorAll('h3')].every(heading=>['Open','Resolved'].includes(heading.textContent)) &&

@@ -146,6 +146,22 @@ outcome wording. The `command_tests.rs` test
 `item_completion_and_reopening_must_change_status` covers the Rust
 precondition and the idempotent replay of historical duplicates.
 
+`scripts/chat-layout-regression.mjs` (#310, #311, #316) runs after the chat
+suite on the room it leaves: Chat fits the screen at 320×568, phone
+landscape, 768×1024, 1024×768, 820×1180, desktop and desktop at 200%; at
+320px with 200% text, dark mode and reduced motion; with the keyboard open
+(emulated through a shorter visual viewport); Jump to latest; the + menu; and
+message actions by mouse, right-click, long press and swipe. Physical devices
+follow [MOBILE-CHECKLIST](MOBILE-CHECKLIST.md).
+
+`scripts/undo-regression.mjs` (#314, #315) runs inside
+`browser-regression.mjs` after the bulk suite: the toast after a change, Undo
+then Redo on it, Ctrl/Cmd+Z and Shift+Ctrl/Cmd+Z outside text fields only,
+refusal when the item changed since, an archived item and a deleted routine
+brought back by creating them again (with date, schedule and today's
+completion), Dismiss, and "Nothing to undo." `web/undo.test.mjs` covers the
+history and every reversal mapping.
+
 `scripts/bulk-actions-regression.mjs` runs inside `browser-regression.mjs`
 after the keyboard suite, through the real store and WASM. It covers:
 
@@ -194,7 +210,7 @@ after the keyboard suite, through the real store and WASM. It covers:
   completion; a stale repeat; weekend absence and Monday's new occurrence;
   reload and unlock; Schedule from Today; a partial schedule change and its
   resume without a duplicate; a stale change; 320px targets and overflow; and
-  Stop repeating.
+  Delete routine.
 
 ## Daily UX hardening coverage
 
@@ -450,6 +466,9 @@ wait, and never delete or weaken a test to make it pass.
    test and CI reliability epic, #326, is open; afterwards a new issue labelled
    for test health), with the run link, suite, browser, the first failing line
    and what the diagnostics showed.
+   "Browser did not start" now says which it was (`scripts/browser-launch.mjs`,
+   #327): the browser exited first (with its exit code and the end of its own
+   error output) or didn't write its DevTools port within 45 s.
 4. **Fix the cause** rather than lengthening a wait or retrying more, and say
    in the fix which race it closes. Never delete or weaken a test to go green.
 

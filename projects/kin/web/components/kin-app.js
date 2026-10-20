@@ -4,6 +4,11 @@ import "./kin-notes.js";
 import "./kin-compose.js";
 import "./kin-quick-add.js";
 import "./kin-chat-share.js";
+import "./kin-share-sheet.js";
+import "./kin-shopping-mode.js";
+import "./kin-week.js";
+import "./kin-sitter-editor.js";
+import "./kin-import.js";
 import "./kin-command-palette.js";
 import "./kin-item.js";
 import "./kin-item-detail.js";
@@ -12,6 +17,9 @@ import "./kin-handoff-list.js";
 import "./kin-talk-list.js";
 import "./kin-chat.js";
 import "./kin-fridge.js";
+import "./kin-meals.js";
+import "./kin-tonight.js";
+import "./kin-simple.js";
 import "./kin-chat-settings.js";
 import "./kin-chat-policy.js";
 import "./kin-search.js";
@@ -27,6 +35,7 @@ import "./kin-household-defaults.js";
 import { createAppContext, initializeAppState } from "./app/context.js";
 import { captureInvitationCode } from "../pairing-link.js";
 import { takeSignInLink } from "../device-link.js";
+import { captureLaunchAction, captureShare } from "../share-target.js";
 
 // An invitation link (/pair#code=…) hands over its code before any route is
 // resolved, and the address bar drops it at once (#97). A computer's sign-in
@@ -34,6 +43,10 @@ import { takeSignInLink } from "../device-link.js";
 // the same way (#100).
 captureInvitationCode();
 takeSignInLink();
+// Something shared from another app, or a home-screen shortcut (#389): taken
+// out of the address the same way, and offered once Kin is unlocked.
+captureShare();
+captureLaunchAction();
 
 // The application root. It owns lifecycle, event wiring and the state the
 // controllers in ./app/ share; each behavior lives in one of those controllers.
@@ -51,8 +64,8 @@ const ELEMENT_EVENTS = [
   ["kin:pick-attachment", "onPickAttachment"], ["kin:open-attachment", "onOpenAttachment"],
   ["kin:view-attachment", "onViewAttachment"], ["kin:remove-attachment", "onRemoveAttachment"],
   ["kin:household-status", "onHouseholdStatus"], ["kin:security-changed", "onSecurityChanged"],
-  ["kin:retry-attachments", "onRetryAttachments"], ["kin:change-responsibility", "onChangeResponsibility"],
-  ["kin:replenish-staple", "onReplenishStaple"], ["kin:complete-item", "onCompleteItem"],
+  ["kin:retry-attachments", "onRetryAttachments"], ["kin:change-responsibility", "onChangeResponsibility"], ["kin:simple-done", "onSimpleDone"], ["kin:set-item-emoji", "onSetItemEmoji"],
+  ["kin:replenish-staple", "onReplenishStaple"], ["kin:complete-item", "onCompleteItem"], ["kin:start-shopping", "onStartShopping"], ["kin:save-sitter-page", "onSaveSitterPage"], ["kin:set-routine-rotation", "onSetRoutineRotation"], ["kin:set-routine-turn", "onSetRoutineTurn"], ["kin:set-item-section", "onSetItemSection"], ["kin:save-shopping-sections", "onSaveShoppingSections"], ["kin:import-list", "onImportList"],
   ["kin:reopen-item", "onReopenItem"], ["kin:archive-item", "onArchiveItem"],
   ["kin:add-item-step", "onAddItemStep"], ["kin:complete-item-step", "onCompleteItemStep"],
   ["kin:reopen-item-step", "onReopenItemStep"], ["kin:archive-item-step", "onArchiveItemStep"],

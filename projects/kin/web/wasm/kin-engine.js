@@ -18,6 +18,12 @@ import {
 import { decodeAttachmentBindings, decodeProjection } from "./projection-decode.js";
 import { HistoryMirror } from "./history-mirror.js";
 import { BOARD_COMMANDS, BOARD_EVENT_KINDS, MAX_BOARD_EVENT_COUNT, BoardFormatError, decodeBoard, encodeBoardIntent } from "./kin-board.js";
+import { MEAL_COMMANDS, MEAL_EVENT_KINDS, MealFormatError, decodeMeals, decodePlan, encodeMealIntent, encodePlanQuery } from "./kin-meals.js";
+import { SIMPLE_COMMANDS, SIMPLE_EVENT_KINDS, SimpleFormatError, decodeItemEmojis, decodeMyThings, encodeItemEmojiIntent, encodeMyThingsQuery } from "./kin-simple.js";
+import { decodeWeek, encodeWeekQuery } from "./kin-week.js";
+import { SECTION_COMMANDS, SECTION_EVENT_KINDS, SectionFormatError, decodeShoppingSections, encodeSectionIntent } from "./kin-sections.js";
+import { ROTATION_COMMANDS, ROTATION_EVENT_KINDS, RotationFormatError, decodeRoutineRotations, encodeRotationIntent } from "./kin-rotations.js";
+import { SITTER_COMMANDS, SITTER_EVENT_KINDS, SitterFormatError, decodeSitterPage, encodeSitterIntent } from "./kin-sitter.js";
 
 export { idToHex, KinEngineError };
 
@@ -89,6 +95,14 @@ export function createEngine(instanceExports) {
     "kin_project",
     "kin_device_names",
     "kin_member_names",
+    "kin_meals",
+    "kin_meal_shopping_plan",
+    "kin_item_emojis",
+    "kin_my_things",
+    "kin_week",
+    "kin_shopping_sections",
+    "kin_routine_rotations",
+    "kin_sitter_page",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_audio_peaks",
@@ -284,6 +298,54 @@ export function createEngine(instanceExports) {
     // Members' preferred display names (#224), replayed from the same
     // history: [{ memberId, name }] in member-ID order, IDs as hex. Members
     // who never set a name are absent; hosts fall back to their own labels.
+    // Meals (#333): { recipes, dinners } from the household history, dinners
+    // from 35 days before `civilDate` to 370 after (kin-meals.js decodeMeals).
+    meals: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeMeals(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_meals"),
+      )),
+    // Item emoji (#344): a Map itemId -> emoji for items that exist and
+    // aren't archived.
+    itemEmojis: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeItemEmojis(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_item_emojis"),
+      )),
+    // Store sections (#411, ADR 0015): { sections: [{ sectionId, name }] in
+    // the household's order, itemSections: Map itemId -> sectionId } for
+    // items that exist, aren't archived and whose section is listed.
+    shoppingSections: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeShoppingSections(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_shopping_sections"),
+      )),
+    // Taking turns (#429, ADR 0016): [{ routineId, memberIds, current, next }]
+    // for routines that exist, aren't archived and rotate. Every listed
+    // member counts; turnAmong() (kin-rotations.js) passes over inactive ones.
+    routineRotations: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeRoutineRotations(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_routine_rotations"),
+      )),
+    // The sitter page (#442, ADR 0017): { intro, entries: [{ kind: "note" |
+    // "reference-record" | "routine", id }] }, only entries whose record
+    // exists and isn't archived, in the page's order.
+    sitterPage: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeSitterPage(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_sitter_page"),
+      )),
+    // A member's things on `civilDate` (#344, ADR 0013): [{ kind: "item",
+    // itemId } | { kind: "routine", routineId, occurrenceKey, done }].
+    myThings: (memberId, records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeMyThings(queryBytes(exports, mirror, "kin_my_things", encodeMyThingsQuery(memberId), records, asOf, civilDate, syncIdentity))),
+    // The household's seven days from `startCivilDate` (#417, kin-week.js):
+    // [{ date, items, routines, meals, maintenance, omitted }]. "current" and
+    // "done" on a routine occurrence are judged at `civilDate`.
+    week: (startCivilDate, records, asOf, civilDate, syncIdentity = null) => {
+      const query = encodeWeekQuery(startCivilDate);
+      return safeDecode(() => decodeWeek(queryBytes(exports, mirror, "kin_week", query, records, asOf, civilDate, syncIdentity)));
+    },
+    // What adding a recipe's ({ recipeId }) or a date's dinner's ({ date })
+    // ingredients to Shopping would do now: [{ outcome, text, stapleId }].
+    mealShoppingPlan: (source, records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodePlan(mealPlanBytes(exports, mirror, source, records, asOf, civilDate, syncIdentity))),
     memberNames: (records, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodeMemberNames(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_member_names"),
@@ -300,12 +362,15 @@ export function createEngine(instanceExports) {
       executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins, members),
     // A page of messages, oldest first (KCHP, ABI.md). Options: before (an
     // index; omit for the newest), limit (1 to 500), includeText, includeRetired,
-    // admins (the household admins' member IDs as hex; at most 16).
+    // includeReactions, includePins, includePolls, includeTopics (#312: the
+    // "To talk about" list as `topics`), admins (the household admins'
+    // member IDs as hex; at most 16).
     chatPage: (chatRecords, options, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodeChatPage(
         chatPageBytes(exports, chatMirror, chatRecords, options, asOf, civilDate, syncIdentity),
         options?.includePins === true,
         options?.includePolls === true,
+        options?.includeTopics === true,
       )),
     // Searches the chat (KCHF/KCHR, ABI.md): { query, limit (1 to 200),
     // attachmentsOnly, from, to (ms; 0 for none), authors (hex, at most 16),
@@ -390,6 +455,10 @@ function boardStateBytes(exports, boardMirror, boardRecords, asOf, civilDate, sy
 
 const CHAT_QUOTE_STATES = ["unknown", "live", "edited", "deleted", "removed-by-admin"];
 const CHAT_STATUSES = ["live", "edited", "deleted", "removed-by-admin"];
+/** A "Talk later" topic's state byte (#312): KCMD action 65 and the page. */
+const CHAT_TOPIC_STATES = ["cleared", "open", "resolved"];
+/** Most open or resolved topics a chat keeps (#312); the engine enforces it. */
+export const MAX_CHAT_TOPICS = 200;
 const CHAT_CONTENT_KINDS = [null, "text", "attachment", "poll"];
 export const MAX_CHAT_EVENT_COUNT = 250_000;
 const MAX_CHAT_PAGE = 500;
@@ -426,7 +495,7 @@ function blobFromHex(value, what) {
 
 function executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins, members) {
   if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
-  if (!["post-chat-message", "edit-chat-message", "delete-chat-message", "react-chat-message", "pin-chat-message", "vote-chat-poll", "close-chat-poll"].includes(command?.type))
+  if (!["post-chat-message", "edit-chat-message", "delete-chat-message", "react-chat-message", "pin-chat-message", "vote-chat-poll", "close-chat-poll", "set-chat-topic"].includes(command?.type))
     throw new KinEngineError(2, "Kin received an invalid household action.");
   if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
   if (!Array.isArray(admins) || admins.length > 16 || !Array.isArray(members) || members.length > 64)
@@ -465,12 +534,13 @@ function executeChatCommand(exports, chatMirror, command, identity, chatRecords,
 }
 
 // KCHQ v1 (ABI.md): "KCHQ", version, reserved, before u32, limit u16,
-// flags u8 (1 texts, 2 retired, 4 reactions), reserved u8, admin count u32, admins,
+// flags u8 (1 texts, 2 retired, 4 reactions, 8 pins, 16 polls, 32 topics),
+// reserved u8, admin count u32, admins,
 // then the record-less KINE context.
 function chatPageBytes(exports, chatMirror, chatRecords, options = {}, asOf, civilDate, syncIdentity) {
   if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
   if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
-  const { before = null, limit = 50, includeText = true, includeRetired = false, includeReactions = false, includePins = false, includePolls = false, admins = [] } = options;
+  const { before = null, limit = 50, includeText = true, includeRetired = false, includeReactions = false, includePins = false, includePolls = false, includeTopics = false, admins = [] } = options;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_CHAT_PAGE ||
     (before !== null && (!Number.isInteger(before) || before < 0 || before > 0xffff_ffff)) ||
     !Array.isArray(admins) || admins.length > 16)
@@ -481,7 +551,7 @@ function chatPageBytes(exports, chatMirror, chatRecords, options = {}, asOf, civ
   request.set([75, 67, 72, 81, 1, 0, 0, 0]);
   view.setUint32(8, before ?? 0xffff_ffff, true);
   view.setUint16(12, limit, true);
-  request[14] = (includeText ? 1 : 0) | (includeRetired ? 2 : 0) | (includeReactions ? 4 : 0) | (includePins ? 8 : 0) | (includePolls ? 16 : 0);
+  request[14] = (includeText ? 1 : 0) | (includeRetired ? 2 : 0) | (includeReactions ? 4 : 0) | (includePins ? 8 : 0) | (includePolls ? 16 : 0) | (includeTopics ? 32 : 0);
   view.setUint32(16, admins.length, true);
   admins.forEach((admin, index) => request.set(idFromHex(admin), 20 + index * 16));
   const release = chatMirror.hold(chatRecords);
@@ -601,7 +671,7 @@ function decodeChatSearch(bytes) {
 // KCHP v1 (ABI.md): a 28-byte header, 128 bytes per message, 32 bytes of
 // key per message, the texts, 32 bytes per retired blob, then the reactions
 // a request for them asked for.
-function decodeChatPage(bytes, includePins = false, includePolls = false) {
+function decodeChatPage(bytes, includePins = false, includePolls = false, includeTopics = false) {
   const invalid = () => new KinEngineError(6, "Kin received an invalid chat page.");
   if (bytes.length < 28 || readAscii(bytes, 0, 4) !== "KCHP") throw invalid();
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -757,11 +827,36 @@ function decodeChatPage(bytes, includePins = false, includePolls = false) {
     }
     messages[index].poll = { options: poll.options, multiple: poll.multiple, closed: poll.closed, votes };
   });
+  // Topics (#312), when asked for, last: a count (at most 200), then per
+  // topic, newest change first, its message ID, state (1 open, 2 resolved),
+  // 3 zero bytes, who flagged it and the message as a quote entry; only
+  // messages that show.
+  const topics = [];
+  if (includeTopics) {
+    if (cursor + 4 > bytes.length) throw invalid();
+    const topicCount = view.getUint32(cursor, true);
+    cursor += 4;
+    if (topicCount > MAX_CHAT_TOPICS) throw invalid();
+    const seen = new Set();
+    for (let topic = 0; topic < topicCount; topic += 1) {
+      if (cursor + 36 > bytes.length) throw invalid();
+      const messageId = idToHex(bytes.subarray(cursor, cursor + 16));
+      const state = CHAT_TOPIC_STATES[bytes[cursor + 16]];
+      const flaggedBy = idToHex(bytes.subarray(cursor + 20, cursor + 36));
+      if ((state !== "open" && state !== "resolved") || !zero(bytes.subarray(cursor + 17, cursor + 20)) ||
+        /^0{32}$/.test(messageId) || /^0{32}$/.test(flaggedBy) || seen.has(messageId)) throw invalid();
+      cursor += 36;
+      const quote = readQuote();
+      if (quote.messageId !== messageId || (quote.state !== "live" && quote.state !== "edited")) throw invalid();
+      seen.add(messageId);
+      topics.push({ messageId, state, flaggedBy, quote });
+    }
+  }
   if (cursor !== bytes.length) throw invalid();
   const retired = [];
   for (let index = 0; index < retiredCount; index += 1)
     retired.push(idToHex(bytes.subarray(retiredAt + index * 32, retiredAt + index * 32 + 32)));
-  return { total, start, messages, retired, pins };
+  return { total, start, messages, retired, pins, topics };
 }
 
 // KCHT v1 / KCHS v1 (ABI.md).
@@ -970,6 +1065,19 @@ const COMMAND_TYPES = [
   "name-member",
   // The fridge (#317): KCMD actions 52–58, encoded by kin-board.js.
   ...BOARD_COMMANDS,
+  // Meals (#333): KCMD actions 59–63, encoded by kin-meals.js.
+  ...MEAL_COMMANDS,
+  // Simple view (#344): KCMD action 64, encoded by kin-simple.js.
+  ...SIMPLE_COMMANDS,
+  // "Talk later" (#312): KCMD action 65, a chat command; its state rides in
+  // the u8 field.
+  "set-chat-topic",
+  // Store sections (#411): KCMD actions 66–67, encoded by kin-sections.js.
+  ...SECTION_COMMANDS,
+  // Taking turns (#429): KCMD actions 68–69, encoded by kin-rotations.js.
+  ...ROTATION_COMMANDS,
+  // The sitter page (#442): KCMD action 70, encoded by kin-sitter.js.
+  ...SITTER_COMMANDS,
 ];
 const EVENT_KINDS = [
   null,
@@ -1025,6 +1133,12 @@ const EVENT_KINDS = [
   "CHAT_POLL_CLOSED",
   "MEMBER_NAMED",
   ...BOARD_EVENT_KINDS,
+  ...MEAL_EVENT_KINDS,
+  ...SIMPLE_EVENT_KINDS,
+  "CHAT_TOPIC_SET",
+  ...SECTION_EVENT_KINDS,
+  ...ROTATION_EVENT_KINDS,
+  ...SITTER_EVENT_KINDS,
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -1080,6 +1194,7 @@ const ENTITY_FIELDS = Object.freeze({
   "pin-chat-message": "messageId",
   "vote-chat-poll": "messageId",
   "close-chat-poll": "messageId",
+  "set-chat-topic": "messageId",
 });
 
 /** The entity ID an intent packet carries: the type's own field, else `id`, else the caller's fallback. */
@@ -1099,8 +1214,49 @@ function encodeIntent(type, value) {
 
 function encodeIntentPacket(command, identity) {
   const kind = COMMAND_TYPES.indexOf(command.type);
-  // Fridge actions (52+) have their own encoder and log (kin-board.js).
-  if (kind < 1 || kind >= 52)
+  // Meals (59–63) carry their canonical payload (kin-meals.js).
+  if (kind >= 59 && kind <= 63) {
+    try { return encodeMealIntent(command, identity); }
+    catch (error) {
+      if (error instanceof MealFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // An item's emoji (64) carries its canonical payload (kin-simple.js).
+  if (kind === 64) {
+    try { return encodeItemEmojiIntent(command, identity); }
+    catch (error) {
+      if (error instanceof SimpleFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // Store sections (66–67) carry their canonical payload (kin-sections.js).
+  if (kind === 66 || kind === 67) {
+    try { return encodeSectionIntent(command, identity); }
+    catch (error) {
+      if (error instanceof SectionFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // Rotations (68–69) carry their canonical payload (kin-rotations.js).
+  if (kind === 68 || kind === 69) {
+    try { return encodeRotationIntent(command, identity); }
+    catch (error) {
+      if (error instanceof RotationFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // The sitter page (70) carries its canonical payload (kin-sitter.js).
+  if (kind === 70) {
+    try { return encodeSitterIntent(command, identity); }
+    catch (error) {
+      if (error instanceof SitterFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // Fridge actions (52+) have their own encoder and log (kin-board.js); a
+  // chat topic (65) is a classic packet.
+  if (kind < 1 || (kind >= 52 && kind !== 65))
     throw new KinEngineError(2, "Kin received an invalid household action.");
   const hasText = [1, 5, 8, 14, 18, 19, 47].includes(kind);
   // A reaction's text is its emoji; Rust checks it is one emoji.
@@ -1275,6 +1431,11 @@ function encodeIntentPacket(command, identity) {
   } else if (kind === 48) {
     if (typeof command.on !== "boolean") throw new KinEngineError(2, "Kin received an invalid pin.");
     packet[112] = command.on ? 1 : 0;
+  } else if (kind === 65) {
+    // "Talk later" (#312): 0 cleared, 1 open, 2 resolved.
+    const code = CHAT_TOPIC_STATES.indexOf(command.state);
+    if (code < 0) throw new KinEngineError(2, "Kin received an invalid topic.");
+    packet[112] = code;
   } else if (kind === 33) {
     packet.set(playbookBytes, 128);
     view.setUint32(124, playbookBytes.length, true);
@@ -1639,6 +1800,41 @@ function callCore(exports, operation, request, { statusOnly = false } = {}) {
 // or an array): the instance's history is brought up to date, then replayed
 // in the context of a record-less KINE request. `operation` is kin_project,
 // or kin_plan_import for an archive's import plan.
+function mealPlanBytes(exports, mirror, source, records, asOf, civilDate, syncIdentity) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (records.length > MAX_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  let query;
+  try { query = encodePlanQuery(source); }
+  catch (error) {
+    if (error instanceof MealFormatError) throw new KinEngineError(2, error.message);
+    throw error;
+  }
+  // The 32-byte KMPQ query, then the record-less KINE context.
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, query.length);
+  request.set(query, 0);
+  const release = mirror.hold(records);
+  try {
+    return callCore(exports, "kin_meal_shopping_plan", request);
+  } finally {
+    release();
+  }
+}
+
+// A query export (`operation`) given `query` then the record-less KINE
+// context, against the instance's history brought up to date with `records`.
+function queryBytes(exports, mirror, operation, query, records, asOf, civilDate, syncIdentity) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (records.length > MAX_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, query.length);
+  request.set(query, 0);
+  const release = mirror.hold(records);
+  try {
+    return callCore(exports, operation, request);
+  } finally {
+    release();
+  }
+}
+
 function replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, syncIdentity, operation = "kin_project") {
   if (!exports)
     throw new KinEngineError(

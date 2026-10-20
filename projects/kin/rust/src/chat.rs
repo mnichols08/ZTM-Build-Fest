@@ -238,6 +238,55 @@ pub struct PollState {
     pub closed: bool,
 }
 
+/// Event kind 65 (#312, ADR 0014): a "Talk later" flag on a message.
+pub const CHAT_TOPIC_SET: u16 = 65;
+
+/// Most open or resolved topics a chat log keeps (#312). A command that would
+/// add one more is refused; replay ignores a new topic past it.
+pub const MAX_TOPICS: usize = 200;
+
+/// Where a "Talk later" topic stands (#312): the payload's state byte.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChatTopicState {
+    /// Taken off the list ("Remove from list"): the topic is dropped.
+    Cleared = 0,
+    /// On the list, to talk about ("Talk later", "Reopen").
+    Open = 1,
+    /// Talked about ("Resolved"); still on the list.
+    Resolved = 2,
+}
+
+impl ChatTopicState {
+    pub const fn code(self) -> u8 {
+        self as u8
+    }
+
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Cleared),
+            1 => Some(Self::Open),
+            2 => Some(Self::Resolved),
+            _ => None,
+        }
+    }
+}
+
+/// One message on the "To talk about" list (#312), as replay leaves it.
+/// A cleared topic has no record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChatTopic {
+    pub message_id: ChatMessageId,
+    /// Open or resolved, never cleared.
+    pub state: ChatTopicState,
+    /// Who put it on the list (the first actor since it was last cleared).
+    pub flagged_by: ActorId,
+    /// Who last changed it.
+    pub changed_by: ActorId,
+    /// `ChatState::topic_clock` at its last change: a page lists the newest
+    /// change first.
+    pub changed: u64,
+}
+
 /// The chat domain of a replay.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ChatState {
@@ -270,6 +319,13 @@ pub struct ChatState {
     /// Votes by poll (#135); a poll with no votes and still open has no
     /// entry. Deleting the poll for everyone drops its entry.
     pub polls: BTreeMap<ChatMessageId, PollState>,
+    /// "Talk later" topics (#312) in the order replay first listed them, at
+    /// most `MAX_TOPICS`. Clearing a topic, or its author deleting the
+    /// message, drops it; one an admin removed stays but is not shown
+    /// (`shown_topics`).
+    pub topics: Vec<ChatTopic>,
+    /// Counts topic changes in replay order, for `ChatTopic::changed`.
+    pub topic_clock: u64,
 }
 
 impl ChatState {
@@ -305,6 +361,32 @@ impl ChatState {
             })
             .take(MAX_PINS)
             .collect()
+    }
+
+    /// The topic on `message_id`, if it is open or resolved (#312).
+    pub fn topic(&self, message_id: &ChatMessageId) -> Option<&ChatTopic> {
+        self.topics
+            .iter()
+            .find(|topic| topic.message_id == *message_id)
+    }
+
+    /// The topics a page shows, given the household's admins: those whose
+    /// message still shows, newest change first.
+    pub fn shown_topics(&self, admins: &[ActorId]) -> Vec<&ChatTopic> {
+        let mut shown = self
+            .topics
+            .iter()
+            .filter(|topic| {
+                self.get(&topic.message_id).is_some_and(|message| {
+                    matches!(
+                        self.shown_status(message, admins),
+                        ChatMessageStatus::Live | ChatMessageStatus::Edited
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        shown.sort_unstable_by_key(|topic| std::cmp::Reverse(topic.changed));
+        shown
     }
 
     pub fn get(&self, message_id: &ChatMessageId) -> Option<&ChatMessage> {
@@ -620,7 +702,8 @@ impl ChatTexts {
 /// KCHQ v1, a page request: "KCHQ", version u16 (1), reserved u16 (0),
 /// before u32 (page ends before this index; u32::MAX for the newest),
 /// limit u16 (1..=500), flags u8 (bit 0: include texts the arena holds;
-/// bit 1: include retired blobs; bit 2: include reactions; bit 3: include pins; bit 4: include polls), reserved u8
+/// bit 1: include retired blobs; bit 2: include reactions; bit 3: include pins; bit 4: include polls;
+/// bit 5: include topics), reserved u8
 /// (0), admin count u32 (at most
 /// 16), then 16 bytes per admin actor ID, then the record-less KINE context.
 pub struct PageRequest<'a> {
@@ -631,6 +714,7 @@ pub struct PageRequest<'a> {
     pub include_reactions: bool,
     pub include_pins: bool,
     pub include_polls: bool,
+    pub include_topics: bool,
     pub admins: Vec<ActorId>,
     pub context: &'a [u8],
 }
@@ -648,7 +732,7 @@ pub fn decode_page_request(bytes: &[u8]) -> Result<PageRequest<'_>, KinError> {
         return Err(KinError::UnsupportedVersion);
     }
     let flags = bytes[14];
-    if bytes[6..8] != [0; 2] || bytes[15] != 0 || flags & !0b11111 != 0 {
+    if bytes[6..8] != [0; 2] || bytes[15] != 0 || flags & !0b11_1111 != 0 {
         return Err(KinError::MalformedProtocol);
     }
     let before = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
@@ -676,6 +760,7 @@ pub fn decode_page_request(bytes: &[u8]) -> Result<PageRequest<'_>, KinError> {
         include_reactions: flags & 4 != 0,
         include_pins: flags & 8 != 0,
         include_polls: flags & 16 != 0,
+        include_topics: flags & 32 != 0,
         admins,
         context: &bytes[context_at..],
     })
@@ -807,6 +892,11 @@ fn shown_reactions<'a>(
 /// options as a u16 bit set and 2 zero bytes. A poll record carries its option
 /// count at 118, flags at 119 (1 multiple, 2 closed) and the voter count as a
 /// u16 at 120.
+/// Last of all, when it asked for topics (#312, flag bit 5), the "To talk
+/// about" list: a count u32 (at most `MAX_TOPICS`), then per topic, newest
+/// change first: the message ID (16), its state u8 (1 open, 2 resolved), 3
+/// zero bytes, who flagged it (16), and the message as a quote entry, as a
+/// pin's. Only topics whose message still shows are listed.
 pub fn encode_page(
     state: &ChatState,
     request: &PageRequest<'_>,
@@ -884,6 +974,24 @@ pub fn encode_page(
         .iter()
         .map(|message| poll_votes(message).len() * 20)
         .sum::<usize>();
+    // Topics (#312) are asked for: a count, then per shown topic its message
+    // ID, state, who flagged it and the message as a quote entry.
+    let topics = if request.include_topics {
+        state.shown_topics(&request.admins)
+    } else {
+        Vec::new()
+    };
+    let topic_bytes = if request.include_topics {
+        4 + topics
+            .iter()
+            .map(|topic| {
+                36 + PAGE_QUOTE_BYTES
+                    + quote_text(state, request, texts, &topic.message_id).map_or(0, <[u8]>::len)
+            })
+            .sum::<usize>()
+    } else {
+        0
+    };
     let mut text_bytes = 0usize;
     if request.include_text {
         for message in page {
@@ -904,6 +1012,7 @@ pub fn encode_page(
         .and_then(|size| size.checked_add(mention_bytes))
         .and_then(|size| size.checked_add(pin_bytes))
         .and_then(|size| size.checked_add(poll_bytes))
+        .and_then(|size| size.checked_add(topic_bytes))
         .ok_or(KinError::SizeLimit)?;
     let mut bytes = Vec::new();
     bytes
@@ -1033,11 +1142,21 @@ pub fn encode_page(
             bytes.extend_from_slice(&[0, 0]);
         }
     }
+    if request.include_topics {
+        bytes.extend_from_slice(&(topics.len() as u32).to_le_bytes());
+        for topic in &topics {
+            bytes.extend_from_slice(&topic.message_id.0);
+            bytes.extend_from_slice(&[topic.state.code(), 0, 0, 0]);
+            bytes.extend_from_slice(&topic.flagged_by.0);
+            write_quote(&mut bytes, state, request, texts, &topic.message_id);
+        }
+    }
     debug_assert_eq!(bytes.len(), size);
     Ok(bytes)
 }
 
-/// One quote entry (#129), also used by pins (#131): see `encode_page`.
+/// One quote entry (#129), also used by pins (#131) and topics (#312): see
+/// `encode_page`.
 fn write_quote(
     bytes: &mut Vec<u8>,
     state: &ChatState,

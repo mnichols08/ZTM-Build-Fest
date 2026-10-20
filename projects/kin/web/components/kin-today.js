@@ -166,6 +166,16 @@ class KinToday extends HTMLElement {
     hint.className = "section-hint";
     hint.textContent = config.hint;
     section.append(heading, hint);
+    // Shopping mode (#404): the list for use in the shop.
+    if (this.display === "shopping") {
+      const start = document.createElement("button");
+      start.type = "button";
+      start.className = "start-shopping primary-action";
+      start.textContent = "Start shopping";
+      start.disabled = this.isDisabled;
+      start.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:start-shopping", { bubbles: true, composed: true, detail: { opener: start } })));
+      section.append(start);
+    }
     const composer = this.ensureComposer();
     composer.disabled = this.isDisabled;
     section.append(composer);
@@ -219,6 +229,7 @@ class KinToday extends HTMLElement {
       item.responsibilityContext = this.ownerContext;
       item.areaOptions = this.areaRecords;
       item.pinned = this.pinRecords.some((pin) => pin.targetKind === "item" && pin.targetId === record.itemId);
+      item.emoji = this.emojiMap?.get?.(record.itemId) ?? null;
       item.selected = this.selectedItemId === record.itemId;
       if (this.selectionMode) {
         item.checked = this.selectedIds.has(record.itemId);
@@ -262,6 +273,10 @@ defineProps(KinToday, {
   selected: { field: "selectedItemId", coerce: (value) => value ?? null },
   previews: { field: "previewProvider", coerce: asFunction },
   responsibilityContext: { field: "ownerContext", coerce: (value) => value ?? NO_CONTEXT },
+  // Item picture emoji (#347): a Map itemId -> emoji, or null.
+  emojis: { field: "emojiMap", coerce: (value) => (value instanceof Map ? value : null) },
+  // Taking turns (#437): a Map routineId -> { memberIds, current, next }.
+  turns: { field: "turnMap", coerce: (value) => (value instanceof Map ? value : null) },
 });
 
 customElements.define("kin-today", KinToday);

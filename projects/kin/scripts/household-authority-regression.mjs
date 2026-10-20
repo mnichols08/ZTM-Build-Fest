@@ -10,6 +10,7 @@
 // ceremony, and separate profiles on one machine are not separate devices.
 //
 // Usage: node scripts/household-authority-regression.mjs <browser executable>
+import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { applyRegressionDefaults, captureFailure, waitForOrigin } from "./cdp-page.mjs";
 import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
@@ -541,6 +542,100 @@ async function pageRestoreClock() {
   delete window.__kinOriginalDateNow;
 }
 
+// The fridge through the real wiring (#372): sync opens the board room and
+// hands it to Household → Fridge; nothing is attached by hand. Returns where
+// the door is and what the page says, so a failure explains itself.
+async function pageOpenFridge() {
+  const app = document.querySelector("kin-app");
+  location.hash = "#household/fridge";
+  const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  for (let i = 0; i < 600 && !app.fridge?.room; i++) await frame();
+  await frame(); await frame();
+  const fridge = app.fridge;
+  const door = fridge?.querySelector(".fridge-door");
+  // A person scrolls to the door first; input outside the viewport goes nowhere.
+  door?.scrollIntoView({ block: "center", behavior: "instant" });
+  await frame(); await frame();
+  const rect = door?.getBoundingClientRect();
+  return {
+    room: Boolean(fridge?.room), access: fridge?.room?.access ?? null, coordinatorBoard: Boolean(app.syncCoordinator?.board),
+    summary: fridge?.querySelector(".fridge-summary")?.textContent ?? null,
+    status: fridge?.querySelector(".fridge-status")?.textContent ?? null,
+    door: rect ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null,
+    canvas: door ? [...door.querySelectorAll("canvas")].map((canvas) => [canvas.width, canvas.height]) : null,
+    hit: rect ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)?.className ?? null : null,
+  };
+}
+
+async function pageFridgeAfterDrawing() {
+  const app = document.querySelector("kin-app");
+  const fridge = app.fridge;
+  const count = () => { try { return fridge.room?.board().strokes.length ?? -1; } catch { return -2; } };
+  for (let i = 0; i < 300 && count() < 1 && !fridge.querySelector(".fridge-status")?.textContent; i++)
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  return {
+    strokes: count(),
+    summary: fridge.querySelector(".fridge-summary")?.textContent ?? null,
+    status: fridge.querySelector(".fridge-status")?.textContent ?? null,
+    waiting: fridge.room?.waiting ?? null,
+  };
+}
+
+// Simple view (#343, #350): an admin's switch on a Limited member's row, by
+// the real People & devices control and a fresh passkey.
+async function pageToggleSimpleView(on) {
+  const app = document.querySelector("kin-app");
+  const h = app.household;
+  const originalConfirm = globalThis.confirm;
+  globalThis.confirm = () => true;
+  try {
+    await h.showHousehold();
+    const prefix = on ? "Turn on Simple view for " : "Turn off Simple view for ";
+    const button = [...h.querySelectorAll("button")].find((b) => b.textContent.startsWith(prefix));
+    if (!button) throw new Error("No control '" + prefix + "': " + h.textContent);
+    button.click();
+    for (let i = 0; i < 400; i++) {
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      if (!h.busy && [...h.querySelectorAll("button")].some((b) => b.textContent.startsWith(on ? "Turn off Simple view" : "Turn on Simple view"))) break;
+      const alert = h.querySelector(".household-message");
+      if (!h.busy && alert?.getAttribute("role") === "alert") throw new Error("Simple view change failed: " + alert.textContent);
+    }
+    return { text: h.textContent, rowSaysOn: /Simple view on/.test(h.textContent) };
+  } finally {
+    globalThis.confirm = originalConfirm;
+  }
+}
+
+async function pageSimpleState() {
+  const app = document.querySelector("kin-app");
+  return {
+    simple: app?.simpleView === true, flag: document.documentElement.dataset.kinSimple ?? null,
+    lists: Boolean(document.getElementById("lists")), unlocked: Boolean(app?.store), hash: location.hash,
+    nav: app?.navLinks ? [...app.navLinks.values()].filter((link) => !link.hidden).map((link) => link.textContent.trim()) : [],
+  };
+}
+
+async function pageWaitSimple(want) {
+  const app = document.querySelector("kin-app");
+  for (let i = 0; i < 600 && (app?.simpleView === true) !== want; i++) {
+    await new Promise((r) => requestAnimationFrame(() => r()));
+    if (i % 40 === 39) await app?.syncCoordinator?.syncNow?.();
+  }
+  // Page functions run alone in the page: no calling pageSimpleState here.
+  return {
+    simple: app?.simpleView === true, flag: document.documentElement.dataset.kinSimple ?? null,
+    lists: Boolean(document.getElementById("lists")), unlocked: Boolean(app?.store), hash: location.hash,
+    nav: app?.navLinks ? [...app.navLinks.values()].filter((link) => !link.hidden).map((link) => link.textContent.trim()) : [],
+  };
+}
+
+async function pageLockNow() {
+  const app = document.querySelector("kin-app");
+  app.ctx.session.lockHousehold();
+  for (let i = 0; i < 400 && app.store; i++) await new Promise((r) => requestAnimationFrame(() => r()));
+  return !app.store;
+}
+
 async function pageEnableSync() {
   const app = document.querySelector("kin-app");
   await app.household.enableSync();
@@ -952,18 +1047,9 @@ async function launchProfile(executable, label, origin) {
       `--user-data-dir=${profile}`,
       "about:blank",
     ],
-    { windowsHide: true, stdio: "ignore" },
+    BROWSER_STDIO,
   );
-  browser.on("error", (error) => console.error(`Browser ${label} failed to launch`, error));
-  let port;
-  for (let attempt = 0; attempt < 200 && !port; attempt += 1) {
-    try {
-      port = (await readFile(join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0];
-    } catch {
-      await delay(50);
-    }
-  }
-  assert.ok(port, `Browser ${label} did not start`);
+  const port = await waitForDevTools(browser, profile, { label: `Browser ${label}` });
   const target = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(origin)}`, { method: "PUT" })
     .then((response) => response.json());
   const socket = new WebSocket(target.webSocketDebuggerUrl);
@@ -1206,6 +1292,20 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(result.last?.state !== "paused", "Adult A completes the first relay sync: " + JSON.stringify(result.last));
     const aRelay = relaySession(aBoot.identity.memberId, aBoot.identity.deviceId);
     check(relayEvents(aRelay).length === 2, "relay holds A1 and A's device name (#71) as two opaque envelopes");
+    // Draw on the fridge with the real mouse, through the real wiring (#372).
+    const fridge = await a.callStable(pageOpenFridge);
+    check(fridge.room && fridge.access === "write" && fridge.door?.width > 100,
+      "sync opens the fridge for Adult A: " + JSON.stringify(fridge));
+    const point = (fx, fy) => ({ x: Math.round(fridge.door.left + fridge.door.width * fx), y: Math.round(fridge.door.top + fridge.door.height * fy) });
+    const start = point(0.3, 0.3);
+    await a.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...start });
+    await a.send("Input.dispatchMouseEvent", { type: "mousePressed", ...start, button: "left", buttons: 1, clickCount: 1 });
+    for (let step = 1; step <= 8; step += 1)
+      await a.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...point(0.3 + step * 0.04, 0.3 + step * 0.03), button: "left", buttons: 1 });
+    await a.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...point(0.62, 0.54), button: "left", buttons: 0, clickCount: 1 });
+    const drawn = await a.callStable(pageFridgeAfterDrawing);
+    check(drawn.strokes >= 1, "a mouse stroke on the synced fridge is saved: " + JSON.stringify({ ...fridge, ...drawn }));
+    await a.call(() => { location.hash = "#today"; });
     pass(`${checks} household creation assertions (profile A)`);
 
     // ---- Profile B: second Adult -----------------------------------------
@@ -1375,6 +1475,35 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await c.call(pageSync);
     result = await a.call(pageSync);
     check(result.items.includes("C1 limited member item"), "Adult A receives Limited C's event");
+    // Simple view (#343, #350): A turns it on; C's device switches on its
+    // next poll; an offline unlock stays simple; A turns it off again.
+    const turnedOn = await a.call(pageToggleSimpleView, true);
+    check(turnedOn.rowSaysOn, "the admin's People row says Simple view on");
+    result = await c.call(pageSync);
+    let simple = await c.call(pageWaitSimple, true);
+    check(simple.simple && simple.flag === "on" && !simple.lists && JSON.stringify(simple.nav) === JSON.stringify(["Today", "Chat", "Fridge"]),
+      "Limited C's device switches to Simple view on its next poll: " + JSON.stringify(simple));
+    check(await c.call(pageLockNow), "Limited C locks");
+    await c.send("Network.emulateNetworkConditions", { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    try {
+      await c.call(pageUnlock, c.recovery);
+      simple = await c.callStable(pageSimpleState);
+      check(simple.unlocked && simple.simple && !simple.lists, "an offline unlock opens Simple view from the cached layout: " + JSON.stringify(simple));
+    } finally {
+      await c.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    }
+    const turnedOff = await a.call(pageToggleSimpleView, false);
+    check(!turnedOff.rowSaysOn, "the admin's People row no longer says Simple view on");
+    // C's next pass reloads Kin into the full layout (unlocked again where a
+    // refresh keeps Kin unlocked; otherwise C unlocks).
+    let full = await c.callStable(pageWaitSimple, false);
+    if (!full.unlocked) {
+      await c.callStable(pageWaitReady);
+      await c.call(pageUnlock, c.recovery);
+    }
+    full = await c.callStable(pageWaitSimple, false);
+    check(full && !full.simple && full.lists && full.flag === null, "turning it off brings back the full Kin: " + JSON.stringify(full));
+    await c.callStable(pageWaitHousehold);
     pass(`${checks} Limited admission and restriction assertions (profile C)`);
 
     // ---- Remove Limited C while C is offline --------------------------------

@@ -17,6 +17,7 @@ export const SEGMENTS = Object.freeze({
     Object.freeze({ id: "todo", label: "To do", classification: "need" }),
     Object.freeze({ id: "shopping", label: "Shopping", classification: "shopping" }),
     Object.freeze({ id: "staples", label: "Staples", classification: "staple" }),
+    Object.freeze({ id: "meals", label: "Meals" }),
   ]),
   routines: Object.freeze([
     Object.freeze({ id: "all", label: "Routines" }),
@@ -24,7 +25,6 @@ export const SEGMENTS = Object.freeze({
   ]),
   updates: Object.freeze([
     Object.freeze({ id: "handoffs", label: "Handoffs" }),
-    Object.freeze({ id: "talk", label: "Talk" }),
     Object.freeze({ id: "chat", label: "Chat" }),
   ]),
   household: Object.freeze([
@@ -32,6 +32,8 @@ export const SEGMENTS = Object.freeze({
     // The family fridge (#317): a shared drawing board.
     Object.freeze({ id: "fridge", label: "Fridge" }),
     Object.freeze({ id: "notes", label: "Notes & reference" }),
+    // The sitter page (#441): what a babysitter or guest sees first.
+    Object.freeze({ id: "sitter", label: "For the sitter" }),
     Object.freeze({ id: "areas", label: "Areas & status" }),
     Object.freeze({ id: "people", label: "People & devices" }),
     Object.freeze({ id: "privacy", label: "Privacy & recovery" }),
@@ -46,14 +48,17 @@ const PAGE_TITLES = Object.freeze({
   updates: "Updates",
   household: "Household",
   search: "Search",
+  // This week (#416): reached from Today; it marks Today in the navigation.
+  week: "This week",
+  // For you (#441): a Temporary member's landing page; it marks Today.
+  foryou: "For you",
 });
 
 // Legacy destinations and tabs from earlier releases.
 const ALIASES = Object.freeze({
   handoff: "updates/handoffs",
   "handoff/handoffs": "updates/handoffs",
-  "handoff/talk": "updates/talk",
-  talk: "updates/talk",
+  // Talk moved into Chat's To talk about list (#312); see TOPIC_ALIASES.
   handoffs: "updates/handoffs",
   more: "household",
   "more/notes": "household/notes",
@@ -72,6 +77,10 @@ const ALIASES = Object.freeze({
   "routines/playbooks": "routines/checklists",
 });
 
+// Links to the former Talk tab (#312, ADR 0014) open Chat with its To talk
+// about list; the route carries `topics: true`.
+const TOPIC_ALIASES = new Set(["talk", "handoff/talk", "updates/talk"]);
+
 /** Dispatched on window when the visible page or segment changes. In-app
  * navigation uses history.pushState and hides views rather than removing
  * them, so neither hashchange nor disconnection signals it. */
@@ -86,12 +95,34 @@ export function routeHash(page, segment = null) {
   return `#${page}/${chosen.id}`;
 }
 
+/** Simple view's destinations (#345, ADR 0013), by route. */
+export const SIMPLE_ROUTES = Object.freeze({
+  today: Object.freeze({ page: "today", label: "Today" }),
+  chat: Object.freeze({ page: "updates", segment: "chat", label: "Chat" }),
+  fridge: Object.freeze({ page: "household", segment: "fridge", label: "Fridge" }),
+});
+
+/**
+ * Simple view's allowlist: Today, Updates › Chat when `chat` is true and
+ * Household › Fridge when `fridge` is true. Every other hash, alias, search
+ * link and `/pair` resolves to Today.
+ */
+export function resolveSimpleRoute(location = {}, { chat = false, fridge = false } = {}) {
+  const route = resolveRoute(location);
+  // An old Talk link isn't Chat: Simple view has no To talk about list.
+  const allowed = (chat && route.page === "updates" && route.segment === "chat" && !route.topics) ||
+    (fridge && route.page === "household" && route.segment === "fridge");
+  return allowed ? route : resolveRoute({ hash: "#today" });
+}
+
 export function resolveRoute({ hash = "", pathname = "/" } = {}) {
   let requested = String(hash ?? "").replace(/^#/, "").replace(/\/+$/, "").toLowerCase();
   // An invitation link's fragment (#code=…) is not a route. pairing-link.js
   // takes it as the app loads; this keeps /pair on the join screen even so.
   if (pathname === "/pair" && /^code=/.test(requested)) requested = "";
   if (!requested && pathname === "/pair") requested = "household/people";
+  const topics = TOPIC_ALIASES.has(requested);
+  if (topics) requested = "updates/chat";
   requested = ALIASES[requested] ?? requested;
   const [pageCandidate, segmentCandidate] = requested.split("/");
   const page = PAGE_TITLES[pageCandidate] ? pageCandidate : "today";
@@ -101,11 +132,11 @@ export function resolveRoute({ hash = "", pathname = "/" } = {}) {
     : null;
   const canonical = segments ? `${page}/${segment}` : page;
   // Search is reachable from every page; it marks no primary destination.
-  const destination = page === "search" ? null : page;
-  return { page, segment, canonical, destination, title: PAGE_TITLES[page], hash: segments ? routeHash(page, segment) : `#${page}` };
+  const destination = page === "search" ? null : page === "week" || page === "foryou" ? "today" : page;
+  return { page, segment, canonical, destination, title: PAGE_TITLES[page], hash: segments ? routeHash(page, segment) : `#${page}`, ...(topics ? { topics: true } : {}) };
 }
 
 export function listSegmentForClassification(classification) {
   if (classification === "today") return "todo";
-  return SEGMENTS.lists.find((entry) => entry.classification === classification)?.id ?? "todo";
+  return SEGMENTS.lists.find((entry) => entry.classification && entry.classification === classification)?.id ?? "todo";
 }

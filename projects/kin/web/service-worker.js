@@ -11,23 +11,23 @@ const SHELL = [
   // Not the manifest or /install-icon/*: they depend on the household that
   // published an install identity (#78), so they always come from the network.
   "/", "/index.html", "/styles/app.css", "/icon.svg",
-  "/browser-time.js", "/platform.js", "/pairing-link.js", "/device-link.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin-board.js", "/wasm/kin_engine.wasm", "/wasm/kin-qr.js",
+  "/browser-time.js", "/sitter-view.js", "/platform.js", "/pairing-link.js", "/share-target.js", "/device-link.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin-board.js", "/wasm/kin-meals.js", "/wasm/kin-simple.js", "/wasm/kin-sections.js", "/wasm/kin-rotations.js", "/wasm/kin-sitter.js", "/wasm/kin-week.js", "/wasm/kin_engine.wasm", "/wasm/kin-qr.js",
   "/wasm/wire.js", "/wasm/history-mirror.js", "/wasm/projection-decode.js", "/wasm/projection/reader.js", "/wasm/projection/items.js",
   "/wasm/projection/conversations.js", "/wasm/projection/routines.js", "/wasm/projection/records.js",
-  "/routes.js", "/today-view.js", "/reminder-time.js", "/capture-plan.js", "/keyboard-commands.js", "/bulk-actions.js", "/recurrence.js",
+  "/routes.js", "/today-view.js", "/reminder-time.js", "/capture-plan.js", "/keyboard-commands.js", "/bulk-actions.js", "/undo.js", "/import/list-import.js", "/wake-lock.js", "/recurrence.js",
   "/attachments/attachment-crypto.js", "/attachments/attachment-lifecycle.js", "/attachments/attachment-permissions.js", "/attachments/attachment-preview.js", "/attachments/attachment-progress.js", "/attachments/object-urls.js",
   "/storage/event-store.js", "/storage/event-arena.js", "/storage/encrypted-idb.js", "/storage/root-rotation.js", "/storage/quarantine.js",
   "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js", "/security/archive-stream.js", "/security/key-label.js", "/security/reload-resume.js",
   "/appearance/palette.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js", "/appearance/install-icons.js",
   "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js", "/sync/envelope-wire.js", "/sync/live-channel.js", "/sync/ephemeral-envelope.js",
-  "/components/kin-fridge.js", "/board/board-room.js", "/board/fridge-view.js", "/board/fridge-magnets.js", "/board/board-archive.js", "/board/board-log-store.js", "/chat/chat-room.js", "/chat/chat-log-store.js", "/chat/chat-records.js", "/chat/chat-attachments.js", "/chat/chat-blobs.js", "/chat/chat-blob-store.js", "/chat/chat-blob-client.js", "/chat/chat-blob-crypto.js", "/chat/emoji.js", "/chat/emoji.json", "/chat/chat-hidden.js", "/chat/chat-presence.js", "/chat/chat-keys.js", "/chat/chat-reactions.js",
+  "/components/kin-fridge.js", "/components/kin-meals.js", "/components/kin-tonight.js", "/components/kin-simple.js", "/simple/simple-view.js", "/meals/meals-view.js", "/board/board-room.js", "/board/fridge-view.js", "/board/fridge-magnets.js", "/board/board-archive.js", "/board/board-log-store.js", "/chat/chat-room.js", "/chat/chat-log-store.js", "/chat/chat-records.js", "/chat/chat-attachments.js", "/chat/chat-blobs.js", "/chat/chat-blob-store.js", "/chat/chat-blob-client.js", "/chat/chat-blob-crypto.js", "/chat/emoji.js", "/chat/emoji.json", "/chat/chat-hidden.js", "/chat/chat-presence.js", "/chat/chat-layout.js", "/chat/chat-keys.js", "/chat/chat-reactions.js",
   "/chat/chat-badge.js", "/chat/chat-archive.js", "/chat/chat-voice.js",
   "/chat/chat-mentions.js",
   "/chat/chat-polls.js",
   "/chat/chat-search-ranges.js",
-  ...["app", "appearance", "household-defaults", "install-identity", "notifications", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "qr", "qr-scanner", "chat", "chat-search", "chat-settings", "chat-policy", "chat-share", "chat-poll", "chat-voice", "emoji-picker", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility", "bulk-bar", "playbook-editor", "routine-schedule"].map((name) => `/components/kin-${name}.js`),
-  "/components/app/appearance.js", "/components/app/attachments.js", "/components/app/chat-share.js", "/components/app/commands/append.js", "/components/app/commands/bulk.js", "/components/app/commands/conversations.js", "/components/app/commands/items.js", "/components/app/commands/records.js", "/components/app/commands/routines.js", "/components/app/constants.js", "/components/app/context.js", "/components/app/detail.js", "/components/app/feedback.js", "/components/app/navigation.js", "/components/app/peer-channel.js", "/components/app/refresh.js", "/components/app/render.js", "/components/app/session.js", "/components/app/shell.js", "/components/app/status.js", "/components/app/sync.js", "/components/app/views.js",
-  ...["dom", "focus", "icons", "operation", "props", "session-guard"].map((name) => `/components/shared/${name}.js`),
+  ...["app", "appearance", "household-defaults", "install-identity", "notifications", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "qr", "qr-scanner", "chat", "chat-search", "chat-settings", "chat-policy", "chat-share", "share-sheet", "shopping-mode", "sitter-editor", "sitter-page", "rotation", "import", "week", "chat-poll", "chat-voice", "emoji-picker", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility", "bulk-bar", "playbook-editor", "routine-schedule"].map((name) => `/components/kin-${name}.js`),
+  "/components/app/appearance.js", "/components/app/attachments.js", "/components/app/chat-share.js", "/components/app/commands/append.js", "/components/app/commands/bulk.js", "/components/app/commands/conversations.js", "/components/app/commands/items.js", "/components/app/commands/records.js", "/components/app/commands/routines.js", "/components/app/constants.js", "/components/app/context.js", "/components/app/detail.js", "/components/app/feedback.js", "/components/app/meals.js", "/components/app/simple.js", "/components/app/share.js", "/components/app/sections.js", "/components/app/import.js", "/components/app/week.js", "/components/app/sitter.js", "/components/app/rotations.js", "/components/app/navigation.js", "/components/app/peer-channel.js", "/components/app/refresh.js", "/components/app/render.js", "/components/app/session.js", "/components/app/shell.js", "/components/app/status.js", "/components/app/sync.js", "/components/app/undo.js", "/components/app/views.js",
+  ...["assignee-label", "dom", "focus", "icons", "operation", "props", "session-guard"].map((name) => `/components/shared/${name}.js`),
   ...["api", "auth", "lifecycle", "link", "link-approval", "member-labels", "membership", "pairing", "pairing-path", "views"].map((name) => `/components/household/${name}.js`),
   ...["archive", "protection", "unlock", "views"].map((name) => `/components/security/${name}.js`),
   ...["focus", "sections", "selection"].map((name) => `/components/today/${name}.js`),
@@ -63,8 +63,37 @@ self.addEventListener("install", (event) => {
     }
   })());
 });
+// ---- Sharing into Kin (#389) -------------------------------------------------
+// Another app's share sheet POSTs to /share (manifest `share_target`). The
+// worker answers it here, so the shared text and files never reach the
+// server: they wait in this worker's memory under a random id (never in the
+// Cache API or any storage) until the page takes them, once, or a few
+// minutes pass.
+const SHARE_TTL_MS = 5 * 60_000;
+const shares = new Map();
+function forgetOldShares() {
+  const now = Date.now();
+  for (const [id, share] of shares) if (now - share.at > SHARE_TTL_MS) shares.delete(id);
+}
+async function receiveShare(request) {
+  forgetOldShares();
+  let form;
+  try { form = await request.formData(); } catch { form = null; }
+  const field = (name) => (typeof form?.get(name) === "string" ? form.get(name).slice(0, 4_000) : "");
+  const files = form ? form.getAll("files").filter((file) => file instanceof File && file.size > 0).slice(0, 10) : [];
+  const id = [...crypto.getRandomValues(new Uint8Array(16))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  shares.set(id, { at: Date.now(), title: field("title"), text: field("text"), url: field("url"), files });
+  return Response.redirect(new URL(`/#kin-share=${id}`, self.location.origin).href, 303);
+}
+
 self.addEventListener("message", (event) => {
   if (event.data?.type === "KIN_SKIP_WAITING") void self.skipWaiting();
+  if (event.data?.type === "kin-share-take" && event.ports?.[0]) {
+    forgetOldShares();
+    const share = shares.get(event.data.id) ?? null;
+    shares.delete(event.data.id);
+    event.ports[0].postMessage(share ? { title: share.title, text: share.text, url: share.url, files: share.files } : null);
+  }
 });
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
@@ -74,6 +103,10 @@ self.addEventListener("activate", (event) => {
 });
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
+  if (event.request.method === "POST" && url.origin === self.location.origin && url.pathname === "/share") {
+    event.respondWith(receiveShare(event.request));
+    return;
+  }
   if (event.request.method !== "GET" || url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
   if (event.request.mode === "navigate" && ["/", "/pair", "/link"].includes(url.pathname)) {
     // Never cache the requested URL (which could contain a pairing code).

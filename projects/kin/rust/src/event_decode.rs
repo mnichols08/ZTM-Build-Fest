@@ -564,6 +564,42 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
             }
             crate::board::decode_payload(code, payload)?
         }
+        // Item emoji (#344): simple.rs decodes its payload strictly.
+        (1, code) if crate::simple::is_simple_code(code) => {
+            if !valid_timestamp(read_i64(record, 68)?) {
+                return Err(KinError::MalformedProtocol);
+            }
+            crate::simple::decode_payload(code, payload)?
+        }
+        // Store sections (#411): store_sections.rs decodes its payloads
+        // strictly.
+        (1, code) if crate::store_sections::is_sections_code(code) => {
+            if !valid_timestamp(read_i64(record, 68)?) {
+                return Err(KinError::MalformedProtocol);
+            }
+            crate::store_sections::decode_payload(code, payload)?
+        }
+        // Taking turns (#429): rotations.rs decodes its payloads strictly.
+        (1, code) if crate::rotations::is_rotation_code(code) => {
+            if !valid_timestamp(read_i64(record, 68)?) {
+                return Err(KinError::MalformedProtocol);
+            }
+            crate::rotations::decode_payload(code, payload)?
+        }
+        // The sitter page (#442): sitter.rs decodes its payload strictly.
+        (1, code) if crate::sitter::is_sitter_code(code) => {
+            if !valid_timestamp(read_i64(record, 68)?) {
+                return Err(KinError::MalformedProtocol);
+            }
+            crate::sitter::decode_payload(code, payload)?
+        }
+        // Meals (#333): meals.rs decodes its payloads strictly.
+        (1, code) if crate::meals::is_meals_code(code) => {
+            if !valid_timestamp(read_i64(record, 68)?) {
+                return Err(KinError::MalformedProtocol);
+            }
+            crate::meals::decode_payload(code, payload)?
+        }
         // Chat (#109). IDs, blob references and keys are never zero.
         (1, 44) => {
             if payload.len() < 84 || !valid_timestamp(read_i64(record, 68)?) {
@@ -711,6 +747,23 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
                 return Err(KinError::MalformedProtocol);
             }
             EventKind::ChatPollClosed { message_id }
+        }
+        // Topic (#312): message ID, state u8 (0 cleared, 1 open, 2
+        // resolved), 3 reserved.
+        (1, crate::chat::CHAT_TOPIC_SET) => {
+            if payload.len() != 20
+                || payload[17..20] != [0; 3]
+                || !valid_timestamp(read_i64(record, 68)?)
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let message_id = ChatMessageId(read_id(payload, 0)?);
+            let state = crate::chat::ChatTopicState::from_code(payload[16])
+                .ok_or(KinError::MalformedProtocol)?;
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::ChatTopicSet { message_id, state }
         }
         (1, 15..=17) => {
             if payload.len() != if event_kind == 17 { 16 } else { 20 }

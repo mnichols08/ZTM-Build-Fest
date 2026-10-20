@@ -64,6 +64,12 @@ export class RenderController {
     const civilDate = this.ctx.navigation.currentCivilDate();
     const responsibilityContext = this.ctx.detail.responsibilityContext();
     this.app.catchUp.summary = this.app.state.summary;
+    // Meals replay from history on their own; the read coalesces.
+    void this.ctx.meals?.refresh();
+    // Simple view's cards (#345) read the same history.
+    void this.ctx.simple?.refresh();
+    // Item picture emoji (#347) for the rows and details.
+    void this.ctx.simple?.refreshPictures();
     this.app.catchUp.lastLookedAt = this.app.catchUpCursor?.lastLookedAt;
     this.app.todayDate.textContent = formatCivilDate(civilDate);
     const selected = this.app.selection?.itemId ?? null;
@@ -76,8 +82,18 @@ export class RenderController {
         pins: this.app.state.pins ?? [],
         attachments: this.app.attachmentRows,
         selected,
+        emojis: this.app.itemEmojis ?? null,
       });
     }
+    if (this.app.shoppingMode) this.app.shoppingMode.items = this.app.state.items;
+    // This week (#416) reads from Rust while it's showing.
+    void this.ctx.week?.refresh();
+    // The sitter page (#441) while its editor or For you is showing.
+    void this.ctx.sitter?.refresh();
+    // Taking turns (#437): whose turn it is, from Rust, after each render.
+    void this.ctx.rotations?.refresh();
+    // Store sections (#411) read from Rust after each render.
+    void this.ctx.sections?.refresh();
     this.app.today.update({
       today: civilDate,
       items: this.app.state.items,
@@ -89,6 +105,7 @@ export class RenderController {
       routines: this.app.state.routines ?? [],
       handoffs: this.app.state.handoffs ?? [],
       mode,
+      emojis: this.app.itemEmojis ?? null,
     });
     const waiting = (this.app.state.handoffs ?? []).filter((record) => record.status === "unacknowledged").length;
     const updatesNav = this.app.segmentNavs?.get("updates");
@@ -103,6 +120,8 @@ export class RenderController {
     this.ctx.records.renderReminders();
     this.app.handoffs.handoffs = this.app.state.handoffs;
     this.app.talks.talks = this.app.state.talks;
+    // The Chat toolbar's To talk about count includes older open topics.
+    this.app.chat.legacyOpenCount = this.app.state.talks.filter((record) => record.status === "open").length;
     this.app.search.household = {
       items: this.app.state.items,
       handoffs: this.app.state.handoffs,

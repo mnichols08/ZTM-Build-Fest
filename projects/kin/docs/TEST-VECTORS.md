@@ -176,6 +176,156 @@ count 2, then for each the device ID, member ID, the two u16 lengths and the
 names; the empty table is the 12-byte header with count 0. Held history with
 an identity binding names the bound device and member.
 
+## Item pictures and my things today (Simple view, #344)
+
+These vectors are written out by hand in `rust/src/simple_tests.rs`.
+
+**039 — Emoji payload.** Item 7 with "🧦", "👩‍🍳", "🇬🇧" and none round-trip;
+the payload is the item ID, `01 00 00 00` and the emoji's u16 length and
+bytes, or `00 00 00 00` when cleared. A non-zero reserved flag byte, a
+trailing byte, text after a clear, a zero item ID, and "a", "🧦🧦", "" or "x🧦"
+fail with code 2.
+
+**040 — Set, change, clear.** Adding item 1 and setting "🪥" then "🦷" works;
+the same emoji again, an unknown item and an archived item fail (code 4).
+KIEM reports only the unarchived item: `"KIEM"`, `01 00`, `00 00`, count 1,
+item 1, length 4, "🦷". An emoji event for an item the history lacks replays
+and isn't reported.
+
+**041 — My things today (20261003).** For the child: item 3 planned
+20261001, item 1 planned 20261003, undated item 2, then routines "Bins out"
+(open) and "Feed the fish" (done). Not listed: an item planned 20261010, a
+completed, an archived and a Staple item, and other members' things. After
+item 2 is unassigned and the mode is Vacation, only items 3 and 1 remain.
+KMTD encodes an item as `01 00 00 00`, its ID and a zero date; KMTQ with
+version 2 fails with code 3, a zero member or a short query with code 2.
+
+## Store sections (#411)
+
+These vectors are written out by hand in `rust/src/shopping_section_tests.rs`;
+section and item IDs are `numbered_id(n)`. JavaScript mirrors 046, 047 and
+050 in `web/wasm/kin-sections.test.mjs` and `abi-ownership.test.mjs`.
+
+**046 — List payload.** Sections 1 "Produce" and 2 "Dairy" encode as
+`02 00 00 00`, section 1, `07 00` "Produce", section 2, `05 00` "Dairy"; the
+empty list is `00 00 00 00`. Thirty sections and a 40-byte name ("é" × 20)
+encode. A non-zero reserved byte, a trailing or missing byte, a count that
+disagrees with the entries, 31 sections, a repeated or zero ID, and the names
+" Dairy", "Dairy ", "", " ", "a\u{7}b" or 41 × "x" fail with code 2. "Dairy"
+and "dairy" together decode (a command rule, not a format rule).
+
+**047 — Item payload.** Item 7 in section 2 is item 7's ID then section 2's
+(32 bytes); cleared, the section is 16 zero bytes. 31 or 33 bytes, or a zero
+item ID, fail with code 2.
+
+**048 — List rules.** Setting the empty list on a new household fails (code 4,
+no change); setting "Produce", "Dairy" works; the same list again, or a list
+with "Dairy" and "DAIRY", fails with code 4; a repeated ID, " Produce ", a
+41-byte name or 31 sections fail with code 2. Reordering and renaming are
+changes; the empty list then clears it.
+
+**049 — Item rules.** With Milk (item 1) and sections 1 "Produce" and 2
+"Dairy": an unknown item, unknown section 5, or clearing a section that isn't
+set fails (code 4); Milk in Dairy works, again fails. An archived item fails
+whether set or cleared. When the list becomes just "Produce", Milk shows none;
+clearing it, or setting Dairy, fails; setting Produce works. Replay keeps an
+item section naming a section never listed, or an item it lacks, and shows
+none; listing that section ID later shows the item in it. Of two lists made
+from the same history, the later in replay order wins.
+
+**050 — KSHS.** Items 1 Milk (Dairy), 2 Apples (Produce), 3 Batteries (none)
+and 4 (Produce, then archived), with the list "Dairy" (section 2), "Produce"
+(section 1): `"KSHS"`, `01 00`, `00 00`, count 2, section 2, `05 00` "Dairy",
+section 1, `07 00` "Produce", item count 2, item 1 + section 2, item 2 +
+section 1. An empty history is `"KSHS"`, `01 00 00 00` and two zero counts.
+
+## Taking turns on routines (#429)
+
+These vectors are written out by hand in `rust/src/rotation_tests.rs`; the
+routine is `numbered_id(20)` ("Bins out", daily from 2026-10-03) and the
+members Alex, Sam and Jo are 16 bytes of `01`, `02` and `03`. JavaScript
+mirrors 051, 052 and 055 in `web/wasm/kin-rotations.test.mjs` and
+`abi-ownership.test.mjs`.
+
+**051 — Rotation payload.** Alex, Sam, Jo with Sam's turn is the routine ID,
+`03 01 00 00`, then the three member IDs (68 bytes); ending is the routine ID
+and `00 00 00 00`. Twelve members with index 11 decode. One member, thirteen,
+a repeat, a zero member, index 2 of two, index 1 with no list, a zero
+routine, a non-zero reserved byte, a trailing or missing byte, or a count
+that disagrees with the members fail with code 2.
+
+**052 — Turn payload.** The routine ID then Sam's (32 bytes). 31 or 33
+bytes, a zero member or a zero routine fail with code 2.
+
+**053 — Rotation rules.** Ending with no rotation, an unknown routine, or the
+same rotation again fails (code 4); a repeat, one member or an index past the
+list fails with code 2. Alex, Sam, Jo at index 1 makes Sam current, Jo next
+and Sam the owner; reordering or moving the index is a change. While it
+rotates, an owner change fails (code 4). Ending it leaves the last current
+member (Alex) the owner, which can then change as usual. An archived routine
+takes neither a rotation, an end nor a turn.
+
+**054 — The turn passes when it's done.** Alex, Sam, Jo from Alex: completing
+the 3rd makes Sam current; reopening the 3rd makes Alex current again.
+Completing the 3rd, 4th and 5th comes back to Alex. Reopening the 4th (not
+the one that passed it) changes nothing; reopening the 5th makes Jo current;
+completing and reopening the 4th passes it to Alex and back. A day nobody
+completes keeps Jo's turn. After a completion passes it to Alex, a turn set to
+Jo and then reopening that occurrence keeps Jo. Two devices completing the
+same occurrence move the turn once, in either arrival order. Of a turn to Jo
+(device `33`), a completion (device `11`) and a new list Alex, Sam (device
+`22`) at the same logical time, replay order gives Alex current with the turn
+to Jo ignored; an owner change from a device that hadn't seen the rotation is
+ignored.
+
+**055 — KRRS.** Bins out rotating Sam, Alex, Jo at index 2, routine 22
+rotating then archived, routine 23 rotating then ended, routine 21 never
+rotating: `"KRRS"`, `01 00`, `00 00`, count 1, routine 20, `03 02 00 00`, Sam,
+Alex, Jo. An empty history is `"KRRS"`, `01 00 00 00` and a zero count.
+## The sitter page (#442)
+
+These vectors are written out by hand in `rust/src/sitter_tests.rs`; record
+IDs are `numbered_id(n)`, and the household has note 1 "Bedtime", reference
+record 2 "Grandma" and routine 3 "Feed the cat". JavaScript mirrors 060, 063
+and 064 in `web/wasm/kin-sitter.test.mjs` and `abi-ownership.test.mjs`.
+
+**060 — Page payload.** Note 1, reference record 2 and routine 3 with the
+intro "Bed by 8.\nThanks!" encode as `03 00 00 00`, then `01 00 00 00` +
+note 1, `02 00 00 00` + record 2, `03 00 00 00` + routine 3, then `11 00` and
+the intro (83 bytes). The empty page is six zero bytes. Thirty entries, a
+500-byte intro ("é" × 250) and the same ID as a note and as a routine encode.
+A non-zero reserved byte in the count or an entry, an entry kind 0, 4 or 255,
+a trailing or missing byte, a count that disagrees with the entries, 31
+entries, an entry twice, a zero ID, invalid UTF-8, and the intros " Hi",
+"Hi ", "\nHi", "Hi\n", " ", "a\u{7}b", "a\r\nb", "a\tb" or 501 × "x" fail
+with code 2.
+
+**061 — Page rules.** Setting the empty page on a new household fails
+(code 4, no change), as do an unknown note, reference record or routine 9,
+and note 1 named as a routine. The full page with intro "Bed by 8." works;
+the same page again fails (code 4); an entry twice, " Bed by 8." or 31
+entries fail with code 2. Reordering, a new intro and dropping entries are
+changes and replace the page whole. An archived note or reference record
+can't be added (code 4); the empty page then clears it.
+
+**062 — Replay.** With note 4 "Wi-Fi" and the page note 4, routine 3, note 1,
+record 2: after note 1 and routine 3 are archived the page reads note 4,
+record 2, and the event keeps all four. A page naming note 50, which the
+history lacks, replays and skips it; once note 50 is created it shows, in
+the page's order. Of two pages made from the same history, the later in
+replay order wins.
+
+**063 — KCMD.** Action 70 carries the payload as its text with zero entity,
+date, option and expiry; a 30-entry page with a 500-byte intro fits; a
+non-zero entity, date, option or expiry, an untrimmed intro or an empty text
+fail.
+
+**064 — KSIT.** With note 4 "Gone" archived after the page routine 3, note 4,
+record 2, note 1 with intro "Hi": `"KSIT"`, `01 00`, `00 00`, count 3, then
+`03 00 00 00` + routine 3, `02 00 00 00` + record 2, `01 00 00 00` + note 1,
+then `02 00` "Hi". An empty history is `"KSIT"`, `01 00 00 00`, a zero count
+and a zero intro length.
+
 ## Household chat (v1.1)
 
 Chat records are written out by hand in `rust/src/chat_tests.rs`; IDs, blob
@@ -232,6 +382,44 @@ earlier-dated post of its own message: both messages show (the copy as its
 author's) and nothing is retired. Into an earlier-dated edit of its own
 attachment: the blob is a candidate, but member 1's message still shows it,
 so it is not retired.
+
+## Talk later topics (#312)
+
+These vectors are written out by hand in `rust/src/chat_topic_tests.rs`,
+reusing the chat records above.
+
+**042 — Topic payload.** Message 1 with state 0, 1 and 2 round-trips as kind
+65: the message ID, the state and three zero bytes (20 bytes). A trailing or
+missing byte, state 3 or 0xFF, a non-zero reserved byte and a zero message ID
+fail with code 2; so do KCMD action 65 with option 3, a zero entity ID, a
+payload or a date. The household history refuses a topic record.
+
+**043 — Transitions.** Against messages 1–3: resolving or clearing message 1
+with no topic fails (code 4); member 2 opens it; opening it again fails;
+member 1 resolves it; resolving again fails; it reopens, resolves and clears;
+clearing again fails. Message 2 clears from open. Message 99 (unknown) fails.
+Message 3, once its author deletes it, fails for every state and its open
+topic is gone. On a message a named admin removed, open and resolve fail and
+clear succeeds. With 200 topics listed, a 201st open fails until one is
+cleared; resolving one at the limit succeeds.
+
+**044 — Tolerant replay.** Latest in log order wins: opened by member 2 then
+resolved by member 1 lists message 1 resolved, flagged by member 2, changed by
+member 1, in any arrival order. A resolve with no topic lists it resolved; the
+same state again changes nothing; a topic on message 9 (unknown), or logged
+before its message's post, changes nothing. Cleared then opened again starts
+the record over at the end of the list. The author's deletion drops the topic
+and a later flag on it changes nothing; an admin's removal keeps the record
+but a page naming that admin leaves it out. Replay keeps 200 topics and
+ignores the 201st.
+
+**045 — KCHP topics section.** Messages 1–3, a pin on 1, member 2 opens 1,
+member 1 opens 2 and resolves 1, member 2 opens 3, member 1 deletes 3. A page
+asking for texts, reactions, pins, polls and topics equals the page without
+topics followed by: count 2; message 1, `02 00 00 00`, member 2, then its
+quote (live text by member 1, index 0, first line "Holiday plans"); message
+2, `01 00 00 00`, member 1, then its quote (index 1, no text held). Flag bit 6
+is refused.
 
 ## Push payload (RFC 8291)
 

@@ -774,6 +774,26 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the fridge policy migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 19) {
+      try {
+        this.transaction(() => {
+          // #343, ADR 0013: Simple view, a layout a household admin turns on
+          // for a Limited member. Plaintext authorization metadata like
+          // household_admin; only a Limited member can have it (checked when
+          // members load, as household_admin is checked for Adults).
+          this.db.exec(`
+            ALTER TABLE members ADD COLUMN simple_view INTEGER NOT NULL DEFAULT 0
+              CHECK (simple_view IN (0, 1));
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(20, Date.now());
+          sqlitePragma(this.db, "user_version = 20");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the Simple view migration.", { cause: error });
+      }
+    }
   },
 
   verify() {

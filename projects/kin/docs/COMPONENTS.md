@@ -370,8 +370,8 @@ passes `cadence` with `kin:add-item`; `<kin-app>` then appends one
 `create-routine` command keyed by the capture's client id. `<kin-today>`
 renders each Routine's Rust `nextOn` and a Schedule button that dispatches
 `kin:open-routine-schedule`. `<kin-routines>` owns a per-row Schedule editor
-that dispatches `kin:change-routine-schedule`; the row's Stop repeating button
-dispatches `kin:archive-routine`. The open row and unsaved choice survive
+that dispatches `kin:change-routine-schedule`; the row's Delete routine button
+(in a ⋯ menu below 720px, #314) dispatches `kin:archive-routine`. The open row and unsaved choice survive
 re-renders. `<kin-app>` plans schedule
 changes with `web/recurrence.js` and keeps the replacement id until the change
 finishes. See [WORKSPACE-UX](WORKSPACE-UX.md) §5.5.

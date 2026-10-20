@@ -1,6 +1,7 @@
 import "./kin-attachments.js";
 import "./kin-reminder.js";
 import "./kin-responsibility.js";
+import "./kin-emoji-picker.js";
 import { describePlanningDate, KIND_LABELS } from "../today-view.js";
 import { button } from "./shared/dom.js";
 import { asArray, asFunction, defineProps, scheduleRender } from "./shared/props.js";
@@ -233,6 +234,7 @@ class KinItemDetail extends HTMLElement {
     section.append(this.ctx.sections.createAttachments(record));
     section.append(this.ctx.sections.createPlanning(record));
     section.append(this.ctx.sections.createResponsibility(record));
+    if (this.pictureAllowed && record.status !== "archived") section.append(this.ctx.sections.createPicture(record));
     section.append(this.ctx.sections.createArea(record));
     section.append(this.ctx.sections.createReminder(record));
     section.append(this.ctx.sections.createQuickAccess(record));
@@ -274,6 +276,9 @@ defineProps(KinItemDetail, {
   today: { field: "civilDate", coerce: (value) => (Number.isSafeInteger(value) ? value : null) },
   mode: { field: "presentation" },
   closeLabel: { field: "backLabel", coerce: (value) => value || "Close" },
+  // Item picture (#347): the item's emoji, and whether this member sets one.
+  emoji: { field: "emojiValue", coerce: (value) => value || null },
+  canSetPicture: { field: "pictureAllowed", coerce: Boolean },
 });
 
 customElements.define("kin-item-detail", KinItemDetail);

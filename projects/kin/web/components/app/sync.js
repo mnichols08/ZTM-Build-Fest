@@ -96,6 +96,12 @@ export class SyncController {
         this.app.chat.room = room;
         if (this.app.chatSettings) this.app.chatSettings.room = room;
         if (this.app.search) this.app.search.chatRoom = room;
+        this.ctx.simple?.updateAccess();
+      },
+      // Simple view (#343, ADR 0013): the layout this member's admin chose.
+      onSimpleView: (on, options) => {
+        if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
+        this.ctx.simple?.setSimpleView(on, options);
       },
       // The family fridge (#317), for Household → Fridge.
       onBoardRoom: (room) => {
@@ -105,6 +111,7 @@ export class SyncController {
         this.app.fridge.memberId = identity.memberId;
         this.app.fridge.room = room;
         if (room) void this.labelFridge(identity.memberId);
+        this.ctx.simple?.updateAccess();
       },
     });
     this.app.syncCoordinator = coordinator;
@@ -238,8 +245,11 @@ export class SyncController {
     if (this.app.reconcilingResponsibility || this.app.busy || !this.app.store || !this.app.engine ||
         !this.app.activeMemberIds || !this.app.state?.responsibilities?.length) return;
     const active = new Set(this.app.activeMemberIds);
+    const rotating = this.app.rotations ?? new Map();
     const stale = this.app.state.responsibilities.filter((entry) => {
       if (!entry.memberId || active.has(entry.memberId)) return false;
+      // A rotating routine's turn moves on instead (app/rotations.js, #437).
+      if (entry.targetKind === "routine" && rotating.has(entry.targetId)) return false;
       return entry.targetKind === "item"
         ? this.app.state.items?.some((item) => item.itemId === entry.targetId && item.status !== "archived")
         : this.app.state.routines?.some((routine) => routine.routineId === entry.targetId && !routine.archived);

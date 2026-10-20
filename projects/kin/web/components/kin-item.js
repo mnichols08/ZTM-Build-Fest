@@ -1,5 +1,6 @@
 import "./kin-attachments.js";
 import { describePlanningDate, KIND_LABELS } from "../today-view.js";
+import { assigneeLabel } from "./shared/assignee-label.js";
 
 // One default list row. It shows the item text, a restrained complete
 // control, a short context line, checklist progress only when steps exist, a
@@ -30,10 +31,12 @@ class KinItem extends HTMLElement {
   set item(value) { this.record = value; this.render(); }
   set areaOptions(value) { this.areas = Array.isArray(value) ? value : []; this.render(); }
   set pinned(value) { this.isPinned = Boolean(value); this.render(); }
+  /** The item's picture emoji (#347), shown small beside the text. */
+  set emoji(value) { const next = value || null; if (next === this.emojiValue) return; this.emojiValue = next; this.render(); }
   set selected(value) { this.isSelected = Boolean(value); this.render(); }
   set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
   set previews(provider) { this.previewProvider = typeof provider === "function" ? provider : null; this.render(); }
-  set responsibilityContext(value) { this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? []; this.render(); }
+  set responsibilityContext(value) { this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? []; this.memberNames = value?.names ?? null; this.render(); }
   set today(value) { this.civilDate = Number.isSafeInteger(value) ? value : null; this.render(); }
   set kindVisible(value) { this.showKind = Boolean(value); this.render(); }
   // Selection mode swaps the completion control for a native checkbox.
@@ -124,6 +127,14 @@ class KinItem extends HTMLElement {
     text.className = "item-text";
     text.textContent = record.text;
     text.dataset.itemId = record.itemId;
+    if (this.emojiValue) {
+      // Beside the text, never instead of it; the text stays the name.
+      const emoji = document.createElement("span");
+      emoji.className = "item-emoji";
+      emoji.setAttribute("aria-hidden", "true");
+      emoji.textContent = this.emojiValue;
+      open.append(emoji);
+    }
     open.append(text);
     body.append(open);
     const meta = this.createMetaLine();
@@ -183,8 +194,7 @@ class KinItem extends HTMLElement {
     if (planned) parts.push(planned);
     const owner = this.responsibilities?.find((entry) => entry.targetKind === "item" && entry.targetId === record.itemId)?.memberId ?? null;
     if (owner) {
-      const index = (this.memberIds ?? []).indexOf(owner);
-      parts.push(owner === this.memberId ? "You" : index >= 0 ? `Household adult ${index + 1}` : "Former household adult");
+      parts.push(assigneeLabel(owner, { memberId: this.memberId, memberIds: this.memberIds ?? [], names: this.memberNames }));
     }
     const area = this.areas.find((candidate) => candidate.areaId === record.areaId);
     if (area) parts.push(`${area.name}${area.archived ? " (archived)" : ""}`);

@@ -288,10 +288,143 @@ Replay (rust/src/board.rs) never fails on a decoded board event:
 - Commands are stricter: a new ID, room in the budget, a change that changes
   something, and a logical time after the board log's latest.
 
+## Meals
+
+Kinds 59–63 (#333, [ADR 0012](decisions/0012-meals.md)) are schema 1 events in
+the household history. IDs are never zero, reserved bytes are zero, flags are
+0 or 1, and text is canonical in the event (whitespace runs collapsed and
+trimmed; notes keep their lines, with CRLF as LF and trailing spaces gone).
+Payloads are laid out in [ABI](ABI.md).
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 59 | `RECIPE_SAVED` | A recipe saved whole: name (1–80 characters), up to 40 ingredient lines (1–120 characters each, optionally linked to a Staple item), notes (up to 2,000 characters). At most 4,352 bytes after the ID, so one recipe fits one sync envelope |
+| 60 | `RECIPE_ARCHIVED` | The recipe leaves the recipe list for good |
+| 61 | `DINNER_SET` | The dinner for one civil date: a recipe with its name when planned, or a one-off name |
+| 62 | `DINNER_CLEARED` | That date has no dinner (and no cook) |
+| 63 | `DINNER_COOK_SET` | Who's cooking on that date; no member is "No one yet" |
+
+Replay (rust/src/meals.rs) never fails on a decoded meals event:
+
+- A recipe's latest save wins; an archived recipe stays archived and later
+  saves of it change nothing.
+- One dinner per date: the latest `DINNER_SET` in replay order wins, so two
+  devices that planned the same evening offline converge. `DINNER_CLEARED`
+  removes the dinner and its cook.
+- The cook is kept per date apart from the dinner, so replanning keeps it; it
+  shows only while the date has a dinner.
+- A dinner naming a recipe the history lacks, and an archive of an unknown
+  recipe, change nothing.
+- Commands are stricter: at most 200 active recipes, a staple link to an
+  active Staple (a link the recipe already had may stay after its staple is
+  archived), a dinner naming an active recipe by its current name, a cook only
+  for a date with a dinner, and every change must change something.
+
+Nothing here is counted or compared: who cooked is never totalled. Meals are
+not part of the KINS projection; hosts read them through `kin_meals` and plan
+Shopping additions through `kin_meal_shopping_plan`.
+
+## Item pictures (Simple view)
+
+Kind 64 (#344, [ADR 0013](decisions/0013-simple-view.md)) is a schema 1 event
+in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 64 | `ITEM_EMOJI_SET` | An item's picture emoji (one grapheme, validated as a chat reaction), or none to clear it |
+
+Replay (rust/src/simple.rs) never fails on a decoded emoji event: the latest
+one for an item wins, and an emoji for an item the history lacks, or one that
+is archived, is kept but never reported. Commands are stricter: the item
+exists and isn't archived, and the change changes something. The emoji sits
+beside an item's text and never replaces it. Hosts read emoji through
+`kin_item_emojis` and a member's things today through `kin_my_things`; neither
+is part of the KINS projection. Older devices pause sync with "unsupported"
+and keep their data until they update.
+
+## Store sections (Shopping)
+
+Kinds 66 and 67 (#411, [ADR 0015](decisions/0015-store-sections.md)) are
+schema 1 events in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 66 | `SHOPPING_SECTIONS_SET` | The household's whole ordered list of store sections (0–30, each a stable ID and a name of 1–40 UTF-8 bytes), replacing the previous list |
+| 67 | `ITEM_SECTION_SET` | An item's store section, or none (an all-zero section ID) to clear it |
+
+Replay (rust/src/store_sections.rs) never fails on a decoded event. The
+latest list in replay order wins; a section left out is gone. The latest
+section event for an item wins, and an item whose section is no longer listed
+(or never was) shows under none; its event is kept, so listing that section
+ID again brings the item back. The payloads are strict: at most 30 sections,
+non-zero and unique IDs, names already trimmed, 1–40 bytes, no control
+characters. Commands are stricter: no two names equal ignoring case, the list
+must change; an item's section needs the item to exist and not be archived,
+the section to be in the current list (or none), and a change. Sections are
+not areas: an item keeps its area. Hosts read sections through
+`kin_shopping_sections`, which is not part of the KINS projection. Older
+devices pause sync with "unsupported" and keep their data until they update.
+
+## Taking turns on routines
+
+Kinds 68 and 69 (#429, [ADR 0016](decisions/0016-routine-rotations.md)) are
+schema 1 events in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 68 | `ROUTINE_ROTATION_SET` | A routine's rotation: an ordered list of 2–12 distinct members and the index whose turn it is, replacing the previous one; an empty list ends it |
+| 69 | `ROUTINE_TURN_SET` | It's this listed member's turn on the routine now (Skip to next, Swap with…) |
+
+Replay (rust/src/rotations.rs, applied from replay/routines.rs) fails only
+for a routine the history lacks. A rotation or turn for an archived routine,
+and a turn naming a member the rotation no longer lists (or a routine with no
+rotation), are recorded with no effect. When `ROUTINE_OCCURRENCE_COMPLETED`
+newly completes an occurrence of a rotating routine, the turn moves to the
+next member in the list and that occurrence key is remembered; a duplicate
+completion of an occurrence already complete (two devices offline) changes
+nothing, so the turn moves once. `ROUTINE_OCCURRENCE_REOPENED` of the
+remembered occurrence (Undo) moves the turn back one and forgets it;
+reopening any other occurrence changes nothing. Setting a rotation or a turn
+forgets the key too.
+
+While a rotation is set, replay keeps the routine's responsibility equal to
+the current member, so KINS, This week and "my things today" show the
+current member as the owner. Ending the rotation writes nothing else: the
+last current member stays the owner as an ordinary responsibility. A
+`RESPONSIBILITY_CHANGED` for a rotating routine is recorded with no effect
+(commands refuse it). Rust counts every listed member as taking turns:
+membership (removed or expired members) is not in the history, so the host
+passes over inactive members when it shows the turn, shows no current turn
+with fewer than two active, and moves the turn on with a `ROUTINE_TURN_SET`
+when the current member isn't active. No count of turns per member exists.
+Hosts read rotations through `kin_routine_rotations`, which is not part of
+the KINS projection. Older devices pause sync with "unsupported" and keep
+## The sitter page
+
+Kind 70 (#442, [ADR 0017](decisions/0017-sitter-page.md)) is a schema 1 event
+in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 70 | `SITTER_PAGE_SET` | The household's page for Temporary members: an intro (0–500 UTF-8 bytes, empty for none) and an ordered list of up to 30 entries, each a note, reference record or routine by ID, replacing the previous page |
+
+Replay (rust/src/sitter.rs) never fails on a decoded event; the latest page
+in replay order wins. An entry whose record is archived, unknown, or of
+another kind is kept in the event but skipped when the page is read, so it
+shows again if that record appears later. The payload is strict: at most 30
+entries, kinds 1–3, non-zero IDs, no entry twice, the intro already trimmed
+with no control characters but newline. Commands are stricter: every entry
+names a record that exists and isn't archived, and the page must change.
+Only Adults may set it; the host checks that, because replay doesn't know
+member kinds. Entries point at records and copy nothing, so editing a note
+updates the page. Hosts read it through `kin_sitter_page`, which is not part
+of the KINS projection. Older devices pause sync with "unsupported" and keep
+their data until they update.
+
 ## v1.1.0 Household chat
 
 `CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and
-`CHAT_MESSAGE_DELETED` (46), `CHAT_REACTION_SET` (47), `CHAT_PIN_SET` (48), `CHAT_POLL_VOTE` (49) and `CHAT_POLL_CLOSED` (50) are schema 1 and leave replay protocol 24
+`CHAT_MESSAGE_DELETED` (46), `CHAT_REACTION_SET` (47), `CHAT_PIN_SET` (48), `CHAT_POLL_VOTE` (49), `CHAT_POLL_CLOSED` (50) and `CHAT_TOPIC_SET` (65) are schema 1 and leave replay protocol 24
 unchanged ([ABI](ABI.md) has the payloads; [ADR 0008](decisions/0008-household-chat.md)
 the product decisions).
 
@@ -378,6 +511,25 @@ the product decisions).
   (50) carries the message ID and 4 reserved bytes; only the poll's author
   closes it, and the first close stands. Deleting the poll for everyone drops
   its votes.
+- **Talk later (#312, [ADR 0014](decisions/0014-talk-later.md)).**
+  `CHAT_TOPIC_SET` (65) sets where one message stands on the "To talk
+  about" list: payload is the message ID, `state` u8 (0 cleared, 1 open, 2
+  resolved) and 3 reserved zero bytes (20 bytes). It is a chat event, so it
+  lives only in the chat log, under the chat key, and a member without chat
+  access never receives it. Replay keeps topics in the order first listed,
+  with who flagged each (the first actor since it was last cleared) and who
+  last changed it: the latest event in replay order wins whatever came
+  before, so an open or resolved event on a message with no topic lists it,
+  the same state again changes nothing, and cleared drops the topic. A topic
+  on a message the log lacks or that its author deleted changes nothing, and
+  the author's deletion drops the topic; an admin's removal is only known to
+  the service, so a page leaves the topic out while a named admin has removed
+  its message. At most 200 open or resolved topics are kept (`MAX_TOPICS`);
+  a new one past that changes nothing. Commands are stricter: open needs a
+  message that shows and no topic or a resolved one, and room under the
+  limit; resolved needs an open topic and a message that shows; cleared
+  needs a topic on a message not deleted. A command that would change
+  nothing is refused. Any member who can post may set one, as with a pin.
 - **Pins (#131).** `CHAT_PIN_SET` (48) pins or unpins one message: payload is
   the message ID, `on` u8 and 3 reserved zero bytes (20 bytes). Replay keeps
   pins in the order applied, with who pinned each: a pin of an unknown

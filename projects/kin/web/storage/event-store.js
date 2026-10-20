@@ -950,6 +950,8 @@ export class EventStore {
           validateContext(context);
           validateCursorBoundary(context, loadedEvents);
           const boundary = snapshotBoundary(loadedEvents);
+          // Meals views reuse this (see meals()), with the arena it names.
+          this.recentSyncIdentity = { epoch: loadedEvents.epoch, value: syncIdentityFromContext(context) };
           finish({
             // A HistoryView, not an array: pass it to the engine directly;
             // `.rows()` gives detached row objects.
@@ -1130,6 +1132,8 @@ export class EventStore {
             pendingCount: loadedEvents.length,
             initialized: false,
           };
+          // The sync identity or bindings may change: meals and names read again (recentHistory).
+          this.recentSyncIdentity = null;
           const contextWrite = contextStore.put(updatedContext);
           const stateWrite = syncStates.add(newState);
           contextWrite.onerror = () =>
@@ -1229,9 +1233,95 @@ export class EventStore {
    * history under its sync identity: [{ memberId, name }]. */
   async memberNames() {
     if (!this.engine) throw new EventStoreError("Kin could not read member names.");
-    const { events, syncIdentity } = await this.getCatchUpState();
+    const { events, syncIdentity } = await this.recentHistory();
     const { asOf, civilDate } = projectionContext();
     return this.engine.memberNames(events, asOf, civilDate, syncIdentity);
+  }
+
+  /** Meals (#333), replayed from the current history: { recipes, dinners }
+   * (kin-meals.js decodeMeals), dinners around the projection date. */
+  async meals() {
+    if (!this.engine) throw new EventStoreError("Kin could not read meals.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.meals(events, asOf, civilDate, syncIdentity);
+  }
+
+  /** Item emoji (#344): a Map itemId -> emoji. */
+  /** The seven days from `startCivilDate` (#417): items, routines, dinners
+   * and maintenance by day, from Rust. */
+  async week(startCivilDate) {
+    if (!this.engine) throw new EventStoreError("Kin could not read the week.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.week(startCivilDate, events, asOf, civilDate, syncIdentity);
+  }
+
+  async itemEmojis() {
+    if (!this.engine) throw new EventStoreError("Kin could not read item pictures.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.itemEmojis(events, asOf, civilDate, syncIdentity);
+  }
+
+  /** Store sections (#411, ADR 0015): { sections: [{ sectionId, name }],
+   * itemSections: Map itemId -> sectionId }. */
+  async shoppingSections() {
+    if (!this.engine) throw new EventStoreError("Kin could not read store sections.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.shoppingSections(events, asOf, civilDate, syncIdentity);
+  }
+
+  /** Taking turns (#429, ADR 0016): [{ routineId, memberIds, current, next }]
+   * for each rotating routine; kin-rotations.js turnAmong() passes over
+   * members who aren't active. */
+  async routineRotations() {
+    if (!this.engine) throw new EventStoreError("Kin could not read whose turn it is.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.routineRotations(events, asOf, civilDate, syncIdentity);
+  }
+  /** The sitter page (#442, ADR 0017): { intro, entries: [{ kind, id }] },
+   * the entries whose record exists and isn't archived, in the page's order.
+   * Changing it is Adult-only; the command append path checks that
+   * (kin-sitter.js). */
+  async sitterPage() {
+    if (!this.engine) throw new EventStoreError("Kin could not read the sitter page.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.sitterPage(events, asOf, civilDate, syncIdentity);
+  }
+
+  /** `memberId`'s things today (#344, ADR 0013), in Rust's order. */
+  async myThings(memberId) {
+    if (!this.engine) throw new EventStoreError("Kin could not read your things for today.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.myThings(memberId, events, asOf, civilDate, syncIdentity);
+  }
+
+  /**
+   * The history for a view that is read after every render (meals, names).
+   * The session arena already holds what the last read loaded plus this
+   * tab's appends since, so it's used as it is; another tab's changes arrive
+   * through the peer refresh, which reads and then renders. When the arena
+   * isn't known to be current (locked, rebuilt, never read), this reads.
+   */
+  async recentHistory() {
+    const recent = this.recentSyncIdentity;
+    if (recent && recent.epoch === this.arena.epoch && this.arena.generation !== null && this.arena.length > 0)
+      return { events: this.arena.view(), syncIdentity: recent.value };
+    return this.getCatchUpState();
+  }
+
+  /** What adding a recipe's ({ recipeId }) or a date's dinner's ({ date })
+   * ingredients to Shopping would do now (#333). */
+  async mealShoppingPlan(source) {
+    if (!this.engine) throw new EventStoreError("Kin could not plan the ingredients.");
+    const { events, syncIdentity } = await this.getCatchUpState();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.mealShoppingPlan(source, events, asOf, civilDate, syncIdentity);
   }
 
   updateSyncServerState(status) {
@@ -1733,6 +1823,8 @@ export class EventStore {
               abortWith(transaction, storageError(write.error));
           }
           context.sync_identity_bindings = [...bindingsByKey.values()];
+          // The sync identity or bindings may change: meals and names read again (recentHistory).
+          this.recentSyncIdentity = null;
           const contextWrite = contextStore.put(context);
           contextWrite.onerror = () =>
             abortWith(transaction, storageError(contextWrite.error));
@@ -2080,6 +2172,8 @@ export class EventStore {
             syncState.quarantine.length + syncState.quarantineDropped;
           syncState.syncCursor = nextCursor;
           syncState.cursorHighWater = nextCursor;
+          // The sync identity or bindings may change: meals and names read again (recentHistory).
+          this.recentSyncIdentity = null;
           const contextWrite = contextStore.put(context);
           const stateWrite = syncStates.put(syncState);
           contextWrite.onerror = () =>
@@ -2215,6 +2309,8 @@ export class EventStore {
             last_looked_local_sequence: boundary.localSequence,
             last_looked_at: Date.now(),
           };
+          // The sync identity or bindings may change: meals and names read again (recentHistory).
+          this.recentSyncIdentity = null;
           const write = contextStore.put(updatedContext);
           write.onerror = () =>
             abortWith(transaction, storageError(write.error));

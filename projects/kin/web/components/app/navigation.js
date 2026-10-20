@@ -10,14 +10,31 @@ export class NavigationController {
     this.app = ctx.app;
   }
 
+  /** The route for a location; Simple view allows only its pages (#345). */
+  routeFor(where) {
+    return this.app.simpleView ? this.ctx.simple.route(where) : resolveRoute(where);
+  }
+
   navigate(hash) {
-    const route = resolveRoute({ hash, pathname: location.pathname });
+    const route = this.routeFor({ hash, pathname: location.pathname });
+    // An old Talk link becomes Chat's address; the list still opens.
+    if (route.topics) this.pendingTopics = true;
     if (location.hash !== route.hash) history.pushState(null, "", route.hash);
     this.ctx.navigation.showPageFromLocation();
   }
   showPageFromLocation() {
     if (!this.app.pages || !this.app.navLinks) return;
-    const route = resolveRoute({ hash: location.hash, pathname: location.pathname });
+    let route = this.routeFor({ hash: location.hash, pathname: location.pathname });
+    // Without chat access (#123) Chat isn't there: its links, and the old
+    // Talk tab's, go to Handoffs, where the older topics then live (#312).
+    if (route.page === "updates" && route.segment === "chat" && this.app.chatAccess === "none" && !this.app.simpleView) {
+      route = { ...resolveRoute({ hash: routeHash("updates", "handoffs") }), ...(route.topics ? { topics: true } : {}) };
+      history.replaceState(null, "", route.hash);
+    } else if (route.topics) {
+      history.replaceState(null, "", route.hash);
+    }
+    // Simple view keeps the address on an allowed page.
+    if (this.app.simpleView && location.hash !== route.hash) history.replaceState(null, "", route.hash);
     const previous = this.app.route ?? null;
     const changed = previous?.canonical !== route.canonical;
     if (previous && changed) this.app.pageScroll.set(previous.canonical, window.scrollY);
@@ -38,14 +55,30 @@ export class NavigationController {
       for (const [segment, panel] of panels) panel.hidden = segment !== route.segment;
     }
     if (route.page === "routines") this.app.routines.view = route.segment;
+    if (route.page === "week") void this.ctx.week?.refresh();
+    void this.ctx.sitter?.refresh();
     // Details stay open only within the page that opened them.
     if (this.app.selection && this.app.selection.page !== route.page) this.ctx.detail.closeItemDetail({ restoreFocus: false });
     this.ctx.detail.mountDetail();
+    if (route.topics || this.pendingTopics) {
+      this.pendingTopics = false;
+      this.revealTopics();
+    }
     if (changed && previous) {
       const remembered = this.app.pageScroll.get(route.canonical) ?? 0;
       requestAnimationFrame(() => window.scrollTo({ top: remembered, behavior: "auto" }));
       if (route.page === "search") this.app.search.focusInput?.();
     }
+  }
+  /** The To talk about list (#312): Chat's panel, or the Handoffs section
+   * without chat access. */
+  revealTopics() {
+    if (this.app.chatAccess === "none") {
+      const section = this.app.talksStandalone;
+      requestAnimationFrame(() => { section?.scrollIntoView({ block: "start" }); section?.querySelector("h2")?.setAttribute("tabindex", "-1"); section?.querySelector("h2")?.focus({ preventScroll: true }); });
+      return;
+    }
+    this.app.chat?.openTopics?.();
   }
   // Shortcuts and palette commands act only on an unlocked, rendered
   // workspace; the security screen and its fields never see them.
@@ -54,7 +87,8 @@ export class NavigationController {
       this.app.siteTools && !this.app.siteTools.hidden && this.app.commandPalette?.isConnected);
   }
   handleShortcutKeydown(event) {
-    if (event.defaultPrevented || !this.ctx.navigation.workspaceReady()) return;
+    // Simple view has no keyboard shortcuts or command palette (#345).
+    if (event.defaultPrevented || this.app.simpleView || !this.ctx.navigation.workspaceReady()) return;
     const shortcut = shortcutForKey(event, { mac: this.app.macShortcuts });
     if (!shortcut) return;
     const openDialogs = [...this.app.querySelectorAll("dialog[open]")];
@@ -72,6 +106,7 @@ export class NavigationController {
     }
     if (openDialogs.length || isTypingContext(event, active)) return;
     event.preventDefault();
+    if (shortcut === "undo" || shortcut === "redo") { void this.ctx.undo.run(shortcut); return; }
     this.ctx.append.runWorkspaceCommand(shortcut, { opener });
   }
   layoutMode() {
@@ -120,7 +155,7 @@ export class NavigationController {
         return;
       case "talk":
         if (!this.app.state.talks.some((record) => record.talkId === detail.id && record.status !== "archived")) { unavailable(); return; }
-        reveal(routeHash("updates", "talk"), `[data-talk-id="${detail.id}"]`);
+        reveal("#updates/talk", `[data-talk-id="${detail.id}"]`);
         return;
       case "note":
         if (!(this.app.state.notes ?? []).some((record) => record.noteId === detail.id && !record.archived)) { unavailable(); return; }

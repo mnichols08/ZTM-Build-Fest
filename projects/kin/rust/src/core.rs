@@ -93,6 +93,114 @@ pub fn encode_member_names(members: &[state::MemberNameState]) -> Result<Vec<u8>
     Ok(bytes)
 }
 
+/// Meals (`kin_meals`, #333): the record-less KINE context against the
+/// household history; publishes KMLS (meals.rs). Dinners within the window
+/// around the context's civil date.
+pub fn meals(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    crate::meals::encode_meals(&state.meals, &state.items, context.civil_date)
+}
+
+/// Item emoji (`kin_item_emojis`, #344): the record-less KINE context
+/// against the household history; publishes KIEM (simple.rs).
+pub fn item_emojis(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    Ok(crate::simple::encode_emojis(&state.pictures, &state.items))
+}
+
+/// Store sections (`kin_shopping_sections`, #411): the record-less KINE
+/// context against the household history; publishes KSHS
+/// (store_sections.rs).
+pub fn shopping_sections(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    Ok(crate::store_sections::encode_sections(
+        &state.store_sections,
+        &state.items,
+    ))
+}
+
+/// Routine rotations (`kin_routine_rotations`, #429): the record-less KINE
+/// context against the household history; publishes KRRS (rotations.rs).
+pub fn routine_rotations(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    Ok(crate::rotations::encode_rotations(
+        &state.rotations,
+        &state.routines,
+    ))
+}
+
+/// The sitter page (`kin_sitter_page`, #442): the record-less KINE context
+/// against the household history; publishes KSIT (sitter.rs).
+pub fn sitter_page(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    Ok(crate::sitter::encode_page(
+        &state.sitter_page,
+        state.sitter_records(),
+    ))
+}
+
+/// A member's things today (`kin_my_things`, #344): KMTQ (simple.rs) and the
+/// record-less KINE context; publishes KMTD for the context's civil date.
+pub fn my_things(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let (member, context) = crate::simple::decode_query(input)?;
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    Ok(crate::simple::encode_my_things(&crate::simple::my_things(
+        &state,
+        member,
+        context.civil_date,
+    )))
+}
+
+/// KMPQ v1, a Shopping plan query (`kin_meal_shopping_plan`, #333): "KMPQ",
+/// version u16 = 1, reserved u16, source u8 (1 recipe, 2 a date's dinner),
+/// 3 reserved, recipe ID [16] (zero for a date), date u32 (zero for a
+/// recipe); 32 bytes, then the record-less KINE context. Publishes KMSP.
+pub fn meal_shopping_plan(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let query = input.get(..32).ok_or(KinError::MalformedProtocol)?;
+    if &query[..4] != b"KMPQ" || query[6..8] != [0, 0] || query[9..12] != [0, 0, 0] {
+        return Err(KinError::MalformedProtocol);
+    }
+    if u16::from_le_bytes([query[4], query[5]]) != 1 {
+        return Err(KinError::UnsupportedVersion);
+    }
+    let recipe = <[u8; 16]>::try_from(&query[12..28]).map_err(|_| KinError::MalformedProtocol)?;
+    let date = u32::from_le_bytes([query[28], query[29], query[30], query[31]]);
+    let source = match query[8] {
+        1 if recipe != [0; 16] && date == 0 => {
+            crate::meals::PlanSource::Recipe(crate::event::RecipeId(recipe))
+        }
+        2 if recipe == [0; 16] => {
+            crate::meals::PlanSource::Dinner(crate::recurrence::CivilDate::from_encoded(date)?)
+        }
+        _ => return Err(KinError::MalformedProtocol),
+    };
+    let context = decode_context(&input[32..])?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    Ok(crate::meals::encode_plan(
+        &state.meals.shopping_plan(source, &state.items)?,
+    ))
+}
+
 /// A chat page (`kin_chat_page`): a KCHQ request (chat.rs) carrying the
 /// record-less KINE context, against the instance's history. Texts of
 /// retired blobs, and of messages the page shows as deleted or removed, are

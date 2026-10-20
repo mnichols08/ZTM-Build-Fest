@@ -55,7 +55,12 @@ export class ViewBuilder {
     fridgeLink.className = "today-fridge-link";
     fridgeLink.href = routeHash("household", "fridge");
     fridgeLink.textContent = "Draw on the fridge";
-    today.querySelector(".page-intro").append(this.app.todayDate, fridgeLink);
+    // This week (#416): the next seven days in one list.
+    const weekLink = document.createElement("a");
+    weekLink.className = "today-week-link";
+    weekLink.href = "#week";
+    weekLink.textContent = "This week";
+    today.querySelector(".page-intro").append(this.app.todayDate, weekLink, fridgeLink);
     this.app.compose.setAttribute("mode", "today");
     this.app.compose.setAttribute("scope", "today");
     this.app.catchUp.setAttribute("aria-label", "Catch up since you last looked");
@@ -64,7 +69,7 @@ export class ViewBuilder {
     this.app.onboarding = document.createElement("section");
     this.app.onboarding.className = "today-section onboarding-card";
     this.app.onboarding.hidden = true;
-    today.append(this.app.compose, this.app.catchUp, this.app.onboarding, this.app.today);
+    today.append(this.app.compose, this.app.tonight, this.app.catchUp, this.app.onboarding, this.app.today);
 
     // Lists: one list at a time, each with its own quick-add; export lives in
     // the list actions with its warning at the point of use.
@@ -86,7 +91,16 @@ export class ViewBuilder {
     const calendarExportNote = document.createElement("p");
     calendarExportNote.className = "section-hint";
     calendarExportNote.textContent = "Exports every open item that has a planned date, from all lists. The downloaded .ics file is not encrypted and contains the item text.";
-    listActions.append(listActionsSummary, this.app.calendarExportButton, calendarExportNote);
+    // Bring a list into Kin (#452): paste a list or choose a CSV/text file.
+    const importButton = document.createElement("button");
+    importButton.type = "button";
+    importButton.className = "import-list-button";
+    importButton.textContent = "Import a list…";
+    importButton.addEventListener("click", () => this.ctx.importList.open({ opener: importButton }));
+    const importNote = document.createElement("p");
+    importNote.className = "section-hint";
+    importNote.textContent = "Paste a list or choose a CSV or text file from another app. It is read on this device; you choose what to add.";
+    listActions.append(listActionsSummary, this.app.calendarExportButton, calendarExportNote, importButton, importNote);
     lists.append(listActions);
     this.app.needs.display = "need";
     this.app.shopping.display = "shopping";
@@ -97,10 +111,16 @@ export class ViewBuilder {
       list.dataset.segment = segment;
       lists.append(list);
     }
+    this.app.meals.dataset.segment = "meals";
+    lists.append(this.app.meals);
+    listPanels.set("meals", this.app.meals);
     this.app.segmentPanels.set("lists", listPanels);
 
     const search = page("search", "Search");
     search.append(this.app.search);
+    const week = page("week", "This week", "The next seven days: planned items, routines, dinners and maintenance due. Move an item to another day from here.");
+    this.app.week = document.createElement("kin-week");
+    week.append(this.app.week);
 
     const routines = page("routines", "Routines", DESTINATION_DESCRIPTIONS.routines);
     const routinesNav = segmentNav("routines", "Routines");
@@ -115,15 +135,19 @@ export class ViewBuilder {
     const handoffPanel = document.createElement("section");
     handoffPanel.id = "handoffs-panel";
     handoffPanel.setAttribute("aria-label", "Handoffs");
-    const talkPanel = document.createElement("section");
-    talkPanel.id = "talk-panel";
-    talkPanel.setAttribute("aria-label", "Talk");
     const chatPanel = document.createElement("section");
     chatPanel.id = "chat-panel";
     chatPanel.setAttribute("aria-label", "Chat");
     handoffPanel.append(this.app.handoffs);
-    talkPanel.append(this.app.talks);
+    // To talk about (#312, ADR 0014): the older Talk topics live in Chat's
+    // list; without chat access, in their own section under Handoffs.
+    this.app.talksStandalone = document.createElement("section");
+    this.app.talksStandalone.id = "talk-standalone";
+    this.app.talksStandalone.className = "talk-standalone";
+    this.app.talksStandalone.hidden = true;
+    handoffPanel.append(this.app.talksStandalone);
     chatPanel.append(this.app.chat);
+    this.ctx.views.placeTalks();
     // The unread count (#133) from the chat view: on the Chat link and, where
     // the browser supports it, on the installed app's icon. Both are set from
     // what this device decrypted; no count is sent anywhere. A locked
@@ -137,12 +161,13 @@ export class ViewBuilder {
     // The admin's chat policy (#123): with no access, Chat leaves Updates.
     this.app.chat.addEventListener("kin:chat-access", (event) => {
       this.app.chatAccess = event.detail.access;
+      this.ctx.views.placeTalks();
       this.ctx.render.renderState();
       if (event.detail.access === "none" && this.app.route?.page === "updates" && this.app.route.segment === "chat")
         this.ctx.navigation.navigate(routeHash("updates", "handoffs"));
     });
-    updates.append(updatesNav, handoffPanel, talkPanel, chatPanel);
-    this.app.segmentPanels.set("updates", new Map([["handoffs", handoffPanel], ["talk", talkPanel], ["chat", chatPanel]]));
+    updates.append(updatesNav, handoffPanel, chatPanel);
+    this.app.segmentPanels.set("updates", new Map([["handoffs", handoffPanel], ["chat", chatPanel]]));
 
     // Household: an overview plus secondary destinations. Appearance remains
     // personal while the five primary destinations stay unchanged.
@@ -307,10 +332,20 @@ export class ViewBuilder {
     this.app.boardPolicy = document.createElement("kin-board-policy");
     appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance);
 
-    household.append(hub, fridgePage, notesPage, areasPage, peoplePage, privacyPage, appearancePage);
-    this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
+    // For the sitter (#441, ADR 0017).
+    const sitterPage = document.createElement("section");
+    sitterPage.className = "household-subpage sitter-page";
+    sitterPage.setAttribute("aria-label", "For the sitter");
+    this.app.sitterEditor = document.createElement("kin-sitter-editor");
+    sitterPage.append(this.app.sitterEditor);
+    household.append(hub, fridgePage, notesPage, sitterPage, areasPage, peoplePage, privacyPage, appearancePage);
+    this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["sitter", sitterPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
 
-    for (const section of [today, lists, search, routines, updates, household]) {
+    // For you (#441): the page a Temporary member lands on.
+    const foryou = page("foryou", "For you", "What the family left for you.");
+    this.app.sitterView = document.createElement("kin-sitter-page");
+    foryou.append(this.app.sitterView);
+    for (const section of [today, week, foryou, lists, search, routines, updates, household]) {
       this.app.pages.set(section.id, section);
       main.append(section);
     }
@@ -321,5 +356,25 @@ export class ViewBuilder {
     this.app.detailPanel.hidden = true;
     main.append(this.app.detailPanel);
     this.ctx.navigation.showPageFromLocation();
+  }
+
+  /** Where the older Talk topics show: in Chat's To talk about list, or,
+   * without chat access, in a section of their own under Handoffs. */
+  placeTalks() {
+    const talks = this.app.talks;
+    const host = this.app.talksStandalone;
+    if (!talks || !host) return;
+    const standalone = this.app.chatAccess === "none";
+    if (standalone) {
+      talks.setAttribute("heading", "To talk about");
+      if (talks.parentElement !== host) host.append(talks);
+      this.app.chat.legacyTopics = null;
+    } else {
+      talks.setAttribute("heading", "Other topics");
+      this.app.chat.legacyTopics = talks;
+      if (talks.parentElement === host) talks.remove();
+      if (this.app.chat.legacyHost && talks.parentElement !== this.app.chat.legacyHost) this.app.chat.legacyHost.append(talks);
+    }
+    host.hidden = !standalone;
   }
 }

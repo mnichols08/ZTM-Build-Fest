@@ -65,13 +65,18 @@ impl CivilDate {
         Self(low * 10_000 + month * 100 + day_of_year + 1)
     }
 
+    /// Days since 0001-01-01, for comparing dates a number of days apart.
+    pub fn day_number(self) -> u32 {
+        self.ordinal()
+    }
+
     /// Saturday or Sunday. Ordinal 0 (0001-01-01) is a Monday.
     pub fn is_weekend(self) -> bool {
         self.ordinal() % 7 >= 5
     }
 
-    /// The following civil date, or `None` past the representable range.
-    fn checked_add_days(self, days: u32) -> Option<Self> {
+    /// The date `days` later, or `None` past the representable range.
+    pub fn checked_add_days(self, days: u32) -> Option<Self> {
         let ordinal = self.ordinal().checked_add(days)?;
         (ordinal <= MAX_ORDINAL).then(|| Self::from_ordinal(ordinal))
     }

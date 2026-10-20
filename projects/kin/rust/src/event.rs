@@ -36,6 +36,10 @@ id_type!(AttachmentId);
 id_type!(ChatMessageId);
 // A fridge stroke, magnet or clear (#317, board.rs).
 id_type!(BoardId);
+// A saved recipe (#333, meals.rs).
+id_type!(RecipeId);
+// A Shopping store section, such as "Dairy" (#411, store_sections.rs).
+id_type!(StoreSectionId);
 
 /// What a chat message's content blob holds (#109).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -363,6 +367,13 @@ pub enum EventKind {
     ChatPollClosed {
         message_id: ChatMessageId,
     },
+    /// "Talk later" (#312, ADR 0014): puts a message on the "To talk about"
+    /// list (open), marks it talked about (resolved), or takes it off
+    /// (cleared). The latest in replay order wins.
+    ChatTopicSet {
+        message_id: ChatMessageId,
+        state: crate::chat::ChatTopicState,
+    },
     /// The fridge (#317, board.rs): a stroke in the board's coordinates.
     BoardStrokeAdded {
         stroke_id: BoardId,
@@ -394,8 +405,66 @@ pub enum EventKind {
     BoardCleared {
         clear_id: BoardId,
     },
+    /// Meals (#333, meals.rs): a recipe saved whole.
+    RecipeSaved {
+        recipe_id: RecipeId,
+        name: String,
+        ingredients: Vec<crate::meals::Ingredient>,
+        notes: String,
+    },
+    RecipeArchived {
+        recipe_id: RecipeId,
+    },
+    /// The dinner for one civil date: a recipe (with its name when planned)
+    /// or a one-off name.
+    DinnerSet {
+        date: CivilDate,
+        recipe_id: Option<RecipeId>,
+        name: String,
+    },
+    DinnerCleared {
+        date: CivilDate,
+    },
+    /// Who's cooking on a date; `None` is "No one yet".
+    DinnerCookSet {
+        date: CivilDate,
+        member_id: Option<ActorId>,
+    },
     BoardClearUndone {
         clear_id: BoardId,
+    },
+    /// Simple view (#344, simple.rs): an item's picture emoji; `None` clears.
+    ItemEmojiSet {
+        item_id: ItemId,
+        emoji: Option<String>,
+    },
+    /// Store sections (#411, store_sections.rs): the household's whole
+    /// ordered section list, replacing the previous one.
+    ShoppingSectionsSet {
+        sections: Vec<crate::store_sections::StoreSection>,
+    },
+    /// An item's store section; `None` clears it.
+    ItemSectionSet {
+        item_id: ItemId,
+        section_id: Option<StoreSectionId>,
+    },
+    /// Taking turns (#429, rotations.rs): a routine's ordered rotation and
+    /// the index whose turn it is; an empty list ends the rotation.
+    RoutineRotationSet {
+        routine_id: RoutineId,
+        members: Vec<ActorId>,
+        current: u8,
+    },
+    /// It's this listed member's turn on the routine now.
+    RoutineTurnSet {
+        routine_id: RoutineId,
+        member_id: ActorId,
+    },
+    /// The sitter page (#442, sitter.rs): an intro (empty for none) and the
+    /// ordered entries, replacing the previous page.
+    SitterPageSet {
+        intro: String,
+        entries: Vec<crate::sitter::SitterEntry>,
     },
 }
 
@@ -412,6 +481,7 @@ impl EventKind {
                 | EventKind::ChatPinSet { .. }
                 | EventKind::ChatPollVote { .. }
                 | EventKind::ChatPollClosed { .. }
+                | EventKind::ChatTopicSet { .. }
         )
     }
 

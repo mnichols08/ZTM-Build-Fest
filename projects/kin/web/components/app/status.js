@@ -17,15 +17,20 @@ export class StatusController {
     if (isBusy) {
       this.app.detail?.deferFocusedControl?.();
       this.app.chat?.deferFocusedControl?.();
+      this.app.meals?.deferFocusedControl?.();
+      this.app.simpleToday?.deferFocusedControl?.();
     }
     this.app.controlFieldset.disabled = controlsDisabled;
     // Header controls and a phone detail sheet live outside the fieldset.
     this.app.quickAdd.disabled = isBusy || !this.app.store;
     if (this.app.detail?.closest(".detail-sheet")) this.app.detail.disabled = controlsDisabled;
     if (this.app.lockButton) this.app.lockButton.disabled = isBusy;
+    if (this.app.shoppingMode) this.app.shoppingMode.disabled = controlsDisabled;
+    if (this.app.week) this.app.week.disabled = controlsDisabled;
+    if (this.app.sitterEditor) this.app.sitterEditor.disabled = controlsDisabled;
     this.app.retryButton.disabled = isBusy;
     if (!controlsDisabled) {
-      for (const component of [this.app.today, this.app.needs, this.app.shopping, this.app.staples, this.app.areas, this.app.notes, this.app.detail, this.app.chat])
+      for (const component of [this.app.today, this.app.needs, this.app.shopping, this.app.staples, this.app.areas, this.app.notes, this.app.detail, this.app.chat, this.app.meals, this.app.simpleToday])
         component?.settleDeferredFocus?.();
     }
   }
@@ -34,6 +39,7 @@ export class StatusController {
     clearTimeout(this.app.statusTimer);
     this.app.status.removeAttribute("data-stale");
     if (message) this.app.statusTimer = setTimeout(() => this.app.status.setAttribute("data-stale", "true"), 6_000);
+    this.ctx.undo?.syncStatus();
   }
   clearAlert() {
     this.app.feedback?.classList.remove("app-feedback-inline");

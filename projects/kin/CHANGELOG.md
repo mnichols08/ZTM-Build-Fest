@@ -9,6 +9,80 @@ documentation only.
 
 ### Added
 
+- **Taking turns on routines** (#428, [ADR 0016](docs/decisions/0016-routine-rotations.md)):
+  people take turns at a routine in an order you choose; the turn passes when
+  it's done, with Skip to next and Give this turn to…, and Today shows whose
+  turn it is. No scores.
+- **For the sitter** (#441, [ADR 0017](docs/decisions/0017-sitter-page.md)):
+  an Adult picks notes, contacts and routines for a babysitter, carer or guest;
+  a Temporary member lands on **For you**, which shows them live, with phone
+  numbers as tap-to-call links.
+- **This week** (#416): from Today, the next seven days in one list —
+  planned items, routines, dinners and maintenance due — with complete,
+  Undo and Move to… another day.
+- **Bring a list into Kin** (#452): paste several lines into a capture field,
+  or import a CSV or text file from another app, preview the rows (repeats
+  and existing items left out) and add them to To do or Shopping, with dates
+  and done states where the file has them.
+- **Store sections** (#411, [ADR 0015](docs/decisions/0015-store-sections.md)):
+  name the parts of the shop in the order you walk it, give items a section,
+  and shopping mode groups the list that way (Other last). Staples keep
+  their section when replenished. Event kinds 66 and 67; older devices pause
+  sync until updated.
+- **Shopping mode** (#403): Start shopping opens the list for the shop —
+  big checkboxes, ticked items into "In the basket" (Undo applies), and the
+  screen kept on while you shop where the browser allows.
+- **Share into Kin** (#389): choose Kin in another app's share sheet to add a
+  link, text, photo or PDF to To do, Shopping, a note, a handoff or Chat,
+  after a preview. The content never reaches the server. Home-screen
+  shortcuts: Quick add, Shopping, Chat and Today.
+- **Talk later** (#312, [ADR 0014](docs/decisions/0014-talk-later.md)): any
+  message can go on a **To talk about** list in Chat, marked in the
+  conversation, then be marked talked about, reopened or removed. The older
+  Talk topics sit in the same list. It's a side column at 1180px and wider,
+  and a panel from the chat toolbar elsewhere, its count in words. A flag is
+  a new chat event (kind 65), so members without chat access never see it;
+  they find the older topics under Handoffs.
+- **Updates has two tabs** (#313): Handoffs and Chat. The Talk tab is gone;
+  old Talk links open the To talk about list.
+- **Chat on a phone** (#310, #311): Chat fits the screen, with the message
+  list the only thing that scrolls, and opens at the newest message; Jump to
+  latest shows when you scroll up. The composer is one row ([+] [message]
+  [emoji] [Send or Voice]) and stays above the keyboard and the bottom bar.
+  Message actions open in one sheet: a long press or ⋯ on a touch screen (a
+  bottom sheet, reactions first), ⋯ or right-click with a mouse.
+- **Undo and redo** (#315): after adding, completing, reopening, archiving,
+  planning or pinning an item, or adding, completing or deleting a routine,
+  a toast offers **Undo**, then **Redo**; Ctrl/Cmd+Z and Shift+Ctrl/Cmd+Z (or
+  Ctrl+Y) do the same outside text fields. Each undo appends ordinary
+  reversing changes that sync; history is never rewritten. It is refused, in
+  plain words, when the thing changed since. Kept in memory for the session;
+  locking clears it.
+- **Delete routine** (#314) replaces "Stop repeating": no confirmation, the
+  toast's Undo brings it back with its schedule, owner and today's
+  completion. On a phone it lives in the row's ⋯ menu.
+- **Simple view** (#341, [ADR 0013](docs/decisions/0013-simple-view.md)): a
+  household admin turns on a calmer layout for a Limited member (People &
+  devices, with their passkey). The child's Kin then shows only Today, Chat
+  and the Fridge: big cards for their own things today with a picture, a
+  large Done that becomes Undo in place, and tonight's dinner. Nothing is
+  counted. It is a layout, not a lock: the service enforces only the switch
+  and Chat and Fridge access. Server schema 20 (`members.simple_view`), key
+  database version 6 (the cached layout, so an offline unlock stays simple).
+- **Item pictures** (#347): Adults give an item one emoji in its details; it
+  shows beside the item's text and large in Simple view. Event kind 64; older
+  devices pause sync with "update Kin" rather than drop it.
+- Assignee labels use members' preferred names, else "Household member N",
+  never "Household adult N" for a child (#344).
+- **Meals** (#333, [ADR 0012](docs/decisions/0012-meals.md)): Lists → Meals
+  plans the week's dinners, Monday to Sunday, from the household's own
+  recipes or "Something else", with who's cooking (anyone; nothing is
+  counted). Recipes are a name, ingredients one per line and notes; an
+  ingredient that exactly matches a Staple is linked to it. **Add ingredients
+  to Shopping** adds what's missing, re-adds linked Staples and skips what's
+  already listed, so adding twice never duplicates. Today shows Tonight's
+  dinner. Meals are household events (kinds 59–63); older devices pause sync
+  with "update Kin" rather than drop them.
 - A refresh keeps Kin unlocked in the same tab, including an accidental
   pull-down on a phone (#351, #354). Closing the tab, Lock, automatic lock and
   a lock from another tab still lock Kin, and the inactivity clock carries
@@ -71,6 +145,14 @@ direction; the tester sessions it calls for (#262, #269) have not run yet.
 
 ### Fixed
 
+- On a device without household sync, the fridge showed its drawing tools
+  and a blank line under the board, so it looked drawable and did nothing
+  (#372). The tools now wait for sync, and the board says the fridge is
+  shared through sync, with a link to People & devices.
+- Exporting a synced household refused its own fridge and chat ("Connect to
+  your household…") because the export expected the household ID in a
+  different form; restoring such an export now opens the right fridge and
+  chat (#372).
 - People & devices could be replaced mid-load by a pairing poll or household
   refresh from the previous view, losing the device list (#304, #305, #307).
 - The setup screen hides "Sign in using my phone" again while a claim is
