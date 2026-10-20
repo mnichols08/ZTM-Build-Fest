@@ -58,7 +58,8 @@ export async function mealsRegressions() {
   await waitFor(() => app.mealsState.dinners.find((dinner) => dinner.date === today)?.cookId === cook.options[1].value, "the cook is saved");
   await waitFor(() => app.tonight.querySelector(".tonight-line")?.textContent === "Meals regression leftovers · You're cooking", "Tonight on Today names the dinner and cook");
   plan.querySelector(".meal-dialog-actions button:last-child").click();
-  check(!plan.open && document.activeElement === planButton(), "closing returns focus to the day");
+  // The dialog's close event is queued, so focus moves a moment later.
+  await waitFor(() => !plan.open && document.activeElement === planButton(), "closing returns focus to the day");
 
   // A recipe linked to the Staple, then its ingredients on Shopping twice.
   meals.querySelector(".meals-recipes-head .add-button").click();
