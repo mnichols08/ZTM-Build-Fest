@@ -1336,409 +1336,442 @@ try {
   })()`);
   assert.equal(stateRegression.offline && stateRegression.revoked && stateRegression.cleared, true,
     `state notice stays attached through unlock-lock-unlock and offline/revoked-device states remain announced with truthful, human-readable copy (${JSON.stringify(stateRegression)})`);
-  // KIN_REGRESSION_PART splits this suite in two for parallel CI jobs (#329):
-  // 1 = the single-tab checks, 2 = the checks with a second tab. Each part
-  // does the shared setup above and the final checks below; unset runs both.
-  if (REGRESSION_PART !== "2") {
-    console.log(await first.evaluate(`(${regressions.toString()})()`));
-    await first.evaluate(`document.querySelector('kin-app').nav.querySelector('a[href="#routines"]').focus()`);
-    await first.send("Input.dispatchKeyEvent", {
-      type: "keyDown", key: "Enter", code: "Enter", text: "\r", windowsVirtualKeyCode: 13,
-    });
-    await first.send("Input.dispatchKeyEvent", {
-      type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13,
-    });
-    await visit(first, "routines");
-    assert.equal(
-      await first.evaluate("document.activeElement===document.querySelector('kin-app').navLinks.get('routines')"),
-      true,
-      "keyboard Enter activates a primary destination and retains navigation focus",
-    );
-    await visit(first, "today");
-    await visit(first, "updates/handoffs");
-    console.log(await first.evaluate(`(${handoffRegressions.toString()})()`));
-    assert.equal(await first.evaluate(`(()=>{
-      const app=document.querySelector('kin-app');
-      const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
-      links[1].click();
-      return location.hash==='#updates/talk' && links[1].getAttribute('aria-current')==='true' && !links[0].hasAttribute('aria-current') &&
-        document.querySelector('#handoffs-panel').hidden && !document.querySelector('#talk-panel').hidden &&
-        app.talks.querySelector('.talk-hint').textContent.includes('Topics to discuss');
-    })()`), true, "Handoffs/Talk segments switch by route and keep the concepts distinct");
-    console.log(await first.evaluate(`(${talkRegressions.toString()})()`));
-    await visit(first, "updates/chat");
-    assert.equal(await first.evaluate(`(()=>{const app=document.querySelector('kin-app');const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
-      return location.hash==='#updates/chat' && links[2]?.getAttribute('aria-current')==='true' && !document.querySelector('#chat-panel').hidden &&
-        document.querySelector('#talk-panel').hidden && Boolean(document.querySelector('kin-chat .chat-scroll'));
-    })()`), true, "Updates → Chat is the third segment");
-    console.log(await first.evaluate(`(${chatRegressions.toString()})()`));
-    await visit(first, "household/areas");
-    console.log(await first.evaluate(`(${pulseRegressions.toString()})()`));
-    console.log(
-      await first.evaluate(`(${pulseResilienceRegressions.toString()})()`),
-    );
-    await visit(first, "today");
-    console.log(await first.evaluate(`(${catchUpRegressions.toString()})()`));
-    await visit(first, "lists/shopping");
-    console.log(await first.evaluate(`(${shoppingRegressions.toString()})()`));
-    await visit(first, "today");
-    console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
-    await visit(first, "today");
-    console.log(await first.evaluate(`(${quickAddRegressions.toString()})()`));
-    await visit(first, "today");
-    console.log(await first.evaluate(`(${qrRegressions.toString()})(${JSON.stringify(qrExpected)})`));
-    await visit(first, "today");
-    console.log(await first.evaluate(`(${mobileUxRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
-    console.log(await attachmentUploadRegressions(first, { recovery: recoverySecret, visit: (id) => visit(first, id), scratch: profile }));
-    console.log(await first.evaluate(`(${workspaceUxRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
-    console.log(await workspaceViewportRegressions(first, { visit: (id) => visit(first, id) }));
-    await visit(first, "today");
-    console.log(await first.evaluate(`(${todayActionableRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
-    // The lifecycle suite unlocks while the network is deliberately offline, so
-    // the app's own status probe fails then. Only that exact failure, inside
-    // this window, is expected; every other console error still fails the run.
-    const offlineWindowStart = problems.length;
-    console.log(await todayLifecycleRegressions(first, { visit: (id) => visit(first, id), ready }));
-    const offlineStatusProbe = (entry) => entry.source === "network" && entry.text === "Failed to load resource: net::ERR_INTERNET_DISCONNECTED" &&
-      typeof entry.url === "string" && new URL(entry.url).origin === origin && new URL(entry.url).pathname === "/api/status";
-    problems.push(...problems.splice(offlineWindowStart).filter((entry) => !offlineStatusProbe(entry)));
-    console.log(await keyboardCommandRegressions(first, { visit: (id) => visit(first, id), ready }));
-    console.log(await bulkActionRegressions(first, { visit: (id) => visit(first, id), ready }));
-    console.log(await recurringTaskRegressions(first, { visit: (id) => visit(first, id), ready }));
-    // The hardening suite also unlocks offline; the same probe filter applies.
-    const hardeningOfflineStart = problems.length;
-    console.log(await dailyUxHardeningRegressions(first, { visit: (id) => visit(first, id), ready, tab }));
-    problems.push(...problems.splice(hardeningOfflineStart).filter((entry) => !offlineStatusProbe(entry)));
-    await visit(first, "routines");
-    console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
-    const playbookResult = await first.evaluate(async () => {
-      const app = document.querySelector("kin-app"), ui = app.routines;
-      const wait = async () => { for (let i = 0; app.busy && i < 300; i++) await new Promise(resolve => setTimeout(resolve, 10)); };
-      const form = ui.playbookList.parentElement.querySelector("form");
-      const titleErrorId = ui.playbookTitle.getAttribute("aria-describedby");
-      ui.playbookTitle.value = "界".repeat(43);
-      ui.playbookEntries.value = "A valid step";
-      form.requestSubmit();
-      const invalidCreateTitle = ui.playbookTitle.getAttribute("aria-invalid") === "true" && titleErrorId === ui.playbookTitleError.id && ui.playbookTitleError.textContent === "This checklist name is too long." && !ui.playbookTitleError.hidden && !app.busy;
-      ui.playbookTitle.value = "A valid title";
-      ui.playbookEntries.value = "界".repeat(86);
-      form.requestSubmit();
-      const entryErrorId = ui.playbookEntries.getAttribute("aria-describedby").split(/\s+/).find(id => id.includes("entry-error"));
-      const invalidCreateEntry = ui.playbookEntries.getAttribute("aria-invalid") === "true" && ui.playbookEntryErrors.querySelector(`#${entryErrorId}`)?.textContent === "Step 1: This step is too long." && !app.busy;
-      const uniqueIds = () => { const ids = [...document.querySelectorAll("[id]")].map(node => node.id); return ids.length === new Set(ids).size; };
-      const uniqueIdsAfterInvalid = uniqueIds();
-      ui.playbookTitle.value = "Regression playbook";
-      ui.playbookEntries.value = "First step\nSecond step";
-      form.requestSubmit();
-      await wait();
-      const record = app.state.playbooks.find(item => item.title === "Regression playbook");
-      if (!record || record.entries.join("|") !== "First step|Second step") return false;
-      const append = app.ctx.append.appendCommand;
-      let guardedAppends = 0;
-      app.ctx.append.appendCommand = async command => { guardedAppends++; return append.call(app.ctx.append, command); };
-      app.busy = true;
-      await app.ctx.routines.handlePlaybookIntent(new CustomEvent("kin:archive-playbook", { detail: { playbookId: record.playbookId } }));
-      app.busy = false;
+  // KIN_REGRESSION_PART splits this suite in two for parallel CI jobs (#329).
+  // Part 1 runs every single-tab check. Part 2 runs the quick in-page
+  // single-tab checks too, because the two-tab checks build on the handoffs,
+  // topics and routines they leave, then the two-tab checks; it skips the slow
+  // browser-driven sections marked `heavy`. Unset runs everything once.
+  const heavy = REGRESSION_PART !== "2";
+  console.log(await first.evaluate(`(${regressions.toString()})()`));
+  await first.evaluate(`document.querySelector('kin-app').nav.querySelector('a[href="#routines"]').focus()`);
+  await first.send("Input.dispatchKeyEvent", {
+    type: "keyDown", key: "Enter", code: "Enter", text: "\r", windowsVirtualKeyCode: 13,
+  });
+  await first.send("Input.dispatchKeyEvent", {
+    type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13,
+  });
+  await visit(first, "routines");
+  assert.equal(
+    await first.evaluate("document.activeElement===document.querySelector('kin-app').navLinks.get('routines')"),
+    true,
+    "keyboard Enter activates a primary destination and retains navigation focus",
+  );
+  await visit(first, "today");
+  await visit(first, "updates/handoffs");
+  console.log(await first.evaluate(`(${handoffRegressions.toString()})()`));
+  assert.equal(await first.evaluate(`(()=>{
+    const app=document.querySelector('kin-app');
+    const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
+    links[1].click();
+    return location.hash==='#updates/talk' && links[1].getAttribute('aria-current')==='true' && !links[0].hasAttribute('aria-current') &&
+      document.querySelector('#handoffs-panel').hidden && !document.querySelector('#talk-panel').hidden &&
+      app.talks.querySelector('.talk-hint').textContent.includes('Topics to discuss');
+  })()`), true, "Handoffs/Talk segments switch by route and keep the concepts distinct");
+  console.log(await first.evaluate(`(${talkRegressions.toString()})()`));
+  await visit(first, "updates/chat");
+  assert.equal(await first.evaluate(`(()=>{const app=document.querySelector('kin-app');const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
+    return location.hash==='#updates/chat' && links[2]?.getAttribute('aria-current')==='true' && !document.querySelector('#chat-panel').hidden &&
+      document.querySelector('#talk-panel').hidden && Boolean(document.querySelector('kin-chat .chat-scroll'));
+  })()`), true, "Updates → Chat is the third segment");
+  console.log(await first.evaluate(`(${chatRegressions.toString()})()`));
+  await visit(first, "household/areas");
+  console.log(await first.evaluate(`(${pulseRegressions.toString()})()`));
+  console.log(
+    await first.evaluate(`(${pulseResilienceRegressions.toString()})()`),
+  );
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${catchUpRegressions.toString()})()`));
+  await visit(first, "lists/shopping");
+  console.log(await first.evaluate(`(${shoppingRegressions.toString()})()`));
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${quickAddRegressions.toString()})()`));
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${qrRegressions.toString()})(${JSON.stringify(qrExpected)})`));
+  await visit(first, "today");
+  if (heavy) console.log(await first.evaluate(`(${mobileUxRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
+  if (heavy) console.log(await attachmentUploadRegressions(first, { recovery: recoverySecret, visit: (id) => visit(first, id), scratch: profile }));
+  if (heavy) console.log(await first.evaluate(`(${workspaceUxRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
+  if (heavy) console.log(await workspaceViewportRegressions(first, { visit: (id) => visit(first, id) }));
+  await visit(first, "today");
+  if (heavy) console.log(await first.evaluate(`(${todayActionableRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
+  // The lifecycle suite unlocks while the network is deliberately offline, so
+  // the app's own status probe fails then. Only that exact failure, inside
+  // this window, is expected; every other console error still fails the run.
+  const offlineWindowStart = problems.length;
+  if (heavy) console.log(await todayLifecycleRegressions(first, { visit: (id) => visit(first, id), ready }));
+  const offlineStatusProbe = (entry) => entry.source === "network" && entry.text === "Failed to load resource: net::ERR_INTERNET_DISCONNECTED" &&
+    typeof entry.url === "string" && new URL(entry.url).origin === origin && new URL(entry.url).pathname === "/api/status";
+  problems.push(...problems.splice(offlineWindowStart).filter((entry) => !offlineStatusProbe(entry)));
+  if (heavy) console.log(await keyboardCommandRegressions(first, { visit: (id) => visit(first, id), ready }));
+  if (heavy) console.log(await bulkActionRegressions(first, { visit: (id) => visit(first, id), ready }));
+  if (heavy) console.log(await recurringTaskRegressions(first, { visit: (id) => visit(first, id), ready }));
+  // The hardening suite also unlocks offline; the same probe filter applies.
+  const hardeningOfflineStart = problems.length;
+  if (heavy) console.log(await dailyUxHardeningRegressions(first, { visit: (id) => visit(first, id), ready, tab }));
+  problems.push(...problems.splice(hardeningOfflineStart).filter((entry) => !offlineStatusProbe(entry)));
+  await visit(first, "routines");
+  console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
+  const playbookResult = await first.evaluate(async () => {
+    const app = document.querySelector("kin-app"), ui = app.routines;
+    const wait = async () => { for (let i = 0; app.busy && i < 300; i++) await new Promise(resolve => setTimeout(resolve, 10)); };
+    const form = ui.playbookList.parentElement.querySelector("form");
+    const titleErrorId = ui.playbookTitle.getAttribute("aria-describedby");
+    ui.playbookTitle.value = "界".repeat(43);
+    ui.playbookEntries.value = "A valid step";
+    form.requestSubmit();
+    const invalidCreateTitle = ui.playbookTitle.getAttribute("aria-invalid") === "true" && titleErrorId === ui.playbookTitleError.id && ui.playbookTitleError.textContent === "This checklist name is too long." && !ui.playbookTitleError.hidden && !app.busy;
+    ui.playbookTitle.value = "A valid title";
+    ui.playbookEntries.value = "界".repeat(86);
+    form.requestSubmit();
+    const entryErrorId = ui.playbookEntries.getAttribute("aria-describedby").split(/\s+/).find(id => id.includes("entry-error"));
+    const invalidCreateEntry = ui.playbookEntries.getAttribute("aria-invalid") === "true" && ui.playbookEntryErrors.querySelector(`#${entryErrorId}`)?.textContent === "Step 1: This step is too long." && !app.busy;
+    const uniqueIds = () => { const ids = [...document.querySelectorAll("[id]")].map(node => node.id); return ids.length === new Set(ids).size; };
+    const uniqueIdsAfterInvalid = uniqueIds();
+    ui.playbookTitle.value = "Regression playbook";
+    ui.playbookEntries.value = "First step\nSecond step";
+    form.requestSubmit();
+    await wait();
+    const record = app.state.playbooks.find(item => item.title === "Regression playbook");
+    if (!record || record.entries.join("|") !== "First step|Second step") return false;
+    const append = app.ctx.append.appendCommand;
+    let guardedAppends = 0;
+    app.ctx.append.appendCommand = async command => { guardedAppends++; return append.call(app.ctx.append, command); };
+    app.busy = true;
+    await app.ctx.routines.handlePlaybookIntent(new CustomEvent("kin:archive-playbook", { detail: { playbookId: record.playbookId } }));
+    app.busy = false;
+    app.ctx.append.appendCommand = append;
+    const operationGuarded = guardedAppends === 0 && !app.state.playbooks.find(value => value.playbookId === record.playbookId).archived;
+    const instantiate = app.ctx.routines.instantiatePlaybook.bind(app.ctx.routines); let savedBatch;
+    app.ctx.routines.instantiatePlaybook = batch => { savedBatch = batch; return instantiate(batch); };
+    const appendForChecklist = app.ctx.append.appendCommand;
+    const renderForChecklist = app.ctx.render.renderState;
+    const broadcastForChecklist = app.ctx.peers.broadcastEventChange;
+    let checklistSteps = 0, partialRenders = 0, partialBroadcasts = 0;
+    app.ctx.append.appendCommand = async command => {
+      if (command.type === "add-item-step" && ++checklistSteps === 2)
+        throw Object.assign(new Error("Synthetic checklist failure"), { userMessage: "Kin could not save that change locally." });
+      return appendForChecklist.call(app.ctx.append, command);
+    };
+    app.ctx.render.renderState = (...args) => { partialRenders++; return renderForChecklist.apply(app.ctx.render, args); };
+    app.ctx.peers.broadcastEventChange = (...args) => { partialBroadcasts++; return broadcastForChecklist.apply(app.ctx.peers, args); };
+    [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Use checklist").click();
+    await wait();
+    app.ctx.append.appendCommand = appendForChecklist;
+    app.ctx.render.renderState = renderForChecklist;
+    app.ctx.peers.broadcastEventChange = broadcastForChecklist;
+    const partialItem = app.state.items.find(value => value.text === "Regression playbook");
+    const partialReported = partialItem?.steps.length === 1 && partialRenders === 1 && partialBroadcasts === 1 &&
+      app.alert.textContent === "Checklist partly created. Retry to add the remaining steps." && !app.retryButton.hidden;
+    app.retryButton.click();
+    await wait();
+    const item = app.state.items.find(value => value.text === "Regression playbook");
+    if (!item || item.steps.map(step => step.text).join("|") !== "First step|Second step") return false;
+    const itemCount = app.state.items.length;
+    await instantiate(savedBatch); await wait();
+    if (app.state.items.length !== itemCount || app.state.items.find(value => value.itemId === item.itemId).steps.length !== 2) return false;
+    [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Edit").click();
+    ui.playbookTitle.value = "P".repeat(129); ui.playbookEntries.value = "Changed later";
+    form.requestSubmit();
+    const invalidEditTitle = ui.playbookTitle.getAttribute("aria-invalid") === "true" && ui.playbookTitleError.textContent === "This checklist name is too long." && app.state.playbooks.find(value => value.playbookId === record.playbookId).title === "Regression playbook" && !app.busy;
+    ui.playbookTitle.value = "Edited template"; ui.playbookEntries.value = "Changed later\n";
+    form.requestSubmit();
+    const emptyEditStepId = ui.playbookEntries.getAttribute("aria-describedby").split(/\s+/).find(id => id.includes("entry-error"));
+    const invalidEditEntry = ui.playbookEntries.getAttribute("aria-invalid") === "true" && ui.playbookEntryErrors.querySelector(`#${emptyEditStepId}`)?.textContent === "Step 2: Checklist steps can't be empty." && !app.busy;
+    ui.playbookTitle.value = "Edited template"; ui.playbookEntries.value = "Changed later";
+    form.requestSubmit(); await wait();
+    const independent = app.state.items.find(value => value.itemId === item.itemId);
+    if (independent.text !== "Regression playbook" || independent.steps[0].text !== "First step") return false;
+    [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Archive").click(); await wait();
+    return { archived: app.state.playbooks.find(value => value.playbookId === record.playbookId).archived, invalidCreateTitle, invalidCreateEntry, invalidEditTitle, invalidEditEntry, uniqueIdsAfterInvalid, operationGuarded, partialReported };
+  });
+  assert.equal(playbookResult.archived, true, "Playbooks save ordered entries, instantiate independent checklist state, edit, and archive");
+  assert.equal(playbookResult.invalidCreateTitle, true, "Playbook create rejects overlong UTF-8 title with associated inline feedback");
+  assert.equal(playbookResult.invalidCreateEntry, true, "Playbook create rejects overlong UTF-8 step with associated inline feedback");
+  assert.equal(playbookResult.invalidEditTitle, true, "Playbook edit uses the same title validation");
+  assert.equal(playbookResult.invalidEditEntry, true, "Playbook edit rejects an empty step with associated inline feedback");
+  assert.equal(playbookResult.uniqueIdsAfterInvalid, true, "Playbook validation keeps DOM IDs unique");
+  assert.equal(playbookResult.operationGuarded, true, "Playbook commands refuse overlapping work at the handler boundary");
+  assert.equal(playbookResult.partialReported, true, "A partial Playbook instantiation renders committed work, notifies peers, and offers Retry");
+  console.log("PASS Playbook authoring, independent checklist instantiation, edit, and archive");
+  const responsibilityLifecycle = await first.evaluate(async () => {
+    const app = document.querySelector("kin-app");
+    const item = app.state.items.find(value => value.text === "Regression playbook");
+    const memberId = app.ctx.detail.responsibilityContext().memberId;
+    if (!item || !memberId) return false;
+    const append = app.ctx.append.appendCommand;
+    const render = app.ctx.render.renderState;
+    const flush = app.ctx.peers.flushPeerRefresh;
+    let renders = 0, flushes = 0;
+    app.ctx.append.appendCommand = async command => {
+      const result = await append.call(app.ctx.append, command);
+      if (command.type === "change-responsibility") app.pendingRefresh = true;
+      return result;
+    };
+    app.ctx.render.renderState = (...args) => { renders++; return render.apply(app.ctx.render, args); };
+    app.ctx.peers.flushPeerRefresh = (...args) => { flushes++; return flush.apply(app.ctx.peers, args); };
+    try {
+      await app.ctx.items.handleChangeResponsibility({ detail: { targetKind: "item", targetId: item.itemId, memberId } });
+    } finally {
       app.ctx.append.appendCommand = append;
-      const operationGuarded = guardedAppends === 0 && !app.state.playbooks.find(value => value.playbookId === record.playbookId).archived;
-      const instantiate = app.ctx.routines.instantiatePlaybook.bind(app.ctx.routines); let savedBatch;
-      app.ctx.routines.instantiatePlaybook = batch => { savedBatch = batch; return instantiate(batch); };
-      const appendForChecklist = app.ctx.append.appendCommand;
-      const renderForChecklist = app.ctx.render.renderState;
-      const broadcastForChecklist = app.ctx.peers.broadcastEventChange;
-      let checklistSteps = 0, partialRenders = 0, partialBroadcasts = 0;
-      app.ctx.append.appendCommand = async command => {
-        if (command.type === "add-item-step" && ++checklistSteps === 2)
-          throw Object.assign(new Error("Synthetic checklist failure"), { userMessage: "Kin could not save that change locally." });
-        return appendForChecklist.call(app.ctx.append, command);
-      };
-      app.ctx.render.renderState = (...args) => { partialRenders++; return renderForChecklist.apply(app.ctx.render, args); };
-      app.ctx.peers.broadcastEventChange = (...args) => { partialBroadcasts++; return broadcastForChecklist.apply(app.ctx.peers, args); };
-      [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Use checklist").click();
-      await wait();
-      app.ctx.append.appendCommand = appendForChecklist;
-      app.ctx.render.renderState = renderForChecklist;
-      app.ctx.peers.broadcastEventChange = broadcastForChecklist;
-      const partialItem = app.state.items.find(value => value.text === "Regression playbook");
-      const partialReported = partialItem?.steps.length === 1 && partialRenders === 1 && partialBroadcasts === 1 &&
-        app.alert.textContent === "Checklist partly created. Retry to add the remaining steps." && !app.retryButton.hidden;
-      app.retryButton.click();
-      await wait();
-      const item = app.state.items.find(value => value.text === "Regression playbook");
-      if (!item || item.steps.map(step => step.text).join("|") !== "First step|Second step") return false;
-      const itemCount = app.state.items.length;
-      await instantiate(savedBatch); await wait();
-      if (app.state.items.length !== itemCount || app.state.items.find(value => value.itemId === item.itemId).steps.length !== 2) return false;
-      [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Edit").click();
-      ui.playbookTitle.value = "P".repeat(129); ui.playbookEntries.value = "Changed later";
-      form.requestSubmit();
-      const invalidEditTitle = ui.playbookTitle.getAttribute("aria-invalid") === "true" && ui.playbookTitleError.textContent === "This checklist name is too long." && app.state.playbooks.find(value => value.playbookId === record.playbookId).title === "Regression playbook" && !app.busy;
-      ui.playbookTitle.value = "Edited template"; ui.playbookEntries.value = "Changed later\n";
-      form.requestSubmit();
-      const emptyEditStepId = ui.playbookEntries.getAttribute("aria-describedby").split(/\s+/).find(id => id.includes("entry-error"));
-      const invalidEditEntry = ui.playbookEntries.getAttribute("aria-invalid") === "true" && ui.playbookEntryErrors.querySelector(`#${emptyEditStepId}`)?.textContent === "Step 2: Checklist steps can't be empty." && !app.busy;
-      ui.playbookTitle.value = "Edited template"; ui.playbookEntries.value = "Changed later";
-      form.requestSubmit(); await wait();
-      const independent = app.state.items.find(value => value.itemId === item.itemId);
-      if (independent.text !== "Regression playbook" || independent.steps[0].text !== "First step") return false;
-      [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Archive").click(); await wait();
-      return { archived: app.state.playbooks.find(value => value.playbookId === record.playbookId).archived, invalidCreateTitle, invalidCreateEntry, invalidEditTitle, invalidEditEntry, uniqueIdsAfterInvalid, operationGuarded, partialReported };
-    });
-    assert.equal(playbookResult.archived, true, "Playbooks save ordered entries, instantiate independent checklist state, edit, and archive");
-    assert.equal(playbookResult.invalidCreateTitle, true, "Playbook create rejects overlong UTF-8 title with associated inline feedback");
-    assert.equal(playbookResult.invalidCreateEntry, true, "Playbook create rejects overlong UTF-8 step with associated inline feedback");
-    assert.equal(playbookResult.invalidEditTitle, true, "Playbook edit uses the same title validation");
-    assert.equal(playbookResult.invalidEditEntry, true, "Playbook edit rejects an empty step with associated inline feedback");
-    assert.equal(playbookResult.uniqueIdsAfterInvalid, true, "Playbook validation keeps DOM IDs unique");
-    assert.equal(playbookResult.operationGuarded, true, "Playbook commands refuse overlapping work at the handler boundary");
-    assert.equal(playbookResult.partialReported, true, "A partial Playbook instantiation renders committed work, notifies peers, and offers Retry");
-    console.log("PASS Playbook authoring, independent checklist instantiation, edit, and archive");
-    const responsibilityLifecycle = await first.evaluate(async () => {
-      const app = document.querySelector("kin-app");
-      const item = app.state.items.find(value => value.text === "Regression playbook");
-      const memberId = app.ctx.detail.responsibilityContext().memberId;
-      if (!item || !memberId) return false;
-      const append = app.ctx.append.appendCommand;
-      const render = app.ctx.render.renderState;
-      const flush = app.ctx.peers.flushPeerRefresh;
-      let renders = 0, flushes = 0;
-      app.ctx.append.appendCommand = async command => {
-        const result = await append.call(app.ctx.append, command);
-        if (command.type === "change-responsibility") app.pendingRefresh = true;
-        return result;
-      };
-      app.ctx.render.renderState = (...args) => { renders++; return render.apply(app.ctx.render, args); };
-      app.ctx.peers.flushPeerRefresh = (...args) => { flushes++; return flush.apply(app.ctx.peers, args); };
-      try {
-        await app.ctx.items.handleChangeResponsibility({ detail: { targetKind: "item", targetId: item.itemId, memberId } });
-      } finally {
-        app.ctx.append.appendCommand = append;
-        app.ctx.render.renderState = render;
-        app.ctx.peers.flushPeerRefresh = flush;
-      }
-      await new Promise(resolve => setTimeout(resolve, 0));
-      for (let index = 0; index < 300 && (app.busy || app.refreshing || app.pendingRefresh); index++) await new Promise(resolve => setTimeout(resolve, 10));
-      const owner = app.state.responsibilities.find(value => value.targetKind === "item" && value.targetId === item.itemId)?.memberId;
-      const renderedOwner = app.needs.ownerContext?.responsibilities?.find(value => value.targetKind === "item" && value.targetId === item.itemId)?.memberId;
-      return owner === memberId && renderedOwner === memberId && renders >= 1 && flushes === 1 && !app.busy && !app.refreshing && !app.pendingRefresh;
-    });
-    assert.equal(responsibilityLifecycle, true, "Responsibility changes render committed ownership and flush refreshes deferred while busy");
-    await visit(first, "today");
-    const backgroundResponsibilityFocus = await first.evaluate(async () => {
-      const app = document.querySelector("kin-app");
-      const input = app.compose.input;
-      const item = app.state.items.find(value => value.status !== "archived");
-      const currentMember = app.ctx.detail.responsibilityContext().memberId;
-      if (!item || !currentMember) return false;
-      const append = app.ctx.append.appendCommand;
-      const setBusy = app.ctx.status.setBusy;
-      const coordinator = app.syncCoordinator;
-      const responsibilities = app.state.responsibilities;
-      let busyCalls = 0;
-      app.syncCoordinator = {
-        ...(coordinator ?? {}),
-        identity: { ...(coordinator?.identity ?? {}), memberId: currentMember },
-      };
-      app.activeMemberIds = [currentMember];
-      app.state.responsibilities = [{ targetKind: "item", targetId: item.itemId, memberId: "ff".repeat(16) }];
-      app.ctx.append.appendCommand = async command => {
-        await Promise.resolve();
-        if (command.type === "change-responsibility") app.state.responsibilities = [];
-      };
-      app.ctx.status.setBusy = (...args) => { busyCalls++; return setBusy.apply(app.ctx.status, args); };
-      input.focus();
-      try {
-        await app.ctx.sync.reconcileResponsibilityMembers();
-        return busyCalls === 0 && !app.compose.input.disabled && document.activeElement === app.compose.input;
-      } finally {
-        app.ctx.append.appendCommand = append;
-        app.ctx.status.setBusy = setBusy;
-        app.syncCoordinator = coordinator;
-        app.state.responsibilities = responsibilities;
-      }
-    });
-    assert.equal(backgroundResponsibilityFocus, true, "Background responsibility reconciliation leaves Today capture enabled and focused");
-    // #351: a refresh keeps Kin unlocked in the same tab; Lock, the setting and
-    // a non-refresh navigation still leave it locked.
-    {
-      const safely = (expression) => async () => { try { return await first.evaluate(expression); } catch { return false; } };
-      const settled = safely('(()=>{const app=document.querySelector("kin-app");return Boolean(app?.security?.heading)&&!app.busy&&(app.security.phase!=="unlocked"||Boolean(app.store))&&!app.starting})()');
-      const phase = () => first.evaluate('document.querySelector("kin-app").security.phase');
-      const armed = safely('Boolean(document.querySelector("kin-app")?.reloadResume?.armed)');
-      assert.equal(await first.evaluate('getComputedStyle(document.documentElement).overscrollBehaviorY'), "none",
-        "the page root stops the browser's pull-to-refresh");
-      await first.evaluate('(()=>{localStorage.setItem("kin.reload-resume-enabled","on");const app=document.querySelector("kin-app");return app.reloadResume.arm(app.vault)})()');
-      await until(armed);
-      await first.evaluate('location.hash="#lists/shopping"');
-      await first.send("Page.reload");
-      await until(settled, { attempts: 600 });
-      await until(safely('document.querySelector("kin-app").security.phase==="unlocked"&&Boolean(document.querySelector("kin-app").store)'), { attempts: 600 });
-      assert.equal(await first.evaluate('location.hash'), "#lists/shopping", "a refresh keeps Kin unlocked on the same page");
-      assert.equal(await first.evaluate('sessionStorage.getItem("kin.reload-resume")'), null, "the resume ticket is used once");
-      await until(armed);
-      await first.evaluate('document.querySelector("kin-app").lockButton.click()');
-      await until(safely('document.querySelector("kin-app").security.phase!=="unlocked"'));
-      await first.send("Page.reload");
-      await until(settled, { attempts: 600 });
-      await delay(500);
-      assert.notEqual(await phase(), "unlocked", "after Lock, a refresh stays locked");
-      await ready(first);
-      await until(armed);
-      await first.send("Page.navigate", { url: `${origin}/?resume-check=1#today` });
-      await until(settled, { attempts: 600 });
-      await delay(500);
-      assert.notEqual(await phase(), "unlocked", "navigating to Kin again (not a refresh) stays locked");
-      await ready(first);
-      await first.evaluate('localStorage.setItem("kin.reload-resume-enabled","off")');
-      await first.send("Page.reload");
-      await until(settled, { attempts: 600 });
-      await delay(500);
-      assert.notEqual(await phase(), "unlocked", "with the setting off, a refresh locks like closing the tab");
-      await ready(first);
-      await first.evaluate('location.hash="#today"');
-      console.log("PASS refresh keeps Kin unlocked in the same tab; Lock, navigation and the setting still lock (#351)");
+      app.ctx.render.renderState = render;
+      app.ctx.peers.flushPeerRefresh = flush;
     }
-    console.log(await fridgeRegressions(first, until));
-    await first.evaluate(
-      'sessionStorage.setItem("kin.test.expectedState", JSON.stringify(document.querySelector("kin-app").state))',
-    );
+    await new Promise(resolve => setTimeout(resolve, 0));
+    for (let index = 0; index < 300 && (app.busy || app.refreshing || app.pendingRefresh); index++) await new Promise(resolve => setTimeout(resolve, 10));
+    const owner = app.state.responsibilities.find(value => value.targetKind === "item" && value.targetId === item.itemId)?.memberId;
+    const renderedOwner = app.needs.ownerContext?.responsibilities?.find(value => value.targetKind === "item" && value.targetId === item.itemId)?.memberId;
+    return owner === memberId && renderedOwner === memberId && renders >= 1 && flushes === 1 && !app.busy && !app.refreshing && !app.pendingRefresh;
+  });
+  assert.equal(responsibilityLifecycle, true, "Responsibility changes render committed ownership and flush refreshes deferred while busy");
+  await visit(first, "today");
+  const backgroundResponsibilityFocus = await first.evaluate(async () => {
+    const app = document.querySelector("kin-app");
+    const input = app.compose.input;
+    const item = app.state.items.find(value => value.status !== "archived");
+    const currentMember = app.ctx.detail.responsibilityContext().memberId;
+    if (!item || !currentMember) return false;
+    const append = app.ctx.append.appendCommand;
+    const setBusy = app.ctx.status.setBusy;
+    const coordinator = app.syncCoordinator;
+    const responsibilities = app.state.responsibilities;
+    let busyCalls = 0;
+    app.syncCoordinator = {
+      ...(coordinator ?? {}),
+      identity: { ...(coordinator?.identity ?? {}), memberId: currentMember },
+    };
+    app.activeMemberIds = [currentMember];
+    app.state.responsibilities = [{ targetKind: "item", targetId: item.itemId, memberId: "ff".repeat(16) }];
+    app.ctx.append.appendCommand = async command => {
+      await Promise.resolve();
+      if (command.type === "change-responsibility") app.state.responsibilities = [];
+    };
+    app.ctx.status.setBusy = (...args) => { busyCalls++; return setBusy.apply(app.ctx.status, args); };
+    input.focus();
+    try {
+      await app.ctx.sync.reconcileResponsibilityMembers();
+      return busyCalls === 0 && !app.compose.input.disabled && document.activeElement === app.compose.input;
+    } finally {
+      app.ctx.append.appendCommand = append;
+      app.ctx.status.setBusy = setBusy;
+      app.syncCoordinator = coordinator;
+      app.state.responsibilities = responsibilities;
+    }
+  });
+  assert.equal(backgroundResponsibilityFocus, true, "Background responsibility reconciliation leaves Today capture enabled and focused");
+  // #351: a refresh keeps Kin unlocked in the same tab; Lock, the setting and
+  // a non-refresh navigation still leave it locked.
+  if (heavy) {
+    const safely = (expression) => async () => { try { return await first.evaluate(expression); } catch { return false; } };
+    const settled = safely('(()=>{const app=document.querySelector("kin-app");return Boolean(app?.security?.heading)&&!app.busy&&(app.security.phase!=="unlocked"||Boolean(app.store))&&!app.starting})()');
+    const phase = () => first.evaluate('document.querySelector("kin-app").security.phase');
+    const armed = safely('Boolean(document.querySelector("kin-app")?.reloadResume?.armed)');
+    assert.equal(await first.evaluate('getComputedStyle(document.documentElement).overscrollBehaviorY'), "none",
+      "the page root stops the browser's pull-to-refresh");
+    await first.evaluate('(()=>{localStorage.setItem("kin.reload-resume-enabled","on");const app=document.querySelector("kin-app");return app.reloadResume.arm(app.vault)})()');
+    await until(armed);
+    await first.evaluate('location.hash="#lists/shopping"');
     await first.send("Page.reload");
+    await until(settled, { attempts: 600 });
+    await until(safely('document.querySelector("kin-app").security.phase==="unlocked"&&Boolean(document.querySelector("kin-app").store)'), { attempts: 600 });
+    assert.equal(await first.evaluate('location.hash'), "#lists/shopping", "a refresh keeps Kin unlocked on the same page");
+    assert.equal(await first.evaluate('sessionStorage.getItem("kin.reload-resume")'), null, "the resume ticket is used once");
+    await until(armed);
+    await first.evaluate('document.querySelector("kin-app").lockButton.click()');
+    await until(safely('document.querySelector("kin-app").security.phase!=="unlocked"'));
+    await first.send("Page.reload");
+    await until(settled, { attempts: 600 });
+    await delay(500);
+    assert.notEqual(await phase(), "unlocked", "after Lock, a refresh stays locked");
     await ready(first);
-    const stateDifferences = await first.evaluate(`(() => {
-      const before = JSON.parse(sessionStorage.getItem("kin.test.expectedState"));
-      const after = document.querySelector("kin-app").state;
-      return Object.keys(before).filter(key => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
-    })()`);
-    assert.deepEqual(
-      stateDifferences,
-      [],
-      "Rust-derived household and summary state survives reload",
-    );
-    assert.equal(
-      await first.evaluate(`(async()=>{
-        const app=document.querySelector('kin-app');
-        const expected=JSON.parse(sessionStorage.getItem('kin.test.catchUpCursor'));
-        return JSON.stringify((await app.store.getCatchUpState()).cursor)===JSON.stringify(expected);
-      })()`),
-      true,
-      "installation-local catch-up cursor survives reload",
-    );
-    await first.evaluate('sessionStorage.removeItem("kin.test.catchUpCursor")');
-    await first.evaluate('sessionStorage.removeItem("kin.test.expectedState")');
-    assert.equal(
-      await first.evaluate(`(() => {
-        const app = document.querySelector("kin-app");
-        const archivedTexts = JSON.parse(sessionStorage.getItem("kin.test.archivedTexts"));
-        const visibleTexts = [...app.querySelectorAll(".item-text")]
-          .map(element => element.textContent);
-        const archivedRows = app.store.loadEvents();
-        return Promise.resolve(archivedRows).then(events =>
-          archivedTexts.every(text =>
-            app.state.items.find(item => item.text === text)?.status === "archived" &&
-            !visibleTexts.includes(text)
-          ) && events.filter(event => event.kind === "ITEM_ARCHIVED").length >= 2
-        );
-      })()`),
-      true,
-      "archived state survives reload and remains hidden",
-    );
-    assert.equal(
-      await first.evaluate('document.querySelector("input").value'),
-      "",
-      "reload discards unsaved plaintext drafts",
-    );
-    assert.equal(
-      await first.evaluate('(()=>{const c=document.querySelector("kin-app").compose;return `${c.classification.value}/${c.plan.value}/${c.pin.checked}`;})()'),
-      "need/today/false",
-      "reload defaults the ephemeral Today capture to a task planned for today, not pinned",
-    );
-    await first.evaluate(`(()=>{const input=document.querySelector('kin-compose input');input.value='Keyboard after unlock';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();})()`);
-    await first.send("Input.dispatchKeyEvent", {
-      type: "keyDown",
-      key: "Enter",
-      code: "Enter",
-      text: "\r",
-      windowsVirtualKeyCode: 13,
-    });
-    await first.send("Input.dispatchKeyEvent", {
-      type: "keyUp",
-      key: "Enter",
-      code: "Enter",
-      windowsVirtualKeyCode: 13,
-    });
+    await until(armed);
+    await first.send("Page.navigate", { url: `${origin}/?resume-check=1#today` });
+    await until(settled, { attempts: 600 });
+    await delay(500);
+    assert.notEqual(await phase(), "unlocked", "navigating to Kin again (not a refresh) stays locked");
     await ready(first);
-    assert.equal(
-      await first.evaluate('document.querySelector("input").value'),
-      "",
-    );
-    console.log("PASS recovery unlock/replay, draft disposal, keyboard submission");
-
-    await visit(first, "updates/handoffs");
-    await first.evaluate('document.querySelector("kin-app").ctx.navigation.navigate("#updates/handoffs")');
-    assert.equal(
-      await first.evaluate('document.querySelector("#handoff-text").value'),
-      "",
-      "Handoff draft is discarded on reload",
-    );
-    await first.evaluate(`(()=>{const input=document.querySelector('#handoff-text');input.value='Newer handoff draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();})()`);
-    // A background refresh (routine timers) may briefly disable the field; hold
-    // focus on it before the keystroke so Enter cannot land on the body.
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');const input=document.querySelector('#handoff-text');if(app.busy||input.disabled)return false;if(document.activeElement!==input)input.focus();return document.activeElement===input;})()`));
-    await pressEnterUntil(first,
-      `app.state.handoffs.some(row=>row.text==='Newer handoff draft')&&document.querySelector('#handoff-text').value===''`,
-      // Not submitted yet: the draft is still in the focused, enabled field.
-      `!app.busy&&!app.state.handoffs.some(row=>row.text==='Newer handoff draft')&&document.activeElement===document.querySelector('#handoff-text')&&document.querySelector('#handoff-text').value==='Newer handoff draft'&&!document.querySelector('#handoff-text').disabled`);
-    assert.equal(
-      await first.evaluate('document.querySelector("#handoff-text").value'),
-      "",
-    );
-    await until(() => first.evaluate(`(()=>{
+    await first.evaluate('localStorage.setItem("kin.reload-resume-enabled","off")');
+    await first.send("Page.reload");
+    await until(settled, { attempts: 600 });
+    await delay(500);
+    assert.notEqual(await phase(), "unlocked", "with the setting off, a refresh locks like closing the tab");
+    await ready(first);
+    await first.evaluate('location.hash="#today"');
+    console.log("PASS refresh keeps Kin unlocked in the same tab; Lock, navigation and the setting still lock (#351)");
+  }
+  if (heavy) console.log(await fridgeRegressions(first, until));
+  await first.evaluate(
+    'sessionStorage.setItem("kin.test.expectedState", JSON.stringify(document.querySelector("kin-app").state))',
+  );
+  await first.send("Page.reload");
+  await ready(first);
+  const stateDifferences = await first.evaluate(`(() => {
+    const before = JSON.parse(sessionStorage.getItem("kin.test.expectedState"));
+    const after = document.querySelector("kin-app").state;
+    return Object.keys(before).filter(key => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
+  })()`);
+  assert.deepEqual(
+    stateDifferences,
+    [],
+    "Rust-derived household and summary state survives reload",
+  );
+  assert.equal(
+    await first.evaluate(`(async()=>{
       const app=document.querySelector('kin-app');
-      const target=app.querySelector('kin-handoff-list [aria-label="Acknowledge Newer handoff draft"]');
-      return !app.busy && !app.refreshing && !app.pendingRefresh && target && !target.disabled;
-    })()`));
-    const handoffFocus = await first.evaluate(`(()=>{
-      const target=document.querySelector('kin-handoff-list [aria-label="Acknowledge Newer handoff draft"]');
-      target.focus();return {focused:document.activeElement===target,target:target.outerHTML,active:document.activeElement?.outerHTML};
-    })()`);
-    assert.equal(handoffFocus.focused,true,JSON.stringify(handoffFocus));
-    await pressEnterUntil(first,
-      `app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status==='acknowledged'`,
-      `!app.busy&&app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status!=='acknowledged'&&document.activeElement?.getAttribute('aria-label')==='Acknowledge Newer handoff draft'&&!document.activeElement.disabled`);
-    assert.equal(
-      await first.evaluate(
-        'document.activeElement === document.querySelector("#handoff-text")',
-      ),
-      true,
-    );
-    const keyboardHandoffState = await first.evaluate(`(()=>{const app=document.querySelector('kin-app');return {status:app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status,alert:app.alert.textContent,notice:app.status.textContent,button:!!app.querySelector('[aria-label="Acknowledge Newer handoff draft"]'),focus:document.activeElement?.outerHTML?.slice(0,120)}})()`);
-    assert.equal(keyboardHandoffState.status, "acknowledged", JSON.stringify(keyboardHandoffState));
-    console.log(
-      "PASS Handoff draft disposal, keyboard capture/acknowledgement, focus restoration",
-    );
-    await first.evaluate('document.querySelector("kin-app").ctx.navigation.navigate("#updates/talk")');
-    assert.equal(
-      await first.evaluate('document.querySelector("#talk-text").value'),
-      "",
-      "Talk draft is discarded on reload",
-    );
-    await first.evaluate(`(()=>{const input=document.querySelector('#talk-text');input.value='Newer talk draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();})()`);
-    for (const type of ["keyDown", "keyUp"])
-      await first.send("Input.dispatchKeyEvent", {
-        type,
-        key: "Enter",
-        code: "Enter",
-        windowsVirtualKeyCode: 13,
-        ...(type === "keyDown" ? { text: "\r" } : {}),
-      });
-    await householdState(first, `app.state.talks.some(row=>row.text==='Newer talk draft')&&document.querySelector('#talk-text').value===''`);
-    assert.equal(
-      await first.evaluate('document.querySelector("#talk-text").value'),
-      "",
-    );
+      const expected=JSON.parse(sessionStorage.getItem('kin.test.catchUpCursor'));
+      return JSON.stringify((await app.store.getCatchUpState()).cursor)===JSON.stringify(expected);
+    })()`),
+    true,
+    "installation-local catch-up cursor survives reload",
+  );
+  await first.evaluate('sessionStorage.removeItem("kin.test.catchUpCursor")');
+  await first.evaluate('sessionStorage.removeItem("kin.test.expectedState")');
+  assert.equal(
+    await first.evaluate(`(() => {
+      const app = document.querySelector("kin-app");
+      const archivedTexts = JSON.parse(sessionStorage.getItem("kin.test.archivedTexts"));
+      const visibleTexts = [...app.querySelectorAll(".item-text")]
+        .map(element => element.textContent);
+      const archivedRows = app.store.loadEvents();
+      return Promise.resolve(archivedRows).then(events =>
+        archivedTexts.every(text =>
+          app.state.items.find(item => item.text === text)?.status === "archived" &&
+          !visibleTexts.includes(text)
+        ) && events.filter(event => event.kind === "ITEM_ARCHIVED").length >= 2
+      );
+    })()`),
+    true,
+    "archived state survives reload and remains hidden",
+  );
+  assert.equal(
+    await first.evaluate('document.querySelector("input").value'),
+    "",
+    "reload discards unsaved plaintext drafts",
+  );
+  assert.equal(
+    await first.evaluate('(()=>{const c=document.querySelector("kin-app").compose;return `${c.classification.value}/${c.plan.value}/${c.pin.checked}`;})()'),
+    "need/today/false",
+    "reload defaults the ephemeral Today capture to a task planned for today, not pinned",
+  );
+  await first.evaluate(`(()=>{const input=document.querySelector('kin-compose input');input.value='Keyboard after unlock';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();})()`);
+  await first.send("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Enter",
+    code: "Enter",
+    text: "\r",
+    windowsVirtualKeyCode: 13,
+  });
+  await first.send("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+  });
+  await ready(first);
+  assert.equal(
+    await first.evaluate('document.querySelector("input").value'),
+    "",
+  );
+  console.log("PASS recovery unlock/replay, draft disposal, keyboard submission");
+
+  await visit(first, "updates/handoffs");
+  await first.evaluate('document.querySelector("kin-app").ctx.navigation.navigate("#updates/handoffs")');
+  assert.equal(
+    await first.evaluate('document.querySelector("#handoff-text").value'),
+    "",
+    "Handoff draft is discarded on reload",
+  );
+  await first.evaluate(`(()=>{const input=document.querySelector('#handoff-text');input.value='Newer handoff draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();})()`);
+  // A background refresh (routine timers) may briefly disable the field; hold
+  // focus on it before the keystroke so Enter cannot land on the body.
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');const input=document.querySelector('#handoff-text');if(app.busy||input.disabled)return false;if(document.activeElement!==input)input.focus();return document.activeElement===input;})()`));
+  await pressEnterUntil(first,
+    `app.state.handoffs.some(row=>row.text==='Newer handoff draft')&&document.querySelector('#handoff-text').value===''`,
+    // Not submitted yet: the draft is still in the focused, enabled field.
+    `!app.busy&&!app.state.handoffs.some(row=>row.text==='Newer handoff draft')&&document.activeElement===document.querySelector('#handoff-text')&&document.querySelector('#handoff-text').value==='Newer handoff draft'&&!document.querySelector('#handoff-text').disabled`);
+  assert.equal(
+    await first.evaluate('document.querySelector("#handoff-text").value'),
+    "",
+  );
+  await until(() => first.evaluate(`(()=>{
+    const app=document.querySelector('kin-app');
+    const target=app.querySelector('kin-handoff-list [aria-label="Acknowledge Newer handoff draft"]');
+    return !app.busy && !app.refreshing && !app.pendingRefresh && target && !target.disabled;
+  })()`));
+  const handoffFocus = await first.evaluate(`(()=>{
+    const target=document.querySelector('kin-handoff-list [aria-label="Acknowledge Newer handoff draft"]');
+    target.focus();return {focused:document.activeElement===target,target:target.outerHTML,active:document.activeElement?.outerHTML};
+  })()`);
+  assert.equal(handoffFocus.focused,true,JSON.stringify(handoffFocus));
+  await pressEnterUntil(first,
+    `app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status==='acknowledged'`,
+    `!app.busy&&app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status!=='acknowledged'&&document.activeElement?.getAttribute('aria-label')==='Acknowledge Newer handoff draft'&&!document.activeElement.disabled`);
+  assert.equal(
     await first.evaluate(
-      'document.querySelector("kin-talk-list .complete-button").focus()',
-    );
+      'document.activeElement === document.querySelector("#handoff-text")',
+    ),
+    true,
+  );
+  const keyboardHandoffState = await first.evaluate(`(()=>{const app=document.querySelector('kin-app');return {status:app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status,alert:app.alert.textContent,notice:app.status.textContent,button:!!app.querySelector('[aria-label="Acknowledge Newer handoff draft"]'),focus:document.activeElement?.outerHTML?.slice(0,120)}})()`);
+  assert.equal(keyboardHandoffState.status, "acknowledged", JSON.stringify(keyboardHandoffState));
+  console.log(
+    "PASS Handoff draft disposal, keyboard capture/acknowledgement, focus restoration",
+  );
+  await first.evaluate('document.querySelector("kin-app").ctx.navigation.navigate("#updates/talk")');
+  assert.equal(
+    await first.evaluate('document.querySelector("#talk-text").value'),
+    "",
+    "Talk draft is discarded on reload",
+  );
+  await first.evaluate(`(()=>{const input=document.querySelector('#talk-text');input.value='Newer talk draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();})()`);
+  for (const type of ["keyDown", "keyUp"])
+    await first.send("Input.dispatchKeyEvent", {
+      type,
+      key: "Enter",
+      code: "Enter",
+      windowsVirtualKeyCode: 13,
+      ...(type === "keyDown" ? { text: "\r" } : {}),
+    });
+  await householdState(first, `app.state.talks.some(row=>row.text==='Newer talk draft')&&document.querySelector('#talk-text').value===''`);
+  assert.equal(
+    await first.evaluate('document.querySelector("#talk-text").value'),
+    "",
+  );
+  await first.evaluate(
+    'document.querySelector("kin-talk-list .complete-button").focus()',
+  );
+  for (const type of ["keyDown", "keyUp"])
+    await first.send("Input.dispatchKeyEvent", {
+      type,
+      key: "Enter",
+      code: "Enter",
+      windowsVirtualKeyCode: 13,
+      ...(type === "keyDown" ? { text: "\r" } : {}),
+    });
+  await householdState(first, `app.state.talks.find(row=>row.text==='Newer talk draft')?.status==='resolved'`);
+  assert.equal(
+    await first.evaluate(
+      'document.activeElement === document.querySelector("#talk-text")',
+    ),
+    true,
+  );
+  assert.equal(
+    await first.evaluate(
+      'document.querySelector("kin-app").state.talks.at(-1).status',
+    ),
+    "resolved",
+  );
+  console.log(
+    "PASS Talk draft disposal, keyboard capture/resolution, focus restoration",
+  );
+  // Exercise the remaining Talk lifecycle through native keyboard activation.
+  for (const label of ["Reopen", "Resolve", "Archive"]) {
+    await first.evaluate(`(()=>{
+      const capture=document.querySelector('kin-app').talks;
+      const row=[...capture.querySelectorAll('li')].find(row=>row.querySelector('.item-text').textContent==='Newer talk draft');
+      [...row.querySelectorAll('button')].find(button=>button.textContent==='${label}').focus();
+    })()`);
     for (const type of ["keyDown", "keyUp"])
       await first.send("Input.dispatchKeyEvent", {
         type,
@@ -1747,10 +1780,11 @@ try {
         windowsVirtualKeyCode: 13,
         ...(type === "keyDown" ? { text: "\r" } : {}),
       });
-    await householdState(first, `app.state.talks.find(row=>row.text==='Newer talk draft')?.status==='resolved'`);
+    const expectedStatus = label === "Reopen" ? "open" : label === "Resolve" ? "resolved" : "archived";
+    await householdState(first, `app.state.talks.find(row=>row.text==='Newer talk draft')?.status===${JSON.stringify(expectedStatus)}`);
     assert.equal(
       await first.evaluate(
-        'document.activeElement === document.querySelector("#talk-text")',
+        'document.activeElement===document.querySelector("#talk-text")',
       ),
       true,
     );
@@ -1758,69 +1792,36 @@ try {
       await first.evaluate(
         'document.querySelector("kin-app").state.talks.at(-1).status',
       ),
-      "resolved",
-    );
-    console.log(
-      "PASS Talk draft disposal, keyboard capture/resolution, focus restoration",
-    );
-    // Exercise the remaining Talk lifecycle through native keyboard activation.
-    for (const label of ["Reopen", "Resolve", "Archive"]) {
-      await first.evaluate(`(()=>{
-        const capture=document.querySelector('kin-app').talks;
-        const row=[...capture.querySelectorAll('li')].find(row=>row.querySelector('.item-text').textContent==='Newer talk draft');
-        [...row.querySelectorAll('button')].find(button=>button.textContent==='${label}').focus();
-      })()`);
-      for (const type of ["keyDown", "keyUp"])
-        await first.send("Input.dispatchKeyEvent", {
-          type,
-          key: "Enter",
-          code: "Enter",
-          windowsVirtualKeyCode: 13,
-          ...(type === "keyDown" ? { text: "\r" } : {}),
-        });
-      const expectedStatus = label === "Reopen" ? "open" : label === "Resolve" ? "resolved" : "archived";
-      await householdState(first, `app.state.talks.find(row=>row.text==='Newer talk draft')?.status===${JSON.stringify(expectedStatus)}`);
-      assert.equal(
-        await first.evaluate(
-          'document.activeElement===document.querySelector("#talk-text")',
-        ),
-        true,
-      );
-      assert.equal(
-        await first.evaluate(
-          'document.querySelector("kin-app").state.talks.at(-1).status',
-        ),
-        label === "Reopen"
-          ? "open"
-          : label === "Resolve"
-            ? "resolved"
-            : "archived",
-      );
-    }
-    await first.evaluate('document.querySelector("#talk-text").focus()');
-    await first.send("Input.dispatchKeyEvent", {
-      type: "keyDown",
-      key: "Tab",
-      code: "Tab",
-      windowsVirtualKeyCode: 9,
-    });
-    await first.send("Input.dispatchKeyEvent", {
-      type: "keyUp",
-      key: "Tab",
-      code: "Tab",
-      windowsVirtualKeyCode: 9,
-    });
-    assert.equal(
-      await first.evaluate(
-        'document.activeElement===document.querySelector("kin-talk-list .add-button")',
-      ),
-      true,
-      "Talk input followed by Add in native focus order",
-    );
-    console.log(
-      "PASS Talk keyboard resolve/reopen/archive, focus and native tab order",
+      label === "Reopen"
+        ? "open"
+        : label === "Resolve"
+          ? "resolved"
+          : "archived",
     );
   }
+  await first.evaluate('document.querySelector("#talk-text").focus()');
+  await first.send("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Tab",
+    code: "Tab",
+    windowsVirtualKeyCode: 9,
+  });
+  await first.send("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Tab",
+    code: "Tab",
+    windowsVirtualKeyCode: 9,
+  });
+  assert.equal(
+    await first.evaluate(
+      'document.activeElement===document.querySelector("kin-talk-list .add-button")',
+    ),
+    true,
+    "Talk input followed by Add in native focus order",
+  );
+  console.log(
+    "PASS Talk keyboard resolve/reopen/archive, focus and native tab order",
+  );
   if (REGRESSION_PART !== "1") {
     const second = await tab();
     await second.evaluate(`window.peerReads=0; window.peerReplays=0; window.peerMessages=[];

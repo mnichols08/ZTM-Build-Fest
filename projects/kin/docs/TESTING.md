@@ -392,9 +392,12 @@ change Kin or its workflow, and pushes to `kin-development`, run three jobs
   after checking its SHA-256. Each runs
   `node scripts/verify.mjs --browser-only --suite <suite>`, with the retry and
   FLAKY reporting below. The longest suite, `browser-regression`, runs as
-  two jobs: `KIN_REGRESSION_PART=1` (the single-tab checks) and `=2` (the
-  checks with a second tab); each does the shared setup and the final
-  console, request and storage checks. Unset, it runs both. In October 2026
+  two jobs: `KIN_REGRESSION_PART=1` runs every single-tab check, and `=2`
+  runs the quick in-page single-tab checks (the two-tab checks build on the
+  handoffs, topics and routines they leave) and then the checks with a second
+  tab, skipping the slow browser-driven sections. Each does the shared setup
+  and the final console, request and storage checks. Unset, it runs
+  everything once. In October 2026
   the Edge run of the whole suite took 326 s; the next longest job took 139 s.
 
 Every one of them must pass; a suite that fails on either browser fails the
