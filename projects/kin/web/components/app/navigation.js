@@ -76,7 +76,7 @@ export class NavigationController {
       requestAnimationFrame(() => { section?.scrollIntoView({ block: "start" }); section?.querySelector("h2")?.setAttribute("tabindex", "-1"); section?.querySelector("h2")?.focus({ preventScroll: true }); });
       return;
     }
-    requestAnimationFrame(() => this.app.chat?.openTopics?.());
+    this.app.chat?.openTopics?.();
   }
   // Shortcuts and palette commands act only on an unlocked, rendered
   // workspace; the security screen and its fields never see them.

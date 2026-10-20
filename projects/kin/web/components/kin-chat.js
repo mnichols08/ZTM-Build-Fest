@@ -1753,8 +1753,12 @@ class KinChat extends HTMLElement {
 
   /** Shows the list (an old #updates/talk link): open, its heading focused. */
   openTopics() {
-    this.toggleTopics(true);
-    this.topicsHeading?.focus({ preventScroll: false });
+    const inside = this.topicsPanel?.contains(document.activeElement);
+    this.topicsOpen = true;
+    this.renderTopics();
+    this.stopFit?.schedule?.();
+    // Focus goes to the list's heading unless it is already in the list.
+    if (!inside) this.topicsHeading?.focus({ preventScroll: false });
   }
 
   renderTopics() {
