@@ -27,6 +27,10 @@ export async function chatLayoutRegressions(client, { until }) {
       list: scroller.clientHeight, visible,
       composerBottom: Math.round(form.bottom), rowHeight: Math.round(row.height),
       navTop: navRect ? Math.round(navRect.top) : null,
+      // For a failure message: what takes the room.
+      section: Math.round(chat.querySelector(".chat-section").getBoundingClientRect().top) + "+" + Math.round(chat.querySelector(".chat-section").getBoundingClientRect().height),
+      parts: [...chat.querySelector(".chat-section").children].filter((node) => node.getClientRects().length)
+        .map((node) => (node.className || node.tagName).split(" ")[0] + ":" + Math.round(node.getBoundingClientRect().height)).join(" "),
     };
   })()`);
 
@@ -39,16 +43,19 @@ export async function chatLayoutRegressions(client, { until }) {
     ["desktop at 200%", { width: 640, height: 400, deviceScaleFactor: 2, mobile: false }],
   ]) {
     await setViewport(client, metrics);
+    await page(`(() => { scrollTo(0, 0); const s = document.querySelector("kin-app kin-chat .chat-scroll"); s.scrollTop = s.scrollHeight; return true; })()`);
+    await frames();
     await page(`(() => { const s = document.querySelector("kin-app kin-chat .chat-scroll"); s.scrollTop = s.scrollHeight; return true; })()`);
     await frames();
     const view = await measure();
-    assert.ok(view.fit, `${label}: the chat fits the screen`);
-    assert.ok(view.pageScroll <= 2, `${label}: the page itself doesn't scroll (${view.pageScroll}px)`);
-    assert.ok(view.sideways <= 0, `${label}: no horizontal scroll`);
-    assert.ok(view.composerBottom <= view.visible + 1, `${label}: the composer is in view (${view.composerBottom} of ${view.visible})`);
-    if (view.navTop !== null) assert.ok(view.composerBottom <= view.navTop + 1, `${label}: the composer sits above the bottom bar`);
-    assert.ok(view.rowHeight <= 120, `${label}: the composer is one row (${view.rowHeight}px)`);
-    assert.ok(view.atLatest, `${label}: showing the latest message`);
+    const why = ` ${JSON.stringify(view)}`;
+    assert.ok(view.fit, `${label}: the chat fits the screen${why}`);
+    assert.ok(view.pageScroll <= 2, `${label}: the page itself doesn't scroll (${view.pageScroll}px)${why}`);
+    assert.ok(view.sideways <= 0, `${label}: no horizontal scroll${why}`);
+    assert.ok(view.composerBottom <= view.visible + 1, `${label}: the composer is in view (${view.composerBottom} of ${view.visible})${why}`);
+    if (view.navTop !== null) assert.ok(view.composerBottom <= view.navTop + 1, `${label}: the composer sits above the bottom bar${why}`);
+    assert.ok(view.rowHeight <= 120, `${label}: the composer is one row (${view.rowHeight}px)${why}`);
+    assert.ok(view.atLatest, `${label}: showing the latest message${why}`);
   }
 
   // A phone with the keyboard open: the message box has focus and the

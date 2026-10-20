@@ -1926,7 +1926,9 @@ kin-simple { display: block; }
    keyboard). */
 .chat-section.chat-fit { display: flex; flex-direction: column; gap: 8px; height: var(--chat-height); min-height: 0; }
 .chat-section.chat-fit > * { flex: none; }
-.chat-section.chat-fit .chat-scroll { flex: 1 1 auto; height: auto; min-height: 7rem; }
+.chat-section.chat-fit .chat-scroll { flex: 1 1 0; height: auto; min-height: 3rem; }
+/* Pinned messages never push the composer off screen; their list scrolls. */
+.chat-section.chat-fit .chat-pins { max-height: 7rem; overflow: auto; }
 .chat-section.chat-fit .chat-form textarea { max-height: min(7.5em, 30vh); resize: none; }
 kin-app[data-route="updates/chat"] main { padding-bottom: 0; }
 kin-app[data-route="updates/chat"] .app-feedback { bottom: calc(var(--chat-composer-height, 0px) + 84px + env(safe-area-inset-bottom)); }
@@ -1941,6 +1943,17 @@ kin-app[data-route="updates/chat"] .app-feedback { bottom: calc(var(--chat-compo
   /* Typing: the bottom bar steps aside for the keyboard. */
   [data-chat-composing] .primary-nav { display: none; }
   [data-chat-composing] kin-app[data-route="updates/chat"] .app-feedback { bottom: calc(var(--chat-composer-height, 0px) + 12px); }
+}
+@media (max-height: 500px) {
+  /* A phone held sideways, or a short window: Chat takes the screen. The
+     header, page title and tabs step aside (the bottom bar stays, and the
+     title stays for screen readers); turn the phone upright for them. */
+  kin-app[data-route="updates/chat"] .site-header,
+  kin-app[data-route="updates/chat"] #updates .page-lead,
+  kin-app[data-route="updates/chat"] #updates kin-segment-nav { display: none; }
+  kin-app[data-route="updates/chat"] #updates > .page-intro { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip: rect(0 0 0 0); }
+  kin-app[data-route="updates/chat"] main { padding-top: 8px; }
+  kin-app[data-route="updates/chat"] .chat-section.chat-fit { gap: 4px; padding: 6px; }
 }
 @media (max-height: 500px) and (pointer: coarse) {
   /* Phone landscape with the keyboard: the header steps aside too. */
