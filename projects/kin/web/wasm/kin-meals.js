@@ -90,6 +90,8 @@ export function ingredientsFromText(text, previous = []) {
     let value;
     try { value = normalizeIngredient(line); }
     catch (error) { throw new MealFormatError(`Line ${index + 1}: ${error.message}`, { line: index + 1 }); }
+    // A line typed twice is kept once (case aside); Rust accepts either.
+    if (ingredients.some((entry) => entry.text.toLowerCase() === value.toLowerCase())) return;
     const kept = previous.find((entry) => entry.text === value && entry.stapleId);
     ingredients.push({ text: value, stapleId: kept?.stapleId ?? null });
   });

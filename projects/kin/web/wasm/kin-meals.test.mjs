@@ -33,6 +33,7 @@ test("the ingredients box keeps every pasted line, drops blank ones and names a 
   assert.deepEqual(lines, [{ text: "Milk", stapleId: null }, { text: "2 eggs", stapleId: null }, { text: "Flour", stapleId: null }]);
   // Unchanged lines keep their staple link.
   assert.deepEqual(ingredientsFromText("Milk\nButter", [{ text: "Milk", stapleId: id(3) }]), [{ text: "Milk", stapleId: id(3) }, { text: "Butter", stapleId: null }]);
+  assert.deepEqual(ingredientsFromText("Milk\nmilk\n MILK "), [{ text: "Milk", stapleId: null }], "a line typed twice is kept once");
   assert.throws(() => ingredientsFromText(`ok\n${"y".repeat(121)}`), (error) => error instanceof MealFormatError && error.detail.line === 2 && /^Line 2:/.test(error.message));
   assert.throws(() => ingredientsFromText(Array.from({ length: 41 }, (_, n) => `Thing ${n}`).join("\n")), /at most 40 ingredients/);
   // A recipe too large for one sync envelope says so.

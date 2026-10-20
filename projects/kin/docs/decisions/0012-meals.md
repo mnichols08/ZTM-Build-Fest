@@ -61,9 +61,9 @@ logical time and event id, so "last writer wins" is deterministic everywhere.
   that date has a dinner; setting a dinner keeps the cook already chosen for
   that date. Nothing is counted, ranked or compared.
 - Merge: two devices planning the same date offline converge on the event that
-  sorts last in replay (logical time, then event id) — the same rule as every
-  other latest-wins field. Catch-up lists another member's dinner changes as
-  "Dinner changed" for that day.
+  sorts last in replay (logical time, then device and event ID) — the same rule as every
+  other latest-wins field. Catch-up doesn't list meal changes in this first
+  slice; Tonight on Today and the week show the current plan instead.
 - The week is a view, Monday to Sunday (matching weekly routines). The
   projection keeps dinners from 35 days before the projection date to 370 days
   after it; older dinners stay in the history but leave the view.

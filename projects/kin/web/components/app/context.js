@@ -28,6 +28,7 @@
 // - The event arena's `generation` and `epoch`: see storage/event-arena.js.
 import { captureInvitationCode } from "../../pairing-link.js";
 import { AppearanceController } from "./appearance.js";
+import { MealsController } from "./meals.js";
 import { AppendCommands } from "./commands/append.js";
 import { AttachmentController } from "./attachments.js";
 import { ChatShareController } from "./chat-share.js";
@@ -64,6 +65,7 @@ export function createAppContext(app) {
   ctx.conversations = new ConversationCommands(ctx);
   ctx.routines = new RoutineCommands(ctx);
   ctx.records = new RecordCommands(ctx);
+  ctx.meals = new MealsController(ctx);
   ctx.attachments = new AttachmentController(ctx);
   ctx.chatShare = new ChatShareController(ctx);
   ctx.navigation = new NavigationController(ctx);

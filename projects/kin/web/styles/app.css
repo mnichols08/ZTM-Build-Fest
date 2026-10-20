@@ -1345,6 +1345,7 @@ kin-app > .security-panel {
     grid-template-columns: minmax(0, 1.62fr) minmax(280px, 1fr);
     grid-template-areas:
       "intro intro"
+      "capture tonight"
       "capture quick"
       "catchup routines"
       "onboarding updates"
@@ -1363,10 +1364,13 @@ kin-app > .security-panel {
   #today [data-section="upcoming"] { grid-area: upcoming; }
   #today > kin-compose { grid-area: capture; min-width: 0; }
   #today > kin-catch-up { grid-area: catchup; min-width: 0; }
+  #today > kin-tonight { grid-area: tonight; min-width: 0; }
+  #today .tonight-section { margin-bottom: 16px; }
   #today > .onboarding-card { grid-area: onboarding; }
   #today.compact-onboarding {
     grid-template-areas:
       "intro intro"
+      "capture tonight"
       "capture quick"
       "catchup routines"
       "summary summary"
@@ -1804,3 +1808,69 @@ kin-fridge:fullscreen:not([data-layout="rail"]) .fridge-door { inline-size: min(
   .fridge-kin-choice:has(input:checked) { outline: 3px solid Highlight; }
 }
 .fridge-dialog .danger-action { background: var(--danger); border-color: var(--danger); color: var(--surface); }
+
+/* Meals (#333): Tonight on Today, and Lists › Meals. */
+.tonight-section { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.tonight-section h2 { flex: 1 0 100%; margin: 0; font-size: 18px; }
+.tonight-line { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.tonight-line.tonight-empty { font-weight: 400; color: var(--ink-muted); }
+.tonight-link { display: inline-flex; align-items: center; min-height: var(--tap); color: var(--accent); font-weight: 600; }
+
+kin-meals { display: block; container-type: inline-size; container-name: meals; }
+.meals-result { margin: 0 0 14px; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface-secondary); overflow-wrap: anywhere; }
+.meals-result a { color: var(--accent); font-weight: 600; }
+.meals-layout { display: grid; gap: 22px; }
+.meals-week-head, .meals-recipes-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-bottom: 12px; }
+.meals-week-head h2, .meals-recipes-head h2 { margin: 0; }
+.meals-week-head h2:focus { outline: none; }
+.meals-week-head h2:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.meals-week-nav { display: flex; flex-wrap: wrap; gap: 6px; }
+.meals-week-nav button, .recipe-actions button, .recipe-put-on select { min-height: var(--tap); }
+.meal-days { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.meal-day { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); }
+.meal-day.is-today { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
+.meal-day-name { margin: 0; font-size: 15px; color: var(--ink-muted); }
+.meal-today { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; }
+.meal-dinner { margin: 0; font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
+.meal-dinner.is-empty { font-weight: 400; color: var(--ink-muted); }
+.meal-cook { margin: 0; color: var(--ink-muted); font-size: 14px; }
+.meal-day-actions, .recipe-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.meal-plan, .meal-ingredients { min-height: var(--tap); }
+.meal-plan { min-width: 88px; }
+.recipe-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.recipe { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); }
+.recipe-name { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.recipe-meta { margin: 2px 0 0; }
+/* "Put on…" is a wide-screen shortcut; the day's Plan button does it everywhere. */
+.recipe-put-on { display: none; align-items: center; gap: 6px; }
+.meal-dialog { inline-size: min(34rem, calc(100vw - 32px)); max-block-size: calc(100dvh - 32px); padding: 18px; border: 1px solid var(--line-strong); border-radius: var(--r-card); background: var(--surface); color: var(--ink); }
+.meal-dialog::backdrop { background: rgba(10, 16, 12, .52); }
+.meal-dialog h2 { margin-top: 0; }
+.meal-dialog label { display: grid; gap: 4px; margin-bottom: 12px; }
+.meal-dialog input, .meal-dialog select, .meal-dialog textarea { min-height: var(--tap); }
+.meal-dialog textarea { min-height: 8em; resize: vertical; }
+.meal-plan-recipes { display: grid; gap: 6px; margin: 0 0 12px; padding: 0; list-style: none; }
+.meal-plan-recipes button { inline-size: 100%; min-height: var(--tap); text-align: start; overflow-wrap: anywhere; }
+.meal-plan-other { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.recipe-staples { margin: 0 0 12px; padding: 0; border: 0; }
+.recipe-staple-rows { display: grid; gap: 8px; }
+.recipe-staple-note { margin: 0; color: var(--ink-muted); font-size: 14px; }
+.meal-dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+@container meals (min-width: 560px) {
+  .meal-days { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1180px) {
+  .meals-layout { grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr); align-items: start; }
+  .meals-layout .meal-days { grid-template-columns: minmax(0, 1fr); }
+  .recipe-put-on { display: flex; flex-wrap: wrap; }
+  /* With a detail side panel open there's no room for two columns. */
+  .has-detail-side .meals-layout { grid-template-columns: minmax(0, 1fr); }
+  .has-detail-side .recipe-put-on { display: none; }
+}
+@media (max-width: 719px) {
+  .meal-dialog { margin: auto 0 0; inline-size: 100%; max-inline-size: 100%; border-radius: 16px 16px 0 0; }
+}
+@media (forced-colors: active) {
+  .meal-day.is-today { border: 2px solid Highlight; box-shadow: none; }
+  .meal-today { border: 1px solid CanvasText; }
+}
