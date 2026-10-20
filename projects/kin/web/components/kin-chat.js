@@ -42,6 +42,7 @@ import { excerptRanges, highlightRanges } from "../chat/chat-search-ranges.js";
 import { activeMention, mentionOptions, splitMentions, resolveMentions } from "../chat/chat-mentions.js";
 import "./kin-emoji-picker.js";
 import "./kin-chat-search.js";
+import { fitChat } from "../chat/chat-layout.js";
 
 /** Rows rendered at first and added per page. */
 const PAGE = 60;
@@ -172,6 +173,7 @@ class KinChat extends HTMLElement {
     window.addEventListener("pagehide", this.onPageHide);
     if (this.list) {
       this.resizeObserver?.observe(this.scroller);
+      this.startFit();
       return;
     }
     const section = document.createElement("section");
@@ -400,7 +402,7 @@ class KinChat extends HTMLElement {
     // Voice messages (#134): the recorder panel sits above the buttons.
     this.voiceButton = document.createElement("button");
     this.voiceButton.type = "button";
-    this.voiceButton.className = "chat-attach chat-voice-open";
+    this.voiceButton.className = "chat-voice-open";
     this.voiceButton.textContent = "Voice";
     this.voiceButton.setAttribute("aria-label", "Record a voice message");
     this.voiceButton.addEventListener("click", () => void this.voice.begin());
@@ -409,7 +411,7 @@ class KinChat extends HTMLElement {
     this.voice = new VoiceComposer({
       host: this.voiceHost,
       say: (text) => this.say(text),
-      onChange: () => { this.applyDisabled(); if (!this.voice.open) this.voiceButton.focus(); },
+      onChange: () => { this.applyDisabled(); if (!this.voice.open) (this.voiceButton.hidden ? this.input : this.voiceButton).focus(); },
       send: async ({ blob, durationMs }) => {
         const room = this.chatRoom;
         if (!room) throw new Error("locked");
@@ -457,8 +459,39 @@ class KinChat extends HTMLElement {
     this.retry.setAttribute("aria-label", "Retry sending");
     this.retry.hidden = true;
     this.retry.addEventListener("click", () => void this.submit());
-    buttons.append(this.attach, this.cameraButton, this.pollButton, this.voiceButton, this.emoji, this.send, this.retry, this.stopSend, this.cancel);
-    form.append(this.label, this.replyBar, this.input, this.mentionList, this.pendingList, this.voiceHost, panelSlot, buttons, this.message);
+    // One row (#311): [+] [message] [emoji] [Send, or Voice while empty].
+    // Photo, file, camera and poll sit behind +.
+    this.addMenu = document.createElement("div");
+    this.addMenu.id = "chat-add-menu";
+    this.addMenu.className = "chat-add-menu";
+    this.addMenu.setAttribute("role", "group");
+    this.addMenu.setAttribute("aria-label", "Add to the message");
+    this.addMenu.hidden = true;
+    this.addMenu.append(this.attach, this.cameraButton, this.pollButton);
+    this.addMenu.addEventListener("click", (event) => { if (event.target.closest("button")) this.toggleAddMenu(false); });
+    this.addMenu.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      this.toggleAddMenu(false);
+      this.more.focus();
+    });
+    this.more = document.createElement("button");
+    this.more.type = "button";
+    this.more.className = "chat-more";
+    this.more.textContent = "+";
+    this.more.setAttribute("aria-label", "Add a photo, file or poll");
+    this.more.setAttribute("aria-expanded", "false");
+    this.more.setAttribute("aria-controls", "chat-add-menu");
+    this.more.addEventListener("click", () => this.toggleAddMenu(this.addMenu.hidden));
+    this.input.placeholder = "Message";
+    this.input.addEventListener("input", () => this.updateSendMode());
+    const row = document.createElement("div");
+    row.className = "chat-compose-row";
+    row.append(this.more, this.input, this.emoji, this.send, this.voiceButton);
+    this.label.className = "visually-hidden";
+    buttons.append(this.retry, this.stopSend, this.cancel);
+    form.append(this.label, this.replyBar, row, this.mentionList, this.addMenu, this.pendingList, this.voiceHost, panelSlot, buttons, this.message);
+    this.updateSendMode();
 
     // A viewer for one photo, shown modally; its URL is released on close.
     this.viewer = document.createElement("dialog");
@@ -513,6 +546,12 @@ class KinChat extends HTMLElement {
     this.readOnly.hidden = true;
     section.append(top, this.searchPanel, this.notice, this.onlineLine, this.pinRegion, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details, this.pollDialog);
     this.replaceChildren(section);
+    this.section = section;
+    // Composing on a phone (#310): the bottom navigation steps aside so the
+    // composer sits right above the keyboard.
+    form.addEventListener("focusin", () => this.setComposing(true));
+    form.addEventListener("focusout", (event) => { if (!form.contains(event.relatedTarget)) this.setComposing(false); });
+    this.startFit();
     this.queueRender("reset");
   }
 
@@ -526,7 +565,26 @@ class KinChat extends HTMLElement {
     this.voice?.dispose();
     this.disposePlayers();
     this.resizeObserver?.disconnect();
+    this.stopFit?.();
+    this.stopFit = null;
+    this.setComposing(false);
     this.urls.revokeAll();
+  }
+
+  /** Keeps the chat exactly as tall as the visible screen allows (#310). */
+  startFit() {
+    if (this.stopFit || !this.section) return;
+    this.stopFit = fitChat(this.section, {
+      bar: () => document.querySelector(".primary-nav"),
+      onComposer: () => document.documentElement.style.setProperty("--chat-composer-height", `${Math.round(this.form?.getBoundingClientRect().height ?? 0)}px`),
+    });
+  }
+
+  setComposing(on) {
+    const root = document.documentElement;
+    if (on === root.hasAttribute("data-chat-composing")) return;
+    root.toggleAttribute("data-chat-composing", on);
+    this.stopFit?.schedule();
   }
 
   /** The chat room, or null while there is none (sync not set up, locked). */
@@ -580,8 +638,25 @@ class KinChat extends HTMLElement {
     this.applyDisabled();
   }
 
+  /** Send shows while there's something to send; Voice while the box is
+   * empty (#311). Editing always shows Send ("Save"). */
+  updateSendMode() {
+    if (!this.send || !this.voiceButton) return;
+    const empty = !this.input.value.trim() && !this.files?.length && !this.editing;
+    this.send.hidden = empty;
+    this.voiceButton.hidden = !empty;
+  }
+
+  toggleAddMenu(open) {
+    if (!this.addMenu) return;
+    this.addMenu.hidden = !open;
+    this.more.setAttribute("aria-expanded", String(open));
+    if (open) this.addMenu.querySelector("button:not([hidden]):not(:disabled)")?.focus();
+  }
+
   applyDisabled() {
     if (!this.input) return;
+    this.updateSendMode();
     const off = this.isDisabled || !this.chatRoom;
     this.input.disabled = off;
     this.send.disabled = off || Boolean(this.sending);
@@ -592,6 +667,7 @@ class KinChat extends HTMLElement {
     this.retry.disabled = off || Boolean(this.sending) || Boolean(this.editing) || this.voice?.open === true;
     this.pollButton.disabled = off || Boolean(this.sending) || Boolean(this.editing);
     this.voiceButton.disabled = off || Boolean(this.sending) || Boolean(this.editing) || this.voice.open;
+    this.more.disabled = off || Boolean(this.sending) || Boolean(this.editing);
   }
 
   enterSends() {
@@ -2174,6 +2250,7 @@ class KinChat extends HTMLElement {
       return item;
     }));
     this.pendingList.hidden = this.files.length === 0;
+    this.updateSendMode();
     if (!this.files.length) this.retry.hidden = true;
   }
 
@@ -2311,6 +2388,7 @@ class KinChat extends HTMLElement {
         }
         this.editing = message;
         this.input.value = message.text;
+        this.updateSendMode();
         this.resetMentions();
         for (const person of room.mentionable?.() ?? []) {
           if (room.mentionsOf?.(message).members.includes(person.id)) this.chosenMentions.set(person.label, person.id);
@@ -2356,6 +2434,7 @@ class KinChat extends HTMLElement {
     this.editing = null;
     if (!this.input) return;
     if (wasEditing && restoreDraft) this.input.value = this.stashedDraft ?? "";
+    this.updateSendMode();
     this.stashedDraft = null;
     if (wasEditing) {
       this.resetMentions();
@@ -2428,6 +2507,7 @@ class KinChat extends HTMLElement {
         }
         // Only clear what was sent: typing that continued meanwhile stays.
         if (this.input.value === text) { this.input.value = ""; this.resetMentions(); }
+        this.updateSendMode();
         this.stopReplying();
         await this.queueRender("reset");
       }
@@ -2493,6 +2573,9 @@ class KinChat extends HTMLElement {
     if (this.scroller.scrollTop < EDGE && this.start > 0) void this.loadOlder();
     else if (this.wasAtBottom && !this.following) void this.loadNewer();
     if (this.following && this.wasAtBottom) this.jump.hidden = true;
+    // Jump to latest (#310) also shows once you scroll up more than half a
+    // screen from the newest message.
+    else if (this.scroller.scrollHeight - this.scroller.scrollTop - this.scroller.clientHeight > this.scroller.clientHeight / 2) this.jump.hidden = false;
   }
 
   /** Brings older messages into the window, trimming the newest past the
