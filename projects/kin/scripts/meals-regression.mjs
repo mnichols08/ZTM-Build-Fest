@@ -16,7 +16,17 @@ export async function mealsRegressions() {
     // Say what the person would see, so a CI failure explains itself.
     const shown = [...document.querySelectorAll('[role="alert"]:not([hidden]), [role="status"]')]
       .map((node) => node.textContent.trim()).filter(Boolean).join(" | ");
-    throw new Error(`Timed out: ${message} (showing: ${shown || "nothing"}; recipes: ${app.mealsState?.recipes.map((recipe) => recipe.name).join(", ") ?? "none"})`);
+    throw new Error(`Timed out: ${message} (showing: ${shown || "nothing"}; recipes: ${app.mealsState?.recipes.map((recipe) => recipe.name).join(", ") ?? "none"}; refused: ${refused || "nothing"})`);
+  };
+  // Remember why the engine last refused a change, for the timeout message.
+  let refused = "";
+  const append = app.ctx.append.appendCommand.bind(app.ctx.append);
+  app.ctx.append.appendCommand = async (command) => {
+    try { return await append(command); }
+    catch (error) {
+      refused = `${command.type}: ${error.message} <- ${error.cause?.name ?? ""} ${error.cause?.code ?? ""} ${error.cause?.message ?? ""} ${JSON.stringify(command).slice(0, 400)}`;
+      throw error;
+    }
   };
   const idle = () => waitFor(() => !app.busy && !app.ctx.meals.loading, "meals work returns idle");
   const pad = (value) => String(value).padStart(2, "0");
@@ -100,6 +110,7 @@ export async function mealsRegressions() {
 
   // Phone width: one column, nothing wider than the screen.
   check(meals.scrollWidth <= meals.clientWidth + 1, "the meals view never scrolls sideways");
+  delete app.ctx.append.appendCommand;
   app.ctx.navigation.navigate("#today");
   return "PASS meals plan, cook, recipe staple link and Shopping without duplicates (#333)";
 }
