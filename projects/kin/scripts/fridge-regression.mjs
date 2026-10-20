@@ -12,6 +12,19 @@ export async function fridgeRegressions(client, until) {
   const page = (expression) => client.evaluate(expression);
   const strokes = () => page(`window.__fridgeRoom.board().strokes.length`);
 
+  // Without sync there's no room: no tools that look usable, and the line
+  // under the board says how to turn sync on (#372).
+  const unsynced = await page(`(async () => {
+    const app = document.querySelector("kin-app");
+    if (app.fridge.room) return null;
+    location.hash = "#household/fridge";
+    app.ctx.navigation.showPageFromLocation();
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    const fridge = app.fridge;
+    return { tools: fridge.querySelector(".fridge-tools").hidden, link: fridge.querySelector(".fridge-summary a")?.getAttribute("href") ?? null };
+  })()`);
+  if (unsynced) assert.deepEqual(unsynced, { tools: true, link: "#household/people" }, "an unsynced fridge hides its tools and links to sync");
+
   // A board room with this page's engine, a fresh household key and device
   // keys, and a request that always reports being offline.
   await page(`(async () => {

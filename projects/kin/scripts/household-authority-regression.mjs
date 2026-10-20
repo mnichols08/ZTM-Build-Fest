@@ -552,6 +552,9 @@ async function pageOpenFridge() {
   await frame(); await frame();
   const fridge = app.fridge;
   const door = fridge?.querySelector(".fridge-door");
+  // A person scrolls to the door first; input outside the viewport goes nowhere.
+  door?.scrollIntoView({ block: "center", behavior: "instant" });
+  await frame(); await frame();
   const rect = door?.getBoundingClientRect();
   return {
     room: Boolean(fridge?.room), access: fridge?.room?.access ?? null, coordinatorBoard: Boolean(app.syncCoordinator?.board),
