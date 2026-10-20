@@ -1194,7 +1194,7 @@ export async function chatRegressions({ keepRoom = false } = {}) {
     // Who reacted, from the row menu.
     rowOf().querySelector(".chat-menu-button").click();
     await settle();
-    const details = rowOf().querySelector('[data-action="details"]');
+    const details = chat.querySelector('.chat-action-sheet [data-action="details"]');
     check(details && details.textContent === "See who reacted", "the menu can list who reacted");
     details.click();
     await settle();

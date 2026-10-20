@@ -9,6 +9,12 @@ documentation only.
 
 ### Added
 
+- **Chat on a phone** (#310, #311): Chat fits the screen, with the message
+  list the only thing that scrolls, and opens at the newest message; Jump to
+  latest shows when you scroll up. The composer is one row ([+] [message]
+  [emoji] [Send or Voice]) and stays above the keyboard and the bottom bar.
+  Message actions open in one sheet: a long press or ⋯ on a touch screen (a
+  bottom sheet, reactions first), ⋯ or right-click with a mouse.
 - **Simple view** (#341, [ADR 0013](docs/decisions/0013-simple-view.md)): a
   household admin turns on a calmer layout for a Limited member (People &
   devices, with their passkey). The child's Kin then shows only Today, Chat

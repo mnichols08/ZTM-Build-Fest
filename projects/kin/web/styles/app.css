@@ -1976,3 +1976,37 @@ kin-app[data-route="updates/chat"] .app-feedback { bottom: calc(var(--chat-compo
 @media (forced-colors: active) {
   .chat-more, .chat-voice-open { border: 1px solid ButtonText; }
 }
+
+/* Message actions (#311): one sheet for every message. With a mouse it opens
+   by the message's ⋯ (kin-chat.js placeSheet); on a touch screen it rises
+   from the bottom, at most 480px wide. */
+.chat-action-sheet { position: fixed; inset: auto; margin: 0; width: max-content; min-width: 220px; max-width: calc(100vw - 16px); max-height: min(70vh, 520px); overflow: auto; padding: 6px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); box-shadow: 0 10px 30px rgb(0 0 0 / .2); overscroll-behavior: contain; }
+.chat-action-sheet::backdrop { background: transparent; }
+.chat-action-sheet.chat-sheet-bottom { inset: auto 0 0; margin: 0 auto; width: 100%; max-width: 480px; max-height: 75vh; padding: 6px 10px calc(10px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; }
+.chat-action-sheet.chat-sheet-bottom::backdrop { background: rgb(0 0 0 / .32); }
+.chat-sheet-grip { width: 40px; height: 4px; margin: 4px auto 8px; border-radius: 2px; background: var(--line-strong); }
+.chat-sheet-reactions { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.chat-sheet-reactions button { min-width: var(--tap); min-height: var(--tap); border: 0; border-radius: 999px; background: var(--surface-secondary); font: inherit; font-size: 1.3rem; }
+.chat-sheet-reactions button[aria-pressed="true"] { outline: 2px solid var(--accent); }
+.chat-sheet-reactions .chat-sheet-more { font-size: 14px; padding-inline: 12px; }
+.chat-action-sheet .chat-menu { position: static; display: grid; min-width: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
+.chat-sheet-bottom .chat-menu button { min-height: 52px; font-size: 16px; }
+@media (pointer: coarse) {
+  /* No action column: the bubble takes the width, the ⋯ sits in the time
+     line (or at the end of a grouped message), and a long press opens the
+     sheet. Copy replaces native selection there. */
+  .chat-row { grid-template-columns: minmax(0, 1fr); max-width: min(85%, 640px); }
+  .chat-row:not(.grouped) .chat-meta { padding-inline-end: 40px; }
+  .chat-row.grouped { padding-inline-end: 40px; }
+  .chat-row .chat-menu-wrap { position: absolute; top: 0; inset-inline-end: 0; }
+  .chat-row .chat-menu-button { min-width: 44px; min-height: 44px; }
+  .chat-row .chat-react-button { display: none; }
+  .chat-row .chat-text { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+}
+@media (hover: hover) and (pointer: fine) and (min-width: 720px) {
+  /* With a mouse: the ⋯ and 🙂 show on hover and keyboard focus. */
+  .chat-row .chat-menu-wrap { opacity: 0; transition: opacity .12s; }
+  .chat-row:hover .chat-menu-wrap, .chat-row:focus-within .chat-menu-wrap, .chat-row:has([aria-expanded="true"]) .chat-menu-wrap { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .chat-row .chat-menu-wrap { transition: none; } }
+@media (forced-colors: active) { .chat-action-sheet { border: 1px solid CanvasText; } }
