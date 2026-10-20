@@ -1432,6 +1432,34 @@ async function api(request, response, url, context) {
     );
     return;
   }
+  // Simple view (#343, ADR 0013): the household-admin flow for one Limited member.
+  if (request.method === "POST" && url.pathname === "/api/household/simple-view/options") {
+    if (typeof body?.simpleView !== "boolean" || typeof body?.memberId !== "string") throw badRequest();
+    const change = service.simpleViewContext(session, body.memberId);
+    json(response, 200, issueAuthenticationFlow(
+      { purpose: "set-simple-view", targetMemberId: body.memberId, simpleView: body.simpleView, memberId: change.memberId, deviceId: change.deviceId },
+      change.credentialIds,
+      context,
+    ));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/household/simple-view/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "set-simple-view") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = service.credentials.get(body.credential?.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const result = withTransaction(context, () =>
+      service.setSimpleView(session, flow.targetMemberId, flow.simpleView, auth.member.id),
+    );
+    // The member's devices learn it on their next status poll; a hint makes that now.
+    if (result.changed) syncService.hintHousehold(auth.household.id);
+    json(response, 200, result);
+    return;
+  }
   // Who can use the fridge (#323): the chat policy's flow, its own purpose.
   if (request.method === "POST" && url.pathname === "/api/household/board-policy/options") {
     const change = service.boardPolicyContext(session);

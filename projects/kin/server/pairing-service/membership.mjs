@@ -72,6 +72,8 @@ export const membershipMethods = {
         active: canParticipate(this.members.get(memberId), this.now()),
         kind: normalizeMemberKind(this.members.get(memberId)?.kind),
         admin: isHouseholdAdmin(this.members.get(memberId), this.now()),
+        // Simple view (#343, ADR 0013): a layout, reported for Limited members.
+        ...(normalizeMemberKind(this.members.get(memberId)?.kind) === "limited" ? { simpleView: this.members.get(memberId)?.simpleView === true } : {}),
         ...(this.members.get(memberId)?.expiresAt == null ? {} : { expiresAt: this.members.get(memberId).expiresAt }),
       })),
     };
@@ -200,6 +202,37 @@ export const membershipMethods = {
     });
     this.persistHousehold(household.id);
     return { memberId, admin, changed: true };
+  },
+
+  // Simple view (#343, ADR 0013): an admin, with a fresh passkey, turns a
+  // calmer layout on or off for one active Limited member. It hides the rest
+  // of Kin on that member's devices; it is not a permission.
+  simpleViewContext(sessionToken, memberId) {
+    const { member, household, device } = this.authorize(sessionToken);
+    requireHouseholdAdmin(member, "change Simple view", this.now());
+    const target = this.members.get(memberId);
+    if (!target || target.householdId !== household.id || !canParticipate(target, this.now()))
+      throw new PairingError("not_found", "That household member is unavailable.", 404);
+    if (normalizeMemberKind(target.kind) !== "limited")
+      throw new PairingError("simple_view_limited_required", "Simple view is for children and other Limited members.", 409);
+    return { memberId: member.id, deviceId: device.id, credentialIds: [...member.credentials] };
+  },
+
+  setSimpleView(sessionToken, memberId, simpleView, reauthenticatedMemberId) {
+    if (typeof simpleView !== "boolean")
+      throw new PairingError("simple_view_invalid", "Choose whether Simple view is on.");
+    const context = this.simpleViewContext(sessionToken, memberId);
+    if (reauthenticatedMemberId !== context.memberId)
+      throw new PairingError("fresh_auth_required", "Authenticate with your passkey again before changing Simple view.", 401);
+    const target = this.members.get(memberId);
+    const household = this.households.get(target.householdId);
+    if ((target.simpleView === true) === simpleView) return { memberId, simpleView, changed: false };
+    if (simpleView) target.simpleView = true;
+    else delete target.simpleView;
+    household.version += 1;
+    this.audit(simpleView ? "simple_view_on" : "simple_view_off", { householdId: household.id, memberId, actorId: context.memberId });
+    this.persistHousehold(household.id);
+    return { memberId, simpleView, changed: true };
   },
 
   // Chat access policy (#123): admin only, fresh passkey. Legacy households

@@ -525,7 +525,7 @@ export class HouseholdMembership {
         const item = document.createElement("li");
         const memberLabel = labels.get(member.id) ?? (member.current ? "You" : `${MEMBER_KIND_LABELS[kind]} ${index + 1}`);
         const expiryText = kind === "temporary" && member.expiresAt ? ` — ends ${new Date(member.expiresAt).toLocaleString()}` : "";
-        item.textContent = `${memberLabel}${member.admin ? " — Household admin" : ""}${expiryText}${member.active ? "" : " — access ended"}`;
+        item.textContent = `${memberLabel}${member.admin ? " — Household admin" : ""}${member.simpleView ? " — Simple view on" : ""}${expiryText}${member.active ? "" : " — access ended"}`;
         if (member.current && kind === "temporary") item.textContent = `Temporary household access — ends ${new Date(member.expiresAt).toLocaleString()}`;
         if (me?.admin && kind === "adult" && member.active && (!member.current || member.admin))
           item.append(
@@ -536,6 +536,15 @@ export class HouseholdMembership {
                   ? `Remove household admin from ${memberLabel}`
                   : `Make ${memberLabel} a household admin`,
               () => this.host.setHouseholdAdmin(member.id, memberLabel, !member.admin),
+              "secondary",
+            ),
+          );
+        // Simple view (#343, ADR 0013): an admin's choice for a Limited member.
+        if (me?.admin && kind === "limited" && member.active)
+          item.append(
+            this.host.makeButton(
+              member.simpleView ? `Turn off Simple view for ${memberLabel}` : `Turn on Simple view for ${memberLabel}`,
+              () => this.host.setSimpleView(member.id, memberLabel, !member.simpleView),
               "secondary",
             ),
           );
@@ -686,6 +695,33 @@ export class HouseholdMembership {
           flow: started.flow,
           credential: credentialJson(credential),
         }),
+      });
+    });
+    await this.host.showHousehold();
+  }
+
+  async setSimpleView(memberId, memberLabel, simpleView) {
+    if (
+      !confirm(
+        simpleView
+          ? `Turn on Simple view for ${memberLabel}? Their devices show a simpler layout: their own things for today, Chat and the Fridge, with big buttons. It's a layout, not a lock: Kin hides the rest, it can't prevent it. They can't turn it off.`
+          : `Turn off Simple view for ${memberLabel}? Their devices show the full Kin again when they next connect.`,
+      )
+    )
+      return;
+    await this.host.run(async () => {
+      const started = await this.host.api("/api/household/simple-view/options", {
+        method: "POST",
+        body: JSON.stringify({ memberId, simpleView }),
+      });
+      this.host.message("Confirm Simple view with your passkey.");
+      const credential = await navigator.credentials.get({
+        publicKey: authenticationOptions(started.publicKey),
+        signal: this.host.connectionAbort.signal,
+      });
+      await this.host.api("/api/household/simple-view/finish", {
+        method: "POST",
+        body: JSON.stringify({ flow: started.flow, credential: credentialJson(credential) }),
       });
     });
     await this.host.showHousehold();

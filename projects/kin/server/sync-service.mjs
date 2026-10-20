@@ -71,6 +71,8 @@ export class EncryptedSyncService {
     const policy = chatPolicyOf(auth.household);
     return {
       memberKind: auth.member.kind ?? "adult",
+      // Simple view (#343, ADR 0013): this member's layout, Limited only.
+      simpleView: (auth.member.kind ?? "adult") === "limited" && auth.member.simpleView === true,
       ...(auth.member.expiresAt == null ? {} : { memberExpiresAt: auth.member.expiresAt }),
       // Chat access (#123): this member's own, and the policy for an admin.
       chat: {
