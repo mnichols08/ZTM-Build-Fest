@@ -34,12 +34,16 @@ class KinRoutines extends HTMLElement {
     this.scheduleDrafts = new Map();
   }
 
+  disconnectedCallback() {
+    this.compactQuery?.removeEventListener?.("change", this.onCompactChange);
+  }
+
   connectedCallback() {
     this.compactQuery ??= globalThis.matchMedia?.("(max-width: 719px)") ?? null;
-    if (this.compactQuery && !this.onCompactChange) {
-      this.onCompactChange = () => this.render();
-      this.compactQuery.addEventListener?.("change", this.onCompactChange);
-    }
+    // Removed on disconnect: a lock replaces this element, and a listener
+    // left on the media query would keep the old one and its records alive.
+    this.onCompactChange ??= () => this.render();
+    this.compactQuery?.addEventListener?.("change", this.onCompactChange);
     if (this.input) return;
     // --- Routines view ---
     const routinesView = document.createElement("section");

@@ -146,6 +146,14 @@ outcome wording. The `command_tests.rs` test
 `item_completion_and_reopening_must_change_status` covers the Rust
 precondition and the idempotent replay of historical duplicates.
 
+`scripts/chat-layout-regression.mjs` (#310, #311, #316) runs after the chat
+suite on the room it leaves: Chat fits the screen at 320×568, phone
+landscape, 768×1024, 1024×768, 820×1180, desktop and desktop at 200%; at
+320px with 200% text, dark mode and reduced motion; with the keyboard open
+(emulated through a shorter visual viewport); Jump to latest; the + menu; and
+message actions by mouse, right-click, long press and swipe. Physical devices
+follow [MOBILE-CHECKLIST](MOBILE-CHECKLIST.md).
+
 `scripts/undo-regression.mjs` (#314, #315) runs inside
 `browser-regression.mjs` after the bulk suite: the toast after a change, Undo
 then Redo on it, Ctrl/Cmd+Z and Shift+Ctrl/Cmd+Z outside text fields only,

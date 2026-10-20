@@ -11,7 +11,8 @@
 //   back), so undoing a delete creates the thing again under a new id: an
 //   Item with its text, list, date, area, pin, owner and steps; a Routine
 //   with its text, schedule, owner and today's completion. The original stays
-//   archived in history. Attachments stay with the original.
+//   archived in history. Attachments, an item's picture (emoji) and local
+//   reminders stay with the original.
 // - Before running, the entry is checked against the current projection. If
 //   the thing changed since (another member completed it, moved its date…),
 //   undo is refused with a plain explanation instead of overwriting.
@@ -142,10 +143,17 @@ export function routineArchivedEntry(routineId, before) {
   return Object.freeze({ kind: "routine-archived", routineId, snapshot, replacementId: newId(), label: `delete ${name(snapshot.text)}` });
 }
 
+/** What a routine looked like right after this device's change, to tell
+ * whether anyone changed it since (routines carry no change time). */
+const routineMark = (state, routineId) => {
+  const routine = routineIn(state, routineId);
+  return routine ? [routine.text, routine.cadence, routine.status, routine.occurrenceKey ?? 0, routine.occurrenceStatus, ownerIn(state, "routine", routineId) ?? ""].join("\u0000") : null;
+};
+
 export function routineCreatedEntry(routineId, after) {
   const routine = routineIn(after, routineId);
   if (!routine) return null;
-  return Object.freeze({ kind: "routine-created", routineId, label: `add ${name(routine.text)}` });
+  return Object.freeze({ kind: "routine-created", routineId, mark: routineMark(after, routineId), label: `add ${name(routine.text)}` });
 }
 
 export function routineOccurrenceEntry(type, routineId, after) {
@@ -190,7 +198,9 @@ export function reversalStatus(entry, state) {
     }
     case "routine-created": {
       const routine = routineIn(state, entry.routineId);
-      return !routine || routine.status === "archived" ? "gone" : "ready";
+      if (!routine || routine.status === "archived") return "gone";
+      // Someone assigned, completed or reopened it since: leave it alone.
+      return entry.mark == null || routineMark(state, entry.routineId) === entry.mark ? "ready" : "conflict";
     }
     case "routine-occurrence": {
       const routine = routineIn(state, entry.routineId);
@@ -219,7 +229,7 @@ export function reversalStatus(entry, state) {
  * left off. `memberIds` (when known) keeps a removed member from being made
  * the owner again.
  */
-export function nextReversalStep(entry, state, { memberIds = null } = {}) {
+export function nextReversalStep(entry, state, { memberIds = null, skip = null } = {}) {
   switch (entry.kind) {
     case "item-status": {
       const item = itemIn(state, entry.itemId);
@@ -251,24 +261,33 @@ export function nextReversalStep(entry, state, { memberIds = null } = {}) {
       };
     }
     case "item-archived":
-      return recreateItemStep(entry, state, memberIds);
+      return recreateItemStep(entry, state, memberIds, skip);
     case "routine-archived":
-      return recreateRoutineStep(entry, state, memberIds);
+      return recreateRoutineStep(entry, state, memberIds, skip);
     default:
       return null;
   }
 }
 
-function recreateItemStep({ snapshot, replacementId: id }, state, memberIds) {
+/** Steps of re-creating something that are restored when they can be: a
+ * refusal (ten pins already, say) skips them, not the whole undo. The caller
+ * passes their types back in `skip`. */
+export function isOptionalStep(entry, command) {
+  return (entry?.kind === "item-archived" || entry?.kind === "routine-archived") &&
+    ["pin", "change-responsibility", "change-item-area"].includes(command?.type);
+}
+
+function recreateItemStep({ snapshot, replacementId: id }, state, memberIds, skip) {
+  const skipped = (type) => Boolean(skip?.has(type));
   const item = itemIn(state, id);
   if (!item) return { type: "add", id, text: snapshot.text, classification: snapshot.classification };
   if (item.status === "archived") return null;
   if (snapshot.planningDate != null && (item.planningDate ?? null) !== snapshot.planningDate)
     return { type: "set-item-planning-date", itemId: id, planningDate: snapshot.planningDate };
   const area = snapshot.areaId ? state?.areas?.find((record) => record.areaId === snapshot.areaId && !record.archived) : null;
-  if (area && item.areaId !== snapshot.areaId) return { type: "change-item-area", itemId: id, areaId: snapshot.areaId };
-  if (snapshot.pinned && !pinnedIn(state, id)) return { type: "pin", targetKind: "item", targetId: id };
-  if (snapshot.ownerId && ownerIn(state, "item", id) !== snapshot.ownerId && (!memberIds || memberIds.includes(snapshot.ownerId)))
+  if (area && item.areaId !== snapshot.areaId && !skipped("change-item-area")) return { type: "change-item-area", itemId: id, areaId: snapshot.areaId };
+  if (snapshot.pinned && !pinnedIn(state, id) && !skipped("pin")) return { type: "pin", targetKind: "item", targetId: id };
+  if (snapshot.ownerId && ownerIn(state, "item", id) !== snapshot.ownerId && (!memberIds || memberIds.includes(snapshot.ownerId)) && !skipped("change-responsibility"))
     return { type: "change-responsibility", targetKind: "item", targetId: id, memberId: snapshot.ownerId };
   for (const step of snapshot.steps) {
     const current = item.steps?.find((record) => record.stepId === step.stepId);
@@ -279,11 +298,11 @@ function recreateItemStep({ snapshot, replacementId: id }, state, memberIds) {
   return null;
 }
 
-function recreateRoutineStep({ snapshot, replacementId: id }, state, memberIds) {
+function recreateRoutineStep({ snapshot, replacementId: id }, state, memberIds, skip) {
   const routine = routineIn(state, id);
   if (!routine) return { type: "create-routine", routineId: id, text: snapshot.text, cadence: snapshot.cadence };
   if (routine.status === "archived") return null;
-  if (snapshot.ownerId && ownerIn(state, "routine", id) !== snapshot.ownerId && (!memberIds || memberIds.includes(snapshot.ownerId)))
+  if (snapshot.ownerId && ownerIn(state, "routine", id) !== snapshot.ownerId && (!memberIds || memberIds.includes(snapshot.ownerId)) && !skip?.has("change-responsibility"))
     return { type: "change-responsibility", targetKind: "routine", targetId: id, memberId: snapshot.ownerId };
   if (snapshot.completed && routine.occurrenceStatus === "open" && routine.occurrenceKey)
     return { type: "complete-routine-occurrence", routineId: id, occurrenceKey: routine.occurrenceKey };
@@ -315,7 +334,7 @@ export function inverseEntry(entry, before, after) {
       return snapshot ? keep({ kind: "routine-archived", routineId: entry.routineId, snapshot, replacementId: newId() }) : null;
     }
     case "routine-archived":
-      return keep({ kind: "routine-created", routineId: entry.replacementId });
+      return keep({ kind: "routine-created", routineId: entry.replacementId, mark: routineMark(after, entry.replacementId) });
     case "routine-occurrence":
       return keep({ ...entry, to: entry.to === "completed" ? "open" : "completed" });
     default:

@@ -11,6 +11,8 @@ export class AppendCommands {
   async appendCommand(command) {
     const session = this.ctx.session.captureSession();
     this.ctx.session.assertCurrentSession(session);
+    // A new change replaces the undo toast (#315); undo itself keeps it.
+    this.ctx.undo?.beforeChange();
     const result = await session.store.append(command, session.engine);
     this.ctx.session.assertCurrentSession(session);
     this.app.state = result.state;

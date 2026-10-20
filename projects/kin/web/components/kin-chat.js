@@ -101,6 +101,17 @@ class KinChat extends HTMLElement {
     this.onScreen = new Set();
     this.onWindowChange = () => this.windowChanged();
     this.onPageHide = () => { this.voice?.interrupt(); this.windowChanged(); };
+    // Opening the Chat page lands on the newest message (#310), unless the
+    // "New messages" divider is still waiting to be shown.
+    this.onRouteChange = (event) => {
+      if (event.detail?.to !== "updates/chat" || !this.chatRoom || this.dividerPending) return;
+      requestAnimationFrame(() => {
+        // No focus move here: on a phone that would open the keyboard.
+        if (!this.following) { this.following = true; void this.queueRender("reset"); return; }
+        this.scrollToBottom();
+        this.jump.hidden = true;
+      });
+    };
     this.onDocumentClick = (event) => {
       if (this.reacting && !event.composedPath().some((node) => node?.classList?.contains?.("chat-react-bar") || node?.classList?.contains?.("chat-react-button"))) this.closeReactions();
     };
@@ -169,6 +180,12 @@ class KinChat extends HTMLElement {
   }
 
   connectedCallback() {
+    // The To talk about side column follows the width (#312); removed on
+    // disconnect so a replaced element isn't kept alive.
+    this.wideQuery ??= globalThis.matchMedia?.("(min-width: 1180px)") ?? null;
+    this.onWideChange ??= () => this.renderTopics();
+    this.wideQuery?.addEventListener?.("change", this.onWideChange);
+    window.addEventListener("kin-route-change", this.onRouteChange);
     document.addEventListener("click", this.onDocumentClick);
     document.addEventListener("visibilitychange", this.onWindowChange);
     window.addEventListener("focus", this.onWindowChange);
@@ -241,7 +258,6 @@ class KinChat extends HTMLElement {
     });
     this.topicsPanel.append(topicsHeading, topicsHint, this.topicList, this.topicsEmpty, this.legacyHost);
     this.wideQuery ??= globalThis.matchMedia?.("(min-width: 1180px)") ?? null;
-    this.wideQuery?.addEventListener?.("change", () => this.renderTopics());
     // The chat's own search box and filters (#124).
     this.searchPanel = document.createElement("div");
     this.searchPanel.id = "chat-search-panel";
@@ -635,6 +651,8 @@ class KinChat extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this.wideQuery?.removeEventListener?.("change", this.onWideChange);
+    window.removeEventListener("kin-route-change", this.onRouteChange);
     document.removeEventListener("click", this.onDocumentClick);
     document.removeEventListener("visibilitychange", this.onWindowChange);
     window.removeEventListener("focus", this.onWindowChange);
@@ -1720,7 +1738,9 @@ class KinChat extends HTMLElement {
 
   /** Open older topics, for the toolbar count (set by the app). */
   set legacyOpenCount(value) {
-    this.legacyOpen = Number(value) || 0;
+    const count = Number(value) || 0;
+    if (count === this.legacyOpen) return;
+    this.legacyOpen = count;
     this.renderTopics();
   }
 
@@ -1746,10 +1766,11 @@ class KinChat extends HTMLElement {
     const room = this.chatRoom;
     const topics = room ? this.topics.filter((topic) => !room.isHidden?.(topic.messageId)) : [];
     const open = topics.filter((topic) => topic.state === "open").length + this.legacyOpen;
-    const wide = this.wideTopics();
-    this.topicsPanel.hidden = !wide && !this.topicsOpen;
+    const wide = this.wideTopics() && !this.simple;
+    // Simple view (#341) has no To talk about list.
+    this.topicsPanel.hidden = this.simple || (!wide && !this.topicsOpen);
     this.topicsPanel.classList.toggle("chat-topics-side", wide);
-    this.topicsToggle.hidden = wide;
+    this.topicsToggle.hidden = wide || Boolean(this.simple);
     this.topicsToggle.setAttribute("aria-expanded", String(this.topicsOpen));
     this.topicsToggle.textContent = open ? `To talk about · ${open} open` : "To talk about";
     this.topicsToggle.setAttribute("aria-label", open ? `To talk about, ${open} open` : "To talk about, none open");
@@ -2557,6 +2578,8 @@ class KinChat extends HTMLElement {
     row.addEventListener("contextmenu", (event) => {
       if (skip(event.target)) return;
       event.preventDefault();
+      // A touch long press can bring both this and the timer: open once.
+      cancel();
       if (this.menuFor !== messageId) this.openMenu(messageId);
     });
   }

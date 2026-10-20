@@ -2064,3 +2064,15 @@ kin-app[data-route="updates/chat"] .app-feedback { bottom: calc(var(--chat-compo
   .chat-topics.chat-topics-side { position: absolute; inset-block: 12px; inset-inline-end: 12px; width: 390px; }
 }
 @media (forced-colors: active) { .chat-topics, .chat-topic { border: 1px solid CanvasText; } }
+
+/* The undo toast stays until the next action (#315): keep the newest
+   messages and focused rows from sitting under it (WCAG 2.4.11). */
+kin-app:has(.undo-toast:not([hidden])) .chat-section.chat-fit .chat-scroll { padding-bottom: 72px; scroll-padding-bottom: 72px; }
+html:has(kin-app .undo-toast:not([hidden])) { scroll-padding-bottom: calc(160px + env(safe-area-inset-bottom)); }
+
+/* Updates' two tabs stay on one row at 320px and 200% text (#313): the row
+   scrolls sideways within itself rather than wrapping. */
+@media (max-width: 719px) {
+  #updates kin-segment-nav ul { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  #updates kin-segment-nav li, #updates kin-segment-nav .segment-link { flex: none; white-space: nowrap; }
+}

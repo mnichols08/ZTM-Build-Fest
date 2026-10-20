@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  describeReversal, inverseEntry, itemAddedEntry, itemArchivedEntry, itemDateEntry, itemStatusEntry,
+  describeReversal, inverseEntry, isOptionalStep, itemAddedEntry, itemArchivedEntry, itemDateEntry, itemStatusEntry,
   nextReversalStep, pinEntry, reversalStatus, routineArchivedEntry, routineCreatedEntry,
   routineOccurrenceEntry, UndoHistory,
 } from "./undo.js";
@@ -195,7 +195,9 @@ test("delete routine is undone by creating it again with its schedule, owner and
   assert.deepEqual(commands[0], { type: "create-routine", routineId: entry.replacementId, text: "Walk the dog", cadence: "daily" });
   assert.equal(commands[2].occurrenceKey, 20261020);
   const redo = inverseEntry(entry, deleted, restored);
-  assert.deepEqual(redo, { kind: "routine-created", routineId: entry.replacementId, label: entry.label });
+  assert.equal(redo.kind, "routine-created");
+  assert.equal(redo.routineId, entry.replacementId);
+  assert.equal(redo.label, entry.label);
   assert.deepEqual(reverse(redo, restored).commands, [{ type: "archive-routine", routineId: entry.replacementId }]);
   // Deleted again elsewhere: nothing to bring back.
   const again = apply(restored, { type: "archive-routine", routineId: entry.replacementId }, { now: 2 });
@@ -228,4 +230,29 @@ test("entries need the thing to exist; outcomes are described plainly", () => {
   assert.match(describeReversal(entry, "redo", "gone"), /^Couldn't redo that .*no longer here/);
   assert.equal(describeReversal(null, "undo", "empty"), "Nothing to undo.");
   assert.equal(describeReversal(null, "redo", "empty"), "Nothing to redo.");
+});
+
+test("a routine someone changed since isn't deleted by undo", () => {
+  const after = state({ routines: [routine()] });
+  const created = routineCreatedEntry(R, after);
+  assert.equal(reversalStatus(created, after), "ready");
+  assert.equal(reversalStatus(created, state({ routines: [routine({ occurrenceStatus: "completed" })] })), "conflict", "completed since");
+  assert.equal(reversalStatus(created, state({ routines: [routine()], responsibilities: [{ targetKind: "routine", targetId: R, memberId: ME }] })), "conflict", "assigned since");
+});
+
+test("pin, owner and area are restored when they can be; skipped ones are passed over", () => {
+  const before = state({
+    items: [item({ areaId: AREA })],
+    pins: [{ targetKind: "item", targetId: A }],
+    responsibilities: [{ targetKind: "item", targetId: A, memberId: ME }],
+    areas: [{ areaId: AREA, name: "Kitchen", archived: false }],
+  });
+  const entry = itemArchivedEntry(A, before);
+  const archived = apply(before, { type: "archive", itemId: A }, { now: 500 });
+  const skip = new Set(["pin", "change-item-area", "change-responsibility"]);
+  const { commands } = reverse(entry, archived, { now: 600 }, { skip });
+  assert.deepEqual(commands.map((command) => command.type), ["add"]);
+  assert.equal(isOptionalStep(entry, { type: "pin" }), true);
+  assert.equal(isOptionalStep(entry, { type: "add" }), false);
+  assert.equal(isOptionalStep(itemStatusEntry("complete", A, state({ items: [item({ status: "completed" })] })), { type: "pin" }), false);
 });

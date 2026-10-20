@@ -8,7 +8,7 @@
 // never times out (WCAG 2.2.1). Ctrl/Cmd+Z and Shift+Ctrl/Cmd+Z (or Ctrl+Y)
 // do the same outside text fields (navigation.js). Nothing is persisted or
 // synced; locking clears it.
-import { describeReversal, inverseEntry, nextReversalStep, reversalStatus, UndoHistory } from "../../undo.js";
+import { describeReversal, inverseEntry, isOptionalStep, nextReversalStep, reversalStatus, UndoHistory } from "../../undo.js";
 import { SAVE_ERROR } from "./constants.js";
 
 // A reversal is a handful of commands; this only stops a runaway loop.
@@ -40,7 +40,7 @@ export class UndoController {
     dismiss.className = "undo-toast-dismiss";
     dismiss.setAttribute("aria-label", "Dismiss");
     dismiss.textContent = "×";
-    dismiss.addEventListener("click", () => this.hideToast({ restoreFocus: true }));
+    dismiss.addEventListener("click", () => this.hideToast());
     toast.append(text, action, dismiss);
     feedback.prepend(toast);
     this.toast = toast;
@@ -73,13 +73,21 @@ export class UndoController {
     status.classList.toggle("status-in-toast", Boolean(this.toast && !this.toast.hidden && status.textContent && status.textContent === this.toastText.textContent));
   }
 
-  hideToast({ restoreFocus = false } = {}) {
+  /** Hides the toast. Focus inside it never drops to the page: it goes to
+   * the view's heading. */
+  hideToast() {
     if (!this.toast || this.toast.hidden) return;
     const hadFocus = this.toast.contains(document.activeElement);
     this.toast.hidden = true;
     this.toastText.textContent = "";
     this.syncStatus();
-    if (hadFocus && restoreFocus) this.app.main?.querySelector(".app-view:not([hidden]) h1")?.focus();
+    if (hadFocus) this.app.main?.querySelector(".app-view:not([hidden]) h1")?.focus();
+  }
+
+  /** A change the member makes replaces the toast; background refreshes
+   * and sync don't (called from the append path). */
+  beforeChange() {
+    if (!this.running) this.hideToast();
   }
 
   /** Locking, or leaving the household: nothing survives. */
@@ -106,13 +114,22 @@ export class UndoController {
     const before = this.app.state;
     const memberIds = this.ctx.detail.responsibilityContext?.()?.memberIds ?? null;
     let appended = 0;
+    // Pin, owner and area are restored when they can be; a refusal there
+    // (ten pins already, say) skips that step rather than the whole undo.
+    const skip = new Set();
     this.running = true;
     this.ctx.status.setBusy(true);
     this.ctx.status.clearAlert();
     this.ctx.status.setStatus(direction === "redo" ? "Redoing…" : "Undoing…");
     try {
-      for (let command; appended < MAX_STEPS && (command = nextReversalStep(entry, this.app.state, { memberIds })); appended++) {
-        await this.ctx.append.appendCommand(command);
+      for (let command, steps = 0; steps < MAX_STEPS && (command = nextReversalStep(entry, this.app.state, { memberIds, skip })); steps++) {
+        try {
+          await this.ctx.append.appendCommand(command);
+          appended++;
+        } catch (error) {
+          if (error.code !== 4 || !isOptionalStep(entry, command)) throw error;
+          skip.add(command.type);
+        }
         this.ctx.session.assertCurrentSession(session);
       }
       // Undoing an add archives it: its reminder goes too, as on Archive.
@@ -128,11 +145,20 @@ export class UndoController {
       else this.hideToast();
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      if (error.code === 4) this.app.pendingRefresh = true;
       if (appended) { this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange(); }
-      // Back on its stack: the steps resume where they stopped.
-      this.history.restore(direction, entry);
       this.hideToast();
+      if (error.code === 4) {
+        // The household refused it: something changed. Dropped, and said so;
+        // trying again would meet the same refusal.
+        this.app.pendingRefresh = true;
+        this.ctx.status.setStatus(appended
+          ? `Only partly ${direction === "redo" ? "redone" : "undone"}: the rest changed since, maybe on another device.`
+          : describeReversal(entry, direction, "conflict"));
+        return;
+      }
+      // Back on its stack (storage or a lost connection): the steps resume
+      // where they stopped.
+      this.history.restore(direction, entry);
       this.ctx.status.showAlert(
         appended ? `Only partly ${direction === "redo" ? "redone" : "undone"}. Try again to finish.` : (error.userMessage ?? SAVE_ERROR),
         () => this.run(direction),
