@@ -11,6 +11,7 @@ pub mod error;
 pub mod event;
 pub mod event_decode;
 pub mod history;
+pub mod meals;
 pub mod qr;
 pub mod recurrence;
 pub mod replay;
@@ -70,6 +71,8 @@ mod chat_tests;
 
 #[cfg(test)]
 mod board_tests;
+#[cfg(test)]
+mod meals_tests;
 
 #[cfg(test)]
 mod recurring_task_tests;

@@ -65,6 +65,11 @@ impl CivilDate {
         Self(low * 10_000 + month * 100 + day_of_year + 1)
     }
 
+    /// Days since 0001-01-01, for comparing dates a number of days apart.
+    pub fn day_number(self) -> u32 {
+        self.ordinal()
+    }
+
     /// Saturday or Sunday. Ordinal 0 (0001-01-01) is a Monday.
     pub fn is_weekend(self) -> bool {
         self.ordinal() % 7 >= 5

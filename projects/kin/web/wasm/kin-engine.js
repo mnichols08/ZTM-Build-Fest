@@ -18,6 +18,7 @@ import {
 import { decodeAttachmentBindings, decodeProjection } from "./projection-decode.js";
 import { HistoryMirror } from "./history-mirror.js";
 import { BOARD_COMMANDS, BOARD_EVENT_KINDS, MAX_BOARD_EVENT_COUNT, BoardFormatError, decodeBoard, encodeBoardIntent } from "./kin-board.js";
+import { MEAL_COMMANDS, MEAL_EVENT_KINDS, MealFormatError, decodeMeals, decodePlan, encodeMealIntent, encodePlanQuery } from "./kin-meals.js";
 
 export { idToHex, KinEngineError };
 
@@ -89,6 +90,8 @@ export function createEngine(instanceExports) {
     "kin_project",
     "kin_device_names",
     "kin_member_names",
+    "kin_meals",
+    "kin_meal_shopping_plan",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_audio_peaks",
@@ -284,6 +287,16 @@ export function createEngine(instanceExports) {
     // Members' preferred display names (#224), replayed from the same
     // history: [{ memberId, name }] in member-ID order, IDs as hex. Members
     // who never set a name are absent; hosts fall back to their own labels.
+    // Meals (#333): { recipes, dinners } from the household history, dinners
+    // from 35 days before `civilDate` to 370 after (kin-meals.js decodeMeals).
+    meals: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeMeals(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_meals"),
+      )),
+    // What adding a recipe's ({ recipeId }) or a date's dinner's ({ date })
+    // ingredients to Shopping would do now: [{ outcome, text, stapleId }].
+    mealShoppingPlan: (source, records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodePlan(mealPlanBytes(exports, mirror, source, records, asOf, civilDate, syncIdentity))),
     memberNames: (records, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodeMemberNames(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_member_names"),
@@ -970,6 +983,8 @@ const COMMAND_TYPES = [
   "name-member",
   // The fridge (#317): KCMD actions 52–58, encoded by kin-board.js.
   ...BOARD_COMMANDS,
+  // Meals (#333): KCMD actions 59–63, encoded by kin-meals.js.
+  ...MEAL_COMMANDS,
 ];
 const EVENT_KINDS = [
   null,
@@ -1025,6 +1040,7 @@ const EVENT_KINDS = [
   "CHAT_POLL_CLOSED",
   "MEMBER_NAMED",
   ...BOARD_EVENT_KINDS,
+  ...MEAL_EVENT_KINDS,
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -1099,6 +1115,14 @@ function encodeIntent(type, value) {
 
 function encodeIntentPacket(command, identity) {
   const kind = COMMAND_TYPES.indexOf(command.type);
+  // Meals (59–63) carry their canonical payload (kin-meals.js).
+  if (kind >= 59 && kind <= 63) {
+    try { return encodeMealIntent(command, identity); }
+    catch (error) {
+      if (error instanceof MealFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
   // Fridge actions (52+) have their own encoder and log (kin-board.js).
   if (kind < 1 || kind >= 52)
     throw new KinEngineError(2, "Kin received an invalid household action.");
@@ -1639,6 +1663,26 @@ function callCore(exports, operation, request, { statusOnly = false } = {}) {
 // or an array): the instance's history is brought up to date, then replayed
 // in the context of a record-less KINE request. `operation` is kin_project,
 // or kin_plan_import for an archive's import plan.
+function mealPlanBytes(exports, mirror, source, records, asOf, civilDate, syncIdentity) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (records.length > MAX_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  let query;
+  try { query = encodePlanQuery(source); }
+  catch (error) {
+    if (error instanceof MealFormatError) throw new KinEngineError(2, error.message);
+    throw error;
+  }
+  // The 32-byte KMPQ query, then the record-less KINE context.
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, query.length);
+  request.set(query, 0);
+  const release = mirror.hold(records);
+  try {
+    return callCore(exports, "kin_meal_shopping_plan", request);
+  } finally {
+    release();
+  }
+}
+
 function replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, syncIdentity, operation = "kin_project") {
   if (!exports)
     throw new KinEngineError(

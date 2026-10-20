@@ -318,6 +318,20 @@ pub extern "C" fn kin_device_names(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::device_names, None)
 }
 
+/// Meals (KMLS v1, #333) in the instance's history, in the context of a
+/// record-less KINE request.
+#[no_mangle]
+pub extern "C" fn kin_meals(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::meals, None)
+}
+
+/// A Shopping plan for a recipe or a date's dinner (KMPQ + KINE context ->
+/// KMSP v1, #333) against the instance's history.
+#[no_mangle]
+pub extern "C" fn kin_meal_shopping_plan(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::meal_shopping_plan, None)
+}
+
 /// The member-name table (KMNM v1, #224) of the instance's history, in the
 /// context of a record-less KINE request, as `kin_device_names`.
 #[cfg_attr(target_arch = "wasm32", no_mangle)]

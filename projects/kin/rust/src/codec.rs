@@ -64,6 +64,11 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::BoardMagnetHidden { .. } => crate::board::MAGNET_HIDDEN,
         EventKind::BoardCleared { .. } => crate::board::CLEARED,
         EventKind::BoardClearUndone { .. } => crate::board::CLEAR_UNDONE,
+        EventKind::RecipeSaved { .. } => crate::meals::RECIPE_SAVED,
+        EventKind::RecipeArchived { .. } => crate::meals::RECIPE_ARCHIVED,
+        EventKind::DinnerSet { .. } => crate::meals::DINNER_SET,
+        EventKind::DinnerCleared { .. } => crate::meals::DINNER_CLEARED,
+        EventKind::DinnerCookSet { .. } => crate::meals::DINNER_COOK_SET,
     }
 }
 
@@ -442,6 +447,14 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
         | EventKind::BoardCleared { .. }
         | EventKind::BoardClearUndone { .. }) => {
             payload = crate::board::encode_payload(kind)?;
+        }
+        // Meals (#333): meals.rs owns the payloads.
+        kind @ (EventKind::RecipeSaved { .. }
+        | EventKind::RecipeArchived { .. }
+        | EventKind::DinnerSet { .. }
+        | EventKind::DinnerCleared { .. }
+        | EventKind::DinnerCookSet { .. }) => {
+            payload = crate::meals::encode_payload(kind)?;
         }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());

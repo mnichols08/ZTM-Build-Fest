@@ -288,6 +288,42 @@ Replay (rust/src/board.rs) never fails on a decoded board event:
 - Commands are stricter: a new ID, room in the budget, a change that changes
   something, and a logical time after the board log's latest.
 
+## Meals
+
+Kinds 59–63 (#333, [ADR 0012](decisions/0012-meals.md)) are schema 1 events in
+the household history. IDs are never zero, reserved bytes are zero, flags are
+0 or 1, and text is canonical in the event (whitespace runs collapsed and
+trimmed; notes keep their lines, with CRLF as LF and trailing spaces gone).
+Payloads are laid out in [ABI](ABI.md).
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 59 | `RECIPE_SAVED` | A recipe saved whole: name (1–80 characters), up to 40 ingredient lines (1–120 characters each, optionally linked to a Staple item), notes (up to 2,000 characters). At most 4,352 bytes after the ID, so one recipe fits one sync envelope |
+| 60 | `RECIPE_ARCHIVED` | The recipe leaves the recipe list for good |
+| 61 | `DINNER_SET` | The dinner for one civil date: a recipe with its name when planned, or a one-off name |
+| 62 | `DINNER_CLEARED` | That date has no dinner (and no cook) |
+| 63 | `DINNER_COOK_SET` | Who's cooking on that date; no member is "No one yet" |
+
+Replay (rust/src/meals.rs) never fails on a decoded meals event:
+
+- A recipe's latest save wins; an archived recipe stays archived and later
+  saves of it change nothing.
+- One dinner per date: the latest `DINNER_SET` in replay order wins, so two
+  devices that planned the same evening offline converge. `DINNER_CLEARED`
+  removes the dinner and its cook.
+- The cook is kept per date apart from the dinner, so replanning keeps it; it
+  shows only while the date has a dinner.
+- A dinner naming a recipe the history lacks, and an archive of an unknown
+  recipe, change nothing.
+- Commands are stricter: at most 200 active recipes, a staple link to an
+  active Staple (a link the recipe already had may stay after its staple is
+  archived), a dinner naming an active recipe by its current name, a cook only
+  for a date with a dinner, and every change must change something.
+
+Nothing here is counted or compared: who cooked is never totalled. Meals are
+not part of the KINS projection; hosts read them through `kin_meals` and plan
+Shopping additions through `kin_meal_shopping_plan`.
+
 ## v1.1.0 Household chat
 
 `CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and
