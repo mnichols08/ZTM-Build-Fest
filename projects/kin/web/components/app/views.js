@@ -332,10 +332,20 @@ export class ViewBuilder {
     this.app.boardPolicy = document.createElement("kin-board-policy");
     appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance);
 
-    household.append(hub, fridgePage, notesPage, areasPage, peoplePage, privacyPage, appearancePage);
-    this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
+    // For the sitter (#441, ADR 0017).
+    const sitterPage = document.createElement("section");
+    sitterPage.className = "household-subpage sitter-page";
+    sitterPage.setAttribute("aria-label", "For the sitter");
+    this.app.sitterEditor = document.createElement("kin-sitter-editor");
+    sitterPage.append(this.app.sitterEditor);
+    household.append(hub, fridgePage, notesPage, sitterPage, areasPage, peoplePage, privacyPage, appearancePage);
+    this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["sitter", sitterPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
 
-    for (const section of [today, week, lists, search, routines, updates, household]) {
+    // For you (#441): the page a Temporary member lands on.
+    const foryou = page("foryou", "For you", "What the family left for you.");
+    this.app.sitterView = document.createElement("kin-sitter-page");
+    foryou.append(this.app.sitterView);
+    for (const section of [today, week, foryou, lists, search, routines, updates, household]) {
       this.app.pages.set(section.id, section);
       main.append(section);
     }
