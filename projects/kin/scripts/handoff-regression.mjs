@@ -292,6 +292,10 @@ export async function handoffRegressions() {
     } finally {
       IDBObjectStore.prototype.add = originalAdd;
     }
+    // The failed save's finally runs a waiting peer refresh, which takes the
+    // alert while it reads and offers the same Retry again when it finishes
+    // (refresh.js). Checking in between saw no Retry (#327): wait for it.
+    await idle();
     check(
       (await count()) === beforeAction && !app.retryButton.hidden,
       "failed Handoff action keeps retry",
