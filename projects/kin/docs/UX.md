@@ -2260,7 +2260,13 @@ tried them.
   Screen Wake Lock API; remembered per device) stops the phone sleeping
   between aisles. The lock is released on Done, Escape, lock, or when the
   page is hidden, and asked for again when it comes back.
-- Grouping by store section is a separate story (#411) with its own ADR.
+- **Store sections** (#411, [ADR 0015](decisions/0015-store-sections.md)):
+  **Sections** in shopping mode opens a small editor to name the parts of
+  the shop and put them in the order you walk it (move up/down, remove, add;
+  duplicate names are refused). Each item then has a **Section** control on
+  its row, and the list groups by section in that order with **Other** last.
+  A Staple's section goes with it when it is replenished. With no sections,
+  the list looks as before.
 
 # 36. Bring a list into Kin (#452)
 

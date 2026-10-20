@@ -571,6 +571,14 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
             }
             crate::simple::decode_payload(code, payload)?
         }
+        // Store sections (#411): store_sections.rs decodes its payloads
+        // strictly.
+        (1, code) if crate::store_sections::is_sections_code(code) => {
+            if !valid_timestamp(read_i64(record, 68)?) {
+                return Err(KinError::MalformedProtocol);
+            }
+            crate::store_sections::decode_payload(code, payload)?
+        }
         // Meals (#333): meals.rs decodes its payloads strictly.
         (1, code) if crate::meals::is_meals_code(code) => {
             if !valid_timestamp(read_i64(record, 68)?) {

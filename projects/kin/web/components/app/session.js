@@ -198,6 +198,7 @@ export class SessionController {
     this.app.shoppingMode?.close();
     this.app.importer?.close();
     this.app.pendingImport = null;
+    this.app.shoppingSections = null;
     this.app.pendingCapture = null;
     this.app.pendingShares?.clear();
     // pendingScheduleChange holds only random ids and a cadence. It survives
