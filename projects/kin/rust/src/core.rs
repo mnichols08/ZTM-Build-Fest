@@ -104,6 +104,31 @@ pub fn meals(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError>
     crate::meals::encode_meals(&state.meals, &state.items, context.civil_date)
 }
 
+/// Item emoji (`kin_item_emojis`, #344): the record-less KINE context
+/// against the household history; publishes KIEM (simple.rs).
+pub fn item_emojis(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    Ok(crate::simple::encode_emojis(&state.pictures, &state.items))
+}
+
+/// A member's things today (`kin_my_things`, #344): KMTQ (simple.rs) and the
+/// record-less KINE context; publishes KMTD for the context's civil date.
+pub fn my_things(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let (member, context) = crate::simple::decode_query(input)?;
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    Ok(crate::simple::encode_my_things(&crate::simple::my_things(
+        &state,
+        member,
+        context.civil_date,
+    )))
+}
+
 /// KMPQ v1, a Shopping plan query (`kin_meal_shopping_plan`, #333): "KMPQ",
 /// version u16 = 1, reserved u16, source u8 (1 recipe, 2 a date's dinner),
 /// 3 reserved, recipe ID [16] (zero for a date), date u32 (zero for a

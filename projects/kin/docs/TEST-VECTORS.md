@@ -176,6 +176,30 @@ count 2, then for each the device ID, member ID, the two u16 lengths and the
 names; the empty table is the 12-byte header with count 0. Held history with
 an identity binding names the bound device and member.
 
+## Item pictures and my things today (Simple view, #344)
+
+These vectors are written out by hand in `rust/src/simple_tests.rs`.
+
+**039 — Emoji payload.** Item 7 with "🧦", "👩‍🍳", "🇬🇧" and none round-trip;
+the payload is the item ID, `01 00 00 00` and the emoji's u16 length and
+bytes, or `00 00 00 00` when cleared. A non-zero reserved flag byte, a
+trailing byte, text after a clear, a zero item ID, and "a", "🧦🧦", "" or "x🧦"
+fail with code 2.
+
+**040 — Set, change, clear.** Adding item 1 and setting "🪥" then "🦷" works;
+the same emoji again, an unknown item and an archived item fail (code 4).
+KIEM reports only the unarchived item: `"KIEM"`, `01 00`, `00 00`, count 1,
+item 1, length 4, "🦷". An emoji event for an item the history lacks replays
+and isn't reported.
+
+**041 — My things today (20261003).** For the child: item 3 planned
+20261001, item 1 planned 20261003, undated item 2, then routines "Bins out"
+(open) and "Feed the fish" (done). Not listed: an item planned 20261010, a
+completed, an archived and a Staple item, and other members' things. After
+item 2 is unassigned and the mode is Vacation, only items 3 and 1 remain.
+KMTD encodes an item as `01 00 00 00`, its ID and a zero date; KMTQ with
+version 2 fails with code 3, a zero member or a short query with code 2.
+
 ## Household chat (v1.1)
 
 Chat records are written out by hand in `rust/src/chat_tests.rs`; IDs, blob

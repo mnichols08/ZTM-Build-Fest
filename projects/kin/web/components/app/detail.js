@@ -53,10 +53,12 @@ export class DetailController {
     const memberId = this.app.syncCoordinator?.identity?.memberId ?? this.app.store?.actorId ?? null;
     const responsibilities = this.app.state?.responsibilities ?? NONE;
     const active = this.app.activeMemberIds ?? null;
+    // Preferred names (#224) where the device syncs; labels fall back (#344).
+    const names = this.app.memberNameMap ?? null;
     const cached = this.cachedResponsibility;
-    if (cached?.responsibilities === responsibilities && cached.memberId === memberId && cached.active === active) return cached.context;
-    const context = { responsibilities, memberId, memberIds: active ?? (memberId ? [memberId] : []) };
-    this.cachedResponsibility = { responsibilities, memberId, active, context };
+    if (cached?.responsibilities === responsibilities && cached.memberId === memberId && cached.active === active && cached.names === names) return cached.context;
+    const context = { responsibilities, memberId, memberIds: active ?? (memberId ? [memberId] : []), names };
+    this.cachedResponsibility = { responsibilities, memberId, active, names, context };
     return context;
   }
   // Lock drops every reference into the closed session's state.

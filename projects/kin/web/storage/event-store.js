@@ -1247,6 +1247,22 @@ export class EventStore {
     return this.engine.meals(events, asOf, civilDate, syncIdentity);
   }
 
+  /** Item emoji (#344): a Map itemId -> emoji. */
+  async itemEmojis() {
+    if (!this.engine) throw new EventStoreError("Kin could not read item pictures.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.itemEmojis(events, asOf, civilDate, syncIdentity);
+  }
+
+  /** `memberId`'s things today (#344, ADR 0013), in Rust's order. */
+  async myThings(memberId) {
+    if (!this.engine) throw new EventStoreError("Kin could not read your things for today.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.myThings(memberId, events, asOf, civilDate, syncIdentity);
+  }
+
   /**
    * The history for a view that is read after every render (meals, names).
    * The session arena already holds what the last read loaded plus this

@@ -1,5 +1,6 @@
 import "./kin-attachments.js";
 import { describePlanningDate, KIND_LABELS } from "../today-view.js";
+import { assigneeLabel } from "./shared/assignee-label.js";
 
 // One default list row. It shows the item text, a restrained complete
 // control, a short context line, checklist progress only when steps exist, a
@@ -33,7 +34,7 @@ class KinItem extends HTMLElement {
   set selected(value) { this.isSelected = Boolean(value); this.render(); }
   set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
   set previews(provider) { this.previewProvider = typeof provider === "function" ? provider : null; this.render(); }
-  set responsibilityContext(value) { this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? []; this.render(); }
+  set responsibilityContext(value) { this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? []; this.memberNames = value?.names ?? null; this.render(); }
   set today(value) { this.civilDate = Number.isSafeInteger(value) ? value : null; this.render(); }
   set kindVisible(value) { this.showKind = Boolean(value); this.render(); }
   // Selection mode swaps the completion control for a native checkbox.
@@ -183,8 +184,7 @@ class KinItem extends HTMLElement {
     if (planned) parts.push(planned);
     const owner = this.responsibilities?.find((entry) => entry.targetKind === "item" && entry.targetId === record.itemId)?.memberId ?? null;
     if (owner) {
-      const index = (this.memberIds ?? []).indexOf(owner);
-      parts.push(owner === this.memberId ? "You" : index >= 0 ? `Household adult ${index + 1}` : "Former household adult");
+      parts.push(assigneeLabel(owner, { memberId: this.memberId, memberIds: this.memberIds ?? [], names: this.memberNames }));
     }
     const area = this.areas.find((candidate) => candidate.areaId === record.areaId);
     if (area) parts.push(`${area.name}${area.archived ? " (archived)" : ""}`);

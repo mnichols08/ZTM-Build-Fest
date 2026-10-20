@@ -332,6 +332,20 @@ pub extern "C" fn kin_meal_shopping_plan(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::meal_shopping_plan, None)
 }
 
+/// Item emoji (KIEM v1, #344) of the instance's history, in the context of a
+/// record-less KINE request.
+#[no_mangle]
+pub extern "C" fn kin_item_emojis(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::item_emojis, None)
+}
+
+/// A member's things today (KMTQ + KINE context -> KMTD v1, #344) against
+/// the instance's history.
+#[no_mangle]
+pub extern "C" fn kin_my_things(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::my_things, None)
+}
+
 /// The member-name table (KMNM v1, #224) of the instance's history, in the
 /// context of a record-less KINE request, as `kin_device_names`.
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
