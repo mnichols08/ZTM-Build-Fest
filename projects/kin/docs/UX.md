@@ -2302,3 +2302,25 @@ tried them.
   the item. Routines complete for the current period only; later occurrences
   show without a checkbox. Household modes other than Normal pause routines
   for the whole week, as on Today.
+
+# 38. For the sitter (#441, [ADR 0017](decisions/0017-sitter-page.md))
+
+- **Where.** Household → **For the sitter** (`#household/sitter`) is where an
+  Adult builds the page; **For you** (`#foryou`) is the page itself, a page of
+  its own that keeps Today marked in the navigation. A Temporary member lands
+  on For you once per unlock (not in Simple view); everyone else reaches it
+  from the editor's "See it as the sitter does".
+- **The editor.** A short welcome (up to 500 characters), then "On the page":
+  the chosen notes, reference records and routines in order, each with ↑, ↓
+  and Remove (named for screen readers, focus kept on the moved control).
+  Below, a checkbox per existing note, reference record and routine, grouped
+  by kind; at most 30 things. "Save the sitter page" saves the whole page.
+  Only Adults (and a household that doesn't sync) can change it; others see
+  "Only Adults can change the sitter page."
+- **The page.** The welcome, then a card per entry, live: a note's title and
+  text, a reference record's fields (a value that looks like a phone number
+  is a tap-to-call link, "Call Mum: +44 …", at least 44 px tall), a routine's
+  cadence and whether it's done for now. Archived records drop out. An Adult
+  previewing it sees a note that it is a layout, not a lock: while a
+  Temporary member's access lasts, their device can read the household.
+- **Empty.** "The family hasn't added anything here yet."

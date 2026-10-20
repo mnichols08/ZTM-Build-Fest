@@ -9,6 +9,10 @@ documentation only.
 
 ### Added
 
+- **For the sitter** (#441, [ADR 0017](docs/decisions/0017-sitter-page.md)):
+  an Adult picks notes, contacts and routines for a babysitter, carer or guest;
+  a Temporary member lands on **For you**, which shows them live, with phone
+  numbers as tap-to-call links.
 - **This week** (#416): from Today, the next seven days in one list —
   planned items, routines, dinners and maintenance due — with complete,
   Undo and Move to… another day.

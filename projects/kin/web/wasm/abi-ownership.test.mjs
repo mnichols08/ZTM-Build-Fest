@@ -35,6 +35,7 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_my_things: status,
       kin_week: status,
       kin_shopping_sections: status,
+      kin_sitter_page: status,
       kin_event_metadata: status,
       kin_event_metadata_batch: status,
       kin_audio_peaks: status,
@@ -586,6 +587,65 @@ test("store sections decode from KSHS and their commands encode as KCMD 66 and 6
     { type: "set-shopping-sections", sections: [{ sectionId: hexOf(0x11), name: "x".repeat(41) }] },
     { type: "set-shopping-sections", sections: Array.from({ length: 31 }, (_, n) => ({ sectionId: hexOf(n + 1), name: `S${n}` })) },
     { type: "set-item-section", itemId: hexOf(0), sectionId: null },
+  ]) {
+    assert.throws(() => engine.executeCommand(bad, identity, [], 1_760_000_000_000, null, 20261003),
+      (error) => error instanceof KinEngineError && error.code === 2);
+  }
+});
+
+// The sitter page (#442): KSIT v1 decodes into the intro and the entries in
+// order; "set-sitter-page" travels as KCMD 70 carrying its canonical payload,
+// and kind 70 names SITTER_PAGE_SET in event metadata.
+test("the sitter page decodes from KSIT and its command encodes as KCMD 70", () => {
+  const text = new TextEncoder();
+  const idOf = (byte) => new Uint8Array(16).fill(byte);
+  const hexOf = (byte) => byte.toString(16).padStart(2, "0").repeat(16);
+  const ksit = Uint8Array.from([
+    ...text.encode("KSIT"), 1, 0, 0, 0,
+    2, 0, 0, 0, 3, 0, 0, 0, ...idOf(0x33), 1, 0, 0, 0, ...idOf(0x11),
+    2, 0, ...text.encode("Hi"),
+  ]);
+  const read = (bytes) => createEngine(substituteExports({ operation: () => 0, result: bytes }).exports)
+    .sitterPage([], 1_760_000_000_000, 20261003);
+  assert.deepEqual(read(ksit), {
+    intro: "Hi",
+    entries: [{ kind: "routine", id: hexOf(0x33) }, { kind: "note", id: hexOf(0x11) }],
+  });
+  for (const broken of [ksit.slice(0, -1), Uint8Array.of(...ksit, 0), (() => { const t = ksit.slice(); t[12] = 9; return t; })()]) {
+    assert.throws(() => read(broken), (error) => error instanceof KinEngineError && error.code === 6);
+  }
+
+  const kmet = new Uint8Array(92);
+  kmet.set(text.encode("KMET"));
+  kmet[4] = 1;
+  new DataView(kmet.buffer).setUint16(90, 70, true);
+  const metadata = createEngine(substituteExports({ operation: () => 0, result: kmet }).exports).eventMetadata(new Uint8Array(92));
+  assert.equal(metadata.kind, "SITTER_PAGE_SET");
+
+  let request = null;
+  const fake = substituteExports({ operation: () => 0 });
+  const engine = createEngine({ ...fake.exports, kin_execute: () => {
+    request = new Uint8Array(fake.exports.memory.buffer.slice(POINTER, POINTER + fake.allocations.at(-1)));
+    return 0;
+  } });
+  const identity = {
+    eventId: idOf(1), householdId: idOf(2), actorId: idOf(3), deviceId: idOf(4), timestamp: 1, logicalTime: 1n,
+  };
+  // The substitute returns no KCMT, so the call fails after sending.
+  assert.throws(() => engine.executeCommand({ type: "set-sitter-page", intro: " Hi ", entries: [
+    { kind: "reference-record", id: hexOf(0x22) },
+  ] }, identity, [], 1_760_000_000_000, null, 20261003), KinEngineError);
+  const length = new DataView(request.buffer).getUint32(0, true);
+  const packet = request.subarray(4, 4 + length);
+  const view = new DataView(packet.buffer, packet.byteOffset);
+  assert.equal(String.fromCharCode(...packet.subarray(0, 4)), "KCMD");
+  assert.equal(view.getUint16(8, true), 70);
+  assert.ok(packet.subarray(92, 124).every((byte) => byte === 0), "no entity, date, option or expiry");
+  assert.deepEqual([...packet.subarray(128)], [1, 0, 0, 0, 2, 0, 0, 0, ...idOf(0x22), 2, 0, ...text.encode("Hi")]);
+  for (const bad of [
+    { type: "set-sitter-page", intro: "x".repeat(501), entries: [] },
+    { type: "set-sitter-page", intro: "", entries: [{ kind: "item", id: hexOf(1) }] },
+    { type: "set-sitter-page", intro: "", entries: Array.from({ length: 31 }, (_, n) => ({ kind: "note", id: hexOf(n + 1) })) },
   ]) {
     assert.throws(() => engine.executeCommand(bad, identity, [], 1_760_000_000_000, null, 20261003),
       (error) => error instanceof KinEngineError && error.code === 2);

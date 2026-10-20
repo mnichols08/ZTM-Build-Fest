@@ -103,3 +103,12 @@ test("This week is its own page, reached from Today, which stays marked (#416)",
   assert.equal(route.destination, "today");
   assert.equal(resolveSimpleRoute({ hash: "#week" }, { chat: true, fridge: true }).canonical, "today", "Simple view has no week page");
 });
+
+test("For you and For the sitter (#441)", () => {
+  const foryou = resolveRoute({ hash: "#foryou" });
+  assert.equal(foryou.canonical, "foryou");
+  assert.equal(foryou.title, "For you");
+  assert.equal(foryou.destination, "today");
+  assert.equal(resolveRoute({ hash: "#household/sitter" }).canonical, "household/sitter");
+  assert.equal(resolveSimpleRoute({ hash: "#foryou" }, { chat: true, fridge: true }).canonical, "today");
+});

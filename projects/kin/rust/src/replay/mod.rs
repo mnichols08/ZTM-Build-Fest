@@ -114,6 +114,9 @@ pub struct Replay {
     /// Store sections (store_sections.rs), shared with finalized states
     /// until they change.
     pub(super) store_sections: Arc<crate::store_sections::StoreSectionsState>,
+    /// The sitter page (sitter.rs), shared with finalized states until it
+    /// changes.
+    pub(super) sitter_page: Arc<crate::sitter::SitterPageState>,
     /// Canonical bytes per applied event: an exact duplicate is skipped, a conflicting one fails. Shared, so cloning a Replay does not copy them.
     pub(super) event_bytes: BTreeMap<EventId, Arc<[u8]>>,
     /// Logical time of the last applied event; replay order never goes back.
@@ -313,6 +316,7 @@ impl Replay {
             K::ShoppingSectionsSet { .. } | K::ItemSectionSet { .. } => {
                 crate::store_sections::apply(&mut self.store_sections, event)?
             }
+            K::SitterPageSet { .. } => crate::sitter::apply(&mut self.sitter_page, event)?,
         }
         self.last_logical_time = event.logical_time;
         self.event_bytes
@@ -414,6 +418,7 @@ impl Replay {
             meals: Arc::clone(&self.meals),
             pictures: Arc::clone(&self.pictures),
             store_sections: Arc::clone(&self.store_sections),
+            sitter_page: Arc::clone(&self.sitter_page),
         })
     }
 }

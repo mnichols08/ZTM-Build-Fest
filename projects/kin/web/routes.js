@@ -32,6 +32,8 @@ export const SEGMENTS = Object.freeze({
     // The family fridge (#317): a shared drawing board.
     Object.freeze({ id: "fridge", label: "Fridge" }),
     Object.freeze({ id: "notes", label: "Notes & reference" }),
+    // The sitter page (#441): what a babysitter or guest sees first.
+    Object.freeze({ id: "sitter", label: "For the sitter" }),
     Object.freeze({ id: "areas", label: "Areas & status" }),
     Object.freeze({ id: "people", label: "People & devices" }),
     Object.freeze({ id: "privacy", label: "Privacy & recovery" }),
@@ -48,6 +50,8 @@ const PAGE_TITLES = Object.freeze({
   search: "Search",
   // This week (#416): reached from Today; it marks Today in the navigation.
   week: "This week",
+  // For you (#441): a Temporary member's landing page; it marks Today.
+  foryou: "For you",
 });
 
 // Legacy destinations and tabs from earlier releases.
@@ -128,7 +132,7 @@ export function resolveRoute({ hash = "", pathname = "/" } = {}) {
     : null;
   const canonical = segments ? `${page}/${segment}` : page;
   // Search is reachable from every page; it marks no primary destination.
-  const destination = page === "search" ? null : page === "week" ? "today" : page;
+  const destination = page === "search" ? null : page === "week" || page === "foryou" ? "today" : page;
   return { page, segment, canonical, destination, title: PAGE_TITLES[page], hash: segments ? routeHash(page, segment) : `#${page}`, ...(topics ? { topics: true } : {}) };
 }
 

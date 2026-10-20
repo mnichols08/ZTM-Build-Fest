@@ -20,6 +20,7 @@ kin_item_emojis(ptr, len)            replay the history: KINE context -> KIEM (#
 kin_my_things(ptr, len)              KMTQ + KINE context -> KMTD (#344)
 kin_week(ptr, len)                   KWKQ + KINE context -> KWKD (#417)
 kin_shopping_sections(ptr, len)      replay the history: KINE context -> KSHS (#411)
+kin_sitter_page(ptr, len)            replay the history: KINE context -> KSIT (#442)
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
@@ -257,6 +258,7 @@ N  payload
 | 65 | CHAT_TOPIC_SET (#312, chat log) | message ID, state u8 (0 cleared, 1 open, 2 resolved), 3 reserved: 20 bytes |
 | 66 | SHOPPING_SECTIONS_SET (#411) | section count u16 (0–30), reserved u16, then each section: section ID [16] (non-zero, unique), name (u16 length + UTF-8; trimmed, 1–40 bytes, no controls) |
 | 67 | ITEM_SECTION_SET (#411) | item ID [16] (non-zero), section ID [16] (all zero: none): 32 bytes |
+| 70 | SITTER_PAGE_SET (#442) | entry count u16 (0–30), reserved u16, then each entry: kind u8 (1 note, 2 reference record, 3 routine), 3 reserved, record ID [16] (non-zero; no entry twice); then the intro (u16 length + UTF-8; trimmed, 0–500 bytes, no controls but newline) |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -558,6 +560,26 @@ tuned for printed codes under heavy blur.
   are absent. The KINS projection is unchanged: its section table is part of
   replay protocol 24, so new domains get their own export, as item pictures
   did.
+- **The sitter page (kind 70, #442).** The payload is strict like store
+  sections: it re-encodes to the same bytes, so an untrimmed intro, a control
+  character other than newline, more than 500 intro bytes, an unknown entry
+  kind, a zero ID, an entry twice or more than 30 entries fail with code 2.
+  KCMD action 70 (`set-sitter-page`) carries the exact payload as its text
+  with a zero entity ID and no option, date or expiry; the host trims the
+  intro and turns line breaks into `\n` first (`kin-sitter.js`). Rust checks
+  it against the current state (`SitterPageState::check_command`, code 4):
+  every entry names a note, reference record or routine of its kind that
+  exists and isn't archived, and the page changes. Only Adults may send it:
+  Rust can't tell member kinds apart, so the host's command append path
+  refuses it for anyone else (`canChangeSitterPage`); replay accepts a page
+  from any member ([THREAT-MODEL](THREAT-MODEL.md)).
+- **KSIT v1** (the sitter page, `kin_sitter_page`): `"KSIT"`, version 1,
+  reserved u16, entry count u32, then each entry whose record exists and
+  isn't archived, in the page's order: kind u8 (1 note, 2 reference record,
+  3 routine), 3 reserved, record ID [16]; then the intro (u16 + UTF-8; length
+  0 for none). The host takes titles, fields and text from the KINS
+  projection by ID, so nothing is copied. A household that never set a page
+  reports no entries and no intro.
 - **KMTQ v1 / KMTD v1** (a member's things today, `kin_my_things`): the
   24-byte query `"KMTQ"`, version 1, reserved u16, member ID [16] (non-zero),
   then a record-less KINE context. The result `"KMTD"`, version 1, reserved

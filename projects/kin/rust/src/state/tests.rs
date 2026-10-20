@@ -126,7 +126,8 @@ fn event(event_number: u8, logical_time: u64, kind: EventKind) -> EventEnvelope 
         | EventKind::DinnerCookSet { .. }
         | EventKind::ItemEmojiSet { .. }
         | EventKind::ShoppingSectionsSet { .. }
-        | EventKind::ItemSectionSet { .. } => {
+        | EventKind::ItemSectionSet { .. }
+        | EventKind::SitterPageSet { .. } => {
             panic!("Area tests use independent wire fixtures")
         }
     }

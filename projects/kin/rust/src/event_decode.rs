@@ -579,6 +579,13 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
             }
             crate::store_sections::decode_payload(code, payload)?
         }
+        // The sitter page (#442): sitter.rs decodes its payload strictly.
+        (1, code) if crate::sitter::is_sitter_code(code) => {
+            if !valid_timestamp(read_i64(record, 68)?) {
+                return Err(KinError::MalformedProtocol);
+            }
+            crate::sitter::decode_payload(code, payload)?
+        }
         // Meals (#333): meals.rs decodes its payloads strictly.
         (1, code) if crate::meals::is_meals_code(code) => {
             if !valid_timestamp(read_i64(record, 68)?) {

@@ -2157,3 +2157,31 @@ html:has(kin-app .undo-toast:not([hidden])) { scroll-padding-bottom: calc(160px 
 .shopping-sections-list input, .shopping-sections-add input { flex: 1 1 10em; min-width: 0; min-height: var(--tap); padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); }
 .shopping-sections-list button, .shopping-sections-add button { min-width: var(--tap); min-height: var(--tap); }
 .shopping-sections-add label { flex-basis: 100%; font-weight: 600; }
+
+/* The sitter page (#441): For the sitter (editor) and For you (the page). */
+.sitter-editor { display: grid; gap: 10px; }
+.sitter-editor textarea { width: 100%; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+.sitter-editor h3 { margin: 8px 0 0; font-size: 16px; }
+.sitter-chosen { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.sitter-chosen li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: var(--tap); padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--r-row); }
+.sitter-chosen-label { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+.sitter-chosen button { min-width: var(--tap); min-height: var(--tap); }
+.sitter-available { display: grid; gap: 10px; }
+.sitter-available fieldset { display: grid; gap: 2px; margin: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r-row); }
+.sitter-available label { display: flex; align-items: center; gap: 8px; min-height: var(--tap); }
+.sitter-available input { width: 20px; height: 20px; }
+.sitter-editor .primary-action { justify-self: start; }
+.sitter-preview-link { display: inline-flex; align-items: center; min-height: var(--tap); }
+kin-sitter-page { display: grid; gap: 12px; }
+.sitter-intro { margin: 0; padding: 12px 14px; border-radius: var(--r-card); background: var(--accent-soft); white-space: pre-wrap; font-size: 17px; }
+.sitter-card { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
+.sitter-card h2 { margin: 0 0 6px; font-size: 19px; }
+.sitter-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sitter-fields { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: 6px 14px; margin: 0; }
+.sitter-fields dt { color: var(--ink-muted); }
+.sitter-fields dd { margin: 0; overflow-wrap: anywhere; }
+.sitter-call { display: inline-flex; align-items: center; min-height: var(--tap); font-weight: 650; font-size: 18px; }
+.sitter-routine { margin: 0; color: var(--ink-muted); }
+.sitter-preview-note { margin: 0; }
+@media (max-width: 420px) { .sitter-fields { grid-template-columns: minmax(0, 1fr); } .sitter-fields dt { margin-top: 6px; } }
+@media (forced-colors: active) { .sitter-card { border: 1px solid CanvasText; } }
