@@ -172,6 +172,47 @@ export class ItemDetailSections {
     return group;
   }
 
+  /** Picture (#347): one emoji a child recognizes, shown large in Simple
+   * view and small beside the text here; it never replaces the text. */
+  createPicture(record) {
+    const group = this.group("Picture", "An emoji shown large on a child's Simple view, beside the item's words.");
+    const label = document.createElement("label");
+    label.className = "item-picture-label";
+    label.append(document.createTextNode("Emoji "));
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "item-picture-input";
+    input.autocomplete = "off";
+    input.maxLength = 32;
+    input.value = this.host.emojiValue ?? "";
+    input.setAttribute("aria-label", `Picture emoji for ${record.text}`);
+    input.dataset.focusId = "picture";
+    // One emoji: typing or picking another replaces it.
+    input.addEventListener("input", () => {
+      const value = input.value.trim();
+      if (typeof Intl?.Segmenter !== "function" || !value) return;
+      const last = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value)].at(-1)?.segment ?? "";
+      if (last !== input.value) input.value = last;
+    });
+    label.append(input);
+    const picker = document.createElement("kin-emoji-picker");
+    picker.target = input;
+    const save = this.host.button("Save picture", () => {
+      const emoji = input.value.trim();
+      if (!emoji) { input.focus(); return; }
+      this.host.dispatch("set-item-emoji", { itemId: record.itemId, emoji });
+    }, "item-picture-save");
+    save.dataset.focusId = "picture-save";
+    group.append(label, picker, save);
+    if (this.host.emojiValue) {
+      const clear = this.host.button("Remove picture", () => this.host.dispatch("set-item-emoji", { itemId: record.itemId, emoji: null }), "item-picture-clear");
+      clear.setAttribute("aria-label", `Remove the picture from ${record.text}`);
+      clear.dataset.focusId = "picture-clear";
+      group.append(clear);
+    }
+    return group;
+  }
+
   createArea(record) {
     const group = this.group("Area");
     const label = document.createElement("label");

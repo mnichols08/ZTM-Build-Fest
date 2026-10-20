@@ -14,6 +14,7 @@ import "./kin-chat.js";
 import "./kin-fridge.js";
 import "./kin-meals.js";
 import "./kin-tonight.js";
+import "./kin-simple.js";
 import "./kin-chat-settings.js";
 import "./kin-chat-policy.js";
 import "./kin-search.js";
@@ -53,7 +54,7 @@ const ELEMENT_EVENTS = [
   ["kin:pick-attachment", "onPickAttachment"], ["kin:open-attachment", "onOpenAttachment"],
   ["kin:view-attachment", "onViewAttachment"], ["kin:remove-attachment", "onRemoveAttachment"],
   ["kin:household-status", "onHouseholdStatus"], ["kin:security-changed", "onSecurityChanged"],
-  ["kin:retry-attachments", "onRetryAttachments"], ["kin:change-responsibility", "onChangeResponsibility"],
+  ["kin:retry-attachments", "onRetryAttachments"], ["kin:change-responsibility", "onChangeResponsibility"], ["kin:simple-done", "onSimpleDone"], ["kin:set-item-emoji", "onSetItemEmoji"],
   ["kin:replenish-staple", "onReplenishStaple"], ["kin:complete-item", "onCompleteItem"],
   ["kin:reopen-item", "onReopenItem"], ["kin:archive-item", "onArchiveItem"],
   ["kin:add-item-step", "onAddItemStep"], ["kin:complete-item-step", "onCompleteItemStep"],

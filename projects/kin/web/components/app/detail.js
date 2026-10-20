@@ -11,7 +11,8 @@ export class DetailController {
   }
 
   openItemDetail(itemId, { opener = null, stepId = null, origin = null } = {}) {
-    if (!this.app.state || !this.app.vault || this.app.vault.locked) return;
+    // Simple view has no item details (#345).
+    if (!this.app.state || !this.app.vault || this.app.vault.locked || this.app.simpleView) return;
     const record = this.app.state.items.find((item) => item.itemId === itemId) ?? null;
     const page = this.app.route?.page ?? "today";
     const sameItem = this.app.selection?.itemId === itemId;
@@ -44,6 +45,11 @@ export class DetailController {
       attachments: this.app.attachmentRows,
       responsibilityContext: this.responsibilityContext(),
       reminder: this.app.localReminders.entries.get(`item:${this.app.selection.itemId}`) ?? null,
+      // Item picture (#347): Adults set it; on a device without sync the
+      // person is the household's only member.
+      emoji: this.app.itemEmojis?.get(this.app.selection.itemId) ?? null,
+      // Unknown kind on a synced device: not until the status says Adult.
+      canSetPicture: (this.app.householdStatus?.memberKind ?? (this.app.hasLocalSyncBinding ? null : "adult")) === "adult",
       item,
     });
   }

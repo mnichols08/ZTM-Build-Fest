@@ -66,6 +66,10 @@ export class RenderController {
     this.app.catchUp.summary = this.app.state.summary;
     // Meals replay from history on their own; the read coalesces.
     void this.ctx.meals?.refresh();
+    // Simple view's cards (#345) read the same history.
+    void this.ctx.simple?.refresh();
+    // Item picture emoji (#347) for the rows and details.
+    void this.ctx.simple?.refreshPictures();
     this.app.catchUp.lastLookedAt = this.app.catchUpCursor?.lastLookedAt;
     this.app.todayDate.textContent = formatCivilDate(civilDate);
     const selected = this.app.selection?.itemId ?? null;
@@ -78,6 +82,7 @@ export class RenderController {
         pins: this.app.state.pins ?? [],
         attachments: this.app.attachmentRows,
         selected,
+        emojis: this.app.itemEmojis ?? null,
       });
     }
     this.app.today.update({
@@ -91,6 +96,7 @@ export class RenderController {
       routines: this.app.state.routines ?? [],
       handoffs: this.app.state.handoffs ?? [],
       mode,
+      emojis: this.app.itemEmojis ?? null,
     });
     const waiting = (this.app.state.handoffs ?? []).filter((record) => record.status === "unacknowledged").length;
     const updatesNav = this.app.segmentNavs?.get("updates");

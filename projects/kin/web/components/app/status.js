@@ -18,6 +18,7 @@ export class StatusController {
       this.app.detail?.deferFocusedControl?.();
       this.app.chat?.deferFocusedControl?.();
       this.app.meals?.deferFocusedControl?.();
+      this.app.simpleToday?.deferFocusedControl?.();
     }
     this.app.controlFieldset.disabled = controlsDisabled;
     // Header controls and a phone detail sheet live outside the fieldset.
@@ -26,7 +27,7 @@ export class StatusController {
     if (this.app.lockButton) this.app.lockButton.disabled = isBusy;
     this.app.retryButton.disabled = isBusy;
     if (!controlsDisabled) {
-      for (const component of [this.app.today, this.app.needs, this.app.shopping, this.app.staples, this.app.areas, this.app.notes, this.app.detail, this.app.chat, this.app.meals])
+      for (const component of [this.app.today, this.app.needs, this.app.shopping, this.app.staples, this.app.areas, this.app.notes, this.app.detail, this.app.chat, this.app.meals, this.app.simpleToday])
         component?.settleDeferredFocus?.();
     }
   }

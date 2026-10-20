@@ -110,3 +110,12 @@ test("a stored Simple view on a non-Limited member is refused as invalid data", 
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("a legacy household with no recorded admin can't change Simple view", () => {
+  const h = household();
+  // Simulate a household from before admins were recorded.
+  for (const memberId of h.pairing.households.get(h.pairing.members.get(h.admin.memberId).householdId).members)
+    delete h.pairing.members.get(memberId).householdAdmin;
+  assert.throws(() => h.pairing.simpleViewContext(h.admin.sessionToken, h.child.memberId),
+    (error) => error instanceof PairingError && error.status === 403);
+});

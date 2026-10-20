@@ -219,6 +219,7 @@ class KinToday extends HTMLElement {
       item.responsibilityContext = this.ownerContext;
       item.areaOptions = this.areaRecords;
       item.pinned = this.pinRecords.some((pin) => pin.targetKind === "item" && pin.targetId === record.itemId);
+      item.emoji = this.emojiMap?.get?.(record.itemId) ?? null;
       item.selected = this.selectedItemId === record.itemId;
       if (this.selectionMode) {
         item.checked = this.selectedIds.has(record.itemId);
@@ -262,6 +263,8 @@ defineProps(KinToday, {
   selected: { field: "selectedItemId", coerce: (value) => value ?? null },
   previews: { field: "previewProvider", coerce: asFunction },
   responsibilityContext: { field: "ownerContext", coerce: (value) => value ?? NO_CONTEXT },
+  // Item picture emoji (#347): a Map itemId -> emoji, or null.
+  emojis: { field: "emojiMap", coerce: (value) => (value instanceof Map ? value : null) },
 });
 
 customElements.define("kin-today", KinToday);

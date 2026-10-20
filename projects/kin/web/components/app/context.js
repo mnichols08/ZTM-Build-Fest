@@ -29,6 +29,7 @@
 import { captureInvitationCode } from "../../pairing-link.js";
 import { AppearanceController } from "./appearance.js";
 import { MealsController } from "./meals.js";
+import { SimpleController } from "./simple.js";
 import { AppendCommands } from "./commands/append.js";
 import { AttachmentController } from "./attachments.js";
 import { ChatShareController } from "./chat-share.js";
@@ -66,6 +67,7 @@ export function createAppContext(app) {
   ctx.routines = new RoutineCommands(ctx);
   ctx.records = new RecordCommands(ctx);
   ctx.meals = new MealsController(ctx);
+  ctx.simple = new SimpleController(ctx);
   ctx.attachments = new AttachmentController(ctx);
   ctx.chatShare = new ChatShareController(ctx);
   ctx.navigation = new NavigationController(ctx);
@@ -138,6 +140,10 @@ export function initializeAppState(app) {
     app.onActivity = () => { if (app.autoLockTimer) app.ctx.session.scheduleAutoLock(); };
     app.onRetryAttachments = () => { if (app.syncCoordinator) void app.syncCoordinator.syncNow(); else void app.ctx.sync.configureSyncCoordinator(); };
     app.onChangeResponsibility = (event) => app.ctx.items.handleChangeResponsibility(event);
+    // Simple view (#346): Done and Undo on a card.
+    app.onSimpleDone = (event) => void app.ctx.simple.markDone(event.detail);
+    // Item picture (#347), from the item details.
+    app.onSetItemEmoji = (event) => void app.ctx.simple.setItemEmoji(event.detail);
     app.onReplenishStaple = (event) => app.ctx.items.handleReplenishStaple(event);
     app.syncState = null;
     // Follows the browser's own offline/online events, like the state notice.

@@ -38,7 +38,7 @@ test("KIEM and KMTD decode strictly", () => {
   ));
   assert.deepEqual(decodeMyThings(kmtd), [
     { kind: "item", itemId: id(1) },
-    { kind: "routine", routineId: id(2), occurrenceKey: "2026-10-03", done: true },
+    { kind: "routine", routineId: id(2), occurrenceKey: 20261003, done: true },
   ]);
   const bad = kmtd.slice();
   bad[12] = 3;

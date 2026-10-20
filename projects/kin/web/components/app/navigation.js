@@ -10,14 +10,21 @@ export class NavigationController {
     this.app = ctx.app;
   }
 
+  /** The route for a location; Simple view allows only its pages (#345). */
+  routeFor(where) {
+    return this.app.simpleView ? this.ctx.simple.route(where) : resolveRoute(where);
+  }
+
   navigate(hash) {
-    const route = resolveRoute({ hash, pathname: location.pathname });
+    const route = this.routeFor({ hash, pathname: location.pathname });
     if (location.hash !== route.hash) history.pushState(null, "", route.hash);
     this.ctx.navigation.showPageFromLocation();
   }
   showPageFromLocation() {
     if (!this.app.pages || !this.app.navLinks) return;
-    const route = resolveRoute({ hash: location.hash, pathname: location.pathname });
+    const route = this.routeFor({ hash: location.hash, pathname: location.pathname });
+    // Simple view keeps the address on an allowed page.
+    if (this.app.simpleView && location.hash !== route.hash) history.replaceState(null, "", route.hash);
     const previous = this.app.route ?? null;
     const changed = previous?.canonical !== route.canonical;
     if (previous && changed) this.app.pageScroll.set(previous.canonical, window.scrollY);
@@ -54,7 +61,8 @@ export class NavigationController {
       this.app.siteTools && !this.app.siteTools.hidden && this.app.commandPalette?.isConnected);
   }
   handleShortcutKeydown(event) {
-    if (event.defaultPrevented || !this.ctx.navigation.workspaceReady()) return;
+    // Simple view has no keyboard shortcuts or command palette (#345).
+    if (event.defaultPrevented || this.app.simpleView || !this.ctx.navigation.workspaceReady()) return;
     const shortcut = shortcutForKey(event, { mac: this.app.macShortcuts });
     if (!shortcut) return;
     const openDialogs = [...this.app.querySelectorAll("dialog[open]")];

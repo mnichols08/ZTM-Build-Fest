@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { listSegmentForClassification, PRIMARY_DESTINATIONS, resolveRoute, routeHash, SEGMENTS } from "./routes.js";
+import { listSegmentForClassification, PRIMARY_DESTINATIONS, resolveRoute, resolveSimpleRoute, routeHash, SEGMENTS } from "./routes.js";
 
 test("five primary destinations in a fixed order", () => {
   assert.deepEqual(PRIMARY_DESTINATIONS.map((entry) => entry.id), ["today", "lists", "routines", "updates", "household"]);
@@ -74,4 +74,18 @@ test("an invitation link's fragment on /pair is not taken for a route (#97)", ()
   assert.equal(resolveRoute({ hash: "#code=F7KM-Q2DX", pathname: "/pair" }).canonical, "household/people");
   assert.equal(resolveRoute({ hash: "", pathname: "/pair" }).canonical, "household/people");
   assert.equal(resolveRoute({ hash: "#code=F7KM-Q2DX", pathname: "/" }).canonical, "today", "only on /pair");
+});
+
+test("Simple view allows only Today, Chat and the Fridge, and sends everything else to Today (#345)", () => {
+  const both = { chat: true, fridge: true };
+  assert.equal(resolveSimpleRoute({ hash: "#updates/chat" }, both).canonical, "updates/chat");
+  assert.equal(resolveSimpleRoute({ hash: "#household/fridge" }, both).canonical, "household/fridge");
+  for (const hash of ["", "#lists", "#lists/shopping", "#lists/meals", "#routines", "#search", "#updates", "#updates/handoffs",
+    "#updates/talk", "#household", "#household/people", "#household/privacy", "#household/appearance", "#more/security",
+    "#needs", "#talk", "#handoff", "#nonsense"])
+    assert.equal(resolveSimpleRoute({ hash }, both).canonical, "today", hash);
+  assert.equal(resolveSimpleRoute({ hash: "", pathname: "/pair" }, both).canonical, "today", "/pair goes to Today");
+  assert.equal(resolveSimpleRoute({ hash: "#code=ABCD", pathname: "/pair" }, both).canonical, "today");
+  assert.equal(resolveSimpleRoute({ hash: "#updates/chat" }, { chat: false, fridge: true }).canonical, "today", "no chat access");
+  assert.equal(resolveSimpleRoute({ hash: "#household/fridge" }, { chat: true, fridge: false }).canonical, "today", "no fridge access");
 });

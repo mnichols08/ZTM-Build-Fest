@@ -1874,3 +1874,48 @@ kin-meals { display: block; container-type: inline-size; container-name: meals; 
   .meal-day.is-today { border: 2px solid Highlight; box-shadow: none; }
   .meal-today { border: 1px solid CanvasText; }
 }
+
+/* Simple view (#345, ADR 0013): big cards, two or three destinations, no
+   motion. Sizes are in rem so 200% text grows them; nothing has a fixed
+   height. */
+[data-kin-simple] .nav-link[hidden],
+[data-kin-simple] .header-search[hidden],
+[data-kin-simple] kin-quick-add[hidden] { display: none; }
+[data-kin-simple] .primary-nav.simple-nav-single { display: none; }
+[data-kin-simple] .nav-link { min-height: 4rem; font-size: 1rem; }
+[data-kin-simple] .nav-link svg { inline-size: 1.75rem; block-size: 1.75rem; }
+.simple-view > h1 { margin: 0 0 1rem; font-size: 1.75rem; }
+.simple-view > h1:focus { outline: none; }
+.simple-view > h1:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+kin-simple { display: block; }
+.simple-tonight { margin: 0 0 1rem; padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); font-size: 1.25rem; font-weight: 600; overflow-wrap: anywhere; }
+.simple-empty { margin: 0; padding: 1.5rem 1.25rem; border: 1px dashed var(--line-strong); border-radius: var(--r-card); font-size: 1.25rem; color: var(--ink-muted); }
+.simple-cards { display: grid; gap: 1rem; margin: 0; padding: 0; list-style: none; }
+.simple-card { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding: 1rem; border: 2px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
+.simple-picture { flex: 0 0 6rem; inline-size: 6rem; block-size: 6rem; display: grid; place-items: center; overflow: hidden; border-radius: var(--r-row); background: var(--surface-secondary); }
+.simple-picture.is-empty { display: none; }
+.simple-picture img { inline-size: 100%; block-size: 100%; object-fit: cover; }
+.simple-emoji { font-size: 4rem; line-height: 1; }
+.simple-text { flex: 1 1 12rem; min-inline-size: 0; margin: 0; font-size: 1.25rem; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.simple-done, .simple-undo { flex: 1 1 100%; min-block-size: 3.5rem; font-size: 1.125rem; font-weight: 700; border-radius: var(--r-control); }
+.simple-done { border: 2px solid var(--accent); background: var(--accent); color: var(--accent-ink); }
+.simple-undo { border: 2px solid var(--line-strong); background: var(--surface); color: var(--ink); }
+.simple-card.is-done { border-style: dashed; }
+.simple-card.is-done .simple-text { color: var(--ink-muted); }
+@media (min-width: 720px) {
+  .simple-cards { grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); }
+  .simple-card { flex-direction: column; align-items: stretch; text-align: center; }
+  .simple-picture { flex-basis: auto; inline-size: 8rem; block-size: 8rem; align-self: center; }
+  .simple-text { flex: 1 1 auto; }
+  .simple-done, .simple-undo { flex: 0 0 auto; }
+}
+@media (forced-colors: active) {
+  .simple-card { border: 2px solid CanvasText; }
+  .simple-card.is-done { border-style: dashed; }
+  .simple-done { border: 2px solid ButtonText; }
+}
+
+/* Item picture (#347): small beside the text in lists, never instead of it. */
+.item-emoji { margin-inline-end: 0.35em; font-size: 1.15em; line-height: 1; }
+.item-picture-label { display: inline-flex; align-items: center; gap: 6px; min-height: var(--tap); }
+.item-picture-input { inline-size: 4.5rem; min-height: var(--tap); font-size: 1.5rem; text-align: center; }

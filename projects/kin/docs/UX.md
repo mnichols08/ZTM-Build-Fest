@@ -1210,6 +1210,46 @@ Lists → Meals plans the week's dinners, decided in
   system-coloured border. Planning works offline and is saved on the device;
   with sync on, the status says it will sync when connected.
 
+## 8.12 Simple view (#341)
+
+A calmer layout a household admin turns on for a Limited member, decided in
+[ADR 0013](decisions/0013-simple-view.md). It is a layout, not a lock: the
+service enforces only the switch and Chat and Fridge access.
+
+- **The switch.** In People & devices, an admin sees **Turn on Simple view
+  for …** on each active Limited member's row, confirmed with their passkey;
+  the row then says "Simple view on". The copy says it hides the rest of Kin
+  and can't prevent it. The child can't turn it off. Their device switches
+  on its next sync, and an offline unlock keeps it. Turning it off reloads
+  their Kin into the full layout. A device belongs to one member: a child
+  needs their own device.
+- **What shows.** Today, Chat and the Fridge; the rest of the workspace is
+  out of the document (the household panel stays, hidden, so a removed
+  device still locks). Every other address, alias, `/pair` and search link
+  opens Today. No Quick add, Search, command palette, keyboard shortcuts,
+  bulk selection, item details, or turning a chat message into a record;
+  the brand, sync status and Lock stay. Chat and the Fridge appear once
+  they're open on the device. The navigation is a
+  bottom bar on phones and a side list wider, with Chat or the Fridge left
+  out when the child has no access; with neither, there is no bar.
+- **Today.** "Tonight: Tacos" when a dinner is planned, then one large card
+  per thing: the child's own items planned for today or earlier (or not
+  dated) and their routines open today. Each card shows the picture (the
+  item's emoji, else its first downloaded photo) beside the words, never
+  instead of them, and a full-width **Done** at least 56 px tall named
+  "Done: …". Done becomes **Undo** in the same place for the session, and the
+  polite status says "Marked “…” done." (with "It will sync when you're
+  connected." offline). With nothing to do: "Nothing for you today." No
+  counts, streaks, totals or celebrations.
+- **Layout.** Phones: one card per row, a 96 px picture, 1.25rem text,
+  stacked above the words on narrow screens. 720 px and up: a grid of cards
+  (`minmax(18rem, 1fr)`) with a 128 px picture above the words. Sizes are in
+  rem so text zoom grows them; nothing has a fixed height or moves.
+- **Pictures for adults.** An Adult picks an item's picture in its details
+  (Picture: type or pick one emoji, **Save picture**, **Remove picture**). It
+  shows small beside the item's text in lists and large on a child's Simple
+  view.
+
 # 9. States every relevant screen must handle
 
 | State | User-facing behavior |
