@@ -102,17 +102,22 @@ export async function mealsAcceptanceRegressions(client, until) {
   assert.match(named, /^Change dinner for \w+day \d+ \w+$/, "the day's button names the day for screen readers");
 
   // ---- Light, dark and forced colours ---------------------------------------
+  // Read from the palette the rows use (--surface behind --ink and
+  // --ink-muted): Edge can report a stale computed background right after
+  // the appearance changes, while the custom properties are current.
   const contrast = () => page(`(() => {
-    const rgb = (value) => value.match(/[\\d.]+/g).slice(0, 3).map(Number);
+    const rgb = (value) => {
+      const hex = value.trim().match(/^#([0-9a-f]{6})$/i);
+      if (hex) return [0, 2, 4].map((at) => parseInt(hex[1].slice(at, at + 2), 16));
+      return value.match(/[\\d.]+/g).slice(0, 3).map(Number);
+    };
     const luminance = ([r, g, b]) => [r, g, b].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
       .reduce((total, v, i) => total + v * [0.2126, 0.7152, 0.0722][i], 0);
     const ratio = (a, b) => { const [x, y] = [luminance(rgb(a)), luminance(rgb(b))].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
-    const day = document.querySelector("kin-meals .meal-day");
-    const background = getComputedStyle(day).backgroundColor;
-    return { background, ratios: [".meal-day-name", ".meal-dinner", ".meal-cook, .meal-dinner.is-empty"].map((selector) => {
-      const node = document.querySelector("kin-meals " + selector);
-      return node ? Math.round(ratio(getComputedStyle(node).color, background) * 10) / 10 : null;
-    }).filter(Boolean) };
+    const style = getComputedStyle(document.querySelector("kin-meals .meal-day"));
+    const token = (name) => style.getPropertyValue(name).trim();
+    const background = token("--surface");
+    return { background, ratios: ["--ink", "--ink-muted", "--accent"].map((name) => Math.round(ratio(token(name), background) * 10) / 10) };
   })()`);
   // Light and dark through the app's own appearance setting (its palette is
   // an adopted style sheet; the attribute alone doesn't change tokens).
@@ -132,7 +137,7 @@ export async function mealsAcceptanceRegressions(client, until) {
   const dark = await contrast();
   assert.notEqual(dark.background, light.background, "dark mode changes the day rows");
   for (const [mode, result] of [["light", light], ["dark", dark]])
-    assert.ok(result.ratios.every((value) => value >= 4.5), `${mode}: day text has at least 4.5:1 contrast (${result.ratios.join(", ")})`);
+    assert.ok(result.ratios.every((value) => value >= 4.5), `${mode}: day rows' ink, muted ink and accent have at least 4.5:1 contrast (${result.ratios.join(", ")})`);
   await appearance(null);
   await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "active" }] });
   await settle();
