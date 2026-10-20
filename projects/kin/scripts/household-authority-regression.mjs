@@ -10,7 +10,7 @@
 // ceremony, and separate profiles on one machine are not separate devices.
 //
 // Usage: node scripts/household-authority-regression.mjs <browser executable>
-import { applyRegressionDefaults, waitForOrigin } from "./cdp-page.mjs";
+import { applyRegressionDefaults, captureFailure, waitForOrigin } from "./cdp-page.mjs";
 import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -1670,6 +1670,10 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     await retire(e);
     console.log(`PASS ${checks} live household authority and recovery assertions across independent browser profiles`);
     return checks;
+  } catch (error) {
+    // Before the browser closes: what each page showed (#328).
+    await captureFailure("household authority regression");
+    throw error;
   } finally {
     for (const client of [...open]) await client.close().catch((error) => console.warn(error.message));
   }

@@ -11,8 +11,13 @@ import {
   compareVersions,
   parseVersion,
   runCommand,
-  runVerification,
+  firstFailingLine,
+  runVerification as runRealVerification,
 } from "./verify.mjs";
+
+// The WASM comparison reads two build outputs; these tests stand in for them
+// (identical bytes) so they don't depend on a build having run first.
+const runVerification = (options) => runRealVerification({ readBytes: async () => Buffer.from("engine"), ...options });
 
 test("a failing child command returns its exit status", async () => {
   const result = await runCommand(process.execPath, ["-e", "process.exit(17)"], { capture: true });
@@ -115,7 +120,7 @@ test("missing required browser is a failure and optional browser stage is NOT RU
   const availablePrerequisites = async (command, args) => {
     if (command === "rustup" && args[0] === "show") return { code: 0, stdout: "1.93.0-x86_64-pc-windows-msvc", stderr: "" };
     if (command === "rustup" && args[0] === "target") return { code: 0, stdout: "wasm32-unknown-unknown", stderr: "" };
-    if (command === "python") return { code: 0, stdout: "Python 3.12.0", stderr: "" };
+    if (/python/.test(command)) return { code: 0, stdout: "Python 3.12.0", stderr: "" };
     return { code: 0, stdout: "tool available", stderr: "" };
   };
   const result = await runVerification({
@@ -154,6 +159,7 @@ test("test discovery is deterministic and works from repository and Kin director
   const fromRepository = await collectNodeTests(join(PROJECT_ROOT));
   assert.deepEqual(fromRepository, fromProject);
   assert.ok(fromProject.some((path) => path.endsWith(join("server", "durable-sync-integrity.test.mjs"))));
+  assert.ok(fromProject.some((path) => path.endsWith(join("scripts", "v1-compatibility.test.mjs"))));
   assert.ok(fromProject.every((path) => path.endsWith(".test.mjs")));
 
   const temporary = await mkdtemp(join(tmpdir(), "kin-test-discovery-"));
@@ -166,7 +172,11 @@ test("test discovery is deterministic and works from repository and Kin director
     assert.deepEqual((await collectNodeTests(temporary)).map((path) => path.slice(temporary.length + 1)), [
       join("server", "one.test.mjs"),
       join("web", "nested", "two.test.mjs"),
-    ]);
+    ], "a missing scripts/ directory is no error");
+    await mkdir(join(temporary, "scripts"));
+    await writeFile(join(temporary, "scripts", "three.test.mjs"), "");
+    await writeFile(join(temporary, "scripts", "four-regression.mjs"), "");
+    assert.deepEqual((await collectNodeTests(temporary)).map((path) => path.slice(temporary.length + 1)).at(-1), join("scripts", "three.test.mjs"), "the runner's own tests are part of the gate (#328)");
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -214,7 +224,7 @@ test("a failing required child command makes the overall gate fail", async () =>
   const execute = async (command, args) => {
     if (command === "rustup" && args[0] === "show") return { code: 0, stdout: "1.93.0-x86_64-pc-windows-msvc", stderr: "" };
     if (command === "rustup" && args[0] === "target") return { code: 0, stdout: "wasm32-unknown-unknown", stderr: "" };
-    if (command === "python") return { code: 0, stdout: "Python 3.12.0", stderr: "" };
+    if (/python/.test(command)) return { code: 0, stdout: "Python 3.12.0", stderr: "" };
     if (command === "cargo" && args[0] === "clippy") return { code: 23, stdout: "", stderr: "lint failed" };
     return { code: 0, stdout: "", stderr: "" };
   };
@@ -236,7 +246,7 @@ test("an ignored WASM output is explicitly reported without a committed comparis
   const execute = async (command, args) => {
     if (command === "rustup" && args[0] === "show") return { code: 0, stdout: "1.93.0-x86_64-pc-windows-msvc", stderr: "" };
     if (command === "rustup" && args[0] === "target") return { code: 0, stdout: "wasm32-unknown-unknown", stderr: "" };
-    if (command === "python") return { code: 0, stdout: "Python 3.12.0", stderr: "" };
+    if (/python/.test(command)) return { code: 0, stdout: "Python 3.12.0", stderr: "" };
     if (command === "git" && args[0] === "ls-files") return { code: 1, stdout: "", stderr: "path is ignored" };
     return { code: 0, stdout: "", stderr: "" };
   };
@@ -252,7 +262,7 @@ test("an interrupted required command stops later stages and yields a failing su
     commands.push([command, args[0]]);
     if (command === "rustup" && args[0] === "show") return { code: 0, stdout: "1.93.0-x86_64-pc-windows-msvc", stderr: "" };
     if (command === "rustup" && args[0] === "target") return { code: 0, stdout: "wasm32-unknown-unknown", stderr: "" };
-    if (command === "python") return { code: 0, stdout: "Python 3.12.0", stderr: "" };
+    if (/python/.test(command)) return { code: 0, stdout: "Python 3.12.0", stderr: "" };
     if (command === "cargo" && args[0] === "fmt") return { code: 130, signal: "SIGINT", interrupted: true, stdout: "", stderr: "" };
     return { code: 0, stdout: "", stderr: "" };
   };
@@ -269,7 +279,7 @@ test("a failed Node suite prevents Rust tests and WASM build", async () => {
     commands.push([command, args]);
     if (command === "rustup" && args[0] === "show") return { code: 0, stdout: "1.93.0-x86_64-pc-windows-msvc", stderr: "" };
     if (command === "rustup" && args[0] === "target") return { code: 0, stdout: "wasm32-unknown-unknown", stderr: "" };
-    if (command === "python") return { code: 0, stdout: "Python 3.12.0", stderr: "" };
+    if (/python/.test(command)) return { code: 0, stdout: "Python 3.12.0", stderr: "" };
     if (command === process.execPath && args[0] === "--test") return { code: 1, stdout: "", stderr: "controlled node failure" };
     return { code: 0, stdout: "", stderr: "" };
   };
@@ -287,7 +297,7 @@ test("a failed required browser suite marks later browser suites NOT RUN", async
   const execute = async (command, args) => {
     if (command === "rustup" && args[0] === "show") return { code: 0, stdout: "1.93.0-x86_64-pc-windows-msvc", stderr: "" };
     if (command === "rustup" && args[0] === "target") return { code: 0, stdout: "wasm32-unknown-unknown", stderr: "" };
-    if (command === "python") return { code: 0, stdout: "Python 3.12.0", stderr: "" };
+    if (/python/.test(command)) return { code: 0, stdout: "Python 3.12.0", stderr: "" };
     if (command === "git" && args[0] === "ls-files") return { code: 1, stdout: "", stderr: "ignored" };
     if (command === process.execPath && args[0]?.endsWith(".mjs") && args[0].includes("regression")) {
       executedSuites.push(args[0]);
@@ -297,7 +307,9 @@ test("a failed required browser suite marks later browser suites NOT RUN", async
   };
   const result = await runVerification({ browser: true, browserExecutable: process.execPath, execute, nodeVersion: "24.16.0", output: () => {} });
   const browser = result.stages.find(({ name }) => name.startsWith("E —"));
-  assert.equal(executedSuites.length, 1);
+  // Retried once (#328), then failed: later suites don't run.
+  assert.equal(executedSuites.length, 2);
+  assert.equal(executedSuites[0], executedSuites[1]);
   assert.equal(browser.results[0].status, "FAIL");
   assert.ok(browser.results.slice(1).every(({ status }) => status === "NOT RUN"));
   assert.equal(result.code, 1);
@@ -306,4 +318,89 @@ test("a failed required browser suite marks later browser suites NOT RUN", async
 test("version comparison handles numeric components", () => {
   assert.deepEqual(parseVersion("22.13.0"), [22, 13, 0]);
   assert.ok(compareVersions(parseVersion("22.12.99"), parseVersion("22.13.0")) < 0);
+});
+
+/** Answers every prerequisite and command as passing; browser suites answer
+ * from `suites(script, attempt)`. */
+function scriptedExecute(suites) {
+  const attempts = new Map();
+  const calls = [];
+  const execute = async (command, args, options = {}) => {
+    if (command === "rustup" && args[0] === "show") return { code: 0, stdout: "1.93.0-x86_64-pc-windows-msvc", stderr: "" };
+    if (command === "rustup" && args[0] === "target") return { code: 0, stdout: "wasm32-unknown-unknown", stderr: "" };
+    if (/python/.test(command)) return { code: 0, stdout: "Python 3.12.0", stderr: "" };
+    if (command === "git" && args[0] === "ls-files") return { code: 1, stdout: "", stderr: "ignored" };
+    if (command === process.execPath && args[0]?.endsWith("regression.mjs")) {
+      const script = args[0].split(/[\\/]/).at(-1);
+      const attempt = (attempts.get(script) ?? 0) + 1;
+      attempts.set(script, attempt);
+      calls.push({ script, attempt, diagnostics: options.env?.KIN_DIAGNOSTICS_DIR });
+      return suites(script, attempt);
+    }
+    return { code: 0, stdout: "", stderr: "" };
+  };
+  return { execute, calls };
+}
+
+test("a browser suite that fails once and passes on retry is FLAKY, reported, and not a failure (#328)", async () => {
+  const diagnostics = await mkdtemp(join(tmpdir(), "kin-verify-flaky-"));
+  const summary = join(diagnostics, "summary.md");
+  const { execute, calls } = scriptedExecute((script, attempt) => script === "security-ui-regression.mjs" && attempt === 1
+    ? { code: 1, stdout: "PASS lock screen\n", stderr: "AssertionError [ERR_ASSERTION]: the unlock button is focused\n    at file.mjs:10\n" }
+    : { code: 0, stdout: "PASS all\n", stderr: "" });
+  const messages = [];
+  const result = await runVerification({
+    browser: true, browserExecutable: process.execPath, execute, nodeVersion: "24.16.0", output: (line) => messages.push(line),
+    env: { ...process.env, KIN_DIAGNOSTICS_DIR: diagnostics, GITHUB_ACTIONS: "true", GITHUB_STEP_SUMMARY: summary },
+  });
+  try {
+    const browser = result.stages.find(({ name }) => name.startsWith("E —"));
+    assert.equal(result.code, 0, "a flake doesn't fail the gate");
+    assert.equal(browser.status, "FLAKY");
+    const suite = browser.results.find(({ label }) => label === "security UI regression");
+    assert.equal(suite.status, "FLAKY");
+    assert.equal(suite.firstAttempt, "AssertionError [ERR_ASSERTION]: the unlock button is focused");
+    assert.ok(browser.results.filter(({ label }) => label !== "security UI regression").every(({ status }) => status === "PASS"), "every other suite still ran");
+    assert.deepEqual(result.flaky, [{ label: "security UI regression", failure: suite.firstAttempt }]);
+    assert.ok(messages.some((line) => line.startsWith("RETRY   security UI regression")));
+    assert.ok(messages.some((line) => line.startsWith("  FLAKY   security UI regression — failed once, passed on retry: AssertionError")));
+    assert.ok(messages.some((line) => line === "::warning title=Flaky browser suite: security UI regression::Failed once, then passed on retry. First failure: AssertionError [ERR_ASSERTION]: the unlock button is focused"));
+    assert.ok(!messages.some((line) => /^PASS\s+E —/.test(line)), "the stage is never shown as PASS");
+    assert.match(await readFile(summary, "utf8"), /\| security UI regression \| AssertionError \[ERR_ASSERTION\]: the unlock button is focused \|/);
+    assert.match(await readFile(join(diagnostics, "security-ui-regression-attempt1.log"), "utf8"), /unlock button is focused/);
+    const retried = calls.filter(({ script }) => script === "security-ui-regression.mjs");
+    assert.deepEqual(retried.map(({ attempt }) => attempt), [1, 2]);
+    assert.deepEqual(retried.map(({ diagnostics: dir }) => dir), [join(diagnostics, "attempt1"), join(diagnostics, "attempt2")], "each attempt saves its screenshots apart");
+  } finally {
+    await rm(diagnostics, { recursive: true, force: true });
+  }
+});
+
+test("a browser suite that fails twice FAILs the gate with the second failure (#328)", async () => {
+  const { execute, calls } = scriptedExecute((script, attempt) => script === "browser-regression.mjs"
+    ? { code: 1, stdout: "", stderr: `Error: Timed out waiting for browser state (attempt ${attempt})\n` }
+    : { code: 0, stdout: "", stderr: "" });
+  const result = await runVerification({ browser: true, browserExecutable: process.execPath, execute, nodeVersion: "24.16.0", output: () => {}, env: { ...process.env, GITHUB_ACTIONS: "false" } });
+  const browser = result.stages.find(({ name }) => name.startsWith("E —"));
+  assert.equal(result.code, 1);
+  assert.equal(browser.results[0].status, "FAIL");
+  assert.equal(browser.results[0].error, "Error: Timed out waiting for browser state (attempt 2)");
+  assert.equal(browser.results[0].firstAttempt, "Error: Timed out waiting for browser state (attempt 1)");
+  assert.deepEqual(result.flaky, []);
+  assert.equal(calls.length, 2, "no third attempt, and later suites don't run");
+});
+
+test("a passing browser suite runs once (#328)", async () => {
+  const { execute, calls } = scriptedExecute(() => ({ code: 0, stdout: "", stderr: "" }));
+  const result = await runVerification({ browser: true, browserExecutable: process.execPath, execute, nodeVersion: "24.16.0", output: () => {} });
+  assert.equal(result.code, 0);
+  assert.equal(calls.length, 5);
+  assert.ok(calls.every(({ attempt }) => attempt === 1));
+});
+
+test("the first failing line names the assertion, error or timeout", () => {
+  assert.equal(firstFailingLine("PASS a\nPASS b\nAssertionError [ERR_ASSERTION]: x\n  at y"), "AssertionError [ERR_ASSERTION]: x");
+  assert.equal(firstFailingLine("starting\nError: Timed out waiting\n"), "Error: Timed out waiting");
+  assert.equal(firstFailingLine("one\n\nlast line\n"), "last line");
+  assert.equal(firstFailingLine(""), "no output");
 });

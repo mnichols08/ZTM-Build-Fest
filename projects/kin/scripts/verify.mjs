@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, readdir, readFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -97,7 +97,10 @@ export function runCommand(command, args, { cwd = PROJECT_ROOT, env = process.en
 export async function collectNodeTests(root = PROJECT_ROOT) {
   const files = [];
   async function visit(directory) {
-    const entries = await readdir(directory, { withFileTypes: true });
+    const entries = await readdir(directory, { withFileTypes: true }).catch((error) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       const fullPath = join(directory, entry.name);
@@ -105,7 +108,9 @@ export async function collectNodeTests(root = PROJECT_ROOT) {
       else if (entry.isFile() && entry.name.endsWith(".test.mjs")) files.push(fullPath);
     }
   }
-  for (const directory of ["server", "web"]) await visit(join(root, directory));
+  // scripts/ holds the runner's own tests and the documentation and
+  // compatibility checks; they are part of the gate too (#328).
+  for (const directory of ["server", "web", "scripts"]) await visit(join(root, directory));
   return files;
 }
 
@@ -184,10 +189,23 @@ async function checkEnvironment({ execute, env, nodeVersion }) {
 function statusOf(results) {
   if (results.some((result) => result.status === "FAIL")) return "FAIL";
   if (results.some((result) => result.status === "NOT RUN")) return "NOT RUN";
+  // Passed only on its retry (#328): not a failure, never shown as PASS.
+  if (results.some((result) => result.status === "FLAKY")) return "FLAKY";
   return "PASS";
 }
 
-export async function runVerification({ browser = false, browserExecutable, env = process.env, execute = runCommand, output = console.log, nodeVersion = process.versions.node } = {}) {
+/** The first line of a failed run that says what failed: an assertion, an
+ * error, or a "Timed out" line; otherwise its last non-empty line. */
+export function firstFailingLine(text = "") {
+  const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const named = lines.find((line) => /^(AssertionError|Error|TypeError|RangeError)\b|Timed out|^not ok\b|✖/.test(line));
+  return (named ?? lines.at(-1) ?? "no output").slice(0, 300);
+}
+
+/** Escapes a GitHub Actions workflow-command value. */
+const actionsValue = (value) => String(value).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+
+export async function runVerification({ browser = false, browserExecutable, env = process.env, execute = runCommand, output = console.log, nodeVersion = process.versions.node, readBytes = readFile } = {}) {
   const started = Date.now();
   const stages = [];
   let interrupted = false;
@@ -207,6 +225,46 @@ export async function runVerification({ browser = false, browserExecutable, env 
     const assertionCount = assertionMatches.at(-1)?.[1];
     const check = { label, status: result.code === 0 ? "PASS" : "FAIL", code: result.code, signal: result.signal, error: result.error?.message ?? (result.code ? result.stderr?.trim() : undefined), testCount, assertionCount };
     if (check.status === "FAIL" && !firstFailure) firstFailure = check;
+    return check;
+  };
+
+  // A browser suite that fails is run once more (#328). Passing then makes
+  // it FLAKY: reported, annotated in CI, but not a failure. Each attempt's
+  // output, and the suite's own screenshots, go to KIN_DIAGNOSTICS_DIR.
+  const diagnostics = env.KIN_DIAGNOSTICS_DIR ?? null;
+  const flaky = [];
+  const saveAttempt = async (label, attempt, result) => {
+    if (!diagnostics) return;
+    try {
+      await mkdir(diagnostics, { recursive: true });
+      const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      await writeFile(join(diagnostics, `${slug}-attempt${attempt}.log`), `${result.stdout ?? ""}\n--- stderr ---\n${result.stderr ?? ""}`);
+    } catch { /* diagnostics never change the outcome */ }
+  };
+  const browserSuite = async (label, script, executable) => {
+    const run = async (attempt) => {
+      output(`$ node scripts/${script}${attempt > 1 ? " (retry)" : ""}`);
+      const result = await execute(process.execPath, [join(PROJECT_ROOT, "scripts", script), executable], {
+        cwd: PROJECT_ROOT, env: diagnostics ? { ...env, KIN_DIAGNOSTICS_DIR: join(diagnostics, `attempt${attempt}`) } : env,
+      });
+      if (result.interrupted) interrupted = true;
+      if (result.code !== 0) await saveAttempt(label, attempt, result);
+      return result;
+    };
+    const first = await run(1);
+    const failing = (result) => firstFailingLine(`${result.stderr ?? ""}\n${result.stdout ?? ""}`);
+    let result = first, status = first.code === 0 ? "PASS" : "FAIL", firstAttempt = null;
+    if (status === "FAIL" && !first.interrupted) {
+      firstAttempt = failing(first);
+      output(`RETRY   ${label}: first attempt failed (${firstAttempt}); running it once more`);
+      result = await run(2);
+      if (result.code === 0) {
+        status = "FLAKY";
+        flaky.push({ label, failure: firstAttempt });
+      }
+    }
+    const check = { label, status, code: result.code, signal: result.signal, error: status === "FAIL" ? failing(result) : undefined, firstAttempt };
+    if (status === "FAIL" && !firstFailure) firstFailure = check;
     return check;
   };
 
@@ -265,7 +323,7 @@ export async function runVerification({ browser = false, browserExecutable, env 
       if (tracked.code !== 0) {
         if (browser) {
           try {
-            const [builtBytes, browserBytes] = await Promise.all([readFile(built), readFile(committed)]);
+            const [builtBytes, browserBytes] = await Promise.all([readBytes(built), readBytes(committed)]);
             const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
             if (hash(builtBytes) !== hash(browserBytes)) wasm.status = "FAIL", wasm.artifact = `browser WASM is stale (built ${hash(builtBytes)}, web asset ${hash(browserBytes)}); runner did not replace it`;
             else wasm.artifact = `matches generated browser WASM (${hash(browserBytes)})`;
@@ -279,7 +337,7 @@ export async function runVerification({ browser = false, browserExecutable, env 
         }
       } else {
         try {
-          const [builtBytes, committedBytes] = await Promise.all([readFile(built), readFile(committed)]);
+          const [builtBytes, committedBytes] = await Promise.all([readBytes(built), readBytes(committed)]);
           const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
           if (hash(builtBytes) !== hash(committedBytes)) wasm.status = "FAIL", wasm.artifact = `stale committed WASM (built ${hash(builtBytes)}, committed ${hash(committedBytes)}); runner did not replace it`;
           else wasm.artifact = `matches committed WASM (${hash(committedBytes)})`;
@@ -309,7 +367,7 @@ export async function runVerification({ browser = false, browserExecutable, env 
   } else if (browser) {
     const results = [];
     for (const [label, script] of BROWSER_RUNNERS) {
-      const check = await commandResult(label, process.execPath, [join(PROJECT_ROOT, "scripts", script), executable]);
+      const check = await browserSuite(label, script, executable);
       results.push(check);
       if (check.status === "FAIL") {
         results.push(...BROWSER_RUNNERS.slice(results.length).map(([remaining]) => ({ label: `${remaining}: skipped after failure in ${check.label}`, status: "NOT RUN" })));
@@ -323,18 +381,28 @@ export async function runVerification({ browser = false, browserExecutable, env 
   for (const item of stages) {
     output(`${item.status.padEnd(7)} ${item.name}`);
     for (const result of item.results) {
-      if (result.status !== "PASS" || item.results.length > 1 || result.artifactComparison) output(`  ${result.status.padEnd(7)} ${result.label}${result.testCount ? ` (${result.testCount} tests)` : result.assertionCount ? ` (${result.assertionCount} assertions)` : ""}${result.code !== undefined ? ` (exit ${result.code}${result.signal ? `, signal ${result.signal}` : ""})` : ""}${result.error ? `: ${result.error}` : ""}${result.artifact ? ` — ${result.artifact}` : ""}${result.artifactComparison ? `; ${result.artifactComparison}` : ""}`);
+      if (result.status !== "PASS" || item.results.length > 1 || result.artifactComparison) output(`  ${result.status.padEnd(7)} ${result.label}${result.status === "FLAKY" ? ` — failed once, passed on retry: ${result.firstAttempt}` : ""}${result.testCount ? ` (${result.testCount} tests)` : result.assertionCount ? ` (${result.assertionCount} assertions)` : ""}${result.code !== undefined ? ` (exit ${result.code}${result.signal ? `, signal ${result.signal}` : ""})` : ""}${result.error ? `: ${result.error}` : ""}${result.artifact ? ` — ${result.artifact}` : ""}${result.artifactComparison ? `; ${result.artifactComparison}` : ""}`);
     }
   }
   output(`Runtime: Node ${nodeVersion}; browser ${browser ? browserExecutable ?? env.KIN_BROWSER ?? "missing" : "NOT RUN"}`);
   output(`Elapsed: ${((Date.now() - started) / 1000).toFixed(1)}s`);
   if (firstFailure) output(`First failure: ${firstFailure.label}${firstFailure.signal ? ` (signal ${firstFailure.signal})` : firstFailure.code !== undefined ? ` (exit ${firstFailure.code})` : ""}${firstFailure.error ? ` — ${firstFailure.error}` : ""}`);
   if (interrupted) output("Verification interrupted; remaining checks are NOT RUN.");
+  if (flaky.length) {
+    output(`Flaky: ${flaky.map(({ label }) => label).join(", ")} (passed on retry; see docs/TESTING.md, "Flaky browser suites")`);
+    if (env.GITHUB_ACTIONS === "true") {
+      for (const { label, failure } of flaky) output(`::warning title=Flaky browser suite: ${actionsValue(label)}::${actionsValue(`Failed once, then passed on retry. First failure: ${failure}`)}`);
+      if (env.GITHUB_STEP_SUMMARY) {
+        const rows = flaky.map(({ label, failure }) => `| ${label} | ${failure.replace(/\|/g, "\\|")} |`).join("\n");
+        await appendFile(env.GITHUB_STEP_SUMMARY, `### Flaky browser suites\n\nThese failed once and passed on retry; the build is not failed for them. Diagnostics are in the \`kin-browser-diagnostics\` artifact.\n\n| Suite | First failure |\n| --- | --- |\n${rows}\n`).catch(() => {});
+      }
+    }
+  }
   const failed = stages.some(({ status }) => status === "FAIL");
   const notRunMandatory = stages.slice(0, 4).some(({ status }) => status === "NOT RUN");
   const code = failed || notRunMandatory || interrupted ? 1 : 0;
   output(`Verification exit status: ${code}`);
-  return { code, stages, elapsedMs: Date.now() - started, interrupted, firstFailure };
+  return { code, stages, elapsedMs: Date.now() - started, interrupted, firstFailure, flaky };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -13,6 +13,8 @@
 // about:blank. "Loaded" means past "loading": a page with a long-lived
 // request may never report "complete".
 import { setTimeout as delay } from "node:timers/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 export const PAGE_TIMEOUT_MS = 30_000;
 
@@ -49,7 +51,52 @@ export const REGRESSION_DEFAULTS_SCRIPT =
   'try { if (localStorage.getItem("kin.reload-resume-enabled") === null) localStorage.setItem("kin.reload-resume-enabled", "off"); } catch {}';
 
 /** Installs REGRESSION_DEFAULTS_SCRIPT for every later page load in a tab. */
+// Every page a regression opened (newest last), so a failure can show what
+// each one looked like (#328).
+const livePages = [];
+const MAX_CAPTURED_PAGES = 6;
+const CAPTURE_TIMEOUT_MS = 5_000;
+
+/**
+ * Saves, for each page the failing regression still has open, a screenshot
+ * and its address, title and text, into KIN_DIAGNOSTICS_DIR (nothing when it
+ * isn't set). Called from a regression's outer catch before its browser is
+ * closed; never throws, and a page that no longer answers is skipped.
+ */
+export async function captureFailure(suite, { dir = process.env.KIN_DIAGNOSTICS_DIR } = {}) {
+  if (!dir) return [];
+  const saved = [];
+  try {
+    await mkdir(dir, { recursive: true });
+    const slug = String(suite).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const pages = livePages.slice(-MAX_CAPTURED_PAGES);
+    for (const [index, send] of pages.entries()) {
+      const call = (method, params) => Promise.race([
+        send(method, params),
+        delay(CAPTURE_TIMEOUT_MS).then(() => { throw new Error("no answer"); }),
+      ]);
+      const base = join(dir, `${slug}-page${index + 1}`);
+      try {
+        const { result } = await call("Runtime.evaluate", {
+          expression: `JSON.stringify({ href: location.href, title: document.title, text: (document.body?.innerText ?? "").slice(0, 20000) }, null, 2)`,
+          returnByValue: true,
+        });
+        await writeFile(`${base}.txt`, result?.value ?? "");
+        saved.push(`${base}.txt`);
+      } catch { /* that page is gone */ }
+      try {
+        const { data } = await call("Page.captureScreenshot", { format: "png" });
+        await writeFile(`${base}.png`, Buffer.from(data, "base64"));
+        saved.push(`${base}.png`);
+      } catch { /* that page is gone */ }
+    }
+  } catch { /* diagnostics must never hide the failure itself */ }
+  if (saved.length) console.error(`Saved failure diagnostics: ${saved.join(", ")}`);
+  return saved;
+}
+
 export async function applyRegressionDefaults(send) {
+  livePages.push(send);
   // The Page domain must be on, or the script may not be installed.
   await send("Page.enable");
   await send("Page.addScriptToEvaluateOnNewDocument", { source: REGRESSION_DEFAULTS_SCRIPT });

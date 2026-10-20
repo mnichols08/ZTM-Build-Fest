@@ -1,7 +1,7 @@
 // Node 22+ and a Chromium-family executable; no npm packages required.
 // Uses a fresh temporary profile and loopback server, never an existing Kin DB.
 import { setViewport } from "./cdp-viewport.mjs";
-import { applyRegressionDefaults } from "./cdp-page.mjs";
+import { applyRegressionDefaults, captureFailure } from "./cdp-page.mjs";
 import {
   pulseRegressions,
   pulsePeerRegressions,
@@ -2929,6 +2929,10 @@ try {
   );
   await syncStorageRegressions(first);
   console.log("PASS final encrypted sync storage regression");
+} catch (error) {
+  // Before the browser closes: what each page showed (#328).
+  await captureFailure("browser regression");
+  throw error;
 } finally {
   if (browserClient) await browserClient.send("Browser.close").catch(() => {});
   for (const client of clients) client.close();

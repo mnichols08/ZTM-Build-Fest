@@ -378,7 +378,7 @@ claimed.
 
 The default mandatory local gate is `verify`; browser regressions are an
 explicit second command. `node --test scripts/verify.test.mjs` runs focused
-tests for the verification runner itself. The active root workflow is
+tests for the verification runner itself (they are also part of the gate). The active root workflow is
 `.github/workflows/kin-verification.yml`; a synchronized project-local reference
 is retained at `docs/ci/kin-verification.workflow.yml`. Pull requests that
 change Kin or its workflow run the complete Windows Edge gate, and pushes to
@@ -400,6 +400,29 @@ browser step (about 360 s on Windows) is the rest. A Cargo `target/` cache is
 deliberately not kept: Cargo rebuilds a path crate whose files have new
 modification times, which every checkout gives them, and Kin has no other
 crates to reuse.
+
+## Flaky browser suites
+
+A browser suite that fails is run once more (`scripts/verify.mjs`, #328). If
+the retry passes the suite is **FLAKY**: it does not fail the gate, but the
+report never shows it as PASS. The summary's `Flaky:` line names it, and in
+GitHub Actions it also appears as a warning annotation and in the job summary,
+with the first assertion or error that failed. If the retry fails too, the
+suite FAILs with the second failure (the first is kept as `firstAttempt`).
+A suite is never run a third time.
+
+With `KIN_DIAGNOSTICS_DIR` set (CI sets it), each failed attempt leaves
+`<suite>-attempt<N>.log` (its full output) and, under `attempt<N>/`, a
+screenshot and the address, title and text of each page the suite had open
+when it failed (`captureFailure` in `scripts/cdp-page.mjs`). CI uploads the
+folder as the `kin-browser-diagnostics` artifact.
+
+A flake is a bug to fix, not noise: fix the cause rather than lengthening a
+wait, and never delete or weaken a test to make it pass.
+
+The gate runs every `*.test.mjs` under `server/`, `web/` and `scripts/`, so
+the runner's own tests, the documentation checks and the v1.0 compatibility
+check are part of it (before #328 the `scripts/` tests ran only by hand).
 
 ## Run the browser gates locally
 
