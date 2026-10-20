@@ -2268,21 +2268,6 @@ tried them.
   A Staple's section goes with it when it is replenished. With no sections,
   the list looks as before.
 
-# 37. This week (#416)
-
-- **Where.** Today's heading links to **This week** (`#week`), a page of its
-  own that keeps Today marked in the navigation; no sixth destination.
-- **What.** Seven days from today, each a headed section ("Today",
-  "Tomorrow", then the weekday and date): items planned for that day,
-  routine occurrences (shown on the day each occurrence opens), the planned
-  dinner and maintenance due. Overdue items stay on Today. Rust supplies the
-  days and what falls on them (`kin_week`, [ABI](ABI.md)); the page only
-  names them. Days with nothing say "Nothing planned."
-- **Actions.** Items complete and reopen with a checkbox (Undo applies),
-  **Move to…** another day of the week or "No date", and **Details** opens
-  the item. Routines complete for the current period only; later occurrences
-  show without a checkbox. Household modes other than Normal pause routines
-  for the whole week, as on Today.
 # 36. Bring a list into Kin (#452)
 
 - **Paste a list.** Pasting two or more lines into a capture field (Today,
@@ -2301,3 +2286,19 @@ tried them.
   with an id fixed when the import starts: a failure partway says how many
   were added and Try again (or Add again) resumes without duplicates. At most
   200 rows per import; files are read on the device and never uploaded.
+
+# 37. This week (#416)
+
+- **Where.** Today's heading links to **This week** (`#week`), a page of its
+  own that keeps Today marked in the navigation; no sixth destination.
+- **What.** Seven days from today, each a headed section ("Today",
+  "Tomorrow", then the weekday and date): items planned for that day,
+  routine occurrences (shown on the day each occurrence opens), the planned
+  dinner and maintenance due. Overdue items stay on Today. Rust supplies the
+  days and what falls on them (`kin_week`, [ABI](ABI.md)); the page only
+  names them. Days with nothing say "Nothing planned."
+- **Actions.** Items complete and reopen with a checkbox (Undo applies),
+  **Move to…** another day of the week or "No date", and **Details** opens
+  the item. Routines complete for the current period only; later occurrences
+  show without a checkbox. Household modes other than Normal pause routines
+  for the whole week, as on Today.
