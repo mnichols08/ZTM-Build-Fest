@@ -9,11 +9,12 @@ const activeCopy = new URL("../../../.github/workflows/kin-verification.yml", im
 
 test("the active Kin workflow matches its reference copy", async (t) => {
   let active;
-  try { active = await readFile(activeCopy, "utf8"); } catch {
+  // Compared as LF: a Windows checkout may give either copy CRLF endings.
+  try { active = (await readFile(activeCopy, "utf8")).replace(/\r\n/g, "\n"); } catch {
     t.skip("not inside the parent repository");
     return;
   }
-  const reference = (await readFile(projectCopy, "utf8")).split("\n");
+  const reference = (await readFile(projectCopy, "utf8")).replace(/\r\n/g, "\n").split("\n");
   // The reference copy starts with a three-line note saying what it is.
   assert.match(reference[0], /^# Reference copy/);
   assert.equal(active, reference.slice(3).join("\n"));
