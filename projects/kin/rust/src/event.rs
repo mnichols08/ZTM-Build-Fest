@@ -38,6 +38,8 @@ id_type!(ChatMessageId);
 id_type!(BoardId);
 // A saved recipe (#333, meals.rs).
 id_type!(RecipeId);
+// A Shopping store section, such as "Dairy" (#411, store_sections.rs).
+id_type!(StoreSectionId);
 
 /// What a chat message's content blob holds (#109).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -435,6 +437,16 @@ pub enum EventKind {
     ItemEmojiSet {
         item_id: ItemId,
         emoji: Option<String>,
+    },
+    /// Store sections (#411, store_sections.rs): the household's whole
+    /// ordered section list, replacing the previous one.
+    ShoppingSectionsSet {
+        sections: Vec<crate::store_sections::StoreSection>,
+    },
+    /// An item's store section; `None` clears it.
+    ItemSectionSet {
+        item_id: ItemId,
+        section_id: Option<StoreSectionId>,
     },
 }
 

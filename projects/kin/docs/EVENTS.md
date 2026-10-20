@@ -342,6 +342,29 @@ beside an item's text and never replaces it. Hosts read emoji through
 is part of the KINS projection. Older devices pause sync with "unsupported"
 and keep their data until they update.
 
+## Store sections (Shopping)
+
+Kinds 66 and 67 (#411, [ADR 0015](decisions/0015-store-sections.md)) are
+schema 1 events in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 66 | `SHOPPING_SECTIONS_SET` | The household's whole ordered list of store sections (0–30, each a stable ID and a name of 1–40 UTF-8 bytes), replacing the previous list |
+| 67 | `ITEM_SECTION_SET` | An item's store section, or none (an all-zero section ID) to clear it |
+
+Replay (rust/src/store_sections.rs) never fails on a decoded event. The
+latest list in replay order wins; a section left out is gone. The latest
+section event for an item wins, and an item whose section is no longer listed
+(or never was) shows under none; its event is kept, so listing that section
+ID again brings the item back. The payloads are strict: at most 30 sections,
+non-zero and unique IDs, names already trimmed, 1–40 bytes, no control
+characters. Commands are stricter: no two names equal ignoring case, the list
+must change; an item's section needs the item to exist and not be archived,
+the section to be in the current list (or none), and a change. Sections are
+not areas: an item keeps its area. Hosts read sections through
+`kin_shopping_sections`, which is not part of the KINS projection. Older
+devices pause sync with "unsupported" and keep their data until they update.
+
 ## v1.1.0 Household chat
 
 `CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and

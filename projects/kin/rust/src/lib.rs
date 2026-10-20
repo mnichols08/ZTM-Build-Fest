@@ -21,6 +21,7 @@ pub mod simple;
 pub mod state;
 pub mod state_encode;
 pub mod week;
+pub mod store_sections;
 pub mod wire;
 
 #[cfg(test)]
@@ -75,6 +76,8 @@ mod chat_tests;
 mod board_tests;
 #[cfg(test)]
 mod meals_tests;
+#[cfg(test)]
+mod shopping_section_tests;
 #[cfg(test)]
 mod simple_tests;
 

@@ -2127,3 +2127,18 @@ html:has(kin-app .undo-toast:not([hidden])) { scroll-padding-bottom: calc(160px 
 .week-meal .week-text, .week-maintenance .week-text { font-style: italic; }
 .week-empty { margin: 0; color: var(--ink-muted); }
 @media (forced-colors: active) { .week-day { border: 1px solid CanvasText; } }
+/* Store sections in shopping mode (#411). */
+.shopping-mode-buttons { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.shopping-mode-sections-toggle { min-height: var(--tap); }
+.shopping-mode-group h3 { margin: 14px 10px 4px; color: var(--ink-muted); font-size: 14px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; }
+.shopping-mode-item { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; border-bottom: 1px solid var(--line); }
+.shopping-mode-item label { flex: 1 1 14em; border-bottom: 0; }
+.shopping-mode-section { min-height: var(--tap); max-width: 12em; margin: 4px 10px 4px 0; }
+.shopping-sections-editor { display: grid; gap: 10px; margin: 10px 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); }
+.shopping-sections-editor[hidden] { display: none; }
+.shopping-sections-editor h3 { margin: 0; font-size: 17px; }
+.shopping-sections-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.shopping-sections-list li, .shopping-sections-add { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.shopping-sections-list input, .shopping-sections-add input { flex: 1 1 10em; min-width: 0; min-height: var(--tap); padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); }
+.shopping-sections-list button, .shopping-sections-add button { min-width: var(--tap); min-height: var(--tap); }
+.shopping-sections-add label { flex-basis: 100%; font-weight: 600; }

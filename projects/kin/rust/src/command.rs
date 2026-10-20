@@ -228,6 +228,10 @@ pub enum HouseholdCommand {
     /// An item's emoji (#344, kind 64), carried whole like a meals event;
     /// `PicturesState::check_command` decides whether it applies.
     Picture(EventKind),
+    /// A store-sections event (#411, kinds 66–67), carried whole like a
+    /// meals event; `StoreSectionsState::check_command` decides whether it
+    /// applies.
+    StoreSection(EventKind),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -521,6 +525,12 @@ pub fn create_event(
             }
             kind.clone()
         }
+        StoreSection(kind) => {
+            if !crate::store_sections::is_sections_code(crate::codec::kind_code(kind)) {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -771,6 +781,9 @@ pub fn execute_with(
     }
     if let HouseholdCommand::Picture(kind) = command {
         current.pictures.check_command(kind, &current.items)?;
+    }
+    if let HouseholdCommand::StoreSection(kind) = command {
+        current.store_sections.check_command(kind, &current.items)?;
     }
     if let HouseholdCommand::ChangeResponsibility {
         target_kind,
@@ -1365,6 +1378,17 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         let event_kind = crate::simple::decode_payload(kind, &bytes[128..])?;
         return Ok((
             HouseholdCommand::Picture(event_kind),
+            command_context(bytes)?,
+        ));
+    }
+    // Store sections (#411): likewise.
+    if crate::store_sections::is_sections_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::store_sections::decode_payload(kind, &bytes[128..])?;
+        return Ok((
+            HouseholdCommand::StoreSection(event_kind),
             command_context(bytes)?,
         ));
     }

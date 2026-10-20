@@ -19,6 +19,7 @@ kin_meal_shopping_plan(ptr, len)     KMPQ + KINE context -> KMSP (#333)
 kin_item_emojis(ptr, len)            replay the history: KINE context -> KIEM (#344)
 kin_my_things(ptr, len)              KMTQ + KINE context -> KMTD (#344)
 kin_week(ptr, len)                   KWKQ + KINE context -> KWKD (#417)
+kin_shopping_sections(ptr, len)      replay the history: KINE context -> KSHS (#411)
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
@@ -254,6 +255,8 @@ N  payload
 | 63 | DINNER_COOK_SET (#333) | civil date u32, member flag u8 (0 or 1) + 3 reserved, member ID [16] when flagged (absent: "No one yet") |
 | 64 | ITEM_EMOJI_SET (#344) | item ID [16], emoji flag u8 (0 or 1) + 3 reserved, emoji (u16 + UTF-8, one grapheme, at most 32 bytes) when flagged (absent: cleared) |
 | 65 | CHAT_TOPIC_SET (#312, chat log) | message ID, state u8 (0 cleared, 1 open, 2 resolved), 3 reserved: 20 bytes |
+| 66 | SHOPPING_SECTIONS_SET (#411) | section count u16 (0–30), reserved u16, then each section: section ID [16] (non-zero, unique), name (u16 length + UTF-8; trimmed, 1–40 bytes, no controls) |
+| 67 | ITEM_SECTION_SET (#411) | item ID [16] (non-zero), section ID [16] (all zero: none): 32 bytes |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -538,6 +541,23 @@ tuned for printed codes under heavy blur.
 - **KIEM v1** (item emoji, `kin_item_emojis`): `"KIEM"`, version 1, reserved
   u16, count u32, then for each item that exists and isn't archived, in item
   ID order: item ID [16], emoji (u16 + UTF-8).
+- **Store sections (kinds 66–67, #411).** The payloads are strict like
+  meals: they re-encode to the same bytes, so an untrimmed name, a zero or
+  repeated section ID or more than 30 sections fail with code 2. KCMD actions
+  66 (`set-shopping-sections`) and 67 (`set-item-section`) carry the exact
+  payload as their text with a zero entity ID and no option, date or expiry;
+  the host trims names first (`kin-sections.js`). Rust checks them against
+  the current state (`StoreSectionsState::check_command`, code 4): names
+  unique ignoring case, the list changed; the item exists and isn't archived,
+  the section is listed (or none), and the item's shown section changes.
+- **KSHS v1** (store sections, `kin_shopping_sections`): `"KSHS"`, version 1,
+  reserved u16, section count u32, then each section in the household's
+  order: section ID [16], name (u16 + UTF-8); then item count u32 and, for
+  each item that exists, isn't archived and whose section is in the list, in
+  item ID order: item ID [16], section ID [16]. Items without a listed section
+  are absent. The KINS projection is unchanged: its section table is part of
+  replay protocol 24, so new domains get their own export, as item pictures
+  did.
 - **KMTQ v1 / KMTD v1** (a member's things today, `kin_my_things`): the
   24-byte query `"KMTQ"`, version 1, reserved u16, member ID [16] (non-zero),
   then a record-less KINE context. The result `"KMTD"`, version 1, reserved

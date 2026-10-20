@@ -114,6 +114,20 @@ pub fn item_emojis(context: &[u8], history: &mut History) -> Result<Vec<u8>, Kin
     Ok(crate::simple::encode_emojis(&state.pictures, &state.items))
 }
 
+/// Store sections (`kin_shopping_sections`, #411): the record-less KINE
+/// context against the household history; publishes KSHS
+/// (store_sections.rs).
+pub fn shopping_sections(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    Ok(crate::store_sections::encode_sections(
+        &state.store_sections,
+        &state.items,
+    ))
+}
+
 /// A member's things today (`kin_my_things`, #344): KMTQ (simple.rs) and the
 /// record-less KINE context; publishes KMTD for the context's civil date.
 pub fn my_things(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {

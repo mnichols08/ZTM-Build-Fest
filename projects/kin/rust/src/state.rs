@@ -437,6 +437,10 @@ pub struct HouseholdState {
     /// Item emoji (simple.rs, #344). Hosts read them through
     /// `kin_item_emojis`. Shared with the replay, not copied.
     pub pictures: std::sync::Arc<crate::simple::PicturesState>,
+    /// Store sections and each item's section (store_sections.rs, #411).
+    /// Not part of the KINS projection; hosts read them through
+    /// `kin_shopping_sections`. Shared with the replay, not copied.
+    pub store_sections: std::sync::Arc<crate::store_sections::StoreSectionsState>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

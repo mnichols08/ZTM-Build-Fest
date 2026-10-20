@@ -88,6 +88,8 @@ export class RenderController {
     if (this.app.shoppingMode) this.app.shoppingMode.items = this.app.state.items;
     // This week (#416) reads from Rust while it's showing.
     void this.ctx.week?.refresh();
+    // Store sections (#411) read from Rust after each render.
+    void this.ctx.sections?.refresh();
     this.app.today.update({
       today: civilDate,
       items: this.app.state.items,

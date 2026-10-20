@@ -71,6 +71,8 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::DinnerCookSet { .. } => crate::meals::DINNER_COOK_SET,
         EventKind::ItemEmojiSet { .. } => crate::simple::ITEM_EMOJI_SET,
         EventKind::ChatTopicSet { .. } => crate::chat::CHAT_TOPIC_SET,
+        EventKind::ShoppingSectionsSet { .. } => crate::store_sections::SHOPPING_SECTIONS_SET,
+        EventKind::ItemSectionSet { .. } => crate::store_sections::ITEM_SECTION_SET,
     }
 }
 
@@ -470,6 +472,10 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
         // Item emoji (#344): simple.rs owns the payload.
         kind @ EventKind::ItemEmojiSet { .. } => {
             payload = crate::simple::encode_payload(kind)?;
+        }
+        // Store sections (#411): store_sections.rs owns the payloads.
+        kind @ (EventKind::ShoppingSectionsSet { .. } | EventKind::ItemSectionSet { .. }) => {
+            payload = crate::store_sections::encode_payload(kind)?;
         }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());
