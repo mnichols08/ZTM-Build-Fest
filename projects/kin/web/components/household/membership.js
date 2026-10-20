@@ -489,8 +489,15 @@ export class HouseholdMembership {
   }
 
   async showHousehold() {
+    // This view takes over the panel like People & devices: it bumps the view
+    // generation (so polls and load() leave it alone) and gives way if a newer
+    // view took over while its request was out (#327, as #304/#305/#307).
+    clearTimeout(this.host.poll);
+    clearInterval(this.host.timer);
+    const generation = this.host.viewGeneration = (this.host.viewGeneration ?? 0) + 1;
     await this.host.run(async () => {
       const household = await this.host.api("/api/household");
+      if (this.host.viewGeneration !== generation) return;
       this.host.replaceChildren();
       const heading = document.createElement("h2");
       heading.textContent = "Household access";

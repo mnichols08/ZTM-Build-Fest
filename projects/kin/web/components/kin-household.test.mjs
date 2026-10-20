@@ -799,3 +799,47 @@ test("a household refresh that finishes after People & devices opened leaves tha
   assert.equal(renders, 0, "the newer view is not replaced");
   assert.equal(notified, 1, "the app still hears the new status");
 });
+
+test("Household access gives way to a view that took the panel while it loaded (#327)", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "current-member" };
+  component.run = async (action) => action();
+  const marker = { tagName: "p", children: [], textContent: "People & devices" };
+  let answer;
+  component.api = () => new Promise((resolve) => { answer = resolve; });
+  const loading = component.showHousehold();
+  const generation = component.viewGeneration;
+  assert.ok(generation >= 1, "it takes the panel like other views");
+  // People & devices (or Back) takes over before the answer arrives.
+  component.viewGeneration += 1;
+  component.replaceChildren(marker);
+  answer({ members: [{ id: "current-member", current: true, active: true, kind: "adult" }] });
+  await loading;
+  assert.deepEqual(component.children, [marker], "the late answer doesn't replace the newer view");
+});
+
+test("the claim poll leaves a newer view alone and doesn't repaint an unchanged claim (#327)", async () => {
+  const component = new KinHousehold();
+  const timers = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback) => { timers.push(callback); return timers.length; };
+  try {
+    let renders = 0;
+    component.render = () => { renders += 1; };
+    component.renderError = () => { renders += 100; };
+    component.claim = { state: "Claimed", code: "x" };
+    component.api = async () => ({ state: "Claimed", code: "x" });
+    component.viewGeneration = 4;
+    component.ctx.pairing.schedulePoll();
+    await timers.shift()();
+    assert.equal(renders, 0, "an unchanged claim is not repainted (focus and typing survive)");
+    component.ctx.pairing.schedulePoll();
+    component.viewGeneration = 5;
+    component.api = async () => ({ state: "Approved" });
+    await timers.at(-1)();
+    assert.equal(renders, 0, "a newer view keeps the panel");
+    assert.deepEqual(component.claim, { state: "Claimed", code: "x" });
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+});

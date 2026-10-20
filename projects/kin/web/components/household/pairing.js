@@ -232,12 +232,20 @@ export class HouseholdPairing {
 
   schedulePoll() {
     clearTimeout(this.host.poll);
+    // Like pollPairing: a view that took over the panel meanwhile (an intent
+    // switch, link approval) keeps it, and an unchanged claim doesn't repaint
+    // (which would drop focus and anything typed every 2 s) (#327).
+    const generation = this.host.viewGeneration;
     this.host.poll = setTimeout(async () => {
+      const before = JSON.stringify(this.host.claim ?? null);
       try {
-        this.host.claim = await this.host.api("/api/claim");
-        this.host.render();
-        if (this.host.claim.state === "Claimed") this.schedulePoll();
+        const claim = await this.host.api("/api/claim");
+        if (this.host.viewGeneration !== generation) return;
+        this.host.claim = claim;
+        if (JSON.stringify(claim) !== before) this.host.render();
+        if (claim.state === "Claimed") this.schedulePoll();
       } catch (error) {
+        if (this.host.viewGeneration !== generation) return;
         this.host.claim = null;
         this.host.renderError(error);
         if (location.pathname === "/pair") this.ctx.views.renderJoin();
