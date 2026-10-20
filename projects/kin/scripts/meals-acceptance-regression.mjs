@@ -121,7 +121,7 @@ export async function mealsAcceptanceRegressions(client, until) {
     if (!app.currentAppearance) app.ctx.appearance.applyEffectiveAppearance();
     window.__mealsAppearance ??= structuredClone(app.currentAppearance);
     app.ctx.appearance.applyAppearance(${mode ? `{ ...window.__mealsAppearance, mode: "${mode}" }` : "window.__mealsAppearance"});
-    if (!mode) delete window.__mealsAppearance;
+    ${mode ? "" : "delete window.__mealsAppearance;"}
     return document.documentElement.dataset.kinAppearance ?? null;
   })()`);
   await appearance("light");
