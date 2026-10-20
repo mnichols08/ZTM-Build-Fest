@@ -47,6 +47,7 @@ import { SessionController } from "./session.js";
 import { ShellBuilder } from "./shell.js";
 import { StatusController } from "./status.js";
 import { SyncController } from "./sync.js";
+import { UndoController } from "./undo.js";
 import { ViewBuilder } from "./views.js";
 import { LocalReminders } from "../../reminders.js";
 import { EventStore } from "../../storage/event-store.js";
@@ -74,6 +75,7 @@ export function createAppContext(app) {
   ctx.detail = new DetailController(ctx);
   ctx.appearance = new AppearanceController(ctx);
   ctx.status = new StatusController(ctx);
+  ctx.undo = new UndoController(ctx);
   ctx.render = new RenderController(ctx);
   ctx.shell = new ShellBuilder(ctx);
   ctx.views = new ViewBuilder(ctx);

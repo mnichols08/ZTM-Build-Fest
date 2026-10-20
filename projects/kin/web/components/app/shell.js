@@ -155,6 +155,7 @@ export class ShellBuilder {
     this.app.retryButton.textContent = "Try again";
     this.app.retryButton.hidden = true;
     feedback.append(this.app.status, this.app.alert, this.app.retryButton);
+    this.ctx.undo.buildToast(feedback);
     this.app.feedback = feedback;
 
     this.app.security = document.createElement("kin-security");

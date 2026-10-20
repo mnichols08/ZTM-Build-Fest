@@ -458,20 +458,23 @@ plans which existing commands a request still needs.
   bulk-selectable, so bulk complete and undo cannot touch an occurrence.
 - **Schedule editor.** Each row on Routines has a **Schedule** disclosure: the
   current schedule and next date, a Repeat select, and **Change schedule**.
-  **Stop repeating** sits beside Complete, where Archive was, keeping the row's
-  tab order. Routines have no schedule-change event and history is
+  **Delete routine** (#314) sits beside Complete, where Archive was, keeping
+  the row's tab order; below 720px it lives in the row's ⋯ menu. Routines have no schedule-change event and history is
   never rewritten, so **Change schedule** explicitly starts a new repeating task
   today with the same title (and owner), then stops the old one. Its past
   completions stay with the old schedule, and the current period's done mark
   does not carry over; the editor says so before saving. A failure after the
   new schedule is saved says the old one is still repeating; Try again resumes
   with the same replacement id. A change from a stale view (already stopped)
-  is refused with an explanation. **Stop repeating** archives the Routine:
-  no future occurrences, history kept.
+  is refused with an explanation. **Delete routine** archives the Routine:
+  it leaves Routines and Today on every device, past completions stay in
+  history. There is no confirmation dialog: the toast offers Undo (#315),
+  which creates it again with the same text, schedule, owner and today's
+  completion.
 - **Feedback.** Polite status messages: "Added. Repeats every weekday; it's on
   Today now.", "Done for this period. Next: tomorrow.", "Schedule changed:
-  repeats every week, starting today. Past completions are kept.", "Stopped
-  repeating. Past completions are kept." Stale actions reuse "That period
+  repeats every week, starting today. Past completions are kept.", "Routine
+  deleted. Past completions are kept." Stale actions reuse "That period
   changed. Review the current routine."
 - **Concurrency limit.** Two devices that change the same schedule before
   syncing each create a replacement; both remain visible and either can be
@@ -479,6 +482,36 @@ plans which existing commands a request still needs.
   original is quarantined on sync and the device shows the generic
   "could not be applied" notice ([DAILY-UX-HARDENING](DAILY-UX-HARDENING.md)
   F1). Identical completions converge on one occurrence.
+
+### Undo and redo your own recent changes (#315)
+
+- **What.** A session-scoped history of your own changes on this device:
+  adding an item or routine, completing and reopening (items and routine
+  occurrences), archiving an item, deleting a routine, a planned date, and a
+  pin. Text edits are left to the field's own undo. Chat, membership and
+  security actions are never recorded. Bulk complete and reopen keep their own
+  Undo on the bulk bar.
+- **How.** After a change, a toast in the feedback area shows the
+  confirmation beside **Undo** and a dismiss button. It stays until the next
+  action or until dismissed; it never times out (WCAG 2.2.1). After an undo
+  it offers **Redo**, the touch path for redo. On keyboards, Ctrl/Cmd+Z undoes
+  and Shift+Ctrl/Cmd+Z or Ctrl+Y redoes, only when focus is not in a text
+  field and no dialog is open; native text undo is never taken over. On a
+  phone the toast sits above the bottom bar (and above the chat composer).
+- **History is never rewritten.** Each undo or redo appends ordinary
+  household commands that sync like any change (`web/undo.js`): reopen after
+  complete, the previous date, unpin after pin, archive after add. Archive is
+  terminal, so undoing an archive or a routine deletion creates it again
+  under a new id: an item with its text, list, date, area, pin, owner and
+  steps; a routine with its text, schedule, owner and today's completion. The
+  original stays archived in history; attachments stay with it.
+- **Refusal.** Before running, the entry is checked against the current
+  projection. If the thing changed since (for example another member completed
+  it or moved its date), or is gone, nothing is changed and Kin says so in
+  plain words. A run that fails partway goes back on the stack and Try again
+  resumes it.
+- **Lifetime.** Kept in memory only (up to 20 each way); locking clears it.
+  Nothing about it is persisted or synced.
 
 ---
 

@@ -6,6 +6,7 @@ import { describeRecurringCapture, isCadence, remainingRecurringSteps } from "..
 import { randomId } from "../../../wasm/kin-engine.js";
 import { INLINE_SAVE_FAILED, SAVE_ERROR } from "../constants.js";
 import { itemActionFeedback, pendingActionShare } from "../feedback.js";
+import { itemAddedEntry, itemArchivedEntry, itemDateEntry, itemStatusEntry, pinEntry, routineCreatedEntry } from "../../../undo.js";
 
 export class ItemCommands {
   constructor(ctx) {
@@ -82,6 +83,10 @@ export class ItemCommands {
           composer.showResult?.("Saved on this device.");
         }
       }
+      // Undo (#315): only when this run created it, not a resumed retry's
+      // date or pin.
+      if (steps.some((entry) => entry.type === "add" || entry.type === "create-routine"))
+        this.ctx.undo.record(submittedDraft.cadence ? routineCreatedEntry(submittedDraft.id, this.app.state) : itemAddedEntry(submittedDraft.id, this.app.state));
       if (this.app.pendingCapture?.draft.id === submittedDraft.id) this.app.pendingCapture = null;
       this.ctx.peers.broadcastEventChange();
       restoreComposeFocus = !sourceList;
@@ -150,6 +155,7 @@ export class ItemCommands {
     this.ctx.status.clearAlert();
     this.ctx.status.setStatus("Saving…");
     let restoreComposeFocus = false;
+    const before = this.app.state;
     try {
       await this.ctx.append.appendCommand({ type, itemId: submittedItemId });
       this.ctx.session.assertCurrentSession(session);
@@ -161,6 +167,8 @@ export class ItemCommands {
       const syncing = Boolean(this.app.syncCoordinator);
       this.ctx.status.setStatus(itemActionFeedback({ type, text: itemText, syncing, offline: navigator.onLine === false }));
       if (syncing) (this.app.pendingShares ??= new Set()).add(pendingActionShare());
+      if (type === "archive") this.ctx.undo.record(itemArchivedEntry(submittedItemId, before));
+      else if (type === "complete" || type === "reopen") this.ctx.undo.record(itemStatusEntry(type, submittedItemId, this.app.state));
       this.ctx.peers.broadcastEventChange();
       restoreComposeFocus = true;
     } catch (error) {
@@ -255,6 +263,7 @@ export class ItemCommands {
     this.ctx.status.setBusy(true);
     this.ctx.status.clearAlert();
     this.ctx.status.setStatus("Saving…");
+    const before = this.app.state;
     try {
       await this.ctx.append.appendCommand({
         type: "set-item-planning-date",
@@ -268,6 +277,7 @@ export class ItemCommands {
       this.app.detail.clearFeedback(detail.itemId);
       this.ctx.detail.feedDetail();
       this.ctx.status.setStatus(detail.planningDate ? "Planned date saved." : "Planned date cleared.");
+      this.ctx.undo.record(itemDateEntry(detail.itemId, before, this.app.state));
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.app.pendingRefresh = true;
@@ -315,6 +325,7 @@ export class ItemCommands {
       this.ctx.session.assertCurrentSession(session);
       this.ctx.render.renderState();
       this.ctx.status.setStatus(detail.pinned ? "Pinned for quick access." : "Unpinned.");
+      this.ctx.undo.record(pinEntry(detail.targetId, detail.pinned, this.app.state));
       this.ctx.peers.broadcastEventChange();
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
