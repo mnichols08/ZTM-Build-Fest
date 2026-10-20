@@ -326,7 +326,7 @@ export class ViewBuilder {
     household.append(hub, fridgePage, notesPage, areasPage, peoplePage, privacyPage, appearancePage);
     this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
 
-    for (const section of [today, lists, search, routines, updates, household]) {
+    for (const section of [today, week, lists, search, routines, updates, household]) {
       this.app.pages.set(section.id, section);
       main.append(section);
     }
