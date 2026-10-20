@@ -85,6 +85,7 @@ export class RenderController {
         emojis: this.app.itemEmojis ?? null,
       });
     }
+    if (this.app.shoppingMode) this.app.shoppingMode.items = this.app.state.items;
     this.app.today.update({
       today: civilDate,
       items: this.app.state.items,
