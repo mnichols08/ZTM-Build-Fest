@@ -80,6 +80,14 @@ direction; the tester sessions it calls for (#262, #269) have not run yet.
 
 ### Fixed
 
+- On a device without household sync, the fridge showed its drawing tools
+  and a blank line under the board, so it looked drawable and did nothing
+  (#372). The tools now wait for sync, and the board says the fridge is
+  shared through sync, with a link to People & devices.
+- Exporting a synced household refused its own fridge and chat ("Connect to
+  your household…") because the export expected the household ID in a
+  different form; restoring such an export now opens the right fridge and
+  chat (#372).
 - People & devices could be replaced mid-load by a pairing poll or household
   refresh from the previous view, losing the device list (#304, #305, #307).
 - The setup screen hides "Sign in using my phone" again while a claim is
