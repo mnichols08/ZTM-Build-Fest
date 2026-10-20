@@ -18,6 +18,8 @@ kin_meals(ptr, len)                  replay the history: KINE context -> KMLS (#
 kin_meal_shopping_plan(ptr, len)     KMPQ + KINE context -> KMSP (#333)
 kin_item_emojis(ptr, len)            replay the history: KINE context -> KIEM (#344)
 kin_my_things(ptr, len)              KMTQ + KINE context -> KMTD (#344)
+kin_week(ptr, len)                   KWKQ + KINE context -> KWKD (#417)
+kin_shopping_sections(ptr, len)      replay the history: KINE context -> KSHS (#411)
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
@@ -253,6 +255,8 @@ N  payload
 | 63 | DINNER_COOK_SET (#333) | civil date u32, member flag u8 (0 or 1) + 3 reserved, member ID [16] when flagged (absent: "No one yet") |
 | 64 | ITEM_EMOJI_SET (#344) | item ID [16], emoji flag u8 (0 or 1) + 3 reserved, emoji (u16 + UTF-8, one grapheme, at most 32 bytes) when flagged (absent: cleared) |
 | 65 | CHAT_TOPIC_SET (#312, chat log) | message ID, state u8 (0 cleared, 1 open, 2 resolved), 3 reserved: 20 bytes |
+| 66 | SHOPPING_SECTIONS_SET (#411) | section count u16 (0–30), reserved u16, then each section: section ID [16] (non-zero, unique), name (u16 length + UTF-8; trimmed, 1–40 bytes, no controls) |
+| 67 | ITEM_SECTION_SET (#411) | item ID [16] (non-zero), section ID [16] (all zero: none): 32 bytes |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -537,6 +541,23 @@ tuned for printed codes under heavy blur.
 - **KIEM v1** (item emoji, `kin_item_emojis`): `"KIEM"`, version 1, reserved
   u16, count u32, then for each item that exists and isn't archived, in item
   ID order: item ID [16], emoji (u16 + UTF-8).
+- **Store sections (kinds 66–67, #411).** The payloads are strict like
+  meals: they re-encode to the same bytes, so an untrimmed name, a zero or
+  repeated section ID or more than 30 sections fail with code 2. KCMD actions
+  66 (`set-shopping-sections`) and 67 (`set-item-section`) carry the exact
+  payload as their text with a zero entity ID and no option, date or expiry;
+  the host trims names first (`kin-sections.js`). Rust checks them against
+  the current state (`StoreSectionsState::check_command`, code 4): names
+  unique ignoring case, the list changed; the item exists and isn't archived,
+  the section is listed (or none), and the item's shown section changes.
+- **KSHS v1** (store sections, `kin_shopping_sections`): `"KSHS"`, version 1,
+  reserved u16, section count u32, then each section in the household's
+  order: section ID [16], name (u16 + UTF-8); then item count u32 and, for
+  each item that exists, isn't archived and whose section is in the list, in
+  item ID order: item ID [16], section ID [16]. Items without a listed section
+  are absent. The KINS projection is unchanged: its section table is part of
+  replay protocol 24, so new domains get their own export, as item pictures
+  did.
 - **KMTQ v1 / KMTD v1** (a member's things today, `kin_my_things`): the
   24-byte query `"KMTQ"`, version 1, reserved u16, member ID [16] (non-zero),
   then a record-less KINE context. The result `"KMTD"`, version 1, reserved
@@ -547,6 +568,42 @@ tuned for printed codes under heavy blur.
   first (undated last), then by text; routines are assigned to the member
   with an occurrence open that day, by text, and none while the household
   mode pauses routines ([ADR 0013](decisions/0013-simple-view.md)).
+- **KWKQ v1 / KWKD v1** (the household's week, `kin_week`, #417,
+  `rust/src/week.rs`): the 16-byte query `"KWKQ"`, version 1, reserved u16,
+  start date u32 (YYYYMMDD; a valid date with six more days before
+  9999-12-31, else code 2), reserved u32, then a record-less KINE context.
+  The result `"KWKD"`, version 1, reserved u16, start date u32, day count u8
+  (always 7), flags u8 (bit 0: the household mode pauses routines), reserved
+  u16; then for each of the seven consecutive days from the start: date
+  u32, item count u16, routine count u16, meal count u8 (0 or 1),
+  maintenance count u8, omitted u16 (entries dropped by the caps, saturating),
+  then that day's entries in that order:
+  - item, 36 bytes: item ID [16], classification u8 (0 Today, 1 Need,
+    2 Shopping, 3 Staple), flags u8 (bit 0 owner), reserved u16, owner member
+    ID [16] (zero when none). Active items whose planning date is that day.
+    Overdue items (planned before the start) are **not** included: Today
+    shows those. Undated, completed and archived items are left out.
+  - routine, 40 bytes: routine ID [16], occurrence key u32, cadence u8 (as
+    KINS), flags u8 (bit 0 owner, bit 1 current, bit 2 done), reserved u16,
+    owner member ID [16] (zero when none). Each occurrence appears once, on
+    the day it opens by the routine's cadence (`Cadence::current_key` and
+    `next_start`); one already open on the start date appears on the start
+    date. Weekdays routines have none on Saturday and Sunday. Archived
+    routines have none, and none at all while the household mode isn't
+    Normal (flag bit 0). "Current" is the occurrence open on the context's
+    civil date; "done" is reported only for it (never without current).
+  - meal: flags u8 (bit 0 recipe, bit 1 cook), 3 reserved, recipe ID [16]
+    (zero when none), cook member ID [16] (zero when none), name as shown
+    (u16 + UTF-8), as a KMLS dinner without its date.
+  - maintenance, 36 bytes: maintenance ID [16], reference record ID [16],
+    performed date u32. Entries not archived, on a reference record that
+    isn't archived, whose next date is that day.
+  Items, routines and maintenance sort by text (summary), then ID. Caps per
+  day: 64 items, 64 routine occurrences, 32 maintenance entries (one dinner
+  per date by the meals model); the rest of that kind are dropped and
+  counted in `omitted`. The household mode is the history's at the context's
+  as-of and applies to the whole week. Texts other than a dinner's name come
+  from KINS by ID. Output is deterministic for a log, context and start.
 - **KMNM v1** (preferred member names, `kin_member_names`, #224): `"KMNM"`,
   version 1, reserved u16, member count u32, then per member in member-ID
   order: member ID (16 bytes, after identity bindings), name length u16

@@ -31,6 +31,9 @@ import { AppearanceController } from "./appearance.js";
 import { MealsController } from "./meals.js";
 import { SimpleController } from "./simple.js";
 import { ShareController } from "./share.js";
+import { WeekController } from "./week.js";
+import { ImportController } from "./import.js";
+import { SectionsController } from "./sections.js";
 import { AppendCommands } from "./commands/append.js";
 import { AttachmentController } from "./attachments.js";
 import { ChatShareController } from "./chat-share.js";
@@ -73,6 +76,9 @@ export function createAppContext(app) {
   ctx.attachments = new AttachmentController(ctx);
   ctx.chatShare = new ChatShareController(ctx);
   ctx.share = new ShareController(ctx);
+  ctx.week = new WeekController(ctx);
+  ctx.importList = new ImportController(ctx);
+  ctx.sections = new SectionsController(ctx);
   ctx.navigation = new NavigationController(ctx);
   ctx.detail = new DetailController(ctx);
   ctx.appearance = new AppearanceController(ctx);
@@ -199,6 +205,12 @@ export function initializeAppState(app) {
       app.ctx.conversations.saveTalk({ type: "archive-talk", talkId: event.detail.talkId });
     // Several handlers derive the command type from the event name: every
     // component event is "kin:<command>", so `event.type.slice(4)` drops "kin:".
+    app.onImportList = (event) => app.ctx.importList.open(event.detail ?? {});
+    app.onSetItemSection = (event) => void app.ctx.sections.setItemSection(event.detail.itemId, event.detail.sectionId);
+    app.onSaveShoppingSections = async (event) => {
+      const outcome = await app.ctx.sections.saveSections(event.detail.sections ?? []);
+      event.detail.done?.(outcome);
+    };
     app.onStartShopping = (event) => {
       if (!app.simpleView && app.state) app.shoppingMode?.open({ opener: event.detail?.opener ?? null });
     };

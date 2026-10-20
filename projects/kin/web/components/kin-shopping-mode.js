@@ -19,6 +19,8 @@ class KinShoppingMode extends HTMLElement {
   constructor() {
     super();
     this.records = [];
+    // Store sections (#411, ADR 0015): `{ sections, itemSections }` from Rust.
+    this.sectionData = { sections: [], itemSections: new Map() };
     this.basket = new Set();
     this.isDisabled = false;
     this.wake = new ScreenWake();
@@ -44,7 +46,18 @@ class KinShoppingMode extends HTMLElement {
     this.done.addEventListener("click", () => this.close());
     const titles = document.createElement("div");
     titles.append(heading, this.count);
-    top.append(titles, this.done);
+    this.sectionsToggle = document.createElement("button");
+    this.sectionsToggle.type = "button";
+    this.sectionsToggle.className = "shopping-mode-sections-toggle";
+    this.sectionsToggle.textContent = "Sections";
+    this.sectionsToggle.setAttribute("aria-expanded", "false");
+    this.sectionsToggle.setAttribute("aria-controls", "shopping-sections-editor");
+    this.sectionsToggle.addEventListener("click", () => this.toggleEditor());
+    const buttons = document.createElement("div");
+    buttons.className = "shopping-mode-buttons";
+    buttons.append(this.sectionsToggle, this.done);
+    top.append(titles, buttons);
+    this.editor = this.buildEditor();
     this.list = document.createElement("ul");
     this.list.className = "shopping-mode-list";
     this.list.setAttribute("aria-label", "To buy");
@@ -72,7 +85,7 @@ class KinShoppingMode extends HTMLElement {
     this.dialog.addEventListener("close", () => void this.wake.release());
     // Ticking disables the boxes while Kin saves; this brings focus back.
     this.dialog.addEventListener("focusin", (event) => { if (event.target.dataset?.itemId) this.lastFocus = event.target.dataset.itemId; });
-    this.dialog.append(top, this.list, this.empty, this.basketDetails, wakeLabel);
+    this.dialog.append(top, this.editor, this.list, this.empty, this.basketDetails, wakeLabel);
     this.append(this.dialog);
   }
 
@@ -88,9 +101,134 @@ class KinShoppingMode extends HTMLElement {
     if (this.isOpen) this.render();
   }
 
+  /** `{ sections: [{ sectionId, name }], itemSections: Map }`. */
+  set sections(value) {
+    this.sectionData = value ?? { sections: [], itemSections: new Map() };
+    if (this.isOpen) {
+      this.render();
+      if (!this.editor.hidden && !this.editor.contains(document.activeElement)) this.renderEditor();
+    }
+  }
+
+  /** Where the household's sections are named and put in order: rows of
+   * name fields with Move up, Move down and Remove, an Add field, and Save,
+   * which saves the whole list (`kin:save-shopping-sections`). */
+  buildEditor() {
+    const editor = document.createElement("section");
+    editor.id = "shopping-sections-editor";
+    editor.className = "shopping-sections-editor";
+    editor.hidden = true;
+    editor.setAttribute("aria-labelledby", "shopping-sections-title");
+    const heading = document.createElement("h3");
+    heading.id = "shopping-sections-title";
+    heading.textContent = "Store sections";
+    const hint = document.createElement("p");
+    hint.className = "section-hint";
+    hint.textContent = "Name the parts of the shop in the order you walk it. Items without a section go under Other, at the end.";
+    this.editorList = document.createElement("ol");
+    this.editorList.className = "shopping-sections-list";
+    const addRow = document.createElement("div");
+    addRow.className = "shopping-sections-add";
+    const addLabel = document.createElement("label");
+    addLabel.htmlFor = "shopping-section-new";
+    addLabel.textContent = "New section";
+    this.newSection = document.createElement("input");
+    this.newSection.id = "shopping-section-new";
+    this.newSection.maxLength = 40;
+    this.newSection.placeholder = "Produce, Bakery, Dairy…";
+    this.newSection.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); this.addDraft(); } });
+    const add = document.createElement("button");
+    add.type = "button";
+    add.textContent = "Add";
+    add.addEventListener("click", () => this.addDraft());
+    addRow.append(addLabel, this.newSection, add);
+    this.editorMessage = document.createElement("p");
+    this.editorMessage.className = "compose-message";
+    this.editorMessage.setAttribute("role", "alert");
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "primary-action";
+    save.textContent = "Save sections";
+    save.addEventListener("click", () => {
+      const sections = this.drafts.map(({ sectionId, name }) => ({ sectionId, name: name.trim() })).filter((section) => section.name);
+      this.dispatchEvent(new CustomEvent("kin:save-shopping-sections", { bubbles: true, composed: true, detail: { sections, done: (outcome) => this.editorSaved(outcome) } }));
+    });
+    editor.append(heading, hint, this.editorList, addRow, this.editorMessage, save);
+    return editor;
+  }
+
+  toggleEditor(open = this.editor.hidden) {
+    this.editor.hidden = !open;
+    this.sectionsToggle.setAttribute("aria-expanded", String(open));
+    if (open) {
+      this.drafts = this.sectionData.sections.map((section) => ({ ...section }));
+      this.editorMessage.textContent = "";
+      this.renderEditor();
+      this.newSection.focus();
+    } else {
+      this.sectionsToggle.focus();
+    }
+  }
+
+  addDraft() {
+    const name = this.newSection.value.trim();
+    if (!name) return;
+    if (this.drafts.some((draft) => draft.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      this.editorMessage.textContent = `There's already a section called ${name}.`;
+      return;
+    }
+    this.drafts.push({ sectionId: null, name });
+    this.newSection.value = "";
+    this.editorMessage.textContent = "";
+    this.renderEditor();
+    this.newSection.focus();
+  }
+
+  renderEditor() {
+    this.drafts ??= [];
+    this.editorList.replaceChildren(...this.drafts.map((draft, index) => {
+      const row = document.createElement("li");
+      const field = document.createElement("input");
+      field.value = draft.name;
+      field.maxLength = 40;
+      field.setAttribute("aria-label", `Section ${index + 1} name`);
+      field.addEventListener("input", () => { draft.name = field.value; });
+      const move = (label, by, aria) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.setAttribute("aria-label", `${aria} ${draft.name || "this section"}`);
+        button.disabled = index + by < 0 || index + by >= this.drafts.length;
+        button.addEventListener("click", () => {
+          const [moved] = this.drafts.splice(index, 1);
+          this.drafts.splice(index + by, 0, moved);
+          this.renderEditor();
+          this.editorList.children[index + by]?.querySelectorAll("button")[by < 0 ? 0 : 1]?.focus();
+        });
+        return button;
+      };
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "Remove";
+      remove.setAttribute("aria-label", `Remove ${draft.name || "this section"}`);
+      remove.addEventListener("click", () => {
+        this.drafts.splice(index, 1);
+        this.renderEditor();
+        (this.editorList.children[index] ?? this.editorList.children[index - 1])?.querySelector("input")?.focus() ?? this.newSection.focus();
+      });
+      row.append(field, move("↑", -1, "Move up"), move("↓", 1, "Move down"), remove);
+      return row;
+    }));
+  }
+
+  editorSaved(outcome) {
+    if (outcome?.ok) this.toggleEditor(false);
+    else this.editorMessage.textContent = outcome?.message ?? "Kin couldn't save the sections. Try again.";
+  }
+
   set disabled(value) {
     this.isDisabled = Boolean(value);
-    for (const box of this.querySelectorAll(".shopping-mode-list input")) box.disabled = this.isDisabled;
+    for (const box of this.querySelectorAll(".shopping-mode-list input, .shopping-mode-section")) box.disabled = this.isDisabled;
     if (!this.isDisabled && this.isOpen) {
       const active = document.activeElement;
       if (!active || active === document.body || !active.isConnected)
@@ -135,15 +273,34 @@ class KinShoppingMode extends HTMLElement {
     const inBasket = shopping.filter((record) => this.basket.has(record.itemId));
     const active = document.activeElement;
     const lost = !active || active === document.body || !active.isConnected;
+    const focusedSection = this.contains(active) ? active.dataset.sectionFor : null;
     const focused = this.contains(active) ? active.dataset.itemId : lost ? this.lastFocus : null;
-    this.list.replaceChildren(...toBuy.map((record) => this.row(record, false)));
+    // Grouped by store section in the household's order, Other last (#411).
+    const { sections, itemSections } = this.sectionData;
+    if (sections.length) {
+      const groups = [...sections.map((section) => ({ ...section, items: [] })), { sectionId: null, name: "Other", items: [] }];
+      for (const record of toBuy) (groups.find((group) => group.sectionId === itemSections.get(record.itemId)) ?? groups.at(-1)).items.push(record);
+      this.list.replaceChildren(...groups.filter((group) => group.items.length).flatMap((group) => {
+        const heading = document.createElement("li");
+        heading.className = "shopping-mode-group";
+        heading.setAttribute("role", "presentation");
+        const title = document.createElement("h3");
+        title.textContent = group.name;
+        heading.append(title);
+        return [heading, ...group.items.map((record) => this.row(record, false))];
+      }));
+    } else {
+      this.list.replaceChildren(...toBuy.map((record) => this.row(record, false)));
+    }
     this.basketList.replaceChildren(...inBasket.map((record) => this.row(record, true)));
     this.count.textContent = toBuy.length === 0 ? "Nothing left to buy" : toBuy.length === 1 ? "1 thing to buy" : `${toBuy.length} things to buy`;
     this.empty.hidden = toBuy.length > 0;
     this.empty.textContent = inBasket.length ? "That's everything. Done shopping when you're ready." : "Nothing on the Shopping list.";
     this.basketDetails.hidden = inBasket.length === 0;
     this.basketSummary.textContent = inBasket.length === 1 ? "In the basket: 1" : `In the basket: ${inBasket.length}`;
-    if (focused) {
+    if (focusedSection) {
+      this.querySelector(`.shopping-mode-section[data-section-for="${focusedSection}"]`)?.focus({ preventScroll: true });
+    } else if (focused) {
       const same = this.querySelector(`.shopping-mode-list input[data-item-id="${focused}"]`);
       (same ?? this.list.querySelector("input") ?? this.done).focus({ preventScroll: true });
     }
@@ -170,6 +327,21 @@ class KinShoppingMode extends HTMLElement {
     text.textContent = record.text;
     label.append(box, text);
     item.append(label);
+    // The item's section, changed in place (#411).
+    if (!checked && this.sectionData.sections.length) {
+      const select = document.createElement("select");
+      select.className = "shopping-mode-section";
+      select.dataset.sectionFor = record.itemId;
+      select.disabled = this.isDisabled;
+      select.setAttribute("aria-label", `Section for ${record.text}`);
+      for (const section of this.sectionData.sections) select.append(new Option(section.name, section.sectionId));
+      select.append(new Option("Other", ""));
+      select.value = this.sectionData.itemSections.get(record.itemId) ?? "";
+      select.addEventListener("change", () => this.dispatchEvent(new CustomEvent("kin:set-item-section", {
+        bubbles: true, composed: true, detail: { itemId: record.itemId, sectionId: select.value || null },
+      })));
+      item.append(select);
+    }
     return item;
   }
 }

@@ -46,6 +46,8 @@ const PAGE_TITLES = Object.freeze({
   updates: "Updates",
   household: "Household",
   search: "Search",
+  // This week (#416): reached from Today; it marks Today in the navigation.
+  week: "This week",
 });
 
 // Legacy destinations and tabs from earlier releases.
@@ -126,7 +128,7 @@ export function resolveRoute({ hash = "", pathname = "/" } = {}) {
     : null;
   const canonical = segments ? `${page}/${segment}` : page;
   // Search is reachable from every page; it marks no primary destination.
-  const destination = page === "search" ? null : page;
+  const destination = page === "search" ? null : page === "week" ? "today" : page;
   return { page, segment, canonical, destination, title: PAGE_TITLES[page], hash: segments ? routeHash(page, segment) : `#${page}`, ...(topics ? { topics: true } : {}) };
 }
 

@@ -2107,3 +2107,53 @@ html:has(kin-app .undo-toast:not([hidden])) { scroll-padding-bottom: calc(160px 
 .shopping-mode-wake { display: flex; align-items: center; gap: 10px; min-height: var(--tap); margin: auto 16px calc(12px + env(safe-area-inset-bottom)); color: var(--ink-muted); font-size: 15px; }
 .shopping-mode-wake input { width: 22px; height: 22px; }
 @media (forced-colors: active) { .shopping-mode-item label { border-bottom: 1px solid CanvasText; } }
+
+/* This week (#416): one section per day, today first. */
+.today-week-link { display: inline-flex; align-items: center; min-height: var(--tap); font-size: 15px; }
+.week-days { display: grid; gap: 14px; }
+.week-day { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
+.week-day h2 { margin: 0 0 8px; font-size: 18px; }
+.week-date { color: var(--ink-muted); font-weight: 500; }
+.week-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.week-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: var(--tap); padding: 6px 0; border-top: 1px solid var(--line); }
+.week-row:first-child { border-top: 0; }
+.week-check { display: inline-flex; align-items: center; gap: 10px; flex: 1 1 14em; min-width: 0; cursor: pointer; }
+.week-check input { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+.week-text { flex: 1 1 14em; min-width: 0; overflow-wrap: anywhere; }
+.week-later { color: var(--ink-muted); }
+.week-meta { color: var(--ink-muted); font-size: 13px; }
+.week-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.week-tools select, .week-tools button { min-height: var(--tap); }
+.week-meal .week-text, .week-maintenance .week-text { font-style: italic; }
+.week-empty { margin: 0; color: var(--ink-muted); }
+@media (forced-colors: active) { .week-day { border: 1px solid CanvasText; } }
+/* Bring a list into Kin (#452). */
+.import-source, .import-review { display: grid; gap: 8px; }
+.import-source textarea { width: 100%; min-height: 8em; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; resize: vertical; }
+.import-source select, .import-source input[type="file"] { min-height: var(--tap); }
+.import-source .primary-action { justify-self: start; }
+.import-mapping { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-row); }
+.import-mapping label { display: inline-flex; align-items: center; gap: 6px; }
+.import-mapping select { min-height: var(--tap); }
+.import-summary { margin: 0; font-weight: 600; }
+.import-rows { display: grid; max-height: min(45vh, 420px); margin: 0; padding: 0; overflow: auto; list-style: none; border: 1px solid var(--line); border-radius: var(--r-row); }
+.import-rows label { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: var(--tap); padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.import-rows input { width: 22px; height: 22px; flex: none; }
+.import-row-text { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+.import-row-meta { color: var(--ink-muted); font-size: 13px; }
+.import-list-button { margin-top: 8px; }
+/* Store sections in shopping mode (#411). */
+.shopping-mode-buttons { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.shopping-mode-sections-toggle { min-height: var(--tap); }
+.shopping-mode-group h3 { margin: 14px 10px 4px; color: var(--ink-muted); font-size: 14px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; }
+.shopping-mode-item { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; border-bottom: 1px solid var(--line); }
+.shopping-mode-item label { flex: 1 1 14em; border-bottom: 0; }
+.shopping-mode-section { min-height: var(--tap); max-width: 12em; margin: 4px 10px 4px 0; }
+.shopping-sections-editor { display: grid; gap: 10px; margin: 10px 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); }
+.shopping-sections-editor[hidden] { display: none; }
+.shopping-sections-editor h3 { margin: 0; font-size: 17px; }
+.shopping-sections-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.shopping-sections-list li, .shopping-sections-add { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.shopping-sections-list input, .shopping-sections-add input { flex: 1 1 10em; min-width: 0; min-height: var(--tap); padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); }
+.shopping-sections-list button, .shopping-sections-add button { min-width: var(--tap); min-height: var(--tap); }
+.shopping-sections-add label { flex-basis: 100%; font-weight: 600; }

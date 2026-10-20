@@ -200,6 +200,45 @@ item 2 is unassigned and the mode is Vacation, only items 3 and 1 remain.
 KMTD encodes an item as `01 00 00 00`, its ID and a zero date; KMTQ with
 version 2 fails with code 3, a zero member or a short query with code 2.
 
+## Store sections (#411)
+
+These vectors are written out by hand in `rust/src/shopping_section_tests.rs`;
+section and item IDs are `numbered_id(n)`. JavaScript mirrors 046, 047 and
+050 in `web/wasm/kin-sections.test.mjs` and `abi-ownership.test.mjs`.
+
+**046 — List payload.** Sections 1 "Produce" and 2 "Dairy" encode as
+`02 00 00 00`, section 1, `07 00` "Produce", section 2, `05 00` "Dairy"; the
+empty list is `00 00 00 00`. Thirty sections and a 40-byte name ("é" × 20)
+encode. A non-zero reserved byte, a trailing or missing byte, a count that
+disagrees with the entries, 31 sections, a repeated or zero ID, and the names
+" Dairy", "Dairy ", "", " ", "a\u{7}b" or 41 × "x" fail with code 2. "Dairy"
+and "dairy" together decode (a command rule, not a format rule).
+
+**047 — Item payload.** Item 7 in section 2 is item 7's ID then section 2's
+(32 bytes); cleared, the section is 16 zero bytes. 31 or 33 bytes, or a zero
+item ID, fail with code 2.
+
+**048 — List rules.** Setting the empty list on a new household fails (code 4,
+no change); setting "Produce", "Dairy" works; the same list again, or a list
+with "Dairy" and "DAIRY", fails with code 4; a repeated ID, " Produce ", a
+41-byte name or 31 sections fail with code 2. Reordering and renaming are
+changes; the empty list then clears it.
+
+**049 — Item rules.** With Milk (item 1) and sections 1 "Produce" and 2
+"Dairy": an unknown item, unknown section 5, or clearing a section that isn't
+set fails (code 4); Milk in Dairy works, again fails. An archived item fails
+whether set or cleared. When the list becomes just "Produce", Milk shows none;
+clearing it, or setting Dairy, fails; setting Produce works. Replay keeps an
+item section naming a section never listed, or an item it lacks, and shows
+none; listing that section ID later shows the item in it. Of two lists made
+from the same history, the later in replay order wins.
+
+**050 — KSHS.** Items 1 Milk (Dairy), 2 Apples (Produce), 3 Batteries (none)
+and 4 (Produce, then archived), with the list "Dairy" (section 2), "Produce"
+(section 1): `"KSHS"`, `01 00`, `00 00`, count 2, section 2, `05 00` "Dairy",
+section 1, `07 00` "Produce", item count 2, item 1 + section 2, item 2 +
+section 1. An empty history is `"KSHS"`, `01 00 00 00` and two zero counts.
+
 ## Household chat (v1.1)
 
 Chat records are written out by hand in `rust/src/chat_tests.rs`; IDs, blob
