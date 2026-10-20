@@ -91,7 +91,7 @@ export async function chatLayoutRegressions(client, { until }) {
       const links = [...app.segmentNavs.get("updates").querySelectorAll(".segment-link")];
       const tops = new Set(links.map((link) => Math.round(link.getBoundingClientRect().top)));
       const result = { count: links.length, rows: tops.size === 1 ? 1 : links.map((link) => { const box = link.getBoundingClientRect(); return [Math.round(box.left), Math.round(box.top), Math.round(box.width), getComputedStyle(link.closest("ul")).flexWrap].join("/"); }).join(" "), sideways: document.documentElement.scrollWidth - innerWidth,
-        labelled: links.every((link) => !link.querySelector(".segment-count") || /\w/.test(link.textContent)) };
+        labelled: links.every((link) => { const count = link.querySelector(".segment-count"); return !count || /[a-z]/i.test(count.getAttribute("aria-label") ?? ""); }) };
       app.ctx.navigation.navigate("#updates/chat");
       return result;
     })()`);
