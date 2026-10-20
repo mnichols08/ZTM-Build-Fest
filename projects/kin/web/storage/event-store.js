@@ -950,6 +950,8 @@ export class EventStore {
           validateContext(context);
           validateCursorBoundary(context, loadedEvents);
           const boundary = snapshotBoundary(loadedEvents);
+          // Meals views reuse this (see meals()), with the arena it names.
+          this.recentSyncIdentity = { epoch: loadedEvents.epoch, value: syncIdentityFromContext(context) };
           finish({
             // A HistoryView, not an array: pass it to the engine directly;
             // `.rows()` gives detached row objects.
@@ -1229,7 +1231,7 @@ export class EventStore {
    * history under its sync identity: [{ memberId, name }]. */
   async memberNames() {
     if (!this.engine) throw new EventStoreError("Kin could not read member names.");
-    const { events, syncIdentity } = await this.getCatchUpState();
+    const { events, syncIdentity } = await this.recentHistory();
     const { asOf, civilDate } = projectionContext();
     return this.engine.memberNames(events, asOf, civilDate, syncIdentity);
   }
@@ -1238,9 +1240,23 @@ export class EventStore {
    * (kin-meals.js decodeMeals), dinners around the projection date. */
   async meals() {
     if (!this.engine) throw new EventStoreError("Kin could not read meals.");
-    const { events, syncIdentity } = await this.getCatchUpState();
+    const { events, syncIdentity } = await this.recentHistory();
     const { asOf, civilDate } = projectionContext();
     return this.engine.meals(events, asOf, civilDate, syncIdentity);
+  }
+
+  /**
+   * The history for a view that is read after every render (meals, names).
+   * The session arena already holds what the last read loaded plus this
+   * tab's appends since, so it's used as it is; another tab's changes arrive
+   * through the peer refresh, which reads and then renders. When the arena
+   * isn't known to be current (locked, rebuilt, never read), this reads.
+   */
+  async recentHistory() {
+    const recent = this.recentSyncIdentity;
+    if (recent && recent.epoch === this.arena.epoch && this.arena.generation !== null && this.arena.length > 0)
+      return { events: this.arena.view(), syncIdentity: recent.value };
+    return this.getCatchUpState();
   }
 
   /** What adding a recipe's ({ recipeId }) or a date's dinner's ({ date })
