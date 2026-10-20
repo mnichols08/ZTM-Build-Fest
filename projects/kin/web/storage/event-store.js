@@ -1273,6 +1273,17 @@ export class EventStore {
     return this.engine.shoppingSections(events, asOf, civilDate, syncIdentity);
   }
 
+  /** The sitter page (#442, ADR 0017): { intro, entries: [{ kind, id }] },
+   * the entries whose record exists and isn't archived, in the page's order.
+   * Changing it is Adult-only; the command append path checks that
+   * (kin-sitter.js). */
+  async sitterPage() {
+    if (!this.engine) throw new EventStoreError("Kin could not read the sitter page.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.sitterPage(events, asOf, civilDate, syncIdentity);
+  }
+
   /** `memberId`'s things today (#344, ADR 0013), in Rust's order. */
   async myThings(memberId) {
     if (!this.engine) throw new EventStoreError("Kin could not read your things for today.");

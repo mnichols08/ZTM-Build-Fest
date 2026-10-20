@@ -441,6 +441,21 @@ pub struct HouseholdState {
     /// Not part of the KINS projection; hosts read them through
     /// `kin_shopping_sections`. Shared with the replay, not copied.
     pub store_sections: std::sync::Arc<crate::store_sections::StoreSectionsState>,
+    /// The sitter page as last set (sitter.rs, #442). Not part of the KINS
+    /// projection; hosts read it through `kin_sitter_page`. Shared with the
+    /// replay, not copied.
+    pub sitter_page: std::sync::Arc<crate::sitter::SitterPageState>,
+}
+
+impl HouseholdState {
+    /// The records a sitter-page entry may point at.
+    pub fn sitter_records(&self) -> crate::sitter::SitterRecords<'_> {
+        crate::sitter::SitterRecords {
+            notes: &self.notes,
+            reference_records: &self.reference_records,
+            routines: &self.routines,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

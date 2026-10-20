@@ -22,6 +22,7 @@ import { MEAL_COMMANDS, MEAL_EVENT_KINDS, MealFormatError, decodeMeals, decodePl
 import { SIMPLE_COMMANDS, SIMPLE_EVENT_KINDS, SimpleFormatError, decodeItemEmojis, decodeMyThings, encodeItemEmojiIntent, encodeMyThingsQuery } from "./kin-simple.js";
 import { decodeWeek, encodeWeekQuery } from "./kin-week.js";
 import { SECTION_COMMANDS, SECTION_EVENT_KINDS, SectionFormatError, decodeShoppingSections, encodeSectionIntent } from "./kin-sections.js";
+import { SITTER_COMMANDS, SITTER_EVENT_KINDS, SitterFormatError, decodeSitterPage, encodeSitterIntent } from "./kin-sitter.js";
 
 export { idToHex, KinEngineError };
 
@@ -99,6 +100,7 @@ export function createEngine(instanceExports) {
     "kin_my_things",
     "kin_week",
     "kin_shopping_sections",
+    "kin_sitter_page",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_audio_peaks",
@@ -312,6 +314,13 @@ export function createEngine(instanceExports) {
     shoppingSections: (records, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodeShoppingSections(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_shopping_sections"),
+      )),
+    // The sitter page (#442, ADR 0017): { intro, entries: [{ kind: "note" |
+    // "reference-record" | "routine", id }] }, only entries whose record
+    // exists and isn't archived, in the page's order.
+    sitterPage: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeSitterPage(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_sitter_page"),
       )),
     // A member's things on `civilDate` (#344, ADR 0013): [{ kind: "item",
     // itemId } | { kind: "routine", routineId, occurrenceKey, done }].
@@ -1056,6 +1065,11 @@ const COMMAND_TYPES = [
   "set-chat-topic",
   // Store sections (#411): KCMD actions 66–67, encoded by kin-sections.js.
   ...SECTION_COMMANDS,
+  // 68–69 are routine rotations (#429), assigned on their own branch.
+  null,
+  null,
+  // The sitter page (#442): KCMD action 70, encoded by kin-sitter.js.
+  ...SITTER_COMMANDS,
 ];
 const EVENT_KINDS = [
   null,
@@ -1115,6 +1129,10 @@ const EVENT_KINDS = [
   ...SIMPLE_EVENT_KINDS,
   "CHAT_TOPIC_SET",
   ...SECTION_EVENT_KINDS,
+  // 68–69 are routine rotations (#429), assigned on their own branch.
+  null,
+  null,
+  ...SITTER_EVENT_KINDS,
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -1211,6 +1229,14 @@ function encodeIntentPacket(command, identity) {
     try { return encodeSectionIntent(command, identity); }
     catch (error) {
       if (error instanceof SectionFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // The sitter page (70) carries its canonical payload (kin-sitter.js).
+  if (kind === 70) {
+    try { return encodeSitterIntent(command, identity); }
+    catch (error) {
+      if (error instanceof SitterFormatError) throw new KinEngineError(2, error.message);
       throw error;
     }
   }
