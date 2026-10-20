@@ -1273,6 +1273,16 @@ export class EventStore {
     return this.engine.shoppingSections(events, asOf, civilDate, syncIdentity);
   }
 
+  /** Taking turns (#429, ADR 0016): [{ routineId, memberIds, current, next }]
+   * for each rotating routine; kin-rotations.js turnAmong() passes over
+   * members who aren't active. */
+  async routineRotations() {
+    if (!this.engine) throw new EventStoreError("Kin could not read whose turn it is.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.routineRotations(events, asOf, civilDate, syncIdentity);
+  }
+
   /** `memberId`'s things today (#344, ADR 0013), in Rust's order. */
   async myThings(memberId) {
     if (!this.engine) throw new EventStoreError("Kin could not read your things for today.");

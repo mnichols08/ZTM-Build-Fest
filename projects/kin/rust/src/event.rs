@@ -448,6 +448,18 @@ pub enum EventKind {
         item_id: ItemId,
         section_id: Option<StoreSectionId>,
     },
+    /// Taking turns (#429, rotations.rs): a routine's ordered rotation and
+    /// the index whose turn it is; an empty list ends the rotation.
+    RoutineRotationSet {
+        routine_id: RoutineId,
+        members: Vec<ActorId>,
+        current: u8,
+    },
+    /// It's this listed member's turn on the routine now.
+    RoutineTurnSet {
+        routine_id: RoutineId,
+        member_id: ActorId,
+    },
 }
 
 impl EventKind {

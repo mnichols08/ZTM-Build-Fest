@@ -59,6 +59,29 @@ numbers after store sections' 66 and 67):
 As for other additive household kinds: an older engine pauses household sync
 with "update Kin" and keeps its data until it updates (V1.0-COMPATIBILITY).
 
+### Implementation notes (#429)
+
+- **Owner.** Replay keeps the routine's ordinary responsibility equal to the
+  current member whenever the turn changes, so KINS (whose layout is frozen),
+  This week and `kin_my_things` show it without a new projection field in
+  KINS; the rotation itself is read through `kin_routine_rotations` (KRRS) as
+  `{ routineId, memberIds, current, next }`. Ending the rotation writes no
+  extra event: the responsibility already names the last current member. A
+  `RESPONSIBILITY_CHANGED` for a rotating routine is refused as a command and
+  replays with no effect.
+- **Members who are not active.** Membership is held by the service, not the
+  household history, so Rust cannot pass over inactive members without
+  making replay depend on something outside the events. Rust counts every
+  listed member; the host applies the rule above with the members it knows
+  are active (`turnAmong` in `web/wasm/kin-rotations.js`: inactive members
+  passed over, no current turn with fewer than two) and, when the current
+  member is not active, writes a `ROUTINE_TURN_SET` to the next active member,
+  as it already clears a removed member's responsibilities. That puts the
+  pass in the history, so every device agrees on the owner and the next
+  completion moves on from the person actually shown.
+- **Undo** remembers only the occurrence that last passed the turn; setting
+  a rotation or a turn forgets it.
+
 ## Consequences
 
 - Two event kinds, a projection field, ABI and test-vector updates.

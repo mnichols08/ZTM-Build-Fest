@@ -114,6 +114,10 @@ pub struct Replay {
     /// Store sections (store_sections.rs), shared with finalized states
     /// until they change.
     pub(super) store_sections: Arc<crate::store_sections::StoreSectionsState>,
+    /// Routine rotations (rotations.rs), shared with finalized states until
+    /// they change. Applied in routines.rs, which also moves the routine's
+    /// responsibility with the turn.
+    pub(super) rotations: Arc<crate::rotations::RotationsState>,
     /// Canonical bytes per applied event: an exact duplicate is skipped, a conflicting one fails. Shared, so cloning a Replay does not copy them.
     pub(super) event_bytes: BTreeMap<EventId, Arc<[u8]>>,
     /// Logical time of the last applied event; replay order never goes back.
@@ -268,6 +272,8 @@ impl Replay {
             | K::RoutineOccurrenceCompleted { .. }
             | K::RoutineOccurrenceReopened { .. }
             | K::RoutineArchived { .. }
+            | K::RoutineRotationSet { .. }
+            | K::RoutineTurnSet { .. }
             | K::PlaybookSaved { .. }
             | K::PlaybookArchived { .. } => routines::apply(self, event)?,
             K::AreaCreated { .. }
@@ -414,6 +420,7 @@ impl Replay {
             meals: Arc::clone(&self.meals),
             pictures: Arc::clone(&self.pictures),
             store_sections: Arc::clone(&self.store_sections),
+            rotations: Arc::clone(&self.rotations),
         })
     }
 }

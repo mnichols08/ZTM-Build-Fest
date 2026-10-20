@@ -22,6 +22,7 @@ import { MEAL_COMMANDS, MEAL_EVENT_KINDS, MealFormatError, decodeMeals, decodePl
 import { SIMPLE_COMMANDS, SIMPLE_EVENT_KINDS, SimpleFormatError, decodeItemEmojis, decodeMyThings, encodeItemEmojiIntent, encodeMyThingsQuery } from "./kin-simple.js";
 import { decodeWeek, encodeWeekQuery } from "./kin-week.js";
 import { SECTION_COMMANDS, SECTION_EVENT_KINDS, SectionFormatError, decodeShoppingSections, encodeSectionIntent } from "./kin-sections.js";
+import { ROTATION_COMMANDS, ROTATION_EVENT_KINDS, RotationFormatError, decodeRoutineRotations, encodeRotationIntent } from "./kin-rotations.js";
 
 export { idToHex, KinEngineError };
 
@@ -99,6 +100,7 @@ export function createEngine(instanceExports) {
     "kin_my_things",
     "kin_week",
     "kin_shopping_sections",
+    "kin_routine_rotations",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_audio_peaks",
@@ -312,6 +314,13 @@ export function createEngine(instanceExports) {
     shoppingSections: (records, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodeShoppingSections(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_shopping_sections"),
+      )),
+    // Taking turns (#429, ADR 0016): [{ routineId, memberIds, current, next }]
+    // for routines that exist, aren't archived and rotate. Every listed
+    // member counts; turnAmong() (kin-rotations.js) passes over inactive ones.
+    routineRotations: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeRoutineRotations(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_routine_rotations"),
       )),
     // A member's things on `civilDate` (#344, ADR 0013): [{ kind: "item",
     // itemId } | { kind: "routine", routineId, occurrenceKey, done }].
@@ -1056,6 +1065,8 @@ const COMMAND_TYPES = [
   "set-chat-topic",
   // Store sections (#411): KCMD actions 66–67, encoded by kin-sections.js.
   ...SECTION_COMMANDS,
+  // Taking turns (#429): KCMD actions 68–69, encoded by kin-rotations.js.
+  ...ROTATION_COMMANDS,
 ];
 const EVENT_KINDS = [
   null,
@@ -1115,6 +1126,7 @@ const EVENT_KINDS = [
   ...SIMPLE_EVENT_KINDS,
   "CHAT_TOPIC_SET",
   ...SECTION_EVENT_KINDS,
+  ...ROTATION_EVENT_KINDS,
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -1211,6 +1223,14 @@ function encodeIntentPacket(command, identity) {
     try { return encodeSectionIntent(command, identity); }
     catch (error) {
       if (error instanceof SectionFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // Rotations (68–69) carry their canonical payload (kin-rotations.js).
+  if (kind === 68 || kind === 69) {
+    try { return encodeRotationIntent(command, identity); }
+    catch (error) {
+      if (error instanceof RotationFormatError) throw new KinEngineError(2, error.message);
       throw error;
     }
   }

@@ -20,6 +20,7 @@ kin_item_emojis(ptr, len)            replay the history: KINE context -> KIEM (#
 kin_my_things(ptr, len)              KMTQ + KINE context -> KMTD (#344)
 kin_week(ptr, len)                   KWKQ + KINE context -> KWKD (#417)
 kin_shopping_sections(ptr, len)      replay the history: KINE context -> KSHS (#411)
+kin_routine_rotations(ptr, len)      replay the history: KINE context -> KRRS (#429)
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
@@ -257,6 +258,8 @@ N  payload
 | 65 | CHAT_TOPIC_SET (#312, chat log) | message ID, state u8 (0 cleared, 1 open, 2 resolved), 3 reserved: 20 bytes |
 | 66 | SHOPPING_SECTIONS_SET (#411) | section count u16 (0–30), reserved u16, then each section: section ID [16] (non-zero, unique), name (u16 length + UTF-8; trimmed, 1–40 bytes, no controls) |
 | 67 | ITEM_SECTION_SET (#411) | item ID [16] (non-zero), section ID [16] (all zero: none): 32 bytes |
+| 68 | ROUTINE_ROTATION_SET (#429) | routine ID [16] (non-zero), member count u8 (0, or 2–12), current index u8 (below the count; 0 when the count is 0), reserved u16, then each member ID [16] (non-zero, no repeats): 20 + 16 × count bytes. An empty list ends the rotation |
+| 69 | ROUTINE_TURN_SET (#429) | routine ID [16] (non-zero), member ID [16] (non-zero): 32 bytes |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -558,6 +561,29 @@ tuned for printed codes under heavy blur.
   are absent. The KINS projection is unchanged: its section table is part of
   replay protocol 24, so new domains get their own export, as item pictures
   did.
+- **Routine rotations (kinds 68–69, #429).** The payloads are strict like
+  store sections: they re-encode to the same bytes, so one member, more than
+  12, a repeated or zero member, an index outside the list, or a non-zero
+  index with an empty list fail with code 2. KCMD actions 68
+  (`set-routine-rotation` `{ routineId, memberIds, currentIndex }`) and 69
+  (`set-routine-turn` `{ routineId, memberId }`) carry the exact payload as
+  their text with a zero entity ID and no option, date or expiry
+  (`kin-rotations.js`). Rust checks them against the current state
+  (`RotationsState::check_command`, code 4): the routine exists and isn't
+  archived; a rotation changes the list or the turn, and ending one needs
+  one; a turn needs a rotation that lists the member, who isn't already
+  current. While a routine rotates, `change-responsibility` for it fails with
+  code 4: its owner is whoever's turn it is.
+- **KRRS v1** (routine rotations, `kin_routine_rotations`): `"KRRS"`,
+  version 1, reserved u16, count u32, then for each routine that exists,
+  isn't archived and rotates, in routine ID order: routine ID [16], member
+  count u8 (2–12), current index u8, next index u8 (the one after current,
+  wrapping), reserved u8, then each member ID [16] in turn order. JavaScript
+  decodes it as `[{ routineId, memberIds, current, next }]` (member IDs).
+  Every listed member counts: membership isn't in the history, so the host
+  passes over inactive members (`turnAmong`, [ADR 0016](decisions/0016-routine-rotations.md)).
+  The current member is also the routine's responsibility in KINS, so
+  KMTD and KWKD follow the turn; KINS is unchanged.
 - **KMTQ v1 / KMTD v1** (a member's things today, `kin_my_things`): the
   24-byte query `"KMTQ"`, version 1, reserved u16, member ID [16] (non-zero),
   then a record-less KINE context. The result `"KMTD"`, version 1, reserved

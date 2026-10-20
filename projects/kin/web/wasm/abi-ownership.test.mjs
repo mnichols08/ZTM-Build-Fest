@@ -35,6 +35,7 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_my_things: status,
       kin_week: status,
       kin_shopping_sections: status,
+      kin_routine_rotations: status,
       kin_event_metadata: status,
       kin_event_metadata_batch: status,
       kin_audio_peaks: status,
@@ -586,6 +587,64 @@ test("store sections decode from KSHS and their commands encode as KCMD 66 and 6
     { type: "set-shopping-sections", sections: [{ sectionId: hexOf(0x11), name: "x".repeat(41) }] },
     { type: "set-shopping-sections", sections: Array.from({ length: 31 }, (_, n) => ({ sectionId: hexOf(n + 1), name: `S${n}` })) },
     { type: "set-item-section", itemId: hexOf(0), sectionId: null },
+  ]) {
+    assert.throws(() => engine.executeCommand(bad, identity, [], 1_760_000_000_000, null, 20261003),
+      (error) => error instanceof KinEngineError && error.code === 2);
+  }
+});
+
+// Taking turns (#429): KRRS v1 decodes into rotations with whose turn it is
+// and who is next; the two commands travel as KCMD 68 and 69 carrying their
+// canonical payloads.
+test("routine rotations decode from KRRS and their commands encode as KCMD 68 and 69", () => {
+  const text = new TextEncoder();
+  const idOf = (byte) => new Uint8Array(16).fill(byte);
+  const hexOf = (byte) => byte.toString(16).padStart(2, "0").repeat(16);
+  const krrs = Uint8Array.from([
+    ...text.encode("KRRS"), 1, 0, 0, 0, 1, 0, 0, 0,
+    ...idOf(0x20), 3, 1, 2, 0, ...idOf(0x01), ...idOf(0x02), ...idOf(0x03),
+  ]);
+  const read = (bytes) => createEngine(substituteExports({ operation: () => 0, result: bytes }).exports)
+    .routineRotations([], 1_760_000_000_000, 20261003);
+  assert.deepEqual(read(krrs), [
+    { routineId: hexOf(0x20), memberIds: [hexOf(1), hexOf(2), hexOf(3)], current: hexOf(2), next: hexOf(3) },
+  ]);
+  for (const broken of [krrs.slice(0, -1), Uint8Array.of(...krrs, 0), (() => { const t = krrs.slice(); t[30] = 1; return t; })()]) {
+    assert.throws(() => read(broken), (error) => error instanceof KinEngineError && error.code === 6);
+  }
+
+  let request = null;
+  const fake = substituteExports({ operation: () => 0 });
+  const engine = createEngine({ ...fake.exports, kin_execute: () => {
+    request = new Uint8Array(fake.exports.memory.buffer.slice(POINTER, POINTER + fake.allocations.at(-1)));
+    return 0;
+  } });
+  const identity = {
+    eventId: idOf(1), householdId: idOf(2), actorId: idOf(3), deviceId: idOf(4), timestamp: 1, logicalTime: 1n,
+  };
+  const packetOf = (command) => {
+    request = null;
+    // The substitute returns no KCMT, so the call fails after sending.
+    assert.throws(() => engine.executeCommand(command, identity, [], 1_760_000_000_000, null, 20261003), KinEngineError);
+    const length = new DataView(request.buffer).getUint32(0, true);
+    return request.subarray(4, 4 + length);
+  };
+  const set = packetOf({ type: "set-routine-rotation", routineId: hexOf(0x20), memberIds: [hexOf(1), hexOf(2)], currentIndex: 1 });
+  const view = new DataView(set.buffer, set.byteOffset);
+  assert.equal(String.fromCharCode(...set.subarray(0, 4)), "KCMD");
+  assert.equal(view.getUint16(8, true), 68);
+  assert.ok(set.subarray(92, 124).every((byte) => byte === 0), "no entity, date, option or expiry");
+  assert.deepEqual([...set.subarray(128)], [...idOf(0x20), 2, 1, 0, 0, ...idOf(1), ...idOf(2)]);
+  const end = packetOf({ type: "set-routine-rotation", routineId: hexOf(0x20), memberIds: [], currentIndex: 0 });
+  assert.deepEqual([...end.subarray(128)], [...idOf(0x20), 0, 0, 0, 0]);
+  const skip = packetOf({ type: "set-routine-turn", routineId: hexOf(0x20), memberId: hexOf(2) });
+  assert.equal(new DataView(skip.buffer, skip.byteOffset).getUint16(8, true), 69);
+  assert.deepEqual([...skip.subarray(128)], [...idOf(0x20), ...idOf(2)]);
+  for (const bad of [
+    { type: "set-routine-rotation", routineId: hexOf(0x20), memberIds: [hexOf(1)], currentIndex: 0 },
+    { type: "set-routine-rotation", routineId: hexOf(0x20), memberIds: [hexOf(1), hexOf(1)], currentIndex: 0 },
+    { type: "set-routine-rotation", routineId: hexOf(0x20), memberIds: [hexOf(1), hexOf(2)], currentIndex: 2 },
+    { type: "set-routine-turn", routineId: hexOf(0x20), memberId: hexOf(0) },
   ]) {
     assert.throws(() => engine.executeCommand(bad, identity, [], 1_760_000_000_000, null, 20261003),
       (error) => error instanceof KinEngineError && error.code === 2);
