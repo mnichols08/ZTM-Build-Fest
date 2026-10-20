@@ -79,7 +79,8 @@ export async function simpleRegressions(client, { until, ready }) {
 
   // Done, then Undo in the same place; the status says so politely.
   const card = `[...document.querySelectorAll("kin-simple .simple-card")].find((node) => node.querySelector(".simple-text").textContent === "Simple regression socks away")`;
-  await page(`${card}.querySelector(".simple-done").click()`);
+  // A tap focuses the button; a scripted click doesn't, so focus it first.
+  await page(`(() => { const done = ${card}.querySelector(".simple-done"); done.focus(); done.click(); return true; })()`);
   await until(() => page(`(() => { const app = document.querySelector("kin-app");
     return !app.busy && ${card}?.querySelector(".simple-undo") && /^Marked “Simple regression socks away” done\\./.test(app.status.textContent); })()`), { attempts: 300 });
   const done = await page(`(() => {
