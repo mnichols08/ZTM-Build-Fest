@@ -1255,6 +1255,15 @@ export class EventStore {
     return this.engine.itemEmojis(events, asOf, civilDate, syncIdentity);
   }
 
+  /** Store sections (#411, ADR 0015): { sections: [{ sectionId, name }],
+   * itemSections: Map itemId -> sectionId }. */
+  async shoppingSections() {
+    if (!this.engine) throw new EventStoreError("Kin could not read store sections.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.shoppingSections(events, asOf, civilDate, syncIdentity);
+  }
+
   /** `memberId`'s things today (#344, ADR 0013), in Rust's order. */
   async myThings(memberId) {
     if (!this.engine) throw new EventStoreError("Kin could not read your things for today.");
