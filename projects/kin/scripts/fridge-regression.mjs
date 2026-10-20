@@ -35,6 +35,22 @@ export async function fridgeRegressions(client, until) {
     return true;
   })()`);
 
+  // A new size takes effect in steps: layout, then the fridge's media-query
+  // listener choosing the side rail or not (an asynchronous "change" event).
+  // Measuring before that has settled found the door where it used to be
+  // (#327), so every resize waits for both.
+  const resize = async (metrics) => {
+    await setViewport(client, metrics);
+    await until(() => page(`(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const { KITCHEN_QUERY } = await import("/board/fridge-view.js");
+      const fridge = document.querySelector("kin-fridge");
+      const rail = matchMedia(KITCHEN_QUERY).matches ||
+        (document.fullscreenElement === fridge && matchMedia("(orientation: landscape)").matches);
+      return (fridge.dataset.layout === "rail") === rail;
+    })()`));
+  };
+
   const door = () => page(`(() => {
     const rect = document.querySelector("kin-fridge .fridge-door").getBoundingClientRect();
     return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, right: rect.right };
@@ -48,7 +64,7 @@ export async function fridgeRegressions(client, until) {
     ["tablet", { width: 768, height: 1024, deviceScaleFactor: 2, mobile: true }],
     ["desktop", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }],
   ]) {
-    await setViewport(client, metrics);
+    await resize(metrics);
     await page(`document.querySelector("kin-fridge .fridge-door").scrollIntoView({ block: "center" })`);
     const rect = await door();
     const layout = await page(`({ scrollWidth: document.documentElement.scrollWidth, innerWidth, small: [...document.querySelectorAll("kin-fridge .fridge-tools button")].filter((b) => !b.hidden && b.getClientRects().length && b.getBoundingClientRect().height < 44).map((b) => b.textContent || b.getAttribute("aria-label")) })`);
@@ -73,7 +89,7 @@ export async function fridgeRegressions(client, until) {
     ["tablet landscape", { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true }],
     ["large tablet landscape", { width: 1180, height: 820, deviceScaleFactor: 2, mobile: true }],
   ]) {
-    await setViewport(client, metrics);
+    await resize(metrics);
     await page(`document.querySelector("kin-fridge").scrollIntoView({ block: "start" })`);
     const view = await kitchen();
     assert.ok(view.rail, `${label}: a coarse-pointer landscape screen gets the side rail`);
@@ -85,13 +101,13 @@ export async function fridgeRegressions(client, until) {
     assert.ok(view.scrollWidth <= view.innerWidth, `${label}: no horizontal scroll`);
     assert.match(view.note, /lock/i, `${label}: the screen says how it locks`);
   }
-  await setViewport(client, { width: 768, height: 1024, deviceScaleFactor: 2, mobile: true });
+  await resize({ width: 768, height: 1024, deviceScaleFactor: 2, mobile: true });
   assert.equal((await kitchen()).rail, false, "a portrait tablet keeps the stacked layout");
 
   // Full screen shows the fridge alone; locking leaves it. The page's
   // full-screen API is stood in for: a real full-screen window outlives this
   // check and can stall tabs the regression opens later (#327).
-  await setViewport(client, { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true });
+  await resize({ width: 1024, height: 768, deviceScaleFactor: 2, mobile: true });
   const full = await page(`(async () => {
     const fridge = document.querySelector("kin-fridge");
     let element = null;
@@ -120,7 +136,7 @@ export async function fridgeRegressions(client, until) {
   assert.equal(full.label2, "Full screen");
 
   // ---- Drawing with a finger (phone) -------------------------------------
-  await setViewport(client, { width: 375, height: 812, deviceScaleFactor: 2, mobile: true });
+  await resize({ width: 375, height: 812, deviceScaleFactor: 2, mobile: true });
   await page(`document.querySelector("kin-fridge .fridge-door").scrollIntoView({ block: "center" })`);
   let rect = await door();
   const touch = (type, points) => client.send("Input.dispatchTouchEvent", { type, touchPoints: points.map((p, id) => ({ ...p, id })) });
@@ -149,7 +165,7 @@ export async function fridgeRegressions(client, until) {
   assert.equal(await strokes(), 1, "a second finger cancels the stroke");
 
   // ---- A pen with a palm resting on the screen ----------------------------
-  await setViewport(client, { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true });
+  await resize({ width: 1024, height: 768, deviceScaleFactor: 2, mobile: true });
   await page(`document.querySelector("kin-fridge .fridge-door").scrollIntoView({ block: "center" })`);
   rect = await door();
   const pen = (type, point, buttons = 1) => client.send("Input.dispatchMouseEvent", { type, ...point, button: "left", buttons, clickCount: 1, pointerType: "pen" });
@@ -168,7 +184,7 @@ export async function fridgeRegressions(client, until) {
   assert.equal(await strokes(), 2, "the pen draws; the palm does not");
 
   // ---- Eraser, undo and redo (desktop mouse) -------------------------------
-  await setViewport(client, { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  await resize({ width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await page(`document.querySelector("kin-fridge .fridge-door").scrollIntoView({ block: "center" })`);
   rect = await door();
   const mouse = (type, point, buttons = 1) => client.send("Input.dispatchMouseEvent", { type, ...point, button: "left", buttons, clickCount: 1 });
@@ -314,7 +330,7 @@ export async function fridgeRegressions(client, until) {
     // 200% browser zoom on a 1280×800 desktop: half the CSS pixels.
     ["desktop at 200%", { width: 640, height: 400, deviceScaleFactor: 2, mobile: false }],
   ]) {
-    await setViewport(client, metrics);
+    await resize(metrics);
     // Let the new size lay out before measuring.
     await page(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`);
     await page(`document.querySelector("kin-fridge .fridge-door").scrollIntoView({ block: "center" })`);
@@ -340,7 +356,7 @@ export async function fridgeRegressions(client, until) {
       (animation.effect?.getComputedTiming?.().activeDuration ?? 0) > 1).length;
     return { inked, palette: fridge.palette(), door: getComputedStyle(fridge.querySelector(".fridge-door")).getPropertyValue("--fridge-door").trim(), moving };
   })()`);
-  await setViewport(client, { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  await resize({ width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   const light = await inkCheck();
   // Kin's own dark appearance (the page may have pinned light), then back.
   const appearance = await page(`document.documentElement.dataset.kinAppearance ?? null`);
