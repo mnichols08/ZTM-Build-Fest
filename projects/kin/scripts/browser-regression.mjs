@@ -1378,6 +1378,8 @@ try {
   })()`), { labels: "Handoffs,Chat", hash: "#updates/chat", current: "true", handoffsHidden: true, chatShown: true, inList: true, shown: true, hint: true },
     "Updates has Handoffs and Chat; an old Talk link opens Chat's To talk about list with the older topics (#312, #313)");
   console.log(await first.evaluate(`(${talkRegressions.toString()})()`));
+  // The list the old Talk link opened closes again, leaving Chat its room.
+  await first.evaluate(`document.querySelector('kin-app').chat.toggleTopics(false)`);
   await visit(first, "updates/chat");
   assert.equal(await first.evaluate(`(()=>{const app=document.querySelector('kin-app');const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
     return location.hash==='#updates/chat' && links[1]?.getAttribute('aria-current')==='true' && !document.querySelector('#chat-panel').hidden &&
