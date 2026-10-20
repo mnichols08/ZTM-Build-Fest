@@ -121,7 +121,10 @@ class KinShoppingMode extends HTMLElement {
     this.basket = new Set();
     const opener = this.opener;
     this.opener = null;
-    if (opener?.isConnected) opener.focus();
+    // The list redraws while you shop, replacing its Start shopping button:
+    // focus goes to the one there now.
+    const target = opener?.isConnected ? opener : opener?.classList?.contains("start-shopping") ? document.querySelector("kin-today .start-shopping") : null;
+    target?.focus();
   }
 
   render() {
