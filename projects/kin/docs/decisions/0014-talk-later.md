@@ -47,8 +47,9 @@ A Talk-later flag is a new additive **chat** event kind, **`CHAT_TOPIC_SET`
   flag bit 5): a count, then per topic, newest first, the message id, state,
   who flagged it and a quote of the message (as pins do).
 
-Older devices meet kind 65 like any newer chat kind: chat sync pauses with
-"update Kin" and keeps their data; the household history is untouched.
+Older devices meet kind 65 like pins and polls before it: the device refuses
+the event (`chat_event_refused`) and moves past it, keeping the rest of its
+chat and the household history; it shows no topics until it updates.
 
 ### The list: To talk about
 

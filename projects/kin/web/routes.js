@@ -25,7 +25,6 @@ export const SEGMENTS = Object.freeze({
   ]),
   updates: Object.freeze([
     Object.freeze({ id: "handoffs", label: "Handoffs" }),
-    Object.freeze({ id: "talk", label: "Talk" }),
     Object.freeze({ id: "chat", label: "Chat" }),
   ]),
   household: Object.freeze([
@@ -53,8 +52,7 @@ const PAGE_TITLES = Object.freeze({
 const ALIASES = Object.freeze({
   handoff: "updates/handoffs",
   "handoff/handoffs": "updates/handoffs",
-  "handoff/talk": "updates/talk",
-  talk: "updates/talk",
+  // Talk moved into Chat's To talk about list (#312); see TOPIC_ALIASES.
   handoffs: "updates/handoffs",
   more: "household",
   "more/notes": "household/notes",
@@ -72,6 +70,10 @@ const ALIASES = Object.freeze({
   "household/household": "household/people",
   "routines/playbooks": "routines/checklists",
 });
+
+// Links to the former Talk tab (#312, ADR 0014) open Chat with its To talk
+// about list; the route carries `topics: true`.
+const TOPIC_ALIASES = new Set(["talk", "handoff/talk", "updates/talk"]);
 
 /** Dispatched on window when the visible page or segment changes. In-app
  * navigation uses history.pushState and hides views rather than removing
@@ -101,7 +103,8 @@ export const SIMPLE_ROUTES = Object.freeze({
  */
 export function resolveSimpleRoute(location = {}, { chat = false, fridge = false } = {}) {
   const route = resolveRoute(location);
-  const allowed = (chat && route.page === "updates" && route.segment === "chat") ||
+  // An old Talk link isn't Chat: Simple view has no To talk about list.
+  const allowed = (chat && route.page === "updates" && route.segment === "chat" && !route.topics) ||
     (fridge && route.page === "household" && route.segment === "fridge");
   return allowed ? route : resolveRoute({ hash: "#today" });
 }
@@ -112,6 +115,8 @@ export function resolveRoute({ hash = "", pathname = "/" } = {}) {
   // takes it as the app loads; this keeps /pair on the join screen even so.
   if (pathname === "/pair" && /^code=/.test(requested)) requested = "";
   if (!requested && pathname === "/pair") requested = "household/people";
+  const topics = TOPIC_ALIASES.has(requested);
+  if (topics) requested = "updates/chat";
   requested = ALIASES[requested] ?? requested;
   const [pageCandidate, segmentCandidate] = requested.split("/");
   const page = PAGE_TITLES[pageCandidate] ? pageCandidate : "today";
@@ -122,7 +127,7 @@ export function resolveRoute({ hash = "", pathname = "/" } = {}) {
   const canonical = segments ? `${page}/${segment}` : page;
   // Search is reachable from every page; it marks no primary destination.
   const destination = page === "search" ? null : page;
-  return { page, segment, canonical, destination, title: PAGE_TITLES[page], hash: segments ? routeHash(page, segment) : `#${page}` };
+  return { page, segment, canonical, destination, title: PAGE_TITLES[page], hash: segments ? routeHash(page, segment) : `#${page}`, ...(topics ? { topics: true } : {}) };
 }
 
 export function listSegmentForClassification(classification) {

@@ -17,11 +17,11 @@ test("each destination with sections has a plain one-sentence description", () =
 test("the descriptions name what is actually inside each destination", () => {
   assert.match(DESTINATION_DESCRIPTIONS.lists, /to do.*shopping.*staples/is);
   assert.match(DESTINATION_DESCRIPTIONS.routines, /checklists/i);
-  assert.match(DESTINATION_DESCRIPTIONS.updates, /Handoffs.*Talk.*Chat/s);
+  assert.match(DESTINATION_DESCRIPTIONS.updates, /Handoffs.*Chat.*To talk about/s);
   assert.match(DESTINATION_DESCRIPTIONS.household, /people and devices.*privacy and recovery/is);
 });
 
 test("without chat access the Updates description never mentions Chat", () => {
   assert.doesNotMatch(DESTINATION_DESCRIPTIONS.updatesWithoutChat, /chat/i);
-  assert.match(DESTINATION_DESCRIPTIONS.updatesWithoutChat, /Handoffs.*Talk/s);
+  assert.match(DESTINATION_DESCRIPTIONS.updatesWithoutChat, /Handoffs.*To talk about/s);
 });

@@ -11,7 +11,8 @@ class KinTalkList extends HTMLElement {
     const section = document.createElement("section");
     section.className = "today-section talk-section";
     const heading = document.createElement("h2");
-    heading.textContent = "Talk";
+    heading.textContent = this.getAttribute("heading") ?? "To talk about";
+    this.headingElement = heading;
     const hint = document.createElement("p");
     hint.className = "talk-hint";
     hint.textContent = "Topics to discuss when there is a calm moment. Resolving a topic only means the conversation happened; it is not an agreement.";
@@ -54,6 +55,12 @@ class KinTalkList extends HTMLElement {
     this.replaceChildren(section);
     this.render();
     this.disabled = this.isDisabled;
+  }
+
+  static get observedAttributes() { return ["heading"]; }
+
+  attributeChangedCallback() {
+    if (this.headingElement) this.headingElement.textContent = this.getAttribute("heading") ?? "To talk about";
   }
 
   set talks(value) {

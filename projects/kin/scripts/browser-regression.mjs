@@ -1301,7 +1301,7 @@ try {
           ),
         );
       }
-      await visit(first, "updates/talk");
+      await visit(first, "updates/chat");
       await first.evaluate("window.scrollTo(0,0)");
       await delay(80);
       await writeFile(
@@ -1367,17 +1367,19 @@ try {
   assert.equal(await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app');
     const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
-    links[1].click();
-    return location.hash==='#updates/talk' && links[1].getAttribute('aria-current')==='true' && !links[0].hasAttribute('aria-current') &&
-      document.querySelector('#handoffs-panel').hidden && !document.querySelector('#talk-panel').hidden &&
+    const labels=links.map((link)=>link.textContent.trim().split(/\s/)[0]).join();
+    app.ctx.navigation.navigate('#updates/talk');
+    return labels==='Handoffs,Chat' && location.hash==='#updates/chat' && links[1].getAttribute('aria-current')==='true' &&
+      document.querySelector('#handoffs-panel').hidden && !document.querySelector('#chat-panel').hidden &&
+      app.talks.closest('.chat-topics') && !app.talks.closest('[hidden]') &&
       app.talks.querySelector('.talk-hint').textContent.includes('Topics to discuss');
-  })()`), true, "Handoffs/Talk segments switch by route and keep the concepts distinct");
+  })()`), true, "Updates has Handoffs and Chat; an old Talk link opens Chat's To talk about list with the older topics (#312, #313)");
   console.log(await first.evaluate(`(${talkRegressions.toString()})()`));
   await visit(first, "updates/chat");
   assert.equal(await first.evaluate(`(()=>{const app=document.querySelector('kin-app');const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
-    return location.hash==='#updates/chat' && links[2]?.getAttribute('aria-current')==='true' && !document.querySelector('#chat-panel').hidden &&
-      document.querySelector('#talk-panel').hidden && Boolean(document.querySelector('kin-chat .chat-scroll'));
-  })()`), true, "Updates → Chat is the third segment");
+    return location.hash==='#updates/chat' && links[1]?.getAttribute('aria-current')==='true' && !document.querySelector('#chat-panel').hidden &&
+      !document.querySelector('#talk-panel') && Boolean(document.querySelector('kin-chat .chat-scroll'));
+  })()`), true, "Updates → Chat is the second segment");
   console.log(await first.evaluate(`(${chatRegressions.toString()})({ keepRoom: true })`));
   console.log(await chatLayoutRegressions(first, { until }));
   await visit(first, "household/areas");

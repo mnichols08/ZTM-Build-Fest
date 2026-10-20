@@ -428,19 +428,19 @@ export async function workspaceUxRegressions(recovery) {
   app.compose.classification.value = "need";
 
   // 15. Legacy routes, back and forward.
-  for (const [requested, expected] of [["#more", "household/hub"], ["#handoff", "updates/handoffs"], ["#handoff/talk", "updates/talk"], ["#lists", "lists/todo"], ["#search", "search"], ["#nowhere", "today"], ["#household/privacy", "household/privacy"]]) {
+  for (const [requested, expected] of [["#more", "household/hub"], ["#handoff", "updates/handoffs"], ["#handoff/talk", "updates/chat"], ["#lists", "lists/todo"], ["#search", "search"], ["#nowhere", "today"], ["#household/privacy", "household/privacy"]]) {
     app.ctx.navigation.navigate(requested);
     check(app.dataset.route === expected && !app.pages.get(expected.split("/")[0]).hidden, `15. ${requested} resolves to ${expected}`);
   }
   check(app.nav.querySelectorAll('[aria-current="page"]').length === 1 && app.nav.querySelector('[aria-current="page"]').dataset.page === "household" &&
     app.segmentNavs.get("household").querySelector('[aria-current="true"]').dataset.segment === "privacy" && !app.privacyPage.hidden && app.privacyPage.contains(app.security),
     "15. the current destination and segment are programmatically identifiable and Privacy & recovery holds the security settings");
-  app.ctx.navigation.navigate("#updates/talk");
+  app.ctx.navigation.navigate("#updates/chat");
   history.back();
   await wait(() => app.dataset.route === "household/privacy", "back navigation");
   history.forward();
-  await wait(() => app.dataset.route === "updates/talk", "forward navigation");
-  check(location.hash === "#updates/talk" && !document.querySelector("#talk-panel").hidden, "15. Back and Forward restore the previous routes and panels");
+  await wait(() => app.dataset.route === "updates/chat", "forward navigation");
+  check(location.hash === "#updates/chat" && !document.querySelector("#chat-panel").hidden, "15. Back and Forward restore the previous routes and panels");
 
   // 12. Lock during details, search and the viewer clears protected content.
   app.ctx.navigation.navigate("#lists/todo");

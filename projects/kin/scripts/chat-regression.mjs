@@ -87,7 +87,20 @@ export async function chatRegressions({ keepRoom = false } = {}) {
           messageId: log[at].messageId, state: "live", contentKind: "text", authorId: log[at].authorId, index: at,
           blobRef: log[at].blobRef, blobKey: new Uint8Array(32).fill(1), text: held.get(log[at].blobRef) ?? null, pinnedBy: third,
         })),
+        topics: [...(this.topicStates ?? new Map())].map(([id, state]) => {
+          const at = log.findIndex((message) => message.messageId === id);
+          return at < 0 ? null : { messageId: id, state, flaggedBy: me, quote: {
+            messageId: id, state: "live", contentKind: "text", authorId: log[at].authorId, index: at,
+            blobRef: log[at].blobRef, blobKey: new Uint8Array(32).fill(1), text: held.get(log[at].blobRef) ?? null,
+          } };
+        }).filter(Boolean),
       };
+    },
+    async setTopic(message, state) {
+      this.topicStates ??= new Map();
+      if (state === "cleared") this.topicStates.delete(message.messageId);
+      else this.topicStates.set(message.messageId, state);
+      listeners.forEach((listener) => listener());
     },
     async pin(message, on) {
       this.pinned = (this.pinned ?? []).filter((id) => id !== message.messageId);
@@ -375,7 +388,7 @@ export async function chatRegressions({ keepRoom = false } = {}) {
   await settle();
   const menu = chat.querySelector(`[data-message-id="${ownRow.dataset.messageId}"] .chat-menu`);
   check(menu && document.activeElement === menu.querySelector("button"), "menu opens with focus");
-  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,to-shopping,to-todo,to-handoff,to-note,pin,edit,delete", "own message actions (not Delete for me while it waits to send)");
+  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,talk-later,to-shopping,to-todo,to-handoff,to-note,pin,edit,delete", "own message actions (not Delete for me while it waits to send)");
   menu.querySelector('[data-action="edit"]').click();
   await settle();
   check(input.value === "Send button" && chat.querySelector(".chat-cancel").hidden === false, "editing in the composer");
@@ -394,7 +407,7 @@ export async function chatRegressions({ keepRoom = false } = {}) {
   theirs.querySelector(".chat-menu-button").click();
   await settle();
   const theirMenu = chat.querySelector(`[data-message-id="${theirs.dataset.messageId}"] .chat-menu`);
-  check([...theirMenu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,to-shopping,to-todo,to-handoff,to-note,pin,remove,hide", "an admin may remove others' messages");
+  check([...theirMenu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,talk-later,to-shopping,to-todo,to-handoff,to-note,pin,remove,hide", "an admin may remove others' messages");
   const realConfirm = window.confirm;
   const questions = [];
   window.confirm = (question) => { questions.push(question); return true; };
@@ -1299,6 +1312,48 @@ export async function chatRegressions({ keepRoom = false } = {}) {
     await settle();
     await settle();
     check(region.hidden, "unpinning the last pin hides the bar");
+  }
+
+  // Talk later (#312, ADR 0014): a message goes on To talk about and is
+  // marked in the conversation; talked about, again, and off the list.
+  {
+    const target = room.page().messages.find((entry) => entry.blobRef && room.page().messages.indexOf(entry) < 4);
+    room.topicStates = new Map();
+    notify();
+    await settle();
+    const panel = chat.querySelector(".chat-topics");
+    const toggle = chat.querySelector(".chat-topics-toggle");
+    const openCount = () => Number(/(\d+) open/.exec(toggle.getAttribute("aria-label"))?.[1] ?? 0);
+    check(panel.tagName === "SECTION" && panel.getAttribute("aria-labelledby") === "chat-topics-heading", "To talk about is a labelled region");
+    if (!toggle.hidden) {
+      check(panel.hidden && toggle.getAttribute("aria-expanded") === "false", "the list starts closed below 1180px");
+      toggle.click();
+      check(!panel.hidden && toggle.getAttribute("aria-expanded") === "true", "the toolbar button opens it");
+    } else check(!panel.hidden && panel.classList.contains("chat-topics-side"), "a side column at 1180px and wider");
+    const before = openCount();
+    check(chat.actionsFor(target, room).includes("talk-later"), "Talk later is among the message actions");
+    await chat.act("talk-later", target);
+    await settle();
+    check(room.topicStates.get(target.messageId) === "open", "Talk later puts it on the list");
+    const mark = () => chat.querySelector(`.chat-row[data-message-id="${target.messageId}"] .chat-topic-mark`);
+    check(mark()?.textContent.includes("To talk about"), "the message is marked in the conversation");
+    const entry = () => panel.querySelector(`.chat-topic[data-message-id="${target.messageId}"]`);
+    check(entry()?.textContent.includes("marked by you"), "the list shows it and who marked it");
+    check(openCount() === before + 1, "the count says how many are open, in words");
+    check(chat.actionsFor(target, room).includes("talk-resolve"), "then the action is Mark talked about");
+    entry().querySelector('[data-topic-action="resolve"]').click();
+    await settle();
+    await settle();
+    check(room.topicStates.get(target.messageId) === "resolved" && mark()?.textContent.includes("Talked about") && openCount() === before, "talked about: still listed and marked");
+    check(chat.actionsFor(target, room).includes("talk-reopen"), "and can be talked about again");
+    entry().querySelector('[data-topic-action="remove"]').click();
+    await settle();
+    await settle();
+    check(!room.topicStates.has(target.messageId) && !mark() && !entry(), "Remove takes it off the list and the mark goes");
+    if (!toggle.hidden) {
+      toggle.click();
+      check(panel.hidden, "the button closes the list again");
+    }
   }
 
   // Quick polls (#135): a Poll button opens a labelled dialog that Escape closes.

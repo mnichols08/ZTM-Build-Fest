@@ -13,9 +13,9 @@ export const AUTO_LOCK_KEY = "kin.auto-lock-minutes";
 export const DESTINATION_DESCRIPTIONS = Object.freeze({
   lists: "Things to do, your shopping list, and staples you buy again and again.",
   routines: "Things that come round again, like bins night, plus checklists you reuse.",
-  updates: "Handoffs pass something on to a person, Talk saves a topic for a calm moment, and Chat is for quick back-and-forth.",
+  updates: "Handoffs pass something on to a person, and Chat is for quick back-and-forth, with a To talk about list for a calm moment.",
   // When the household's chat policy leaves this member without Chat (#123).
-  updatesWithoutChat: "Handoffs pass something on to a person, and Talk saves a topic for a calm moment.",
+  updatesWithoutChat: "Handoffs pass something on to a person, and To talk about saves a topic for a calm moment.",
   household: "Notes, areas, people and devices, privacy and recovery, and how Kin looks for your household.",
 });
 export const INLINE_SAVE_FAILED = "Couldn't save. Your text is still here.";
