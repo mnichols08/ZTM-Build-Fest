@@ -84,6 +84,9 @@ class KinFridge extends HTMLElement {
     this.landscapeMedia?.addEventListener?.("change", this.onLayout);
     document.addEventListener("fullscreenchange", this.onLayout);
     this.updateLayout();
+    // Before any room arrives (no sync yet) the line under the board still
+    // says why the fridge can't be drawn on (#372); it used to stay blank.
+    this.render();
   }
 
   disconnectedCallback() {

@@ -23,7 +23,7 @@ export async function fridgeRegressions(client, until) {
     const fridge = app.fridge;
     return { tools: fridge.querySelector(".fridge-tools").hidden, link: fridge.querySelector(".fridge-summary a")?.getAttribute("href") ?? null };
   })()`);
-  if (unsynced) assert.deepEqual(unsynced, { tools: true, link: "#household/people" }, "an unsynced fridge hides its tools and links to sync");
+  if (unsynced) assert.deepEqual(unsynced, { tools: true, link: "#household/people" }, "an unsynced fridge hides its tools and links to sync: " + JSON.stringify(unsynced));
 
   // A board room with this page's engine, a fresh household key and device
   // keys, and a request that always reports being offline.
