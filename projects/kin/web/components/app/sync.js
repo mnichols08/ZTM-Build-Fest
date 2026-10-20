@@ -97,6 +97,11 @@ export class SyncController {
         if (this.app.chatSettings) this.app.chatSettings.room = room;
         if (this.app.search) this.app.search.chatRoom = room;
       },
+      // Simple view (#343, ADR 0013): the layout this member's admin chose.
+      onSimpleView: (on) => {
+        if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
+        this.ctx.simple?.setSimpleView(on);
+      },
       // The family fridge (#317), for Household → Fridge.
       onBoardRoom: (room) => {
         if (!this.app.fridge) return;

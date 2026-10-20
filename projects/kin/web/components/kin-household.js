@@ -179,6 +179,7 @@ class KinHousehold extends HTMLElement {
   render(...args) { return this.ctx.views.render(...args); }
   renderMember(...args) { return this.ctx.views.renderMember(...args); }
   setHouseholdAdmin(...args) { return this.ctx.membership.setHouseholdAdmin(...args); }
+  setSimpleView(...args) { return this.ctx.membership.setSimpleView(...args); }
   showDevices(...args) { return this.ctx.membership.showDevices(...args); }
   showHousehold(...args) { return this.ctx.membership.showHousehold(...args); }
 }

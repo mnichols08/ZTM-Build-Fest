@@ -163,7 +163,7 @@ function browserLiveChannel(options) {
 }
 
 export class SyncCoordinator {
-  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {} }) {
+  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {}, onSimpleView = () => {} }) {
     this.store = store;
     this.engine = engine;
     this.identity = identity;
@@ -205,6 +205,9 @@ export class SyncCoordinator {
     this.board = null;
     this.boardOpening = null;
     this.onBoardRoom = onBoardRoom;
+    // Simple view (#343, ADR 0013): this member's layout as last reported.
+    this.onSimpleView = onSimpleView;
+    this.simpleView = null;
   }
 
   async start() {
@@ -466,6 +469,7 @@ export class SyncCoordinator {
     }
     if (this.stopped) return;
     let status = await this.request("/api/sync/status");
+    await this.noteSimpleView(status);
     if (!status.enabled) {
       this.onState({ state: "disabled", message: "Device sync is off." });
       return { disabled: true, hasMore: false };
@@ -747,6 +751,20 @@ export class SyncCoordinator {
       room?.reportSync(error);
       return { hasMore: false };
     }
+  }
+
+  /** Keeps this member's layout (ADR 0013): cached for an offline unlock,
+   * and handed to the app when it changes. The cache is best effort: a
+   * failure leaves the last cached layout for the next unlock. */
+  async noteSimpleView(status) {
+    const on = status?.simpleView === true;
+    if (this.simpleView === on) return;
+    this.simpleView = on;
+    try {
+      await this.keyStore.cacheMemberView({ householdId: this.identity.householdId, memberId: this.identity.memberId, simpleView: on });
+    } catch { /* the next pass tries again */ this.simpleView = null; }
+    if (this.stopped) return;
+    try { this.onSimpleView(on); } catch { /* the view's trouble isn't sync's */ }
   }
 
   /** Opens the fridge once (#317); null where its storage isn't available.
