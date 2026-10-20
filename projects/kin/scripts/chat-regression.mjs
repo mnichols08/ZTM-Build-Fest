@@ -503,7 +503,9 @@ export async function chatRegressions({ keepRoom = false } = {}) {
   {
     const toggle = chat.querySelector(".emoji-toggle");
     const order = [...chat.querySelectorAll("textarea, .emoji-slot, .emoji-toggle, .chat-form button[type=submit]")];
-    check(order.map((node) => node.className || node.tagName).join() === "TEXTAREA,emoji-slot,emoji-toggle,add-button", "the panel sits after the message, before the buttons");
+    // The one-row composer (#311): message, emoji, Send; the panel opens
+    // right below that row.
+    check(order.map((node) => node.className || node.tagName).join() === "TEXTAREA,emoji-toggle,add-button,emoji-slot", "the panel opens below the one-row composer: " + order.map((node) => node.className || node.tagName).join());
     check(toggle && toggle.getAttribute("aria-expanded") === "false", "an emoji button");
     input.value = "Dinner ready";
     input.setSelectionRange(6, 6);
