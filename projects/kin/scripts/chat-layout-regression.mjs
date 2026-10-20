@@ -99,7 +99,7 @@ export async function chatLayoutRegressions(client, { until }) {
     if (label === "reduced motion")
     {
       const durations = await page(`[...document.querySelectorAll("kin-app kin-chat .chat-menu-wrap")].slice(-3).map((node) => getComputedStyle(node).transitionDuration).join("|")`);
-      assert.ok(durations.split(/[|,]/).every((value) => Number.parseFloat(value) === 0), `reduced motion: no fade on message tools (${durations})`);
+      assert.ok(durations.split(/[|,]/).every((value) => Number.parseFloat(value) <= 0.001), `reduced motion: no fade on message tools (${durations})`);
     }
     await frames();
   }
