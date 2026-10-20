@@ -446,6 +446,21 @@ pub struct HouseholdState {
     /// current member also shows as the routine's responsibility. Shared
     /// with the replay, not copied.
     pub rotations: std::sync::Arc<crate::rotations::RotationsState>,
+    /// The sitter page as last set (sitter.rs, #442). Not part of the KINS
+    /// projection; hosts read it through `kin_sitter_page`. Shared with the
+    /// replay, not copied.
+    pub sitter_page: std::sync::Arc<crate::sitter::SitterPageState>,
+}
+
+impl HouseholdState {
+    /// The records a sitter-page entry may point at.
+    pub fn sitter_records(&self) -> crate::sitter::SitterRecords<'_> {
+        crate::sitter::SitterRecords {
+            notes: &self.notes,
+            reference_records: &self.reference_records,
+            routines: &self.routines,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

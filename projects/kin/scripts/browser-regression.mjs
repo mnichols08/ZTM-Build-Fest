@@ -37,6 +37,7 @@ import { shareRegressions } from "./share-regression.mjs";
 import { shoppingModeRegressions } from "./shopping-mode-regression.mjs";
 import { weekRegressions } from "./week-regression.mjs";
 import { importRegressions } from "./import-regression.mjs";
+import { sitterRegressions } from "./sitter-regression.mjs";
 import { storeSectionsRegressions } from "./store-sections-regression.mjs";
 import { recurringTaskRegressions } from "./recurring-tasks-regression.mjs";
 import { dailyUxHardeningRegressions } from "./daily-ux-hardening-regression.mjs";
@@ -1402,6 +1403,7 @@ try {
   console.log(await first.evaluate(`(${shareRegressions.toString()})()`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${weekRegressions.toString()})()`));
+  console.log(await first.evaluate(`(${sitterRegressions.toString()})()`));
   console.log(await first.evaluate(`(${importRegressions.toString()})()`));
   console.log(await first.evaluate(`(${storeSectionsRegressions.toString()})()`));
   await visit(first, "today");

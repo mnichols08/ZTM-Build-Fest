@@ -32,6 +32,7 @@ import { MealsController } from "./meals.js";
 import { SimpleController } from "./simple.js";
 import { ShareController } from "./share.js";
 import { WeekController } from "./week.js";
+import { SitterController } from "./sitter.js";
 import { ImportController } from "./import.js";
 import { SectionsController } from "./sections.js";
 import { AppendCommands } from "./commands/append.js";
@@ -77,6 +78,7 @@ export function createAppContext(app) {
   ctx.chatShare = new ChatShareController(ctx);
   ctx.share = new ShareController(ctx);
   ctx.week = new WeekController(ctx);
+  ctx.sitter = new SitterController(ctx);
   ctx.importList = new ImportController(ctx);
   ctx.sections = new SectionsController(ctx);
   ctx.navigation = new NavigationController(ctx);
@@ -139,7 +141,7 @@ export function initializeAppState(app) {
     app.pendingScheduleChange = null;
     app.householdStatus = null;
     app.passkeyPromptDismissed = false;
-    app.onHouseholdStatus = (event) => { app.householdStatus = event.detail; app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
+    app.onHouseholdStatus = (event) => { app.householdStatus = event.detail; app.ctx.sitter.landTemporaryMember(); app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
     app.onSecurityChanged = () => app.ctx.status.renderOnboarding();
     app.autoLockMinutes = readAutoLockPreference();
     app.autoLockTimer = null;
@@ -210,6 +212,10 @@ export function initializeAppState(app) {
     app.onSaveShoppingSections = async (event) => {
       const outcome = await app.ctx.sections.saveSections(event.detail.sections ?? []);
       event.detail.done?.(outcome);
+    };
+    app.onSaveSitterPage = async (event) => {
+      const outcome = await app.ctx.sitter.save(event.detail ?? {});
+      event.detail?.done?.(outcome);
     };
     app.onStartShopping = (event) => {
       if (!app.simpleView && app.state) app.shoppingMode?.open({ opener: event.detail?.opener ?? null });

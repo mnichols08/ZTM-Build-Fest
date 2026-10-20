@@ -612,6 +612,22 @@ keeps Simple view; turning it off reaches that device only when it next
 connects. A device belongs to one member, so a tablet registered to an Adult
 shows the Adult's Kin; a child needs their own device.
 
+### The sitter page is a layout, not a lock (#442)
+
+The sitter page ([ADR 0017](decisions/0017-sitter-page.md)) chooses what a
+Temporary member's Kin shows first; it doesn't limit what that device can
+read. While access lasts, a Temporary member's device holds the household key
+and the whole household history, so with other software it could read every
+note, reference record and routine, not only those on the page. Access ends
+with the existing Temporary expiry.
+
+Only Adults may change the page, and the app enforces that, not replay: Rust
+doesn't know member kinds, so a Limited or Temporary member running a
+modified client could write a `SITTER_PAGE_SET` event and other devices would
+accept it, as for attachment removal above. The page can only point at
+records already in the household, so the worst case is a rearranged or
+emptied page that an Adult sets again.
+
 ### v1.0 was not tested across every browser and device
 
 **What it is.** v1.0 shipped on the owner's decision with limited real-world

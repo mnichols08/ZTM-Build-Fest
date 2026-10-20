@@ -75,6 +75,7 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ItemSectionSet { .. } => crate::store_sections::ITEM_SECTION_SET,
         EventKind::RoutineRotationSet { .. } => crate::rotations::ROUTINE_ROTATION_SET,
         EventKind::RoutineTurnSet { .. } => crate::rotations::ROUTINE_TURN_SET,
+        EventKind::SitterPageSet { .. } => crate::sitter::SITTER_PAGE_SET,
     }
 }
 
@@ -482,6 +483,10 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
         // Taking turns (#429): rotations.rs owns the payloads.
         kind @ (EventKind::RoutineRotationSet { .. } | EventKind::RoutineTurnSet { .. }) => {
             payload = crate::rotations::encode_payload(kind)?;
+        }
+        // The sitter page (#442): sitter.rs owns the payload.
+        kind @ EventKind::SitterPageSet { .. } => {
+            payload = crate::sitter::encode_payload(kind)?;
         }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());

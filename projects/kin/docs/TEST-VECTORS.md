@@ -282,6 +282,49 @@ ignored.
 rotating then archived, routine 23 rotating then ended, routine 21 never
 rotating: `"KRRS"`, `01 00`, `00 00`, count 1, routine 20, `03 02 00 00`, Sam,
 Alex, Jo. An empty history is `"KRRS"`, `01 00 00 00` and a zero count.
+## The sitter page (#442)
+
+These vectors are written out by hand in `rust/src/sitter_tests.rs`; record
+IDs are `numbered_id(n)`, and the household has note 1 "Bedtime", reference
+record 2 "Grandma" and routine 3 "Feed the cat". JavaScript mirrors 060, 063
+and 064 in `web/wasm/kin-sitter.test.mjs` and `abi-ownership.test.mjs`.
+
+**060 — Page payload.** Note 1, reference record 2 and routine 3 with the
+intro "Bed by 8.\nThanks!" encode as `03 00 00 00`, then `01 00 00 00` +
+note 1, `02 00 00 00` + record 2, `03 00 00 00` + routine 3, then `11 00` and
+the intro (83 bytes). The empty page is six zero bytes. Thirty entries, a
+500-byte intro ("é" × 250) and the same ID as a note and as a routine encode.
+A non-zero reserved byte in the count or an entry, an entry kind 0, 4 or 255,
+a trailing or missing byte, a count that disagrees with the entries, 31
+entries, an entry twice, a zero ID, invalid UTF-8, and the intros " Hi",
+"Hi ", "\nHi", "Hi\n", " ", "a\u{7}b", "a\r\nb", "a\tb" or 501 × "x" fail
+with code 2.
+
+**061 — Page rules.** Setting the empty page on a new household fails
+(code 4, no change), as do an unknown note, reference record or routine 9,
+and note 1 named as a routine. The full page with intro "Bed by 8." works;
+the same page again fails (code 4); an entry twice, " Bed by 8." or 31
+entries fail with code 2. Reordering, a new intro and dropping entries are
+changes and replace the page whole. An archived note or reference record
+can't be added (code 4); the empty page then clears it.
+
+**062 — Replay.** With note 4 "Wi-Fi" and the page note 4, routine 3, note 1,
+record 2: after note 1 and routine 3 are archived the page reads note 4,
+record 2, and the event keeps all four. A page naming note 50, which the
+history lacks, replays and skips it; once note 50 is created it shows, in
+the page's order. Of two pages made from the same history, the later in
+replay order wins.
+
+**063 — KCMD.** Action 70 carries the payload as its text with zero entity,
+date, option and expiry; a 30-entry page with a 500-byte intro fits; a
+non-zero entity, date, option or expiry, an untrimmed intro or an empty text
+fail.
+
+**064 — KSIT.** With note 4 "Gone" archived after the page routine 3, note 4,
+record 2, note 1 with intro "Hi": `"KSIT"`, `01 00`, `00 00`, count 3, then
+`03 00 00 00` + routine 3, `02 00 00 00` + record 2, `01 00 00 00` + note 1,
+then `02 00` "Hi". An empty history is `"KSIT"`, `01 00 00 00`, a zero count
+and a zero intro length.
 
 ## Household chat (v1.1)
 

@@ -19,6 +19,7 @@ pub mod request;
 pub mod rotations;
 pub mod sections;
 pub mod simple;
+pub mod sitter;
 pub mod state;
 pub mod state_encode;
 pub mod store_sections;
@@ -83,6 +84,8 @@ mod rotation_tests;
 mod shopping_section_tests;
 #[cfg(test)]
 mod simple_tests;
+#[cfg(test)]
+mod sitter_tests;
 
 #[cfg(test)]
 mod recurring_task_tests;

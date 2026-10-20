@@ -1,6 +1,7 @@
 // The single command append path and its retry, focus and error handling.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { routeHash } from "../../../routes.js";
+import { SITTER_PAGE_FORBIDDEN, canChangeSitterPage } from "../../../wasm/kin-sitter.js";
 
 export class AppendCommands {
   constructor(ctx) {
@@ -9,6 +10,13 @@ export class AppendCommands {
   }
 
   async appendCommand(command) {
+    // The sitter page is Adult-only (#442, ADR 0017). Rust can't tell member
+    // kinds apart, so every append passes here first. A device with no server
+    // membership is its own Adult; a synced one whose status hasn't arrived
+    // yet is refused until it has.
+    if (command?.type === "set-sitter-page" &&
+      !canChangeSitterPage(this.app.householdStatus?.memberKind ?? (this.app.hasLocalSyncBinding ? null : "adult")))
+      throw Object.assign(new Error(SITTER_PAGE_FORBIDDEN), { code: "forbidden", userMessage: SITTER_PAGE_FORBIDDEN });
     const session = this.ctx.session.captureSession();
     this.ctx.session.assertCurrentSession(session);
     // A new change replaces the undo toast (#315); undo itself keeps it.

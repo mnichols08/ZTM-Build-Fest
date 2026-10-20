@@ -236,6 +236,10 @@ pub enum HouseholdCommand {
     /// meals event; `RotationsState::check_command` decides whether it
     /// applies.
     Rotation(EventKind),
+    /// The sitter page (#442, kind 70), carried whole like a meals event;
+    /// `SitterPageState::check_command` decides whether it applies. Only an
+    /// Adult may send it; the host checks that (sitter.rs).
+    SitterPage(EventKind),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -541,6 +545,12 @@ pub fn create_event(
             }
             kind.clone()
         }
+        SitterPage(kind) => {
+            if !crate::sitter::is_sitter_code(crate::codec::kind_code(kind)) {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -797,6 +807,11 @@ pub fn execute_with(
     }
     if let HouseholdCommand::Rotation(kind) = command {
         current.rotations.check_command(kind, &current.routines)?;
+    }
+    if let HouseholdCommand::SitterPage(kind) = command {
+        current
+            .sitter_page
+            .check_command(kind, current.sitter_records())?;
     }
     if let HouseholdCommand::ChangeResponsibility {
         target_kind,
@@ -1417,6 +1432,17 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         let event_kind = crate::rotations::decode_payload(kind, &bytes[128..])?;
         return Ok((
             HouseholdCommand::Rotation(event_kind),
+            command_context(bytes)?,
+        ));
+    }
+    // The sitter page (#442): likewise.
+    if crate::sitter::is_sitter_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::sitter::decode_payload(kind, &bytes[128..])?;
+        return Ok((
+            HouseholdCommand::SitterPage(event_kind),
             command_context(bytes)?,
         ));
     }

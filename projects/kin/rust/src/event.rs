@@ -460,6 +460,12 @@ pub enum EventKind {
         routine_id: RoutineId,
         member_id: ActorId,
     },
+    /// The sitter page (#442, sitter.rs): an intro (empty for none) and the
+    /// ordered entries, replacing the previous page.
+    SitterPageSet {
+        intro: String,
+        entries: Vec<crate::sitter::SitterEntry>,
+    },
 }
 
 impl EventKind {

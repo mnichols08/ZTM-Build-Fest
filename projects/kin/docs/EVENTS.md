@@ -399,6 +399,26 @@ with fewer than two active, and moves the turn on with a `ROUTINE_TURN_SET`
 when the current member isn't active. No count of turns per member exists.
 Hosts read rotations through `kin_routine_rotations`, which is not part of
 the KINS projection. Older devices pause sync with "unsupported" and keep
+## The sitter page
+
+Kind 70 (#442, [ADR 0017](decisions/0017-sitter-page.md)) is a schema 1 event
+in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 70 | `SITTER_PAGE_SET` | The household's page for Temporary members: an intro (0–500 UTF-8 bytes, empty for none) and an ordered list of up to 30 entries, each a note, reference record or routine by ID, replacing the previous page |
+
+Replay (rust/src/sitter.rs) never fails on a decoded event; the latest page
+in replay order wins. An entry whose record is archived, unknown, or of
+another kind is kept in the event but skipped when the page is read, so it
+shows again if that record appears later. The payload is strict: at most 30
+entries, kinds 1–3, non-zero IDs, no entry twice, the intro already trimmed
+with no control characters but newline. Commands are stricter: every entry
+names a record that exists and isn't archived, and the page must change.
+Only Adults may set it; the host checks that, because replay doesn't know
+member kinds. Entries point at records and copy nothing, so editing a note
+updates the page. Hosts read it through `kin_sitter_page`, which is not part
+of the KINS projection. Older devices pause sync with "unsupported" and keep
 their data until they update.
 
 ## v1.1.0 Household chat

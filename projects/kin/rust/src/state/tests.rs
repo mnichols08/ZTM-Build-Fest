@@ -131,6 +131,9 @@ fn event(event_number: u8, logical_time: u64, kind: EventKind) -> EventEnvelope 
         | EventKind::RoutineTurnSet { .. } => {
             panic!("Area tests use independent wire fixtures")
         }
+        EventKind::SitterPageSet { .. } => {
+            panic!("Area tests use independent wire fixtures")
+        }
     }
     EventEnvelope {
         event_id,
