@@ -33,6 +33,7 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_meal_shopping_plan: status,
       kin_item_emojis: status,
       kin_my_things: status,
+      kin_week: status,
       kin_event_metadata: status,
       kin_event_metadata_batch: status,
       kin_audio_peaks: status,

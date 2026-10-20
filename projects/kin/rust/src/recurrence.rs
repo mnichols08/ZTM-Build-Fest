@@ -75,8 +75,8 @@ impl CivilDate {
         self.ordinal() % 7 >= 5
     }
 
-    /// The following civil date, or `None` past the representable range.
-    fn checked_add_days(self, days: u32) -> Option<Self> {
+    /// The date `days` later, or `None` past the representable range.
+    pub fn checked_add_days(self, days: u32) -> Option<Self> {
         let ordinal = self.ordinal().checked_add(days)?;
         (ordinal <= MAX_ORDINAL).then(|| Self::from_ordinal(ordinal))
     }

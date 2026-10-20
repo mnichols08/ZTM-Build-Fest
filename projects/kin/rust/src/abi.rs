@@ -346,6 +346,13 @@ pub extern "C" fn kin_my_things(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::my_things, None)
 }
 
+/// The household's week from a start date (KWKQ + KINE context -> KWKD v1,
+/// #417, week.rs) against the instance's history.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_week(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::week::week_export, None)
+}
+
 /// The member-name table (KMNM v1, #224) of the instance's history, in the
 /// context of a record-less KINE request, as `kin_device_names`.
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
