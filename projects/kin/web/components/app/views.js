@@ -64,7 +64,7 @@ export class ViewBuilder {
     this.app.onboarding = document.createElement("section");
     this.app.onboarding.className = "today-section onboarding-card";
     this.app.onboarding.hidden = true;
-    today.append(this.app.compose, this.app.catchUp, this.app.onboarding, this.app.today);
+    today.append(this.app.compose, this.app.tonight, this.app.catchUp, this.app.onboarding, this.app.today);
 
     // Lists: one list at a time, each with its own quick-add; export lives in
     // the list actions with its warning at the point of use.
@@ -97,6 +97,9 @@ export class ViewBuilder {
       list.dataset.segment = segment;
       lists.append(list);
     }
+    this.app.meals.dataset.segment = "meals";
+    lists.append(this.app.meals);
+    listPanels.set("meals", this.app.meals);
     this.app.segmentPanels.set("lists", listPanels);
 
     const search = page("search", "Search");

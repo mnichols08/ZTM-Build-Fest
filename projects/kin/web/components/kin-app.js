@@ -12,6 +12,8 @@ import "./kin-handoff-list.js";
 import "./kin-talk-list.js";
 import "./kin-chat.js";
 import "./kin-fridge.js";
+import "./kin-meals.js";
+import "./kin-tonight.js";
 import "./kin-chat-settings.js";
 import "./kin-chat-policy.js";
 import "./kin-search.js";

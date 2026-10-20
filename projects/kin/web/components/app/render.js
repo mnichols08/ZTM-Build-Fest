@@ -64,6 +64,8 @@ export class RenderController {
     const civilDate = this.ctx.navigation.currentCivilDate();
     const responsibilityContext = this.ctx.detail.responsibilityContext();
     this.app.catchUp.summary = this.app.state.summary;
+    // Meals replay from history on their own; the read coalesces.
+    void this.ctx.meals?.refresh();
     this.app.catchUp.lastLookedAt = this.app.catchUpCursor?.lastLookedAt;
     this.app.todayDate.textContent = formatCivilDate(civilDate);
     const selected = this.app.selection?.itemId ?? null;

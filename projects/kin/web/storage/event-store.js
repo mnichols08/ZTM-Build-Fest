@@ -1234,6 +1234,24 @@ export class EventStore {
     return this.engine.memberNames(events, asOf, civilDate, syncIdentity);
   }
 
+  /** Meals (#333), replayed from the current history: { recipes, dinners }
+   * (kin-meals.js decodeMeals), dinners around the projection date. */
+  async meals() {
+    if (!this.engine) throw new EventStoreError("Kin could not read meals.");
+    const { events, syncIdentity } = await this.getCatchUpState();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.meals(events, asOf, civilDate, syncIdentity);
+  }
+
+  /** What adding a recipe's ({ recipeId }) or a date's dinner's ({ date })
+   * ingredients to Shopping would do now (#333). */
+  async mealShoppingPlan(source) {
+    if (!this.engine) throw new EventStoreError("Kin could not plan the ingredients.");
+    const { events, syncIdentity } = await this.getCatchUpState();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.mealShoppingPlan(source, events, asOf, civilDate, syncIdentity);
+  }
+
   updateSyncServerState(status) {
     const transaction = this.database.transaction(
       [SYNC_STATE_STORE, SYNC_OUTBOX_STORE],

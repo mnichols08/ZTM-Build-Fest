@@ -113,6 +113,8 @@ export class ShellBuilder {
     this.app.needs = document.createElement("kin-today");
     this.app.shopping = document.createElement("kin-today");
     this.app.staples = document.createElement("kin-today");
+    this.app.meals = document.createElement("kin-meals");
+    this.app.tonight = document.createElement("kin-tonight");
     this.app.compose = document.createElement("kin-compose");
     this.app.handoffs = document.createElement("kin-handoff-list");
     this.app.talks = document.createElement("kin-talk-list");

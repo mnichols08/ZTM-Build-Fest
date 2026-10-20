@@ -17,6 +17,7 @@ import {
   routineKeyboardRegressions,
 } from "./routine-regression.mjs";
 import { shoppingRegressions } from "./shopping-regression.mjs";
+import { mealsRegressions } from "./meals-regression.mjs";
 import { planningDateRegressions } from "./planning-date-regression.mjs";
 import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
 import { fridgeRegressions } from "./fridge-regression.mjs";
@@ -1383,6 +1384,7 @@ try {
   console.log(await first.evaluate(`(${catchUpRegressions.toString()})()`));
   await visit(first, "lists/shopping");
   console.log(await first.evaluate(`(${shoppingRegressions.toString()})()`));
+  console.log(await first.evaluate(`(${mealsRegressions.toString()})()`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
   await visit(first, "today");

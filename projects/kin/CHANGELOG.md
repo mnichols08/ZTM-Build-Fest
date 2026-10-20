@@ -9,6 +9,15 @@ documentation only.
 
 ### Added
 
+- **Meals** (#333, [ADR 0012](docs/decisions/0012-meals.md)): Lists → Meals
+  plans the week's dinners, Monday to Sunday, from the household's own
+  recipes or "Something else", with who's cooking (anyone; nothing is
+  counted). Recipes are a name, ingredients one per line and notes; an
+  ingredient that exactly matches a Staple is linked to it. **Add ingredients
+  to Shopping** adds what's missing, re-adds linked Staples and skips what's
+  already listed, so adding twice never duplicates. Today shows Tonight's
+  dinner. Meals are household events (kinds 59–63); older devices pause sync
+  with "update Kin" rather than drop them.
 - A refresh keeps Kin unlocked in the same tab, including an accidental
   pull-down on a phone (#351, #354). Closing the tab, Lock, automatic lock and
   a lock from another tab still lock Kin, and the inactivity clock carries

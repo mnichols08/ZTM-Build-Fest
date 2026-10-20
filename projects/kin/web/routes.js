@@ -17,6 +17,7 @@ export const SEGMENTS = Object.freeze({
     Object.freeze({ id: "todo", label: "To do", classification: "need" }),
     Object.freeze({ id: "shopping", label: "Shopping", classification: "shopping" }),
     Object.freeze({ id: "staples", label: "Staples", classification: "staple" }),
+    Object.freeze({ id: "meals", label: "Meals" }),
   ]),
   routines: Object.freeze([
     Object.freeze({ id: "all", label: "Routines" }),
@@ -107,5 +108,5 @@ export function resolveRoute({ hash = "", pathname = "/" } = {}) {
 
 export function listSegmentForClassification(classification) {
   if (classification === "today") return "todo";
-  return SEGMENTS.lists.find((entry) => entry.classification === classification)?.id ?? "todo";
+  return SEGMENTS.lists.find((entry) => entry.classification && entry.classification === classification)?.id ?? "todo";
 }
