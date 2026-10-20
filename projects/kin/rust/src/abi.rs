@@ -346,6 +346,12 @@ pub extern "C" fn kin_shopping_sections(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::shopping_sections, None)
 }
 
+/// Routine rotations (KRRS v1, #429) of the instance's history, in the
+/// context of a record-less KINE request.
+#[no_mangle]
+pub extern "C" fn kin_routine_rotations(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::routine_rotations, None)
+}
 /// The sitter page (KSIT v1, #442) of the instance's history, in the
 /// context of a record-less KINE request.
 #[no_mangle]

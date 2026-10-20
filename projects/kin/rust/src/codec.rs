@@ -73,6 +73,8 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ChatTopicSet { .. } => crate::chat::CHAT_TOPIC_SET,
         EventKind::ShoppingSectionsSet { .. } => crate::store_sections::SHOPPING_SECTIONS_SET,
         EventKind::ItemSectionSet { .. } => crate::store_sections::ITEM_SECTION_SET,
+        EventKind::RoutineRotationSet { .. } => crate::rotations::ROUTINE_ROTATION_SET,
+        EventKind::RoutineTurnSet { .. } => crate::rotations::ROUTINE_TURN_SET,
         EventKind::SitterPageSet { .. } => crate::sitter::SITTER_PAGE_SET,
     }
 }
@@ -477,6 +479,10 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
         // Store sections (#411): store_sections.rs owns the payloads.
         kind @ (EventKind::ShoppingSectionsSet { .. } | EventKind::ItemSectionSet { .. }) => {
             payload = crate::store_sections::encode_payload(kind)?;
+        }
+        // Taking turns (#429): rotations.rs owns the payloads.
+        kind @ (EventKind::RoutineRotationSet { .. } | EventKind::RoutineTurnSet { .. }) => {
+            payload = crate::rotations::encode_payload(kind)?;
         }
         // The sitter page (#442): sitter.rs owns the payload.
         kind @ EventKind::SitterPageSet { .. } => {

@@ -441,6 +441,11 @@ pub struct HouseholdState {
     /// Not part of the KINS projection; hosts read them through
     /// `kin_shopping_sections`. Shared with the replay, not copied.
     pub store_sections: std::sync::Arc<crate::store_sections::StoreSectionsState>,
+    /// Routine rotations (rotations.rs, #429). Not part of the KINS
+    /// projection; hosts read them through `kin_routine_rotations`. The
+    /// current member also shows as the routine's responsibility. Shared
+    /// with the replay, not copied.
+    pub rotations: std::sync::Arc<crate::rotations::RotationsState>,
     /// The sitter page as last set (sitter.rs, #442). Not part of the KINS
     /// projection; hosts read it through `kin_sitter_page`. Shared with the
     /// replay, not copied.

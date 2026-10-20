@@ -128,6 +128,19 @@ pub fn shopping_sections(context: &[u8], history: &mut History) -> Result<Vec<u8
     ))
 }
 
+/// Routine rotations (`kin_routine_rotations`, #429): the record-less KINE
+/// context against the household history; publishes KRRS (rotations.rs).
+pub fn routine_rotations(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    Ok(crate::rotations::encode_rotations(
+        &state.rotations,
+        &state.routines,
+    ))
+}
+
 /// The sitter page (`kin_sitter_page`, #442): the record-less KINE context
 /// against the household history; publishes KSIT (sitter.rs).
 pub fn sitter_page(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {

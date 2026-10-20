@@ -201,6 +201,8 @@ export class SessionController {
     this.app.shoppingSections = null;
     this.app.sitterPage = null;
     this.app.sitterLanded = false;
+    this.app.rotations = null;
+    if (this.ctx.rotations) this.ctx.rotations.raw = null;
     this.app.pendingCapture = null;
     this.app.pendingShares?.clear();
     // pendingScheduleChange holds only random ids and a cadence. It survives

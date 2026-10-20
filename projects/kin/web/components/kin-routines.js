@@ -3,6 +3,7 @@ import { describeNextOccurrence } from "../recurrence.js";
 import "./kin-playbook-editor.js";
 import "./kin-reminder.js";
 import "./kin-responsibility.js";
+import "./kin-rotation.js";
 import "./kin-routine-schedule.js";
 import { captureFocus, restoreFocus } from "./shared/focus.js";
 
@@ -27,6 +28,9 @@ class KinRoutines extends HTMLElement {
     this.editorOpen = false;
     this.instanceId = `routines-${++KinRoutines.instances}`;
     this.reminderControls = new Map();
+    // Taking turns (#433): one element per routine keeps an open editor.
+    this.rotationControls = new Map();
+    this.rotationMap = new Map();
     this.civilDate = null;
     // Which row's schedule editor is open, and its unsaved choice, survive
     // the re-render a background refresh causes.
@@ -192,6 +196,13 @@ class KinRoutines extends HTMLElement {
     this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? []; this.memberNames = value?.names ?? null;
     this.render();
   }
+  /** routineId -> { memberIds, current, next } (app/rotations.js). */
+  set rotations(value) {
+    const map = value instanceof Map ? value : new Map();
+    if (map === this.rotationMap) return;
+    this.rotationMap = map;
+    this.render();
+  }
   set playbooks(value) {
     const records = value ?? [];
     if (records === this.playbookRecords) return;
@@ -216,6 +227,7 @@ class KinRoutines extends HTMLElement {
       control.disabled = this.isDisabled || control.dataset.domainDisabled === "true";
     }
     for (const control of this.reminderControls.values()) control.disabled = this.isDisabled;
+    for (const control of this.rotationControls.values()) control.disabled = this.isDisabled;
     // These keep their own state (a schedule's Change button also depends on
     // whether the choice differs), so they are told rather than overwritten.
     if (this.playbookEditor) this.playbookEditor.disabled = this.isDisabled;
@@ -314,6 +326,9 @@ class KinRoutines extends HTMLElement {
   render() {
     if (!this.list) return;
     const focus = this.captureFocus();
+    // Taking turns controls are reused, so focus goes back to the same one.
+    const turnFocus = this.list.contains(document.activeElement) ? document.activeElement.closest("kin-rotation") : null;
+    const turnKey = turnFocus ? document.activeElement.dataset.key : null;
     this.list.replaceChildren();
     this.hint.textContent = this.mode === "normal"
       ? "Repeating tasks, without streaks or pressure. Complete the current one when it's done; skipping one is fine. Add one here or with Repeat in Quick add."
@@ -342,9 +357,19 @@ class KinRoutines extends HTMLElement {
           ? record.cadence === "weekdays" ? "Nothing due at the weekend" : "Not available for the current date"
           : record.occurrenceStatus === "completed" ? `Done ${period.toLowerCase()}` : `Open ${period.toLowerCase()}`, next].filter(Boolean).join(" · ");
       content.append(text, status);
-      const responsibility = document.createElement("kin-responsibility");
-      responsibility.record = { targetKind: "routine", targetId: record.routineId, text: record.text, ownerId: this.responsibilities?.find((entry) => entry.targetKind === "routine" && entry.targetId === record.routineId)?.memberId ?? null, memberId: this.memberId, memberIds: this.memberIds, names: this.memberNames };
-      content.append(responsibility);
+      // While a routine rotates its owner is whoever's turn it is (#437).
+      const rotation = this.rotationMap.get(record.routineId) ?? null;
+      if (!rotation) {
+        const responsibility = document.createElement("kin-responsibility");
+        responsibility.record = { targetKind: "routine", targetId: record.routineId, text: record.text, ownerId: this.responsibilities?.find((entry) => entry.targetKind === "routine" && entry.targetId === record.routineId)?.memberId ?? null, memberId: this.memberId, memberIds: this.memberIds, names: this.memberNames };
+        content.append(responsibility);
+      }
+      const turns = this.rotationControls.get(record.routineId) ?? document.createElement("kin-rotation");
+      turns.className = "routine-rotation";
+      this.rotationControls.set(record.routineId, turns);
+      content.append(turns);
+      turns.disabled = this.isDisabled;
+      turns.record = { routineId: record.routineId, text: record.text, rotation, memberId: this.memberId, memberIds: this.memberIds, names: this.memberNames };
       const reminderId = `routine:${record.routineId}`;
       const reminder = this.reminderControls.get(reminderId) ?? document.createElement("kin-reminder");
       reminder.target = { id: reminderId, title: record.text };
@@ -391,7 +416,12 @@ class KinRoutines extends HTMLElement {
       this.list.append(row);
     }
     for (const id of [...this.reminderControls.keys()]) if (!keep.has(id)) this.reminderControls.delete(id);
+    for (const id of [...this.rotationControls.keys()]) if (!visible.some((record) => record.routineId === id)) this.rotationControls.delete(id);
     this.restoreFocus(focus);
+    if (turnFocus?.isConnected) {
+      const controls = [...turnFocus.querySelectorAll("[data-key]")].filter((node) => !node.disabled);
+      (controls.find((node) => node.dataset.key === turnKey) ?? controls[0])?.focus({ preventScroll: true });
+    }
     this.renderPlaybooks();
   }
   // One row's schedule editor (kin-routine-schedule.js). Which editor is open

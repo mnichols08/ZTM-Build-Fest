@@ -239,6 +239,49 @@ and 4 (Produce, then archived), with the list "Dairy" (section 2), "Produce"
 section 1, `07 00` "Produce", item count 2, item 1 + section 2, item 2 +
 section 1. An empty history is `"KSHS"`, `01 00 00 00` and two zero counts.
 
+## Taking turns on routines (#429)
+
+These vectors are written out by hand in `rust/src/rotation_tests.rs`; the
+routine is `numbered_id(20)` ("Bins out", daily from 2026-10-03) and the
+members Alex, Sam and Jo are 16 bytes of `01`, `02` and `03`. JavaScript
+mirrors 051, 052 and 055 in `web/wasm/kin-rotations.test.mjs` and
+`abi-ownership.test.mjs`.
+
+**051 — Rotation payload.** Alex, Sam, Jo with Sam's turn is the routine ID,
+`03 01 00 00`, then the three member IDs (68 bytes); ending is the routine ID
+and `00 00 00 00`. Twelve members with index 11 decode. One member, thirteen,
+a repeat, a zero member, index 2 of two, index 1 with no list, a zero
+routine, a non-zero reserved byte, a trailing or missing byte, or a count
+that disagrees with the members fail with code 2.
+
+**052 — Turn payload.** The routine ID then Sam's (32 bytes). 31 or 33
+bytes, a zero member or a zero routine fail with code 2.
+
+**053 — Rotation rules.** Ending with no rotation, an unknown routine, or the
+same rotation again fails (code 4); a repeat, one member or an index past the
+list fails with code 2. Alex, Sam, Jo at index 1 makes Sam current, Jo next
+and Sam the owner; reordering or moving the index is a change. While it
+rotates, an owner change fails (code 4). Ending it leaves the last current
+member (Alex) the owner, which can then change as usual. An archived routine
+takes neither a rotation, an end nor a turn.
+
+**054 — The turn passes when it's done.** Alex, Sam, Jo from Alex: completing
+the 3rd makes Sam current; reopening the 3rd makes Alex current again.
+Completing the 3rd, 4th and 5th comes back to Alex. Reopening the 4th (not
+the one that passed it) changes nothing; reopening the 5th makes Jo current;
+completing and reopening the 4th passes it to Alex and back. A day nobody
+completes keeps Jo's turn. After a completion passes it to Alex, a turn set to
+Jo and then reopening that occurrence keeps Jo. Two devices completing the
+same occurrence move the turn once, in either arrival order. Of a turn to Jo
+(device `33`), a completion (device `11`) and a new list Alex, Sam (device
+`22`) at the same logical time, replay order gives Alex current with the turn
+to Jo ignored; an owner change from a device that hadn't seen the rotation is
+ignored.
+
+**055 — KRRS.** Bins out rotating Sam, Alex, Jo at index 2, routine 22
+rotating then archived, routine 23 rotating then ended, routine 21 never
+rotating: `"KRRS"`, `01 00`, `00 00`, count 1, routine 20, `03 02 00 00`, Sam,
+Alex, Jo. An empty history is `"KRRS"`, `01 00 00 00` and a zero count.
 ## The sitter page (#442)
 
 These vectors are written out by hand in `rust/src/sitter_tests.rs`; record

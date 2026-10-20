@@ -16,6 +16,7 @@ pub mod qr;
 pub mod recurrence;
 pub mod replay;
 pub mod request;
+pub mod rotations;
 pub mod sections;
 pub mod simple;
 pub mod sitter;
@@ -77,6 +78,8 @@ mod chat_tests;
 mod board_tests;
 #[cfg(test)]
 mod meals_tests;
+#[cfg(test)]
+mod rotation_tests;
 #[cfg(test)]
 mod shopping_section_tests;
 #[cfg(test)]

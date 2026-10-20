@@ -275,6 +275,8 @@ defineProps(KinToday, {
   responsibilityContext: { field: "ownerContext", coerce: (value) => value ?? NO_CONTEXT },
   // Item picture emoji (#347): a Map itemId -> emoji, or null.
   emojis: { field: "emojiMap", coerce: (value) => (value instanceof Map ? value : null) },
+  // Taking turns (#437): a Map routineId -> { memberIds, current, next }.
+  turns: { field: "turnMap", coerce: (value) => (value instanceof Map ? value : null) },
 });
 
 customElements.define("kin-today", KinToday);

@@ -1273,6 +1273,15 @@ export class EventStore {
     return this.engine.shoppingSections(events, asOf, civilDate, syncIdentity);
   }
 
+  /** Taking turns (#429, ADR 0016): [{ routineId, memberIds, current, next }]
+   * for each rotating routine; kin-rotations.js turnAmong() passes over
+   * members who aren't active. */
+  async routineRotations() {
+    if (!this.engine) throw new EventStoreError("Kin could not read whose turn it is.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.routineRotations(events, asOf, civilDate, syncIdentity);
+  }
   /** The sitter page (#442, ADR 0017): { intro, entries: [{ kind, id }] },
    * the entries whose record exists and isn't archived, in the page's order.
    * Changing it is Adult-only; the command append path checks that

@@ -232,6 +232,10 @@ pub enum HouseholdCommand {
     /// meals event; `StoreSectionsState::check_command` decides whether it
     /// applies.
     StoreSection(EventKind),
+    /// A routine rotation or turn (#429, kinds 68–69), carried whole like a
+    /// meals event; `RotationsState::check_command` decides whether it
+    /// applies.
+    Rotation(EventKind),
     /// The sitter page (#442, kind 70), carried whole like a meals event;
     /// `SitterPageState::check_command` decides whether it applies. Only an
     /// Adult may send it; the host checks that (sitter.rs).
@@ -535,6 +539,12 @@ pub fn create_event(
             }
             kind.clone()
         }
+        Rotation(kind) => {
+            if !crate::rotations::is_rotation_code(crate::codec::kind_code(kind)) {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
         SitterPage(kind) => {
             if !crate::sitter::is_sitter_code(crate::codec::kind_code(kind)) {
                 return Err(KinError::InvalidEvent);
@@ -795,6 +805,9 @@ pub fn execute_with(
     if let HouseholdCommand::StoreSection(kind) = command {
         current.store_sections.check_command(kind, &current.items)?;
     }
+    if let HouseholdCommand::Rotation(kind) = command {
+        current.rotations.check_command(kind, &current.routines)?;
+    }
     if let HouseholdCommand::SitterPage(kind) = command {
         current
             .sitter_page
@@ -819,7 +832,11 @@ pub fn execute_with(
                 .iter()
                 .any(|routine| routine.routine_id.0 == *target_id && !routine.archived),
         };
+        // A rotating routine's owner is whoever's turn it is (#429).
+        let rotating = *target_kind == ResponsibilityTargetKind::Routine
+            && current.rotations.is_rotating(&RoutineId(*target_id));
         if !active
+            || rotating
             || current
                 .responsibilities
                 .iter()
@@ -1404,6 +1421,17 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         let event_kind = crate::store_sections::decode_payload(kind, &bytes[128..])?;
         return Ok((
             HouseholdCommand::StoreSection(event_kind),
+            command_context(bytes)?,
+        ));
+    }
+    // Routine rotations (#429): likewise.
+    if crate::rotations::is_rotation_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::rotations::decode_payload(kind, &bytes[128..])?;
+        return Ok((
+            HouseholdCommand::Rotation(event_kind),
             command_context(bytes)?,
         ));
     }

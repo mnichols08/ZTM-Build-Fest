@@ -33,6 +33,7 @@ import { SimpleController } from "./simple.js";
 import { ShareController } from "./share.js";
 import { WeekController } from "./week.js";
 import { SitterController } from "./sitter.js";
+import { RotationsController } from "./rotations.js";
 import { ImportController } from "./import.js";
 import { SectionsController } from "./sections.js";
 import { AppendCommands } from "./commands/append.js";
@@ -79,6 +80,7 @@ export function createAppContext(app) {
   ctx.share = new ShareController(ctx);
   ctx.week = new WeekController(ctx);
   ctx.sitter = new SitterController(ctx);
+  ctx.rotations = new RotationsController(ctx);
   ctx.importList = new ImportController(ctx);
   ctx.sections = new SectionsController(ctx);
   ctx.navigation = new NavigationController(ctx);
@@ -211,6 +213,14 @@ export function initializeAppState(app) {
     app.onSetItemSection = (event) => void app.ctx.sections.setItemSection(event.detail.itemId, event.detail.sectionId);
     app.onSaveShoppingSections = async (event) => {
       const outcome = await app.ctx.sections.saveSections(event.detail.sections ?? []);
+      event.detail.done?.(outcome);
+    };
+    app.onSetRoutineRotation = async (event) => {
+      const outcome = await app.ctx.rotations.setRotation(event.detail.routineId, event.detail.memberIds ?? []);
+      event.detail.done?.(outcome);
+    };
+    app.onSetRoutineTurn = async (event) => {
+      const outcome = await app.ctx.rotations.setTurn(event.detail.routineId, event.detail.memberId);
       event.detail.done?.(outcome);
     };
     app.onSaveSitterPage = async (event) => {

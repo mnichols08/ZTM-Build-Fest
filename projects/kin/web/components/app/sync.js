@@ -245,8 +245,11 @@ export class SyncController {
     if (this.app.reconcilingResponsibility || this.app.busy || !this.app.store || !this.app.engine ||
         !this.app.activeMemberIds || !this.app.state?.responsibilities?.length) return;
     const active = new Set(this.app.activeMemberIds);
+    const rotating = this.app.rotations ?? new Map();
     const stale = this.app.state.responsibilities.filter((entry) => {
       if (!entry.memberId || active.has(entry.memberId)) return false;
+      // A rotating routine's turn moves on instead (app/rotations.js, #437).
+      if (entry.targetKind === "routine" && rotating.has(entry.targetId)) return false;
       return entry.targetKind === "item"
         ? this.app.state.items?.some((item) => item.itemId === entry.targetId && item.status !== "archived")
         : this.app.state.routines?.some((routine) => routine.routineId === entry.targetId && !routine.archived);

@@ -365,6 +365,40 @@ not areas: an item keeps its area. Hosts read sections through
 `kin_shopping_sections`, which is not part of the KINS projection. Older
 devices pause sync with "unsupported" and keep their data until they update.
 
+## Taking turns on routines
+
+Kinds 68 and 69 (#429, [ADR 0016](decisions/0016-routine-rotations.md)) are
+schema 1 events in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 68 | `ROUTINE_ROTATION_SET` | A routine's rotation: an ordered list of 2–12 distinct members and the index whose turn it is, replacing the previous one; an empty list ends it |
+| 69 | `ROUTINE_TURN_SET` | It's this listed member's turn on the routine now (Skip to next, Swap with…) |
+
+Replay (rust/src/rotations.rs, applied from replay/routines.rs) fails only
+for a routine the history lacks. A rotation or turn for an archived routine,
+and a turn naming a member the rotation no longer lists (or a routine with no
+rotation), are recorded with no effect. When `ROUTINE_OCCURRENCE_COMPLETED`
+newly completes an occurrence of a rotating routine, the turn moves to the
+next member in the list and that occurrence key is remembered; a duplicate
+completion of an occurrence already complete (two devices offline) changes
+nothing, so the turn moves once. `ROUTINE_OCCURRENCE_REOPENED` of the
+remembered occurrence (Undo) moves the turn back one and forgets it;
+reopening any other occurrence changes nothing. Setting a rotation or a turn
+forgets the key too.
+
+While a rotation is set, replay keeps the routine's responsibility equal to
+the current member, so KINS, This week and "my things today" show the
+current member as the owner. Ending the rotation writes nothing else: the
+last current member stays the owner as an ordinary responsibility. A
+`RESPONSIBILITY_CHANGED` for a rotating routine is recorded with no effect
+(commands refuse it). Rust counts every listed member as taking turns:
+membership (removed or expired members) is not in the history, so the host
+passes over inactive members when it shows the turn, shows no current turn
+with fewer than two active, and moves the turn on with a `ROUTINE_TURN_SET`
+when the current member isn't active. No count of turns per member exists.
+Hosts read rotations through `kin_routine_rotations`, which is not part of
+the KINS projection. Older devices pause sync with "unsupported" and keep
 ## The sitter page
 
 Kind 70 (#442, [ADR 0017](decisions/0017-sitter-page.md)) is a schema 1 event

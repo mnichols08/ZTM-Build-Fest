@@ -1,4 +1,5 @@
-//! Replay of routines (creation, occurrence completion, archive) and Playbooks.
+//! Replay of routines (creation, occurrence completion, archive, rotations)
+//! and Playbooks.
 //! Moved verbatim from the former `state::rebuild_with_context` match;
 //! local state became `r.<field>` (replay/mod.rs).
 use super::*;
@@ -51,10 +52,47 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             if routine.archived {
                 return Err(KinError::InvalidEvent);
             }
-            if matches!(event.kind, EventKind::RoutineOccurrenceCompleted { .. }) {
-                r.completed_periods.insert((*routine_id, *key));
+            // Only a real change moves a rotation's turn (#429): a duplicate
+            // completion, or reopening an open occurrence, changes nothing.
+            let owner = if matches!(event.kind, EventKind::RoutineOccurrenceCompleted { .. }) {
+                r.completed_periods
+                    .insert((*routine_id, *key))
+                    .then(|| {
+                        crate::rotations::occurrence_completed(&mut r.rotations, *routine_id, *key)
+                    })
+                    .flatten()
             } else {
-                r.completed_periods.remove(&(*routine_id, *key));
+                r.completed_periods
+                    .remove(&(*routine_id, *key))
+                    .then(|| {
+                        crate::rotations::occurrence_reopened(&mut r.rotations, *routine_id, *key)
+                    })
+                    .flatten()
+            };
+            if let Some(member) = owner {
+                set_routine_owner(r, *routine_id, member);
+            }
+        }
+        EventKind::RoutineRotationSet { routine_id, .. }
+        | EventKind::RoutineTurnSet { routine_id, .. } => {
+            if !valid_timestamp(event.timestamp) {
+                return Err(KinError::MalformedProtocol);
+            }
+            if event.actor_id.0 == [0; 16] || event.device_id.0 == [0; 16] {
+                return Err(KinError::InvalidEvent);
+            }
+            let position = r
+                .routine_positions
+                .get(routine_id)
+                .copied()
+                .ok_or(KinError::InvalidEvent)?;
+            if r.routines[position].archived {
+                // A turn racing with archive changes nothing: the routine is
+                // gone, and its rotation with it (Replay::apply records it).
+                return Ok(());
+            }
+            if let Some(member) = crate::rotations::apply(&mut r.rotations, &event.kind)? {
+                set_routine_owner(r, *routine_id, member);
             }
         }
         EventKind::RoutineArchived { routine_id } => {
@@ -129,4 +167,21 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
         _ => return Err(KinError::Internal),
     }
     Ok(())
+}
+
+/// While a routine rotates, its responsibility follows the turn (#429,
+/// rotations.rs): the entry names the current member, as a
+/// `RESPONSIBILITY_CHANGED` would. Ending the rotation leaves it as it is.
+fn set_routine_owner(r: &mut Replay, routine_id: RoutineId, member: ActorId) {
+    if let Some(entry) = r.responsibilities.iter_mut().find(|entry| {
+        entry.target_kind == ResponsibilityTargetKind::Routine && entry.target_id == routine_id.0
+    }) {
+        entry.member_id = Some(member);
+    } else {
+        r.responsibilities.push(ResponsibilityState {
+            target_kind: ResponsibilityTargetKind::Routine,
+            target_id: routine_id.0,
+            member_id: Some(member),
+        });
+    }
 }

@@ -113,6 +113,13 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 }
                 return Err(KinError::InvalidEvent);
             }
+            if *target_kind == ResponsibilityTargetKind::Routine
+                && r.rotations.is_rotating(&RoutineId(*target_id))
+            {
+                // A rotating routine's owner is whoever's turn it is (#429);
+                // a racing owner change is recorded with no effect.
+                return Ok(());
+            }
             if let Some(existing) = r
                 .responsibilities
                 .iter_mut()
