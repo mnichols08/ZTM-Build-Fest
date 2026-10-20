@@ -97,7 +97,10 @@ export async function chatLayoutRegressions(client, { until }) {
     })()`);
     assert.deepEqual(tabs, { count: 2, rows: 1, sideways: 0, labelled: true }, `${label}: Updates shows two tabs on one row at 320px`);
     if (label === "reduced motion")
-      assert.equal(await page(`getComputedStyle(document.querySelector("kin-app kin-chat .chat-menu-wrap")).transitionDuration`), "0s", "reduced motion: no fade on message tools");
+    {
+      const durations = await page(`[...document.querySelectorAll("kin-app kin-chat .chat-menu-wrap")].slice(-3).map((node) => getComputedStyle(node).transitionDuration).join("|")`);
+      assert.ok(durations.split(/[|,]/).every((value) => Number.parseFloat(value) === 0), `reduced motion: no fade on message tools (${durations})`);
+    }
     await frames();
   }
   await page(`(() => { document.documentElement.style.fontSize = ""; return true; })()`);
