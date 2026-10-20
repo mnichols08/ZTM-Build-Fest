@@ -117,7 +117,12 @@ fn event(event_number: u8, logical_time: u64, kind: EventKind) -> EventEnvelope 
         | EventKind::BoardMagnetMoved { .. }
         | EventKind::BoardMagnetHidden { .. }
         | EventKind::BoardCleared { .. }
-        | EventKind::BoardClearUndone { .. } => {
+        | EventKind::BoardClearUndone { .. }
+        | EventKind::RecipeSaved { .. }
+        | EventKind::RecipeArchived { .. }
+        | EventKind::DinnerSet { .. }
+        | EventKind::DinnerCleared { .. }
+        | EventKind::DinnerCookSet { .. } => {
             panic!("Area tests use independent wire fixtures")
         }
     }

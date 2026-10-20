@@ -68,6 +68,15 @@ logical time and event id, so "last writer wins" is deterministic everywhere.
   projection keeps dinners from 35 days before the projection date to 370 days
   after it; older dinners stay in the history but leave the view.
 
+### Replay and commands
+Like the fridge (ADR 0011), replay never fails on a decoded meals event: a
+dinner naming a recipe the history lacks and an archive of an unknown recipe
+change nothing, and an archived recipe stays archived. Caps and validity are
+command rules (`MealsState::check_command`), so two devices that each saved
+the 200th recipe offline still merge. A whole recipe is at most 4,352 bytes
+after its ID, so it always fits one sync envelope (6,144 bytes of
+ciphertext).
+
 ### "Already on Shopping"
 - **Rust decides**, by normalized text: an item is on Shopping when it is
   classified Shopping, not completed and not archived, and its text equals the

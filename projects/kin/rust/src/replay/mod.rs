@@ -107,6 +107,8 @@ pub struct Replay {
     pub(super) chat: Arc<crate::chat::ChatState>,
     /// The fridge (board.rs), shared with finalized states until it changes.
     pub(super) board: Arc<crate::board::BoardState>,
+    /// Meals (meals.rs), shared with finalized states until it changes.
+    pub(super) meals: Arc<crate::meals::MealsState>,
     /// Canonical bytes per applied event: an exact duplicate is skipped, a conflicting one fails. Shared, so cloning a Replay does not copy them.
     pub(super) event_bytes: BTreeMap<EventId, Arc<[u8]>>,
     /// Logical time of the last applied event; replay order never goes back.
@@ -296,6 +298,11 @@ impl Replay {
             | K::BoardMagnetHidden { .. }
             | K::BoardCleared { .. }
             | K::BoardClearUndone { .. } => crate::board::apply(&mut self.board, event)?,
+            K::RecipeSaved { .. }
+            | K::RecipeArchived { .. }
+            | K::DinnerSet { .. }
+            | K::DinnerCleared { .. }
+            | K::DinnerCookSet { .. } => crate::meals::apply(&mut self.meals, event)?,
         }
         self.last_logical_time = event.logical_time;
         self.event_bytes
@@ -394,6 +401,7 @@ impl Replay {
                 .collect(),
             chat: Arc::clone(&self.chat),
             board: Arc::clone(&self.board),
+            meals: Arc::clone(&self.meals),
         })
     }
 }

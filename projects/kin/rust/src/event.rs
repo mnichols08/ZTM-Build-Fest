@@ -36,6 +36,8 @@ id_type!(AttachmentId);
 id_type!(ChatMessageId);
 // A fridge stroke, magnet or clear (#317, board.rs).
 id_type!(BoardId);
+// A saved recipe (#333, meals.rs).
+id_type!(RecipeId);
 
 /// What a chat message's content blob holds (#109).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -393,6 +395,31 @@ pub enum EventKind {
     },
     BoardCleared {
         clear_id: BoardId,
+    },
+    /// Meals (#333, meals.rs): a recipe saved whole.
+    RecipeSaved {
+        recipe_id: RecipeId,
+        name: String,
+        ingredients: Vec<crate::meals::Ingredient>,
+        notes: String,
+    },
+    RecipeArchived {
+        recipe_id: RecipeId,
+    },
+    /// The dinner for one civil date: a recipe (with its name when planned)
+    /// or a one-off name.
+    DinnerSet {
+        date: CivilDate,
+        recipe_id: Option<RecipeId>,
+        name: String,
+    },
+    DinnerCleared {
+        date: CivilDate,
+    },
+    /// Who's cooking on a date; `None` is "No one yet".
+    DinnerCookSet {
+        date: CivilDate,
+        member_id: Option<ActorId>,
     },
     BoardClearUndone {
         clear_id: BoardId,

@@ -29,6 +29,8 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_project: status,
       kin_device_names: status,
       kin_member_names: status,
+      kin_meals: status,
+      kin_meal_shopping_plan: status,
       kin_event_metadata: status,
       kin_event_metadata_batch: status,
       kin_audio_peaks: status,

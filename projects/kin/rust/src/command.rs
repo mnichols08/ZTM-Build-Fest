@@ -213,6 +213,9 @@ pub enum HouseholdCommand {
     /// actions 52–58 carry the event's exact payload; the board's rules
     /// (`BoardState::check_command`) decide whether it applies.
     Board(EventKind),
+    /// A meals event (#333, kinds 59–63), carried whole like a board event;
+    /// `MealsState::check_command` decides whether it applies.
+    Meal(EventKind),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -490,6 +493,12 @@ pub fn create_event(
             }
             kind.clone()
         }
+        Meal(kind) => {
+            if !crate::meals::is_meals_code(crate::codec::kind_code(kind)) {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -733,6 +742,9 @@ pub fn execute_with(
     let current = history.current()?;
     if let HouseholdCommand::Board(kind) = command {
         current.board.check_command(kind)?;
+    }
+    if let HouseholdCommand::Meal(kind) = command {
+        current.meals.check_command(kind, &current.items)?;
     }
     if let HouseholdCommand::ChangeResponsibility {
         target_kind,
@@ -1283,6 +1295,14 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         }
         let event_kind = crate::board::decode_payload(kind, &bytes[128..])?;
         return Ok((HouseholdCommand::Board(event_kind), command_context(bytes)?));
+    }
+    // Meals (#333): likewise, the text is the event's exact payload.
+    if crate::meals::is_meals_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::meals::decode_payload(kind, &bytes[128..])?;
+        return Ok((HouseholdCommand::Meal(event_kind), command_context(bytes)?));
     }
     let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48..=50) {
         String::new()

@@ -564,6 +564,13 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
             }
             crate::board::decode_payload(code, payload)?
         }
+        // Meals (#333): meals.rs decodes its payloads strictly.
+        (1, code) if crate::meals::is_meals_code(code) => {
+            if !valid_timestamp(read_i64(record, 68)?) {
+                return Err(KinError::MalformedProtocol);
+            }
+            crate::meals::decode_payload(code, payload)?
+        }
         // Chat (#109). IDs, blob references and keys are never zero.
         (1, 44) => {
             if payload.len() < 84 || !valid_timestamp(read_i64(record, 68)?) {

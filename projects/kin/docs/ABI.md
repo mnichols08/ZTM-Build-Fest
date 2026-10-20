@@ -14,6 +14,8 @@ kin_history_truncate(count) -> status   keep the first `count` records
 kin_project(ptr, len)                replay the history: KINE context -> KINS
 kin_device_names(ptr, len)           replay the history: KINE context -> KDEV (v1.1)
 kin_member_names(ptr, len)           replay the history: KINE context -> KMNM (v1.3)
+kin_meals(ptr, len)                  replay the history: KINE context -> KMLS (#333)
+kin_meal_shopping_plan(ptr, len)     KMPQ + KINE context -> KMSP (#333)
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
@@ -242,6 +244,11 @@ N  payload
 | 49 | CHAT_POLL_VOTE (v1.1, chat log) | message ID, choice u16 (bit n is option n; 0 clears), 2 reserved: 20 bytes |
 | 50 | CHAT_POLL_CLOSED (v1.1, chat log) | message ID, 4 reserved: 20 bytes |
 | 51 | MEMBER_NAMED (v1.3) | name length u32 (zero clears), the header actor's own preferred name (1–32 characters) |
+| 59 | RECIPE_SAVED (#333) | recipe ID [16], name (u16 length + UTF-8), ingredient count u8, reserved u8, each ingredient: staple flag u8 (0 or 1) + 3 reserved, staple item ID [16] when flagged, text (u16 + UTF-8); notes (u16 + UTF-8). At most 4,352 bytes after the ID |
+| 60 | RECIPE_ARCHIVED (#333) | recipe ID [16] |
+| 61 | DINNER_SET (#333) | civil date u32 (YYYYMMDD), recipe flag u8 (0 or 1) + 3 reserved, recipe ID [16] when flagged, name (u16 + UTF-8) |
+| 62 | DINNER_CLEARED (#333) | civil date u32 |
+| 63 | DINNER_COOK_SET (#333) | civil date u32, member flag u8 (0 or 1) + 3 reserved, member ID [16] when flagged (absent: "No one yet") |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -488,6 +495,35 @@ tuned for printed codes under heavy blur.
   with a zero entity ID and no option, date or expiry; `kin_board_execute`
   takes a u32 command length, the KCMD and the context, and only the board
   log accepts them.
+- **Meals** (#333, [ADR 0012](decisions/0012-meals.md), `meals.rs`): kinds
+  59–63 above are decoded strictly — text already canonical (whitespace runs
+  collapsed and trimmed; notes keep their lines), flags 0 or 1 with zero
+  reserved bytes, IDs non-zero, nothing left over — so they re-encode to the
+  same bytes. Once decoded, a meals event never fails replay: a dinner naming
+  a recipe the history lacks and an archive of an unknown recipe change
+  nothing, an archived recipe stays archived, and caps are command rules.
+  KCMD actions 59–63 carry the exact payload as their text, with a zero
+  entity ID and no option, date or expiry, through `kin_execute`; Rust checks
+  them against the current meals and items (`MealsState::check_command`).
+- **KMLS v1** (meals, `kin_meals`): `"KMLS"`, version 1, reserved u16, recipe
+  count u32, dinner count u32; then each active recipe in the order first
+  saved: ID [16], name (u16 + UTF-8), ingredient count u8 + 3 reserved, each
+  ingredient: staple status u8 (0 none, 1 active staple, 2 archived or
+  missing) + 3 reserved, staple ID [16] (zero when none), text (u16 + UTF-8);
+  notes (u16 + UTF-8); then each dinner from 35 days before the context's
+  civil date to 370 after, ascending: date u32, flags u8 (bit 0 recipe, bit 1
+  cook) + 3 reserved, recipe ID [16], cook member ID [16] (zero when absent),
+  name as shown (an active recipe's current name, else the snapshot).
+- **KMPQ v1 / KMSP v1** (the Shopping plan, `kin_meal_shopping_plan`): the
+  32-byte query `"KMPQ"`, version 1, reserved u16, source u8 (1 recipe, 2 a
+  date's dinner) + 3 reserved, recipe ID [16] (zero for a date), date u32
+  (zero for a recipe), then a record-less KINE context. The result `"KMSP"`,
+  version 1, reserved u16, line count u32, then each line: outcome u8 (1 add,
+  2 re-add staple, 3 already on Shopping) + 3 reserved, staple ID [16] (zero
+  unless re-added), text (u16 + UTF-8). Lines with the same text (collapsed,
+  lowercased) count once; "already on Shopping" compares against active
+  Shopping items the same way. A one-off dinner or an unknown or archived
+  recipe fails with code 4.
 - **KMNM v1** (preferred member names, `kin_member_names`, #224): `"KMNM"`,
   version 1, reserved u16, member count u32, then per member in member-ID
   order: member ID (16 bytes, after identity bindings), name length u16
