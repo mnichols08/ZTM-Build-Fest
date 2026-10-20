@@ -40,10 +40,8 @@ export async function importRegressions() {
   app.main.append(opener);
   check(app.ctx.importList.open({ opener }), "Import a list… opens the dialog");
   const csv = `Title,List,Due Date,Completed\n"Bread, sourdough ${tag}",Groceries,,\nFix tap ${tag},Home,2026-11-02,\nOat milk ${tag},Groceries,,\n`;
-  const files = new DataTransfer();
-  files.items.add(new File([csv], "export.csv", { type: "text/csv" }));
-  app.importer.file.files = files.files;
-  app.importer.file.dispatchEvent(new Event("change"));
+  check(app.querySelectorAll('input[type="file"]').length === 1, "the import dialog keeps no file input of its own");
+  await app.importer.readFile(new File([csv], "export.csv", { type: "text/csv" }));
   await until(() => !app.importer.review.hidden, "choosing a CSV shows the preview");
   check(!app.importer.mapping.hidden && app.importer.selects.text.value === "0" && app.importer.selects.date.value === "2", "the columns are guessed");
   check(rows()[0].textContent.includes("Shopping") && rows()[1].textContent.includes("To do") && rows()[1].querySelector(".import-row-meta").textContent.includes("2026"), "a groceries list goes to Shopping, dates are read");

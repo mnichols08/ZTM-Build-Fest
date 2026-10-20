@@ -36,14 +36,9 @@ class KinImport extends HTMLElement {
     hint.id = "import-text-hint";
     hint.className = "quick-add-hint";
     hint.textContent = "Bullets, numbers and checkboxes are removed; ticked boxes come in as done.";
-    const fileLabel = document.createElement("label");
-    fileLabel.htmlFor = "import-file";
-    fileLabel.textContent = "Or choose a CSV or text file";
-    this.file = document.createElement("input");
-    this.file.id = "import-file";
-    this.file.type = "file";
-    this.file.accept = ".csv,.txt,text/csv,text/plain";
-    this.file.addEventListener("change", () => void this.readFile());
+    // The app keeps one file input (attachments); this one exists only
+    // while the picker is open, as Chat's does.
+    this.fileButton = this.button("Or choose a CSV or text file…", "import-file-button", () => this.chooseFile());
     const listLabel = document.createElement("label");
     listLabel.htmlFor = "import-list";
     listLabel.textContent = "Add to";
@@ -51,7 +46,7 @@ class KinImport extends HTMLElement {
     this.list.id = "import-list";
     for (const [value, label] of LISTS) this.list.append(new Option(label, value));
     this.previewButton = this.button("Preview", "primary-action", () => this.preview());
-    this.source.append(pasteLabel, this.text, hint, fileLabel, this.file, listLabel, this.list, this.previewButton);
+    this.source.append(pasteLabel, this.text, hint, this.fileButton, listLabel, this.list, this.previewButton);
 
     // Step 2: mapping (CSV) and preview.
     this.review = document.createElement("div");
@@ -118,7 +113,6 @@ class KinImport extends HTMLElement {
     this.existing = new Set(existing.map((value) => value.toLocaleLowerCase()));
     this.csv = null;
     this.text.value = text;
-    this.file.value = "";
     this.list.value = classification === "shopping" ? "shopping" : "need";
     this.error.textContent = "";
     this.dialog.showModal();
@@ -143,8 +137,19 @@ class KinImport extends HTMLElement {
     this.text.focus();
   }
 
-  async readFile() {
-    const file = this.file.files?.[0];
+  chooseFile() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv,.txt,text/csv,text/plain";
+    input.hidden = true;
+    const done = () => input.remove();
+    input.addEventListener("change", () => { const file = input.files?.[0]; done(); if (file) void this.readFile(file); });
+    input.addEventListener("cancel", done);
+    this.dialog.append(input);
+    input.click();
+  }
+
+  async readFile(file) {
     if (!file) return;
     if (file.size > MAX_IMPORT_CHARS * 4) {
       this.error.textContent = "That file is too large to import. Split it into smaller lists.";

@@ -104,8 +104,7 @@ export async function mobileUxRegressions(recovery) {
     attachButton.getBoundingClientRect().height >= 44,
     "Add photo is visible on the collapsed row as a labelled 44px button");
   check(app.attachmentInput?.type === "file" && app.attachmentInput.accept === "image/jpeg,image/png,image/webp,application/pdf" &&
-    // The import dialog's own file field (#452) lives in its dialog.
-    [...app.querySelectorAll('input[type="file"]')].filter((input) => !input.closest("dialog")).length === 1,
+    app.querySelectorAll('input[type="file"]').length === 1,
     "one app-owned file input accepts photos and PDFs");
   toggle().focus();
   toggle().click();
