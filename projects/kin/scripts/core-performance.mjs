@@ -15,6 +15,7 @@
 // projection, store-level refresh and command, and the app's full
 // cross-tab refresh and render. Fixtures are synthetic and the browser profile
 // is temporary. Every figure is a median; see `samples` for the count.
+import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -279,14 +280,10 @@ async function browserStages(executable) {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = spawn(executable, ["--headless=new", "--disable-gpu", "--disable-extensions", "--no-first-run",
     "--no-default-browser-check", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"],
-  { windowsHide: true, stdio: "ignore" });
+  BROWSER_STDIO);
   let socket;
   try {
-    let port;
-    for (let attempt = 0; attempt < 200 && !port; attempt += 1) {
-      try { port = (await readFile(join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0]; } catch { await delay(50); }
-    }
-    assert.ok(port, "Browser did not start");
+    const port = await waitForDevTools(browser, profile);
     const version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
     const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" })).json();
     socket = new WebSocket(target.webSocketDebuggerUrl);
