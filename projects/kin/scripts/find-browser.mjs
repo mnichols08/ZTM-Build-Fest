@@ -4,10 +4,12 @@
 // protocol, so any of the three works; CI runs Edge on Windows and Chrome on
 // Linux.
 import { access, constants } from "node:fs/promises";
-import { join } from "node:path";
+import { posix, win32 } from "node:path";
 
 /** Where Edge, Chrome and Chromium are usually installed, in order. */
 export function browserCandidates({ platform = process.platform, env = process.env } = {}) {
+  // Paths in the described platform's own form, whichever machine asks.
+  const join = platform === "win32" ? win32.join : posix.join;
   if (platform === "win32") {
     const roots = [env["ProgramFiles(x86)"], env.ProgramFiles, env.LOCALAPPDATA].filter(Boolean);
     return roots.flatMap((root) => [
