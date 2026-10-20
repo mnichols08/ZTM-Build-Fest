@@ -90,7 +90,7 @@ export async function chatLayoutRegressions(client, { until }) {
       app.ctx.navigation.navigate("#updates/handoffs");
       const links = [...app.segmentNavs.get("updates").querySelectorAll(".segment-link")];
       const tops = new Set(links.map((link) => Math.round(link.getBoundingClientRect().top)));
-      const result = { count: links.length, rows: tops.size, sideways: document.documentElement.scrollWidth - innerWidth,
+      const result = { count: links.length, rows: tops.size === 1 ? 1 : links.map((link) => { const box = link.getBoundingClientRect(); return [Math.round(box.left), Math.round(box.top), Math.round(box.width), getComputedStyle(link.closest("ul")).flexWrap].join("/"); }).join(" "), sideways: document.documentElement.scrollWidth - innerWidth,
         labelled: links.every((link) => !link.querySelector(".segment-count") || /\w/.test(link.textContent)) };
       app.ctx.navigation.navigate("#updates/chat");
       return result;

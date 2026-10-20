@@ -2074,5 +2074,5 @@ html:has(kin-app .undo-toast:not([hidden])) { scroll-padding-bottom: calc(160px 
    scrolls sideways within itself rather than wrapping. */
 @media (max-width: 719px) {
   #updates kin-segment-nav ul { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  #updates kin-segment-nav .segment-link { flex: none; white-space: nowrap; }
+  #updates kin-segment-nav li, #updates kin-segment-nav .segment-link { flex: none; white-space: nowrap; }
 }
