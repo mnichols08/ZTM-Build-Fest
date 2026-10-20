@@ -5,7 +5,7 @@
 //
 // Serialized into the isolated browser: everything it uses is defined
 // inside the function.
-export async function chatRegressions() {
+export async function chatRegressions({ keepRoom = false } = {}) {
   const check = (value, message) => {
     if (!value) throw new Error(`chat: ${message}`);
   };
@@ -503,7 +503,9 @@ export async function chatRegressions() {
   {
     const toggle = chat.querySelector(".emoji-toggle");
     const order = [...chat.querySelectorAll("textarea, .emoji-slot, .emoji-toggle, .chat-form button[type=submit]")];
-    check(order.map((node) => node.className || node.tagName).join() === "TEXTAREA,emoji-slot,emoji-toggle,add-button", "the panel sits after the message, before the buttons");
+    // The one-row composer (#311): message, emoji, Send; the panel opens
+    // right below that row.
+    check(order.map((node) => node.className || node.tagName).join() === "TEXTAREA,emoji-toggle,add-button,emoji-slot", "the panel opens below the one-row composer: " + order.map((node) => node.className || node.tagName).join());
     check(toggle && toggle.getAttribute("aria-expanded") === "false", "an emoji button");
     input.value = "Dinner ready";
     input.setSelectionRange(6, 6);
@@ -1192,7 +1194,7 @@ export async function chatRegressions() {
     // Who reacted, from the row menu.
     rowOf().querySelector(".chat-menu-button").click();
     await settle();
-    const details = rowOf().querySelector('[data-action="details"]');
+    const details = chat.querySelector('.chat-action-sheet [data-action="details"]');
     check(details && details.textContent === "See who reacted", "the menu can list who reacted");
     details.click();
     await settle();
@@ -1384,8 +1386,14 @@ export async function chatRegressions() {
     }
   }
 
-  chat.room = null;
-  await settle();
-  if (!app) chat.remove();
+  // The layout checks (chat-layout-regression.mjs) reuse this room, then
+  // call window.__chatCleanup.
+  const cleanup = async () => {
+    chat.room = null;
+    await settle();
+    if (!app) chat.remove();
+  };
+  if (keepRoom && app) window.__chatCleanup = cleanup;
+  else await cleanup();
   return "chat regressions passed";
 }

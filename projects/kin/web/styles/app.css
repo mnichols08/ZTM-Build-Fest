@@ -379,6 +379,24 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
   transition: opacity .3s;
 }
 .status-message:empty, .status-message[data-stale] { opacity: 0; visibility: hidden; }
+/* Undo and redo (#315): the toast stays until the next action or Dismiss. The
+   status line still announces the change; it steps out of sight while the
+   toast shows the same words. */
+.status-message.status-in-toast { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; padding: 0; border: 0; }
+.undo-toast { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); color: var(--ink); box-shadow: 0 6px 18px rgba(0, 0, 0, .14); }
+.undo-toast[hidden] { display: none; }
+.undo-toast-text { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.undo-toast-action { flex: none; min-height: var(--tap); padding-inline: 14px; font-weight: 650; color: var(--accent); }
+.undo-toast-dismiss { flex: none; min-width: var(--tap); min-height: var(--tap); padding: 0; font-size: 1.25rem; line-height: 1; }
+/* A row's ⋯ menu on a phone (Delete routine, #314). */
+.row-more { position: relative; }
+.row-more > summary { display: inline-flex; align-items: center; justify-content: center; min-width: var(--tap); min-height: var(--tap); border: 1px solid var(--line-strong); border-radius: var(--r-control); cursor: pointer; list-style: none; font-size: 1.25rem; }
+.row-more > summary::-webkit-details-marker { display: none; }
+.row-more[open] > summary { border-color: var(--accent); }
+.row-more > button { position: absolute; z-index: 5; inset-inline-end: 0; top: calc(100% + 4px); white-space: nowrap; box-shadow: 0 6px 18px rgba(0, 0, 0, .14); }
+@media (forced-colors: active) {
+  .undo-toast, .row-more > summary { border: 1px solid CanvasText; }
+}
 .error-message {
   padding: 10px 14px;
   border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line));
@@ -1919,3 +1937,94 @@ kin-simple { display: block; }
 .item-emoji { margin-inline-end: 0.35em; font-size: 1.15em; line-height: 1; }
 .item-picture-label { display: inline-flex; align-items: center; gap: 6px; min-height: var(--tap); }
 .item-picture-input { inline-size: 4.5rem; min-height: var(--tap); font-size: 1.5rem; text-align: center; }
+
+/* Chat fits the screen (#310): on the Chat page the message list is the only
+   thing that scrolls. web/chat/chat-layout.js sets --chat-height to the
+   visible height below the section's top (above the phone's bottom bar and
+   keyboard). */
+.chat-section.chat-fit { display: flex; flex-direction: column; gap: 8px; height: var(--chat-height); min-height: 0; }
+.chat-section.chat-fit > * { flex: none; }
+.chat-section.chat-fit .chat-scroll { flex: 1 1 0; height: auto; min-height: 3rem; }
+/* Pinned messages never push the composer off screen; their list scrolls. */
+.chat-section.chat-fit .chat-pins { max-height: 7rem; overflow: auto; }
+.chat-section.chat-fit .chat-form textarea { max-height: min(7.5em, 30vh); resize: none; }
+kin-app[data-route="updates/chat"] main { padding-bottom: 0; }
+kin-app[data-route="updates/chat"] .app-feedback { bottom: calc(var(--chat-composer-height, 0px) + 84px + env(safe-area-inset-bottom)); }
+@media (max-width: 719px) {
+  /* The page title and tabs take one short row while Chat is open. */
+  kin-app[data-route="updates/chat"] #updates > .page-intro .page-lead { display: none; }
+  kin-app[data-route="updates/chat"] #updates > .page-intro h1 { font-size: 1.25rem; margin-bottom: 4px; }
+  kin-app[data-route="updates/chat"] .chat-section.chat-fit { padding: 8px; }
+  kin-app[data-route="updates/chat"] .chat-section.chat-fit #chat-heading { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+}
+@media (max-width: 719px) and (pointer: coarse) {
+  /* Typing: the bottom bar steps aside for the keyboard. */
+  [data-chat-composing] .primary-nav { display: none; }
+  [data-chat-composing] kin-app[data-route="updates/chat"] .app-feedback { bottom: calc(var(--chat-composer-height, 0px) + 12px); }
+}
+@media (max-height: 500px) {
+  /* A phone held sideways, or a short window: Chat takes the screen. The
+     header, page title and tabs step aside (the bottom bar stays, and the
+     title stays for screen readers); turn the phone upright for them. */
+  kin-app[data-route="updates/chat"] .site-header,
+  kin-app[data-route="updates/chat"] #updates .page-lead,
+  kin-app[data-route="updates/chat"] #updates kin-segment-nav { display: none; }
+  kin-app[data-route="updates/chat"] #updates > .page-intro { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip: rect(0 0 0 0); }
+  kin-app[data-route="updates/chat"] main { padding-top: 8px; }
+  kin-app[data-route="updates/chat"] .chat-section.chat-fit { gap: 4px; padding: 6px; }
+}
+@media (max-height: 500px) and (pointer: coarse) {
+  /* Phone landscape with the keyboard: the header steps aside too. */
+  [data-chat-composing] .site-header { display: none; }
+}
+
+/* The composer is one row (#311): [+] [message] [emoji] [Send or Voice]. */
+.chat-compose-row { display: flex; align-items: flex-end; gap: 6px; min-width: 0; }
+.chat-compose-row textarea { flex: 1 1 auto; min-width: 0; min-height: var(--tap); }
+.chat-form .chat-compose-row textarea { min-height: var(--tap); }
+.chat-more, .chat-voice-open { flex: none; min-width: var(--tap); min-height: var(--tap); padding-inline: 10px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+.chat-more { font-size: 1.4rem; line-height: 1; }
+.chat-more[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.chat-compose-row .add-button { flex: none; min-height: var(--tap); }
+.chat-compose-row .emoji-toggle { flex: none; }
+.chat-voice-open[hidden], .chat-compose-row .add-button[hidden] { display: none; }
+.chat-add-menu { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-add-menu[hidden] { display: none; }
+.chat-form-buttons:not(:has(> :not([hidden]))) { display: none; }
+@media (forced-colors: active) {
+  .chat-more, .chat-voice-open { border: 1px solid ButtonText; }
+}
+
+/* Message actions (#311): one sheet for every message. With a mouse it opens
+   by the message's ⋯ (kin-chat.js placeSheet); on a touch screen it rises
+   from the bottom, at most 480px wide. */
+.chat-action-sheet { position: fixed; inset: auto; margin: 0; width: max-content; min-width: 220px; max-width: calc(100vw - 16px); max-height: min(70vh, 520px); overflow: auto; padding: 6px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); box-shadow: 0 10px 30px rgb(0 0 0 / .2); overscroll-behavior: contain; }
+.chat-action-sheet::backdrop { background: transparent; }
+.chat-action-sheet.chat-sheet-bottom { inset: auto 0 0; margin: 0 auto; width: 100%; max-width: 480px; max-height: 75vh; padding: 6px 10px calc(10px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; }
+.chat-action-sheet.chat-sheet-bottom::backdrop { background: rgb(0 0 0 / .32); }
+.chat-sheet-grip { width: 40px; height: 4px; margin: 4px auto 8px; border-radius: 2px; background: var(--line-strong); }
+.chat-sheet-reactions { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.chat-sheet-reactions button { min-width: var(--tap); min-height: var(--tap); border: 0; border-radius: 999px; background: var(--surface-secondary); font: inherit; font-size: 1.3rem; }
+.chat-sheet-reactions button[aria-pressed="true"] { outline: 2px solid var(--accent); }
+.chat-sheet-reactions .chat-sheet-more { font-size: 14px; padding-inline: 12px; }
+.chat-action-sheet .chat-menu { position: static; display: grid; min-width: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
+.chat-sheet-bottom .chat-menu button { min-height: 52px; font-size: 16px; }
+@media (pointer: coarse) {
+  /* No action column: the bubble takes the width, the ⋯ sits in the time
+     line (or at the end of a grouped message), and a long press opens the
+     sheet. Copy replaces native selection there. */
+  .chat-row { grid-template-columns: minmax(0, 1fr); max-width: min(85%, 640px); }
+  .chat-row:not(.grouped) .chat-meta { padding-inline-end: 40px; }
+  .chat-row.grouped { padding-inline-end: 40px; }
+  .chat-row .chat-menu-wrap { position: absolute; top: 0; inset-inline-end: 0; }
+  .chat-row .chat-menu-button { min-width: 44px; min-height: 44px; }
+  .chat-row .chat-react-button { display: none; }
+  .chat-row .chat-text { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+}
+@media (hover: hover) and (pointer: fine) and (min-width: 720px) {
+  /* With a mouse: the ⋯ and 🙂 show on hover and keyboard focus. */
+  .chat-row .chat-menu-wrap { opacity: 0; transition: opacity .12s; }
+  .chat-row:hover .chat-menu-wrap, .chat-row:focus-within .chat-menu-wrap, .chat-row:has([aria-expanded="true"]) .chat-menu-wrap { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .chat-row .chat-menu-wrap { transition: none; } }
+@media (forced-colors: active) { .chat-action-sheet { border: 1px solid CanvasText; } }

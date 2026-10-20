@@ -42,6 +42,7 @@ import { excerptRanges, highlightRanges } from "../chat/chat-search-ranges.js";
 import { activeMention, mentionOptions, splitMentions, resolveMentions } from "../chat/chat-mentions.js";
 import "./kin-emoji-picker.js";
 import "./kin-chat-search.js";
+import { fitChat } from "../chat/chat-layout.js";
 
 /** Rows rendered at first and added per page. */
 const PAGE = 60;
@@ -101,7 +102,6 @@ class KinChat extends HTMLElement {
     this.onWindowChange = () => this.windowChanged();
     this.onPageHide = () => { this.voice?.interrupt(); this.windowChanged(); };
     this.onDocumentClick = (event) => {
-      if (this.menuFor && !event.composedPath().some((node) => node?.classList?.contains?.("chat-menu-wrap"))) this.closeMenu();
       if (this.reacting && !event.composedPath().some((node) => node?.classList?.contains?.("chat-react-bar") || node?.classList?.contains?.("chat-react-button"))) this.closeReactions();
     };
   }
@@ -129,6 +129,8 @@ class KinChat extends HTMLElement {
     this.messages = [];
     this.rows = new Map();
     this.menuFor = null;
+    if (this.sheet?.open) this.sheet.close();
+    this.sheet?.replaceChildren();
     // The message whose reaction bar is open (#127), and whether it shows
     // the whole emoji table; names for chips, once the table has loaded.
     this.reacting = null;
@@ -172,6 +174,7 @@ class KinChat extends HTMLElement {
     window.addEventListener("pagehide", this.onPageHide);
     if (this.list) {
       this.resizeObserver?.observe(this.scroller);
+      this.startFit();
       return;
     }
     const section = document.createElement("section");
@@ -400,7 +403,7 @@ class KinChat extends HTMLElement {
     // Voice messages (#134): the recorder panel sits above the buttons.
     this.voiceButton = document.createElement("button");
     this.voiceButton.type = "button";
-    this.voiceButton.className = "chat-attach chat-voice-open";
+    this.voiceButton.className = "chat-voice-open";
     this.voiceButton.textContent = "Voice";
     this.voiceButton.setAttribute("aria-label", "Record a voice message");
     this.voiceButton.addEventListener("click", () => void this.voice.begin());
@@ -409,7 +412,7 @@ class KinChat extends HTMLElement {
     this.voice = new VoiceComposer({
       host: this.voiceHost,
       say: (text) => this.say(text),
-      onChange: () => { this.applyDisabled(); if (!this.voice.open) this.voiceButton.focus(); },
+      onChange: () => { this.applyDisabled(); if (!this.voice.open) (this.voiceButton.hidden ? this.input : this.voiceButton).focus(); },
       send: async ({ blob, durationMs }) => {
         const room = this.chatRoom;
         if (!room) throw new Error("locked");
@@ -457,8 +460,39 @@ class KinChat extends HTMLElement {
     this.retry.setAttribute("aria-label", "Retry sending");
     this.retry.hidden = true;
     this.retry.addEventListener("click", () => void this.submit());
-    buttons.append(this.attach, this.cameraButton, this.pollButton, this.voiceButton, this.emoji, this.send, this.retry, this.stopSend, this.cancel);
-    form.append(this.label, this.replyBar, this.input, this.mentionList, this.pendingList, this.voiceHost, panelSlot, buttons, this.message);
+    // One row (#311): [+] [message] [emoji] [Send, or Voice while empty].
+    // Photo, file, camera and poll sit behind +.
+    this.addMenu = document.createElement("div");
+    this.addMenu.id = "chat-add-menu";
+    this.addMenu.className = "chat-add-menu";
+    this.addMenu.setAttribute("role", "group");
+    this.addMenu.setAttribute("aria-label", "Add to the message");
+    this.addMenu.hidden = true;
+    this.addMenu.append(this.attach, this.cameraButton, this.pollButton);
+    this.addMenu.addEventListener("click", (event) => { if (event.target.closest("button")) this.toggleAddMenu(false); });
+    this.addMenu.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      this.toggleAddMenu(false);
+      this.more.focus();
+    });
+    this.more = document.createElement("button");
+    this.more.type = "button";
+    this.more.className = "chat-more";
+    this.more.textContent = "+";
+    this.more.setAttribute("aria-label", "Add a photo, file or poll");
+    this.more.setAttribute("aria-expanded", "false");
+    this.more.setAttribute("aria-controls", "chat-add-menu");
+    this.more.addEventListener("click", () => this.toggleAddMenu(this.addMenu.hidden));
+    this.input.placeholder = "Message";
+    this.input.addEventListener("input", () => this.updateSendMode());
+    const row = document.createElement("div");
+    row.className = "chat-compose-row";
+    row.append(this.more, this.input, this.emoji, this.send, this.voiceButton);
+    this.label.className = "visually-hidden";
+    buttons.append(this.retry, this.stopSend, this.cancel);
+    form.append(this.label, this.replyBar, row, this.mentionList, this.addMenu, this.pendingList, this.voiceHost, panelSlot, buttons, this.message);
+    this.updateSendMode();
 
     // A viewer for one photo, shown modally; its URL is released on close.
     this.viewer = document.createElement("dialog");
@@ -492,6 +526,33 @@ class KinChat extends HTMLElement {
     this.details.setAttribute("aria-labelledby", "chat-details-heading");
     this.details.addEventListener("close", () => this.closeDetails());
 
+    // Message actions (#311): one sheet for every message. On a touch screen
+    // it rises from the bottom (at most 480px wide); with a mouse it opens by
+    // the message's ⋯, above it near the bottom of the screen. Long-press or
+    // right-click a message, or press its ⋯. Escape, the backdrop or a swipe
+    // down closes it, and focus goes back to the message's ⋯.
+    this.sheet = document.createElement("dialog");
+    this.sheet.className = "chat-action-sheet";
+    this.sheet.addEventListener("cancel", (event) => { event.preventDefault(); this.closeMenu({ focusToggle: true }); });
+    this.sheet.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      this.closeMenu({ focusToggle: true });
+    });
+    this.sheet.addEventListener("click", (event) => {
+      if (event.target !== this.sheet) return;
+      const box = this.sheet.getBoundingClientRect();
+      const outside = event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom;
+      if (outside) this.closeMenu({ focusToggle: true });
+    });
+    let swipeFrom = null;
+    this.sheet.addEventListener("pointerdown", (event) => { swipeFrom = event.pointerType === "mouse" ? null : event.clientY; });
+    this.sheet.addEventListener("pointerup", (event) => {
+      if (swipeFrom !== null && event.clientY - swipeFrom > 60) this.closeMenu({ focusToggle: true });
+      swipeFrom = null;
+    });
+    this.sheet.addEventListener("pointercancel", () => { swipeFrom = null; });
+
     // Which rows are on screen decides what counts as read.
     if (typeof IntersectionObserver === "function") {
       this.rowObserver = new IntersectionObserver((entries) => {
@@ -511,8 +572,14 @@ class KinChat extends HTMLElement {
     this.readOnly.setAttribute("role", "status");
     this.readOnly.textContent = "Your household has set chat to read-only for you.";
     this.readOnly.hidden = true;
-    section.append(top, this.searchPanel, this.notice, this.onlineLine, this.pinRegion, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details, this.pollDialog);
+    section.append(top, this.searchPanel, this.notice, this.onlineLine, this.pinRegion, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details, this.pollDialog, this.sheet);
     this.replaceChildren(section);
+    this.section = section;
+    // Composing on a phone (#310): the bottom navigation steps aside so the
+    // composer sits right above the keyboard.
+    form.addEventListener("focusin", () => this.setComposing(true));
+    form.addEventListener("focusout", (event) => { if (!form.contains(event.relatedTarget)) this.setComposing(false); });
+    this.startFit();
     this.queueRender("reset");
   }
 
@@ -526,7 +593,26 @@ class KinChat extends HTMLElement {
     this.voice?.dispose();
     this.disposePlayers();
     this.resizeObserver?.disconnect();
+    this.stopFit?.();
+    this.stopFit = null;
+    this.setComposing(false);
     this.urls.revokeAll();
+  }
+
+  /** Keeps the chat exactly as tall as the visible screen allows (#310). */
+  startFit() {
+    if (this.stopFit || !this.section) return;
+    this.stopFit = fitChat(this.section, {
+      bar: () => document.querySelector(".primary-nav"),
+      onComposer: () => document.documentElement.style.setProperty("--chat-composer-height", `${Math.round(this.form?.getBoundingClientRect().height ?? 0)}px`),
+    });
+  }
+
+  setComposing(on) {
+    const root = document.documentElement;
+    if (on === root.hasAttribute("data-chat-composing")) return;
+    root.toggleAttribute("data-chat-composing", on);
+    this.stopFit?.schedule();
   }
 
   /** The chat room, or null while there is none (sync not set up, locked). */
@@ -580,8 +666,25 @@ class KinChat extends HTMLElement {
     this.applyDisabled();
   }
 
+  /** Send shows while there's something to send; Voice while the box is
+   * empty (#311). Editing always shows Send ("Save"). */
+  updateSendMode() {
+    if (!this.send || !this.voiceButton) return;
+    const empty = !this.input.value.trim() && !this.files?.length && !this.editing;
+    this.send.hidden = empty;
+    this.voiceButton.hidden = !empty;
+  }
+
+  toggleAddMenu(open) {
+    if (!this.addMenu) return;
+    this.addMenu.hidden = !open;
+    this.more.setAttribute("aria-expanded", String(open));
+    if (open) this.addMenu.querySelector("button:not([hidden]):not(:disabled)")?.focus();
+  }
+
   applyDisabled() {
     if (!this.input) return;
+    this.updateSendMode();
     const off = this.isDisabled || !this.chatRoom;
     this.input.disabled = off;
     this.send.disabled = off || Boolean(this.sending);
@@ -592,6 +695,7 @@ class KinChat extends HTMLElement {
     this.retry.disabled = off || Boolean(this.sending) || Boolean(this.editing) || this.voice?.open === true;
     this.pollButton.disabled = off || Boolean(this.sending) || Boolean(this.editing);
     this.voiceButton.disabled = off || Boolean(this.sending) || Boolean(this.editing) || this.voice.open;
+    this.more.disabled = off || Boolean(this.sending) || Boolean(this.editing);
   }
 
   enterSends() {
@@ -1264,7 +1368,7 @@ class KinChat extends HTMLElement {
       message.status, message.text ?? "", message.editedAt ?? "", message.blobRef ?? "", grouped,
       room.pendingMessages?.has(message.messageId) ?? false, status ? Object.keys(status)[0] : "",
       attachment ? [attachment.status, attachment.text, attachment.files.length, attachment.thumbs.size].join("\u0001") : "",
-      room.authorLabel(message.authorId), this.menuFor === message.messageId, this.actionsFor(message, room).join(),
+      room.authorLabel(message.authorId), this.actionsFor(message, room).join(),
       message.messageId === this.latestOwn ? this.seenLine(message, room).text : "",
       JSON.stringify(message.reactions ?? []), this.reacting === message.messageId ? (this.reactMore ? 2 : 1) : 0,
       (room.access ?? "write") === "write", this.emojiNames.size,
@@ -1430,6 +1534,7 @@ class KinChat extends HTMLElement {
     }
     const actions = this.actionsFor(message, room);
     const react = visible(message) && this.canReact(room) ? this.reactButton(message, author) : null;
+    if (actions.length) this.bindPress(item, message.messageId);
     if (actions.length) item.append(this.menu(message, actions, author, react));
     else if (react) {
       const wrap = document.createElement("div");
@@ -2174,6 +2279,7 @@ class KinChat extends HTMLElement {
       return item;
     }));
     this.pendingList.hidden = this.files.length === 0;
+    this.updateSendMode();
     if (!this.files.length) this.retry.hidden = true;
   }
 
@@ -2219,7 +2325,7 @@ class KinChat extends HTMLElement {
     this.dispatchEvent(new CustomEvent("kin:chat-to-record", { bubbles: true, composed: true, detail: { kind, text: state ? state.text ?? "" : message.text, files, limited, opener } }));
   }
 
-  /** A disclosure: the ⋯ button shows or hides the row's action buttons. */
+  /** The row's ⋯: it opens the action sheet (#311). */
   menu(message, actions, author, react = null) {
     const wrap = document.createElement("div");
     wrap.className = "chat-menu-wrap";
@@ -2228,41 +2334,47 @@ class KinChat extends HTMLElement {
     toggle.className = "chat-menu-button";
     toggle.textContent = "⋯";
     toggle.setAttribute("aria-label", `Actions for ${author === "You" ? "your" : `${author}'s`} message`);
-    const open = this.menuFor === message.messageId;
-    const menuId = `chat-menu-${message.messageId}`;
-    toggle.setAttribute("aria-expanded", String(open));
-    toggle.setAttribute("aria-controls", menuId);
+    toggle.setAttribute("aria-haspopup", "dialog");
+    toggle.setAttribute("aria-expanded", String(this.menuFor === message.messageId));
     toggle.addEventListener("click", () => {
       if (this.menuFor === message.messageId) this.closeMenu({ focusToggle: true });
       else this.openMenu(message.messageId);
     });
-    wrap.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape" || this.menuFor !== message.messageId) return;
-      event.preventDefault();
-      this.closeMenu({ focusToggle: true });
-    });
-    // Tabbing out of the menu closes it.
-    wrap.addEventListener("focusout", (event) => {
-      if (this.menuFor === message.messageId && event.relatedTarget && !wrap.contains(event.relatedTarget)) this.closeMenu();
-    });
     wrap.append(...(react ? [react] : []), toggle);
-    if (open) {
-      const list = document.createElement("div");
-      list.className = "chat-menu";
-      list.id = menuId;
-      list.setAttribute("role", "group");
-      list.setAttribute("aria-label", "Message actions");
-      for (const action of actions) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.dataset.action = action;
-        button.textContent = ACTION_LABELS[action];
-        button.addEventListener("click", () => void this.act(action, message));
-        list.append(button);
-      }
-      wrap.append(list);
-    }
     return wrap;
+  }
+
+  /** Long-press (touch or pen) or right-click a message to open its
+   * actions. Links, players, polls, reaction chips and buttons keep their
+   * own presses. */
+  bindPress(row, messageId) {
+    let timer = 0;
+    let start = null;
+    let held = false;
+    const skip = (target) => Boolean(target?.closest?.("a[href], audio, video, input, textarea, select, button, .chat-poll"));
+    const cancel = () => { clearTimeout(timer); timer = 0; start = null; };
+    row.addEventListener("pointerdown", (event) => {
+      held = false;
+      if (event.pointerType === "mouse" || event.button !== 0 || skip(event.target)) return;
+      start = [event.clientX, event.clientY];
+      timer = setTimeout(() => { timer = 0; held = true; this.openMenu(messageId); }, LONG_PRESS_MS);
+    });
+    row.addEventListener("pointermove", (event) => {
+      if (start && Math.hypot(event.clientX - start[0], event.clientY - start[1]) > 10) cancel();
+    });
+    for (const type of ["pointerup", "pointercancel", "pointerleave"]) row.addEventListener(type, cancel);
+    // The click that ends a long press presses nothing else.
+    row.addEventListener("click", (event) => {
+      if (!held) return;
+      held = false;
+      event.preventDefault();
+      event.stopPropagation();
+    }, true);
+    row.addEventListener("contextmenu", (event) => {
+      if (skip(event.target)) return;
+      event.preventDefault();
+      if (this.menuFor !== messageId) this.openMenu(messageId);
+    });
   }
 
   rowFor(messageId) {
@@ -2270,19 +2382,115 @@ class KinChat extends HTMLElement {
   }
 
   openMenu(messageId) {
+    const room = this.chatRoom;
+    const message = this.messages.find((candidate) => candidate.messageId === messageId);
+    if (!room || !message) return;
+    const actions = this.actionsFor(message, room);
+    if (!actions.length) return;
+    if (this.menuFor && this.menuFor !== messageId) this.closeMenu();
+    if (this.reacting) this.closeReactions();
     this.menuFor = messageId;
-    this.reconcile();
-    const menu = this.rowFor(messageId)?.querySelector(".chat-menu");
-    // Bring the whole menu into view (the bottom rows' menus).
-    menu?.scrollIntoView({ block: "nearest" });
-    menu?.querySelector("button")?.focus({ preventScroll: true });
+    // The ⋯ says the sheet is open; the row itself isn't redrawn.
+    this.rowFor(messageId)?.querySelector(".chat-menu-button")?.setAttribute("aria-expanded", "true");
+    const sheet = this.sheet;
+    const author = room.authorLabel(message.authorId);
+    const coarse = globalThis.matchMedia?.("(pointer: coarse)").matches ?? false;
+    sheet.replaceChildren();
+    sheet.dataset.messageId = messageId;
+    sheet.classList.toggle("chat-sheet-bottom", coarse);
+    const heading = document.createElement("h2");
+    heading.className = "visually-hidden";
+    heading.id = "chat-sheet-heading";
+    heading.textContent = `Actions for ${author === "You" ? "your" : `${author}'s`} message`;
+    sheet.setAttribute("aria-labelledby", heading.id);
+    sheet.append(heading);
+    if (coarse) {
+      const grip = document.createElement("div");
+      grip.className = "chat-sheet-grip";
+      grip.setAttribute("aria-hidden", "true");
+      sheet.append(grip);
+    }
+    // First, quick reactions; "More" opens the full table on the row.
+    if (visible(message) && this.canReact(room)) {
+      const quick = document.createElement("div");
+      quick.className = "chat-sheet-reactions";
+      quick.setAttribute("role", "group");
+      quick.setAttribute("aria-label", "React");
+      for (const [emoji, name] of QUICK_REACTIONS) {
+        const mine = (message.reactions ?? []).some((group) => group.emoji === emoji && group.actors.includes(room.identity.memberId));
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.action = `react-${emoji}`;
+        button.textContent = emoji;
+        button.setAttribute("aria-label", name);
+        button.setAttribute("aria-pressed", String(mine));
+        button.addEventListener("click", () => {
+          this.closeMenu({ focusToggle: true });
+          void this.react(message, emoji, !mine);
+        });
+        quick.append(button);
+      }
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "chat-sheet-more";
+      more.textContent = "More";
+      more.setAttribute("aria-label", "More reactions");
+      more.addEventListener("click", async () => {
+        this.closeMenu();
+        this.reacting = messageId;
+        this.reactMore = true;
+        await this.loadNames();
+        this.reconcile();
+        this.rowFor(messageId)?.querySelector(".chat-react-bar button")?.focus({ preventScroll: true });
+      });
+      quick.append(more);
+      sheet.append(quick);
+    }
+    const list = document.createElement("div");
+    list.className = "chat-menu";
+    list.id = `chat-menu-${messageId}`;
+    list.setAttribute("role", "group");
+    list.setAttribute("aria-label", "Message actions");
+    for (const action of actions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.action = action;
+      button.textContent = ACTION_LABELS[action];
+      button.addEventListener("click", () => void this.act(action, message));
+      list.append(button);
+    }
+    sheet.append(list);
+    sheet.style.removeProperty("top");
+    sheet.style.removeProperty("left");
+    if (!sheet.open) sheet.showModal();
+    if (!coarse) this.placeSheet(this.rowFor(messageId)?.querySelector(".chat-menu-button") ?? this.rowFor(messageId));
+    list.querySelector("button")?.focus({ preventScroll: true });
+  }
+
+  /** With a mouse, the sheet opens by the message's ⋯: below it, or above
+   * it when it wouldn't fit (the last messages, near the composer). */
+  placeSheet(anchor) {
+    if (!anchor) return;
+    const view = globalThis.visualViewport;
+    const bottom = view ? view.offsetTop + view.height : innerHeight;
+    const right = view ? view.offsetLeft + view.width : innerWidth;
+    const at = anchor.getBoundingClientRect();
+    const box = this.sheet.getBoundingClientRect();
+    const below = at.bottom + 4;
+    const top = below + box.height <= bottom - 8 ? below : Math.max(8, at.top - box.height - 4);
+    const left = Math.min(Math.max(8, at.right - box.width), right - box.width - 8);
+    this.sheet.style.top = `${Math.round(top)}px`;
+    this.sheet.style.left = `${Math.round(Math.max(8, left))}px`;
   }
 
   closeMenu({ focusToggle = false } = {}) {
     const messageId = this.menuFor;
     if (!messageId) return;
     this.menuFor = null;
-    this.reconcile();
+    if (this.sheet?.open) this.sheet.close();
+    this.sheet?.replaceChildren();
+    if (this.sheet) delete this.sheet.dataset.messageId;
+    this.rowFor(messageId)?.querySelector(".chat-menu-button")?.setAttribute("aria-expanded", "false");
     if (focusToggle) this.rowFor(messageId)?.querySelector(".chat-menu-button")?.focus({ preventScroll: true });
   }
 
@@ -2311,6 +2519,7 @@ class KinChat extends HTMLElement {
         }
         this.editing = message;
         this.input.value = message.text;
+        this.updateSendMode();
         this.resetMentions();
         for (const person of room.mentionable?.() ?? []) {
           if (room.mentionsOf?.(message).members.includes(person.id)) this.chosenMentions.set(person.label, person.id);
@@ -2356,6 +2565,7 @@ class KinChat extends HTMLElement {
     this.editing = null;
     if (!this.input) return;
     if (wasEditing && restoreDraft) this.input.value = this.stashedDraft ?? "";
+    this.updateSendMode();
     this.stashedDraft = null;
     if (wasEditing) {
       this.resetMentions();
@@ -2428,6 +2638,7 @@ class KinChat extends HTMLElement {
         }
         // Only clear what was sent: typing that continued meanwhile stays.
         if (this.input.value === text) { this.input.value = ""; this.resetMentions(); }
+        this.updateSendMode();
         this.stopReplying();
         await this.queueRender("reset");
       }
@@ -2493,6 +2704,9 @@ class KinChat extends HTMLElement {
     if (this.scroller.scrollTop < EDGE && this.start > 0) void this.loadOlder();
     else if (this.wasAtBottom && !this.following) void this.loadNewer();
     if (this.following && this.wasAtBottom) this.jump.hidden = true;
+    // Jump to latest (#310) also shows once you scroll up more than half a
+    // screen from the newest message.
+    else if (this.scroller.scrollHeight - this.scroller.scrollTop - this.scroller.clientHeight > this.scroller.clientHeight / 2) this.jump.hidden = false;
   }
 
   /** Brings older messages into the window, trimming the newest past the

@@ -2,6 +2,7 @@
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { describeNextOccurrence, describeRecurringCapture, describeScheduleChanged, planScheduleChange, SCHEDULE_MESSAGES } from "../../../recurrence.js";
 import { SAVE_ERROR } from "../constants.js";
+import { routineArchivedEntry, routineCreatedEntry, routineOccurrenceEntry } from "../../../undo.js";
 
 export class RoutineCommands {
   constructor(ctx) {
@@ -17,6 +18,7 @@ export class RoutineCommands {
     if (todayFocused) this.app.today.rememberFocus();
     const focus = this.app.routines.captureFocus();
     let committed = false;
+    const before = this.app.state;
     this.ctx.status.setBusy(true);
     this.ctx.status.clearAlert();
     this.ctx.status.setStatus("Saving…");
@@ -40,10 +42,16 @@ export class RoutineCommands {
         submitted.type === "create-routine"
           ? describeRecurringCapture(saved, this.ctx.navigation.currentCivilDate())
           : submitted.type === "archive-routine"
-            ? "Stopped repeating. Past completions are kept."
+            ? "Routine deleted. Past completions are kept."
             : submitted.type === "complete-routine-occurrence"
               ? `Done for this period.${next ? ` ${next}.` : ""}`
               : "Reopened for this period.",
+      );
+      // Undo (#314, #315). Deleting has no confirmation: Undo is the way back.
+      this.ctx.undo.record(
+        submitted.type === "archive-routine" ? routineArchivedEntry(submitted.routineId, before)
+          : submitted.type === "create-routine" ? routineCreatedEntry(submitted.routineId ?? saved?.routineId, this.app.state)
+            : routineOccurrenceEntry(submitted.type, submitted.routineId, this.app.state),
       );
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;

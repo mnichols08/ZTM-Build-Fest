@@ -192,6 +192,7 @@ export class SessionController {
     this.app.commandPalette?.dismiss();
     this.app.commandGeneration = null;
     this.ctx.bulk.clearBulkOutcome();
+    this.ctx.undo.clear();
     this.app.pendingCapture = null;
     this.app.pendingShares?.clear();
     // pendingScheduleChange holds only random ids and a cadence. It survives

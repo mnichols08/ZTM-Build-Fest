@@ -287,9 +287,9 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
         platforms: [...dialog.querySelectorAll(".shortcut-platform")].map((node) => node.textContent),
       };
     });
-    check(state.helpOpen && help.modal && help.title === "Keyboard shortcuts" && help.focusTitle && help.rows === 7 &&
-      ["Ctrl", "Cmd", "Esc", "Quick add a task", "Search household", "Open the command palette"].every((text) => help.text.includes(text)) &&
-      help.platforms.join("|") === "Windows and Linux|Mac",
+    check(state.helpOpen && help.modal && help.title === "Keyboard shortcuts" && help.focusTitle && help.rows === 9 &&
+      ["Ctrl", "Cmd", "Esc", "Quick add a task", "Search household", "Open the command palette", "Undo your last change", "Redo what you undid"].every((text) => help.text.includes(text)) &&
+      [...new Set(help.platforms)].join("|") === "Windows and Linux|Mac",
     "? opens a labelled shortcut help listing every shortcut with Windows/Linux and Mac modifiers", { state, help });
     await press(KEYS.escape);
     state = await snapshot();

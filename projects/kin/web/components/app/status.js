@@ -15,6 +15,8 @@ export class StatusController {
     this.app.main.setAttribute("aria-busy", String(isBusy));
     const controlsDisabled = isBusy || !this.app.store;
     if (isBusy) {
+      // The next action replaces the undo toast (#315); undo itself keeps it.
+      if (!this.ctx.undo?.running) this.ctx.undo?.hideToast();
       this.app.detail?.deferFocusedControl?.();
       this.app.chat?.deferFocusedControl?.();
       this.app.meals?.deferFocusedControl?.();
@@ -36,6 +38,7 @@ export class StatusController {
     clearTimeout(this.app.statusTimer);
     this.app.status.removeAttribute("data-stale");
     if (message) this.app.statusTimer = setTimeout(() => this.app.status.setAttribute("data-stale", "true"), 6_000);
+    this.ctx.undo?.syncStatus();
   }
   clearAlert() {
     this.app.feedback?.classList.remove("app-feedback-inline");

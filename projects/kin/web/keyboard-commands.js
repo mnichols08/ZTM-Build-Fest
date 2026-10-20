@@ -23,6 +23,15 @@ export const SHORTCUTS = Object.freeze([
   Object.freeze({ action: "Quick add a task", combos: Object.freeze([Object.freeze({ keys: Object.freeze(["N"]) })]) }),
   Object.freeze({ action: "Search household", combos: Object.freeze([Object.freeze({ keys: Object.freeze(["/"]) })]) }),
   Object.freeze({ action: "Show keyboard shortcuts", combos: Object.freeze([Object.freeze({ keys: Object.freeze(["?"]) })]) }),
+  Object.freeze({ action: "Undo your last change", combos: Object.freeze([
+    Object.freeze({ keys: Object.freeze(["Ctrl", "Z"]), platform: "Windows and Linux" }),
+    Object.freeze({ keys: Object.freeze(["Cmd", "Z"]), platform: "Mac" }),
+  ]) }),
+  Object.freeze({ action: "Redo what you undid", combos: Object.freeze([
+    Object.freeze({ keys: Object.freeze(["Ctrl", "Shift", "Z"]), platform: "Windows and Linux" }),
+    Object.freeze({ keys: Object.freeze(["Ctrl", "Y"]), platform: "Windows and Linux" }),
+    Object.freeze({ keys: Object.freeze(["Cmd", "Shift", "Z"]), platform: "Mac" }),
+  ]) }),
   Object.freeze({ action: "Close the open dialog or item details", combos: Object.freeze([Object.freeze({ keys: Object.freeze(["Esc"]) })]) }),
   Object.freeze({ action: "Choose a command in the palette", combos: Object.freeze([Object.freeze({ keys: Object.freeze(["↑", "↓"]), either: true })]) }),
   Object.freeze({ action: "Run the chosen command", combos: Object.freeze([Object.freeze({ keys: Object.freeze(["Enter"]) })]) }),
@@ -57,11 +66,17 @@ export function shortcutForKey(event, { mac = false } = {}) {
   const key = String(event.key ?? "");
   if (event.altKey) return null;
   if (event.ctrlKey || event.metaKey) {
-    if (event.shiftKey || (event.ctrlKey && event.metaKey)) return null;
+    if (event.ctrlKey && event.metaKey) return null;
     if (event.ctrlKey && mac) return null;
-    // Non-Latin layouts report their own letter; the physical K key still counts.
-    const isK = key.toLowerCase() === "k" || (event.code === "KeyK" && !/^[a-z]$/i.test(key));
-    return isK ? "palette" : null;
+    // Non-Latin layouts report their own letter; the physical key still counts.
+    const is = (letter) => key.toLowerCase() === letter || (event.code === `Key${letter.toUpperCase()}` && !/^[a-z]$/i.test(key));
+    // Undo and redo your own recent changes (#315): Ctrl/Cmd+Z, and
+    // Shift+Ctrl/Cmd+Z or Ctrl+Y. The caller leaves text fields to the
+    // browser's own undo.
+    if (is("z")) return event.shiftKey ? "redo" : "undo";
+    if (is("y") && event.ctrlKey && !event.shiftKey) return "redo";
+    if (event.shiftKey) return null;
+    return is("k") ? "palette" : null;
   }
   // Shift is allowed: "?" and, on many layouts, "/" need it.
   if (key === "n" || key === "N") return "quick-add";

@@ -304,7 +304,7 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
       };
     }, routine.routineId);
     check(editor.page && editor.open && editor.focus && editor.value === "weekdays" && /^Repeats every weekday\. Next: /.test(editor.current) &&
-      editor.saveDisabled === true && editor.stop === "Stop repeating",
+      editor.saveDisabled === true && editor.stop === "Delete routine",
       "Schedule opens the row's editor with the current schedule and focuses the select", editor);
     await press(KEYS.down);
     editor = await page((id) => {
@@ -386,7 +386,7 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
     await page(() => { const q = document.querySelector("kin-app").quickAdd; q.clearDraft(); q.dialog.close(); });
     await viewport(1280, 900, false);
 
-    // 13. Stop repeating keeps history and removes the task from Today.
+    // 13. Delete routine (#314) keeps history and removes the task from Today.
     await visit("routines");
     await page((id) => document.querySelector("kin-app").routines.openSchedule(id), replacement.routineId);
     await idle();
@@ -396,8 +396,8 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
     versions = await routineByText(title);
     const stopped = await page((id) => document.querySelector("kin-app").today.querySelectorAll(`[data-routine-id="${id}"]`).length, replacement.routineId);
     check(versions.every((entry) => entry.status === "archived" && entry.nextOn === null) && stopped === 0 &&
-      (await announced()).includes("Stopped repeating. Past completions are kept."),
-      "Stop repeating ends future occurrences, keeps history and is announced", versions);
+      (await announced()).includes("Routine deleted. Past completions are kept."),
+      "Delete routine ends future occurrences, keeps history and is announced", versions);
   } finally {
     await page(() => { const app = document.querySelector("kin-app"); if (Object.hasOwn(app.ctx.status, "setStatus")) delete app.ctx.status.setStatus; delete window.__statusLog; });
     await restoreClock();

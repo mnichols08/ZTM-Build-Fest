@@ -2175,3 +2175,33 @@ tried them.
 - **Consistent identity forms (#268).** Path statements, next steps and the
   name and nickname forms share spacing, 48 px targets and theme tokens; long
   names and device labels wrap rather than widening a 320 px screen.
+
+# 32. Chat on a phone: fits the screen, one-row composer, message actions (#310, #311)
+
+- **Fits the screen.** On the Chat page the message list is the only thing
+  that scrolls. `web/chat/chat-layout.js` sizes the chat to the visible area
+  below its top (the visual viewport, so the on-screen keyboard counts),
+  above the phone's bottom bar and leaving room for anything below it. Chat
+  opens at the newest message (or the first unread); **Jump to latest**
+  shows once you scroll up more than half a screen. Below 720px the page
+  title and description collapse; while you type on a touch screen the bottom
+  bar steps aside. On a short screen (a phone held sideways, a short window)
+  the header, page title and Updates tabs step aside on the Chat page (the
+  title stays for screen readers). Toasts sit above the composer.
+- **One-row composer (#311).** [+] [message] [emoji] [Send]. **+** holds
+  photo, file, camera and poll; Escape closes it and returns to +. While the
+  box is empty, Send gives way to **Voice**. The box grows to at most
+  min(7.5 lines, 30% of the screen).
+- **Message actions (#311).** Every message has one sheet of actions: quick
+  reactions first, then Copy, Reply, the records it can become, Pin, Edit,
+  Delete, and Delete for me, as permitted.
+  - On a touch screen: no action column; messages take up to 85% of the
+    width, with a 44px **⋯** in the time line (or at the end of a grouped
+    message). A long press (500 ms) or ⋯ opens a bottom sheet, at most 480px
+    wide on a tablet. A swipe down, the backdrop or Escape closes it, and
+    focus returns to the message's ⋯. Copy replaces native text selection.
+  - With a mouse (720px and wider): ⋯ and 🙂 show on hover and keyboard
+    focus. ⋯ or a right-click opens the sheet by the ⋯, flipping above it
+    near the bottom of the screen so it never clips.
+  - It is a modal dialog: focus moves to the first action and stays in the
+    sheet until it closes.
