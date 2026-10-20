@@ -2267,3 +2267,22 @@ tried them.
   its row, and the list groups by section in that order with **Other** last.
   A Staple's section goes with it when it is replenished. With no sections,
   the list looks as before.
+
+# 36. Bring a list into Kin (#452)
+
+- **Paste a list.** Pasting two or more lines into a capture field (Today,
+  To do, Shopping) opens **Bring a list into Kin** instead of squashing the
+  lines into one item. Bullets, numbers and checkboxes are removed; a ticked
+  box (`[x]`, ☑, ✓) comes in as done.
+- **Import a file.** Lists › List actions › **Import a list…** takes pasted
+  text or a CSV/text file exported from another app or a spreadsheet. A CSV's
+  columns are guessed from common headers (Title, List, Due date, Completed)
+  and can be changed. A list column mentioning shopping or groceries goes to
+  Shopping; dates are read only in unambiguous year-first forms (2026-11-02).
+- **Preview.** Every row has a checkbox. Repeats within the import and items
+  already open in Kin start unticked and say why. The summary says how many
+  will be added; **Add N items** saves exactly the ticked rows.
+- **Saving.** Each row is an ordinary capture (add, planned date, complete)
+  with an id fixed when the import starts: a failure partway says how many
+  were added and Try again (or Add again) resumes without duplicates. At most
+  200 rows per import; files are read on the device and never uploaded.

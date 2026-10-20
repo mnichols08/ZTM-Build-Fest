@@ -9,6 +9,10 @@ documentation only.
 
 ### Added
 
+- **Bring a list into Kin** (#452): paste several lines into a capture field,
+  or import a CSV or text file from another app, preview the rows (repeats
+  and existing items left out) and add them to To do or Shopping, with dates
+  and done states where the file has them.
 - **Store sections** (#411, [ADR 0015](docs/decisions/0015-store-sections.md)):
   name the parts of the shop in the order you walk it, give items a section,
   and shopping mode groups the list that way (Other last). Staples keep

@@ -73,6 +73,14 @@ class KinCompose extends HTMLElement {
     this.input.maxLength = MAX_ITEM_TEXT_BYTES;
     this.input.required = true;
     this.input.setAttribute("aria-describedby", `compose-message${suffix}`);
+    // Pasting several lines (#453): offer to add them as separate items
+    // rather than squashing them into one.
+    this.input.addEventListener("paste", (event) => {
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      if (text.split(/\r\n|\r|\n/).filter((line) => line.trim()).length < 2) return;
+      event.preventDefault();
+      this.dispatchEvent(new CustomEvent("kin:import-list", { bubbles: true, composed: true, detail: { text, classification: this.classification?.value ?? "need", opener: this.input } }));
+    });
 
     // The kind selector doubles as the classification control so existing
     // callers keep reading `classification.value`.
