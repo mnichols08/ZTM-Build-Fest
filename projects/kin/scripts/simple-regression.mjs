@@ -117,24 +117,70 @@ export async function simpleRegressions(client, { until, ready }) {
   await until(() => page(`(() => { const app = document.querySelector("kin-app");
     return !app.busy && ${card}?.querySelector(".simple-done") && /not done/.test(app.status.textContent); })()`), { attempts: 300 });
 
-  // Layout: one column on a phone, a grid on a tablet; nothing scrolls sideways.
-  for (const [label, metrics, columns] of [
-    ["phone", { width: 320, height: 568, deviceScaleFactor: 2, mobile: true }, 1],
-    ["tablet", { width: 768, height: 1024, deviceScaleFactor: 2, mobile: true }, null],
-    ["desktop", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }, null],
+  // Layout (#350): one column and a bottom bar on a phone, a grid wider;
+  // nothing scrolls sideways; at 200% text the picture stacks above the words.
+  const socksCard = `[...document.querySelectorAll("kin-simple .simple-card")].find((node) => node.querySelector(".simple-text").textContent === "Simple regression socks away")`;
+  for (const [label, metrics, phone] of [
+    ["phone", { width: 320, height: 568, deviceScaleFactor: 2, mobile: true }, true],
+    ["tablet", { width: 768, height: 1024, deviceScaleFactor: 2, mobile: true }, false],
+    ["tablet landscape", { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true }, false],
+    ["desktop", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }, false],
+    ["desktop at 200%", { width: 640, height: 400, deviceScaleFactor: 2, mobile: false }, true],
   ]) {
     await setViewport(client, metrics);
     await page(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`);
     const view = await page(`(() => {
-      const card = document.querySelector("kin-simple .simple-card");
+      const card = ${socksCard};
       const picture = card.querySelector(".simple-picture").getBoundingClientRect();
+      const text = card.querySelector(".simple-text").getBoundingClientRect();
+      const lefts = new Set([...document.querySelectorAll("kin-simple .simple-card")].map((node) => Math.round(node.getBoundingClientRect().left)));
+      const small = [...document.querySelectorAll("kin-simple button, .primary-nav a")].filter((node) => !node.hidden && node.getClientRects().length && node.getBoundingClientRect().height < 44);
       return { scroll: document.documentElement.scrollWidth, width: innerWidth, picture: Math.round(picture.width),
+        stacked: picture.bottom <= text.top + 1, columns: lefts.size, small: small.length,
         nav: document.querySelector(".primary-nav").getBoundingClientRect().top > innerHeight / 2 };
     })()`);
-    assert.ok(view.scroll <= view.width, `${label}: no horizontal scroll`);
+    assert.ok(view.scroll <= view.width, `${label}: no horizontal scroll (${view.scroll} > ${view.width})`);
     assert.ok(view.picture >= (metrics.width < 720 ? 96 : 128), `${label}: the picture is large (${view.picture}px)`);
-    if (columns === 1) assert.ok(view.nav, `${label}: the destinations sit in a bottom bar`);
+    assert.equal(view.small, 0, `${label}: every control is at least 44px tall`);
+    if (phone) assert.ok(view.nav && view.columns === 1, `${label}: one column and a bottom bar`);
+    if (metrics.width >= 720 || metrics.width <= 320) assert.ok(view.stacked, `${label}: the picture sits above the words`);
   }
+
+  // Dark and forced colours (#350): the cards use the palette; Done and the
+  // done state stay visible without colour.
+  const colours = () => page(`(() => {
+    const card = ${socksCard};
+    const style = getComputedStyle(card);
+    return { surface: style.getPropertyValue("--surface").trim(), border: style.borderTopStyle, width: parseFloat(style.borderTopWidth) };
+  })()`);
+  const light = await colours();
+  await page(`(() => { const app = document.querySelector("kin-app"); if (!app.currentAppearance) app.ctx.appearance.applyEffectiveAppearance();
+    window.__simpleAppearance = structuredClone(app.currentAppearance); app.ctx.appearance.applyAppearance({ ...window.__simpleAppearance, mode: "dark" }); return true; })()`);
+  const dark = await colours();
+  await page(`(() => { const app = document.querySelector("kin-app"); app.ctx.appearance.applyAppearance(window.__simpleAppearance); delete window.__simpleAppearance; return true; })()`);
+  assert.notEqual(dark.surface, light.surface, "dark mode changes the cards");
+  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "active" }] });
+  const forced = await colours();
+  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "none" }] });
+  assert.ok(forced.width >= 2 && forced.border !== "none", "forced colours: each card keeps a visible border");
+
+  // Keyboard only and names (#350): Tab reaches Done; Enter marks it done;
+  // Undo keeps focus; pictures are hidden from screen readers.
+  await setViewport(client, { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  await page(`(() => { const done = ${socksCard}.querySelector("button"); done.focus(); return document.activeElement === done; })()`);
+  for (const type of ["keyDown", "keyUp"])
+    await client.send("Input.dispatchKeyEvent", { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, ...(type === "keyDown" ? { text: "\r" } : {}) });
+  await until(() => page(`(() => { const app = document.querySelector("kin-app"); const card = ${socksCard};
+    return !app.busy && card?.querySelector(".simple-undo") && document.activeElement === card.querySelector(".simple-undo"); })()`), { attempts: 300 });
+  const names = await page(`(() => ({
+    pictures: [...document.querySelectorAll("kin-simple .simple-picture")].every((node) => node.getAttribute("aria-hidden") === "true"),
+    images: [...document.querySelectorAll("kin-simple img")].every((img) => img.getAttribute("alt") === ""),
+    list: document.querySelector("kin-simple .simple-cards").getAttribute("aria-label"),
+    heading: document.getElementById("today-title")?.textContent,
+  }))()`);
+  assert.deepEqual(names, { pictures: true, images: true, list: "My things today", heading: "Today" });
+  await page(`${socksCard}.querySelector(".simple-undo").click()`);
+  await until(() => page(`(() => !document.querySelector("kin-app").busy && ${socksCard}?.querySelector(".simple-done"))()`), { attempts: 300 });
   await client.send("Emulation.clearDeviceMetricsOverride");
 
   // Back to the full layout for the rest of the run.
@@ -142,5 +188,5 @@ export async function simpleRegressions(client, { until, ready }) {
   await ready(client);
   const full = await page(`(() => ({ flag: document.documentElement.dataset.kinSimple ?? null, lists: Boolean(document.getElementById("lists")) }))()`);
   assert.deepEqual(full, { flag: null, lists: true });
-  return "PASS Simple view and item pictures: an adult sets a picture beside the words; only Today, Chat and the Fridge; no palette, details, Quick add or Search; my things with pictures; Done and Undo in place; phone, tablet and desktop (#345, #346, #347)";
+  return "PASS Simple view and item pictures: an adult sets a picture beside the words; only Today, Chat and the Fridge; no palette, details, Quick add or Search; my things with pictures; Done and Undo in place; 320×568 to desktop and 200% text, dark and forced colours, keyboard and names (#345–#347, #350)";
 }

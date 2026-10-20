@@ -9,6 +9,19 @@ documentation only.
 
 ### Added
 
+- **Simple view** (#341, [ADR 0013](docs/decisions/0013-simple-view.md)): a
+  household admin turns on a calmer layout for a Limited member (People &
+  devices, with their passkey). The child's Kin then shows only Today, Chat
+  and the Fridge: big cards for their own things today with a picture, a
+  large Done that becomes Undo in place, and tonight's dinner. Nothing is
+  counted. It is a layout, not a lock: the service enforces only the switch
+  and Chat and Fridge access. Server schema 20 (`members.simple_view`), key
+  database version 6 (the cached layout, so an offline unlock stays simple).
+- **Item pictures** (#347): Adults give an item one emoji in its details; it
+  shows beside the item's text and large in Simple view. Event kind 64; older
+  devices pause sync with "update Kin" rather than drop it.
+- Assignee labels use members' preferred names, else "Household member N",
+  never "Household adult N" for a child (#344).
 - **Meals** (#333, [ADR 0012](docs/decisions/0012-meals.md)): Lists → Meals
   plans the week's dinners, Monday to Sunday, from the household's own
   recipes or "Something else", with who's cooking (anyone; nothing is

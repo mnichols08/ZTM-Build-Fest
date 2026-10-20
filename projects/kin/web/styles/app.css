@@ -1896,7 +1896,7 @@ kin-simple { display: block; }
 .simple-picture.is-empty { display: none; }
 .simple-picture img { inline-size: 100%; block-size: 100%; object-fit: cover; }
 .simple-emoji { font-size: 4rem; line-height: 1; }
-.simple-text { flex: 1 1 10rem; min-inline-size: 0; margin: 0; font-size: 1.25rem; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.simple-text { flex: 1 1 12rem; min-inline-size: 0; margin: 0; font-size: 1.25rem; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
 .simple-done, .simple-undo { flex: 1 1 100%; min-block-size: 3.5rem; font-size: 1.125rem; font-weight: 700; border-radius: var(--r-control); }
 .simple-done { border: 2px solid var(--accent); background: var(--accent); color: var(--accent-ink); }
 .simple-undo { border: 2px solid var(--line-strong); background: var(--surface); color: var(--ink); }

@@ -580,6 +580,56 @@ async function pageFridgeAfterDrawing() {
   };
 }
 
+// Simple view (#343, #350): an admin's switch on a Limited member's row, by
+// the real People & devices control and a fresh passkey.
+async function pageToggleSimpleView(on) {
+  const app = document.querySelector("kin-app");
+  const h = app.household;
+  const originalConfirm = globalThis.confirm;
+  globalThis.confirm = () => true;
+  try {
+    await h.showHousehold();
+    const prefix = on ? "Turn on Simple view for " : "Turn off Simple view for ";
+    const button = [...h.querySelectorAll("button")].find((b) => b.textContent.startsWith(prefix));
+    if (!button) throw new Error("No control '" + prefix + "': " + h.textContent);
+    button.click();
+    for (let i = 0; i < 400; i++) {
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      if (!h.busy && [...h.querySelectorAll("button")].some((b) => b.textContent.startsWith(on ? "Turn off Simple view" : "Turn on Simple view"))) break;
+      const alert = h.querySelector(".household-message");
+      if (!h.busy && alert?.getAttribute("role") === "alert") throw new Error("Simple view change failed: " + alert.textContent);
+    }
+    return { text: h.textContent, rowSaysOn: /Simple view on/.test(h.textContent) };
+  } finally {
+    globalThis.confirm = originalConfirm;
+  }
+}
+
+async function pageSimpleState() {
+  const app = document.querySelector("kin-app");
+  return {
+    simple: app?.simpleView === true, flag: document.documentElement.dataset.kinSimple ?? null,
+    lists: Boolean(document.getElementById("lists")), unlocked: Boolean(app?.store), hash: location.hash,
+    nav: app?.navLinks ? [...app.navLinks.values()].filter((link) => !link.hidden).map((link) => link.textContent.trim()) : [],
+  };
+}
+
+async function pageWaitSimple(want) {
+  const app = document.querySelector("kin-app");
+  for (let i = 0; i < 600 && (app?.simpleView === true) !== want; i++) {
+    await new Promise((r) => requestAnimationFrame(() => r()));
+    if (i % 40 === 39) await app?.syncCoordinator?.syncNow?.();
+  }
+  return pageSimpleState();
+}
+
+async function pageLockNow() {
+  const app = document.querySelector("kin-app");
+  app.ctx.session.lockHousehold();
+  for (let i = 0; i < 400 && app.store; i++) await new Promise((r) => requestAnimationFrame(() => r()));
+  return !app.store;
+}
+
 async function pageEnableSync() {
   const app = document.querySelector("kin-app");
   await app.household.enableSync();
@@ -1428,6 +1478,35 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await c.call(pageSync);
     result = await a.call(pageSync);
     check(result.items.includes("C1 limited member item"), "Adult A receives Limited C's event");
+    // Simple view (#343, #350): A turns it on; C's device switches on its
+    // next poll; an offline unlock stays simple; A turns it off again.
+    const turnedOn = await a.call(pageToggleSimpleView, true);
+    check(turnedOn.rowSaysOn, "the admin's People row says Simple view on");
+    result = await c.call(pageSync);
+    let simple = await c.call(pageWaitSimple, true);
+    check(simple.simple && simple.flag === "on" && !simple.lists && JSON.stringify(simple.nav) === JSON.stringify(["Today", "Chat", "Fridge"]),
+      "Limited C's device switches to Simple view on its next poll: " + JSON.stringify(simple));
+    check(await c.call(pageLockNow), "Limited C locks");
+    await c.send("Network.emulateNetworkConditions", { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    try {
+      await c.call(pageUnlock, c.recovery);
+      simple = await c.callStable(pageSimpleState);
+      check(simple.unlocked && simple.simple && !simple.lists, "an offline unlock opens Simple view from the cached layout: " + JSON.stringify(simple));
+    } finally {
+      await c.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    }
+    const turnedOff = await a.call(pageToggleSimpleView, false);
+    check(!turnedOff.rowSaysOn, "the admin's People row no longer says Simple view on");
+    // C's next pass reloads Kin into the full layout (unlocked again where a
+    // refresh keeps Kin unlocked; otherwise C unlocks).
+    let full = await c.callStable(pageWaitSimple, false);
+    if (!full.unlocked) {
+      await c.callStable(pageWaitReady);
+      await c.call(pageUnlock, c.recovery);
+    }
+    full = await c.callStable(pageWaitSimple, false);
+    check(full && !full.simple && full.lists && full.flag === null, "turning it off brings back the full Kin: " + JSON.stringify(full));
+    await c.callStable(pageWaitHousehold);
     pass(`${checks} Limited admission and restriction assertions (profile C)`);
 
     // ---- Remove Limited C while C is offline --------------------------------
