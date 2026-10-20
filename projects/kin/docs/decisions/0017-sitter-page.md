@@ -1,6 +1,6 @@
 # ADR 0017 — A page for the sitter
 
-Status: Proposed (#442, for the sitter-page epic #441)
+Status: Accepted (owner decision, #442, for the sitter-page epic #441)
 
 ## Context
 
@@ -23,12 +23,12 @@ Constraints:
 
 ### What it is: a page built from existing records
 
-- **`SITTER_PAGE_SET`** (one additive household event kind, the next free
-  number when built): an optional short intro (0–500 bytes) and an ordered
+- **`SITTER_PAGE_SET` (kind 70)** (one additive household event kind): an optional short intro (0–500 bytes) and an ordered
   list of up to 30 entries, each `{ kind: note | reference-record | routine,
   id }`. Setting it replaces the previous page. Entries pointing at archived
   or unknown records are skipped in the projection.
-- **Who may change it:** Adult members (not Limited or Temporary).
+- **Who may change it:** any Adult member (owner decision; not Limited or
+  Temporary).
 - **What shows:** the entries' current content (a note's title and body, a
   reference record's fields, a routine's text and today's state), so editing
   a note updates the page; nothing is copied.

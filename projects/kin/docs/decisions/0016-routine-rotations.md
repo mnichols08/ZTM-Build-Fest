@@ -1,6 +1,6 @@
 # ADR 0016 — Taking turns on routines
 
-Status: Proposed (#429, for the taking-turns epic #428)
+Status: Accepted (owner decision, #429, for the taking-turns epic #428)
 
 ## Context
 
@@ -20,18 +20,19 @@ Constraints:
 
 ### Model: an ordered list and a turn
 
-Two additive household event kinds (numbers: the next free kinds when built,
-recorded here then):
+Two additive household event kinds, **68** and **69** (the next free
+numbers after store sections' 66 and 67):
 
-- **`ROUTINE_ROTATION_SET`**: `routine_id`, an ordered list of 2–12 member
+- **`ROUTINE_ROTATION_SET` (kind 68)**: `routine_id`, an ordered list of 2–12 member
   ids (no repeats), and the index whose turn it is now. An empty list ends
   the rotation. Setting it replaces the previous rotation.
-- **`ROUTINE_TURN_SET`**: `routine_id`, `member_id` — "it's this person's
+- **`ROUTINE_TURN_SET` (kind 69)**: `routine_id`, `member_id` — "it's this person's
   turn now". Used for **Skip to next** and **Swap with…**; the member must be
   in the rotation.
 
 ### Rules (Rust)
 
+- **The turn passes when it's done** (owner decision: not by calendar).
 - **Advance on completion.** When replay applies
   `ROUTINE_OCCURRENCE_COMPLETED` for a rotating routine, the turn moves to the
   next member in the list. The occurrence key that advanced it is recorded,
