@@ -2247,3 +2247,17 @@ tried them.
 - Support: Android and desktop Chrome/Edge support share targets for
   installed apps; Safari on iOS doesn't offer installed web apps in the share
   sheet yet. Shortcuts work where the platform supports manifest shortcuts.
+
+# 35. Shopping mode (#403)
+
+- **Start shopping** on Lists › Shopping opens the list for use in the shop:
+  full screen, one large native checkbox per item (rows at least 56px, text
+  19px), what's left in words ("3 things to buy"), and **Done shopping**.
+- Ticking an item completes it with the ordinary command (the toast offers
+  Undo) and moves it to **In the basket**; unticking it there reopens it.
+  Everything works offline and syncs later.
+- **Keep the screen on while shopping** (on where the browser supports the
+  Screen Wake Lock API; remembered per device) stops the phone sleeping
+  between aisles. The lock is released on Done, Escape, lock, or when the
+  page is hidden, and asked for again when it comes back.
+- Grouping by store section is a separate story (#411) with its own ADR.
