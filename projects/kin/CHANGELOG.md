@@ -9,6 +9,10 @@ documentation only.
 
 ### Added
 
+- **Share into Kin** (#389): choose Kin in another app's share sheet to add a
+  link, text, photo or PDF to To do, Shopping, a note, a handoff or Chat,
+  after a preview. The content never reaches the server. Home-screen
+  shortcuts: Quick add, Shopping, Chat and Today.
 - **Talk later** (#312, [ADR 0014](docs/decisions/0014-talk-later.md)): any
   message can go on a **To talk about** list in Chat, marked in the
   conversation, then be marked talked about, reopened or removed. The older

@@ -112,7 +112,7 @@ class KinChatShare extends HTMLElement {
    * `files` are `{ name, size, type, load() }`; `limited` says some members
    * can't read the chat; `submit(payload)` saves and resolves
    * `{ ok, message, itemId?, kind }`. */
-  open({ kind, text, files = [], limited = false, submit, opener = null }) {
+  open({ kind, text, files = [], limited = false, submit, opener = null, audience = null }) {
     const spec = SHARE_KINDS[kind];
     if (!spec || typeof submit !== "function" || this.dialog.open) return false;
     this.state = { kind, spec, submit, files };
@@ -126,7 +126,8 @@ class KinChatShare extends HTMLElement {
     this.body.value = isNote ? String(text ?? "") : "";
     this.input.value = isNote ? noteTitleFrom(text) : oneLine(text);
     this.input.removeAttribute("maxlength");
-    this.audience.textContent = `Everyone in your household will see this${limited ? ", including members who can't read the chat" : ""}. It is a copy: changing or deleting the message won't change it.`;
+    // Shared from another app (#389), there is no message to copy from.
+    this.audience.textContent = audience ?? `Everyone in your household will see this${limited ? ", including members who can't read the chat" : ""}. It is a copy: changing or deleting the message won't change it.`;
     this.error.textContent = "";
     this.result.replaceChildren();
     this.renderFiles(kind === "handoff" ? [] : files);

@@ -11,8 +11,21 @@
   "theme_color": "#684033",
   "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }],
   "categories": ["lifestyle", "utilities"],
+  "share_target": {
+    "action": "/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [{ "name": "files", "accept": ["image/*", "application/pdf"] }]
+    }
+  },
   "shortcuts": [
-    { "name": "Today", "short_name": "Today", "url": "/#today", "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }] },
-    { "name": "Lists", "short_name": "Lists", "url": "/#lists", "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
+    { "name": "Quick add", "short_name": "Add", "description": "Add a task or a shopping item", "url": "/#kin-action=quick-add", "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }] },
+    { "name": "Shopping", "short_name": "Shopping", "url": "/#lists/shopping", "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }] },
+    { "name": "Chat", "short_name": "Chat", "url": "/#updates/chat", "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }] },
+    { "name": "Today", "short_name": "Today", "url": "/#today", "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
   ]
 }

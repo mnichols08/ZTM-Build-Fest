@@ -4,6 +4,7 @@ import "./kin-notes.js";
 import "./kin-compose.js";
 import "./kin-quick-add.js";
 import "./kin-chat-share.js";
+import "./kin-share-sheet.js";
 import "./kin-command-palette.js";
 import "./kin-item.js";
 import "./kin-item-detail.js";
@@ -30,6 +31,7 @@ import "./kin-household-defaults.js";
 import { createAppContext, initializeAppState } from "./app/context.js";
 import { captureInvitationCode } from "../pairing-link.js";
 import { takeSignInLink } from "../device-link.js";
+import { captureLaunchAction, captureShare } from "../share-target.js";
 
 // An invitation link (/pair#code=…) hands over its code before any route is
 // resolved, and the address bar drops it at once (#97). A computer's sign-in
@@ -37,6 +39,10 @@ import { takeSignInLink } from "../device-link.js";
 // the same way (#100).
 captureInvitationCode();
 takeSignInLink();
+// Something shared from another app, or a home-screen shortcut (#389): taken
+// out of the address the same way, and offered once Kin is unlocked.
+captureShare();
+captureLaunchAction();
 
 // The application root. It owns lifecycle, event wiring and the state the
 // controllers in ./app/ share; each behavior lives in one of those controllers.
