@@ -111,6 +111,8 @@ export class RenderController {
     this.ctx.records.renderReminders();
     this.app.handoffs.handoffs = this.app.state.handoffs;
     this.app.talks.talks = this.app.state.talks;
+    // The Chat toolbar's To talk about count includes older open topics.
+    this.app.chat.legacyOpenCount = this.app.state.talks.filter((record) => record.status === "open").length;
     this.app.search.household = {
       items: this.app.state.items,
       handoffs: this.app.state.handoffs,

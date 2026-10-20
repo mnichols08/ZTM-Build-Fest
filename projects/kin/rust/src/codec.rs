@@ -70,6 +70,7 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::DinnerCleared { .. } => crate::meals::DINNER_CLEARED,
         EventKind::DinnerCookSet { .. } => crate::meals::DINNER_COOK_SET,
         EventKind::ItemEmojiSet { .. } => crate::simple::ITEM_EMOJI_SET,
+        EventKind::ChatTopicSet { .. } => crate::chat::CHAT_TOPIC_SET,
     }
 }
 
@@ -438,6 +439,15 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             }
             payload.extend_from_slice(&message_id.0);
             payload.extend_from_slice(&[0; 4]);
+        }
+        // Topic (#312): message ID, state u8 (1 open, 2 resolved, 0 cleared)
+        // and 3 reserved.
+        EventKind::ChatTopicSet { message_id, state } => {
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&[state.code(), 0, 0, 0]);
         }
         // The fridge (#317): board.rs owns the payloads.
         kind @ (EventKind::BoardStrokeAdded { .. }

@@ -118,15 +118,19 @@ export class ViewBuilder {
     const handoffPanel = document.createElement("section");
     handoffPanel.id = "handoffs-panel";
     handoffPanel.setAttribute("aria-label", "Handoffs");
-    const talkPanel = document.createElement("section");
-    talkPanel.id = "talk-panel";
-    talkPanel.setAttribute("aria-label", "Talk");
     const chatPanel = document.createElement("section");
     chatPanel.id = "chat-panel";
     chatPanel.setAttribute("aria-label", "Chat");
     handoffPanel.append(this.app.handoffs);
-    talkPanel.append(this.app.talks);
+    // To talk about (#312, ADR 0014): the older Talk topics live in Chat's
+    // list; without chat access, in their own section under Handoffs.
+    this.app.talksStandalone = document.createElement("section");
+    this.app.talksStandalone.id = "talk-standalone";
+    this.app.talksStandalone.className = "talk-standalone";
+    this.app.talksStandalone.hidden = true;
+    handoffPanel.append(this.app.talksStandalone);
     chatPanel.append(this.app.chat);
+    this.ctx.views.placeTalks();
     // The unread count (#133) from the chat view: on the Chat link and, where
     // the browser supports it, on the installed app's icon. Both are set from
     // what this device decrypted; no count is sent anywhere. A locked
@@ -140,12 +144,13 @@ export class ViewBuilder {
     // The admin's chat policy (#123): with no access, Chat leaves Updates.
     this.app.chat.addEventListener("kin:chat-access", (event) => {
       this.app.chatAccess = event.detail.access;
+      this.ctx.views.placeTalks();
       this.ctx.render.renderState();
       if (event.detail.access === "none" && this.app.route?.page === "updates" && this.app.route.segment === "chat")
         this.ctx.navigation.navigate(routeHash("updates", "handoffs"));
     });
-    updates.append(updatesNav, handoffPanel, talkPanel, chatPanel);
-    this.app.segmentPanels.set("updates", new Map([["handoffs", handoffPanel], ["talk", talkPanel], ["chat", chatPanel]]));
+    updates.append(updatesNav, handoffPanel, chatPanel);
+    this.app.segmentPanels.set("updates", new Map([["handoffs", handoffPanel], ["chat", chatPanel]]));
 
     // Household: an overview plus secondary destinations. Appearance remains
     // personal while the five primary destinations stay unchanged.
@@ -324,5 +329,25 @@ export class ViewBuilder {
     this.app.detailPanel.hidden = true;
     main.append(this.app.detailPanel);
     this.ctx.navigation.showPageFromLocation();
+  }
+
+  /** Where the older Talk topics show: in Chat's To talk about list, or,
+   * without chat access, in a section of their own under Handoffs. */
+  placeTalks() {
+    const talks = this.app.talks;
+    const host = this.app.talksStandalone;
+    if (!talks || !host) return;
+    const standalone = this.app.chatAccess === "none";
+    if (standalone) {
+      talks.setAttribute("heading", "To talk about");
+      if (talks.parentElement !== host) host.append(talks);
+      this.app.chat.legacyTopics = null;
+    } else {
+      talks.setAttribute("heading", "Other topics");
+      this.app.chat.legacyTopics = talks;
+      if (talks.parentElement === host) talks.remove();
+      if (this.app.chat.legacyHost && talks.parentElement !== this.app.chat.legacyHost) this.app.chat.legacyHost.append(talks);
+    }
+    host.hidden = !standalone;
   }
 }

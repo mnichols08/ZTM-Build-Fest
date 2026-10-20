@@ -292,7 +292,8 @@ impl Replay {
             | K::ChatReactionSet { .. }
             | K::ChatPinSet { .. }
             | K::ChatPollVote { .. }
-            | K::ChatPollClosed { .. } => chat::apply(self, event)?,
+            | K::ChatPollClosed { .. }
+            | K::ChatTopicSet { .. } => chat::apply(self, event)?,
             K::BoardStrokeAdded { .. }
             | K::BoardStrokeHidden { .. }
             | K::BoardMagnetPlaced { .. }

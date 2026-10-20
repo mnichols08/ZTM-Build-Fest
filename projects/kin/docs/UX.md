@@ -2205,3 +2205,23 @@ tried them.
     near the bottom of the screen so it never clips.
   - It is a modal dialog: focus moves to the first action and stays in the
     sheet until it closes.
+
+# 33. Talk later and two Updates tabs (#312, #313, ADR 0014)
+
+- **Talk later.** A message's actions include **Talk later**; the message
+  then shows "🗨 To talk about" in the conversation and goes on Chat's **To
+  talk about** list. From there or the message's actions it can be marked
+  **talked about** (still listed, "✓ Talked about") or talked about again,
+  and the list can **Remove** it. Choosing a topic goes to its message.
+  Read-only members see the list but can't change it; Simple view has none.
+- **The list.** Open topics first, each with its message's author and first
+  line and who marked it. The older Talk topics (household events 8–11) sit
+  below in the same panel, with Add a topic, Resolve, Reopen and Archive as
+  before. At 1180px and wider the list is a side column (390px); elsewhere
+  the chat toolbar's **To talk about** button opens it, with the open count
+  in words ("To talk about · 2 open"); Escape closes it.
+- **Without chat access** the older topics have their own **To talk about**
+  section under Handoffs; chat topics never appear there.
+- **Updates** has two tabs, Handoffs and Chat. `#talk`, `#handoff/talk` and
+  `#updates/talk` open Chat with the list (or the Handoffs section without
+  chat access); Simple view sends them to Today.

@@ -1301,7 +1301,7 @@ try {
           ),
         );
       }
-      await visit(first, "updates/talk");
+      await visit(first, "updates/chat");
       await first.evaluate("window.scrollTo(0,0)");
       await delay(80);
       await writeFile(
@@ -1364,20 +1364,27 @@ try {
   await visit(first, "today");
   await visit(first, "updates/handoffs");
   console.log(await first.evaluate(`(${handoffRegressions.toString()})()`));
-  assert.equal(await first.evaluate(`(()=>{
+  assert.deepEqual(await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
     const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
-    links[1].click();
-    return location.hash==='#updates/talk' && links[1].getAttribute('aria-current')==='true' && !links[0].hasAttribute('aria-current') &&
-      document.querySelector('#handoffs-panel').hidden && !document.querySelector('#talk-panel').hidden &&
-      app.talks.querySelector('.talk-hint').textContent.includes('Topics to discuss');
-  })()`), true, "Handoffs/Talk segments switch by route and keep the concepts distinct");
+    const labels=links.map((link)=>link.textContent.trim().split(/\\s/)[0]).join();
+    app.ctx.navigation.navigate('#updates/talk');
+    for (let i=0;i<5;i++) await new Promise((r)=>requestAnimationFrame(r));
+    const current=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
+    return { labels, hash: location.hash, current: current[1]?.getAttribute('aria-current'),
+      handoffsHidden: document.querySelector('#handoffs-panel').hidden, chatShown: !document.querySelector('#chat-panel').hidden,
+      inList: Boolean(app.talks.closest('.chat-topics')), shown: !app.talks.closest('[hidden]'),
+      hint: Boolean(app.talks.querySelector('.talk-hint')?.textContent.includes('Topics to discuss')) };
+  })()`), { labels: "Handoffs,Chat", hash: "#updates/chat", current: "true", handoffsHidden: true, chatShown: true, inList: true, shown: true, hint: true },
+    "Updates has Handoffs and Chat; an old Talk link opens Chat's To talk about list with the older topics (#312, #313)");
   console.log(await first.evaluate(`(${talkRegressions.toString()})()`));
+  // The list the old Talk link opened closes again, leaving Chat its room.
+  await first.evaluate(`document.querySelector('kin-app').chat.toggleTopics(false)`);
   await visit(first, "updates/chat");
   assert.equal(await first.evaluate(`(()=>{const app=document.querySelector('kin-app');const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
-    return location.hash==='#updates/chat' && links[2]?.getAttribute('aria-current')==='true' && !document.querySelector('#chat-panel').hidden &&
-      document.querySelector('#talk-panel').hidden && Boolean(document.querySelector('kin-chat .chat-scroll'));
-  })()`), true, "Updates → Chat is the third segment");
+    return location.hash==='#updates/chat' && links[1]?.getAttribute('aria-current')==='true' && !document.querySelector('#chat-panel').hidden &&
+      !document.querySelector('#talk-panel') && Boolean(document.querySelector('kin-chat .chat-scroll'));
+  })()`), true, "Updates → Chat is the second segment");
   console.log(await first.evaluate(`(${chatRegressions.toString()})({ keepRoom: true })`));
   console.log(await chatLayoutRegressions(first, { until }));
   await visit(first, "household/areas");
@@ -2357,7 +2364,7 @@ try {
       await first.evaluate(`(()=>{
       const app=document.querySelector('kin-app'),capture=app.talks;
       capture.input.focus();
-      return capture.querySelector('h2').textContent==='Talk' &&
+      return capture.querySelector('h2').textContent==='Other topics' &&
         capture.input.labels[0].textContent==='What should we talk about?' &&
         capture.querySelectorAll('ul > li').length>0 &&
         [...capture.querySelectorAll('h3')].every(heading=>['Open','Resolved'].includes(heading.textContent)) &&

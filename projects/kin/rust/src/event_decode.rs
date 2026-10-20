@@ -726,6 +726,23 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
             }
             EventKind::ChatPollClosed { message_id }
         }
+        // Topic (#312): message ID, state u8 (0 cleared, 1 open, 2
+        // resolved), 3 reserved.
+        (1, crate::chat::CHAT_TOPIC_SET) => {
+            if payload.len() != 20
+                || payload[17..20] != [0; 3]
+                || !valid_timestamp(read_i64(record, 68)?)
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let message_id = ChatMessageId(read_id(payload, 0)?);
+            let state = crate::chat::ChatTopicState::from_code(payload[16])
+                .ok_or(KinError::MalformedProtocol)?;
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::ChatTopicSet { message_id, state }
+        }
         (1, 15..=17) => {
             if payload.len() != if event_kind == 17 { 16 } else { 20 }
                 || !valid_timestamp(read_i64(record, 68)?)

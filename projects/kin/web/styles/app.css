@@ -1944,7 +1944,7 @@ kin-simple { display: block; }
    keyboard). */
 .chat-section.chat-fit { display: flex; flex-direction: column; gap: 8px; height: var(--chat-height); min-height: 0; }
 .chat-section.chat-fit > * { flex: none; }
-.chat-section.chat-fit .chat-scroll { flex: 1 1 0; height: auto; min-height: 3rem; }
+.chat-section.chat-fit .chat-scroll { flex: 1 1 0; height: auto; min-height: 48px; }
 /* Pinned messages never push the composer off screen; their list scrolls. */
 .chat-section.chat-fit .chat-pins { max-height: 7rem; overflow: auto; }
 .chat-section.chat-fit .chat-form textarea { max-height: min(7.5em, 30vh); resize: none; }
@@ -2028,3 +2028,39 @@ kin-app[data-route="updates/chat"] .app-feedback { bottom: calc(var(--chat-compo
 }
 @media (prefers-reduced-motion: reduce) { .chat-row .chat-menu-wrap { transition: none; } }
 @media (forced-colors: active) { .chat-action-sheet { border: 1px solid CanvasText; } }
+
+/* To talk about (#312, ADR 0014): a side column at 1180px and wider (the
+   detail panel's width); elsewhere a panel the chat toolbar opens. */
+.chat-tools { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; min-width: 0; }
+.chat-topics-toggle { white-space: nowrap; }
+@media (max-width: 719px) {
+  /* One toolbar row on a phone: the tools never wrap under the list. */
+  .chat-top { gap: 6px; }
+  .chat-tools { flex-wrap: nowrap; }
+  .chat-tools button { padding-inline: 10px; white-space: nowrap; }
+}
+@media (max-height: 500px) {
+  /* Typing on a short screen: the toolbar steps aside for the messages. */
+  [data-chat-composing] kin-app[data-route="updates/chat"] .chat-top { display: none; }
+}
+.chat-topics { display: grid; align-content: start; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); overflow: auto; overscroll-behavior: contain; }
+.chat-topics[hidden] { display: none; }
+.chat-topics h3 { margin: 0; font-size: 16px; }
+.chat-topics .section-hint { margin: 0; }
+.chat-section.chat-fit .chat-topics:not(.chat-topics-side) { max-height: 45%; }
+.chat-topic-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.chat-topic { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-row); }
+.chat-topic.chat-topic-resolved { color: var(--ink-muted); }
+.chat-topic-jump { justify-self: stretch; min-height: var(--tap); padding: 6px 8px; border: 0; border-radius: var(--r-control); background: transparent; color: inherit; font: inherit; text-align: start; overflow-wrap: anywhere; }
+.chat-topic-jump:hover, .chat-topic-jump:focus-visible { background: var(--surface-secondary); }
+.chat-topic-meta { font-size: 13px; color: var(--ink-muted); }
+.chat-topic-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-topic-actions button { min-height: var(--tap); padding-inline: 12px; }
+.chat-topics-legacy .today-section { margin: 4px 0 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
+.chat-topic-mark { margin: 4px 0 0; color: var(--accent); font-size: 13px; font-weight: 640; }
+.chat-topic-mark.chat-topic-resolved { color: var(--ink-muted); font-weight: 500; }
+@media (min-width: 1180px) {
+  .chat-section.chat-has-side { position: relative; padding-inline-end: calc(390px + 28px); }
+  .chat-topics.chat-topics-side { position: absolute; inset-block: 12px; inset-inline-end: 12px; width: 390px; }
+}
+@media (forced-colors: active) { .chat-topics, .chat-topic { border: 1px solid CanvasText; } }

@@ -26,8 +26,14 @@ test("lists default to To do and accept each list segment", () => {
 
 test("legacy Handoff, More, Needs and tab hashes alias onto Updates, Household and Lists", () => {
   assert.equal(resolveRoute({ hash: "#handoff" }).canonical, "updates/handoffs");
-  assert.equal(resolveRoute({ hash: "#handoff/talk" }).canonical, "updates/talk");
-  assert.equal(resolveRoute({ hash: "#talk" }).canonical, "updates/talk");
+  // The Talk tab moved into Chat's To talk about list (#312).
+  for (const hash of ["#handoff/talk", "#talk", "#updates/talk"]) {
+    const route = resolveRoute({ hash });
+    assert.equal(route.canonical, "updates/chat", hash);
+    assert.equal(route.hash, "#updates/chat", hash);
+    assert.equal(route.topics, true, hash);
+  }
+  assert.equal("topics" in resolveRoute({ hash: "#updates/chat" }), false);
   assert.equal(resolveRoute({ hash: "#more" }).canonical, "household/hub");
   assert.equal(resolveRoute({ hash: "#more/security" }).canonical, "household/privacy");
   assert.equal(resolveRoute({ hash: "#needs" }).canonical, "lists/todo");
@@ -52,7 +58,7 @@ test("routeHash produces the short form for page defaults and the segment form o
   assert.equal(routeHash("household"), "#household");
   assert.equal(routeHash("household", "privacy"), "#household/privacy");
   assert.equal(routeHash("lists"), "#lists/todo");
-  assert.equal(routeHash("updates", "talk"), "#updates/talk");
+  assert.equal(routeHash("updates", "talk"), "#updates/handoffs", "no Talk tab: the page default");
   assert.equal(routeHash("updates", "chat"), "#updates/chat");
   assert.equal(resolveRoute({ hash: "#updates/chat" }).canonical, "updates/chat");
   assert.equal(routeHash("routines"), "#routines");

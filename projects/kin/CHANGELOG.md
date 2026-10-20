@@ -9,6 +9,15 @@ documentation only.
 
 ### Added
 
+- **Talk later** (#312, [ADR 0014](docs/decisions/0014-talk-later.md)): any
+  message can go on a **To talk about** list in Chat, marked in the
+  conversation, then be marked talked about, reopened or removed. The older
+  Talk topics sit in the same list. It's a side column at 1180px and wider,
+  and a panel from the chat toolbar elsewhere, its count in words. A flag is
+  a new chat event (kind 65), so members without chat access never see it;
+  they find the older topics under Handoffs.
+- **Updates has two tabs** (#313): Handoffs and Chat. The Talk tab is gone;
+  old Talk links open the To talk about list.
 - **Chat on a phone** (#310, #311): Chat fits the screen, with the message
   list the only thing that scrolls, and opens at the newest message; Jump to
   latest shows when you scroll up. The composer is one row ([+] [message]

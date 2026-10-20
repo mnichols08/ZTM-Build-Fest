@@ -365,6 +365,13 @@ pub enum EventKind {
     ChatPollClosed {
         message_id: ChatMessageId,
     },
+    /// "Talk later" (#312, ADR 0014): puts a message on the "To talk about"
+    /// list (open), marks it talked about (resolved), or takes it off
+    /// (cleared). The latest in replay order wins.
+    ChatTopicSet {
+        message_id: ChatMessageId,
+        state: crate::chat::ChatTopicState,
+    },
     /// The fridge (#317, board.rs): a stroke in the board's coordinates.
     BoardStrokeAdded {
         stroke_id: BoardId,
@@ -444,6 +451,7 @@ impl EventKind {
                 | EventKind::ChatPinSet { .. }
                 | EventKind::ChatPollVote { .. }
                 | EventKind::ChatPollClosed { .. }
+                | EventKind::ChatTopicSet { .. }
         )
     }
 

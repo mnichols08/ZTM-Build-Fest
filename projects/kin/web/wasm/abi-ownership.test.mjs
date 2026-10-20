@@ -291,6 +291,54 @@ test("a chat page carries the quote of a reply after its reactions (#129)", () =
   ]) assert.throws(() => decode(bytes), (error) => error instanceof KinEngineError && error.code === 6);
 });
 
+test("a chat page ends with the topics a request for them asked for (#312)", () => {
+  const base = kchp({
+    total: 1, start: 0,
+    messages: [{ id: 0x01, author: 0x11, device: 0x21, postedAt: 1_791_475_200_001, status: 0, blob: 0xb1, key: 0xc1 }],
+  });
+  const quote = ({ id = 0x01, state = 1 } = {}) => {
+    const out = new Uint8Array(108);
+    out.fill(id, 0, 16); out[16] = state; out[17] = 1;
+    out.fill(0x11, 20, 36); out.fill(0xb1, 36, 68); out.fill(0xc1, 68, 100);
+    return out;
+  };
+  const entry = ({ id = 0x01, state = 1, by = 0x12, reserved = 0, quoted = quote({ id }) } = {}) =>
+    Uint8Array.of(...new Array(16).fill(id), state, reserved, 0, 0, ...new Array(16).fill(by), ...quoted);
+  const page = (count, ...entries) => Uint8Array.of(...base, count & 0xff, count >> 8, 0, 0, ...entries.flatMap((part) => [...part]));
+  const decode = (bytes, includeTopics = true) => createEngine(substituteExports({ operation: () => 0, result: bytes }).exports)
+    .chatPage([], { includeTopics }, 1_760_000_000_000, 20261003);
+  const decoded = decode(page(2, entry({ state: 2 }), entry({ id: 0x02, by: 0x13 })));
+  assert.deepEqual(decoded.topics[0], {
+    messageId: "01".repeat(16), state: "resolved", flaggedBy: "12".repeat(16),
+    quote: { messageId: "01".repeat(16), state: "live", contentKind: "text", authorId: "11".repeat(16), index: 0, blobRef: "b1".repeat(32), blobKey: new Uint8Array(32).fill(0xc1), text: null },
+  });
+  assert.deepEqual(decoded.topics.map((topic) => [topic.state, topic.flaggedBy]), [["resolved", "12".repeat(16)], ["open", "13".repeat(16)]]);
+  assert.deepEqual(decode(page(0)).topics, []);
+  assert.deepEqual(decode(base, false).topics, [], "none unless asked for");
+  for (const bytes of [
+    base,
+    page(1),
+    Uint8Array.of(...page(0), 0),
+    page(1, entry({ state: 0 })),
+    page(1, entry({ state: 3 })),
+    page(1, entry({ reserved: 1 })),
+    page(1, entry({ by: 0 })),
+    page(1, entry({ quoted: quote({ id: 0x02 }) })),
+    page(1, entry({ quoted: quote({ state: 3 }) })),
+    page(2, entry(), entry()),
+    page(201),
+  ]) assert.throws(() => decode(bytes), (error) => error instanceof KinEngineError && error.code === 6);
+  // The request asks for them with flag bit 5.
+  let request = null;
+  const fake = substituteExports({ operation: () => 0, result: page(0) });
+  const exports = { ...fake.exports, kin_chat_page: (...args) => {
+    request = new Uint8Array(fake.exports.memory.buffer.slice(POINTER, POINTER + fake.allocations.at(-1)));
+    return fake.exports.kin_chat_page(...args);
+  } };
+  createEngine(exports).chatPage([], { includeTopics: true }, 1_760_000_000_000, 20261003);
+  assert.equal(request[14], 1 | 32);
+});
+
 test("chat pages decode from KCHP and malformed pages are refused (#109)", () => {
   const page = kchp({
     total: 5,

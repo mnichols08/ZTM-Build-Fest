@@ -252,6 +252,7 @@ N  payload
 | 62 | DINNER_CLEARED (#333) | civil date u32 |
 | 63 | DINNER_COOK_SET (#333) | civil date u32, member flag u8 (0 or 1) + 3 reserved, member ID [16] when flagged (absent: "No one yet") |
 | 64 | ITEM_EMOJI_SET (#344) | item ID [16], emoji flag u8 (0 or 1) + 3 reserved, emoji (u16 + UTF-8, one grapheme, at most 32 bytes) when flagged (absent: cleared) |
+| 65 | CHAT_TOPIC_SET (#312, chat log) | message ID, state u8 (0 cleared, 1 open, 2 resolved), 3 reserved: 20 bytes |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -555,7 +556,14 @@ tuned for printed codes under heavy blur.
   (`name-member`) carries the name as its payload, a zero entity ID and no
   option or date (empty clears); there is no target, because a member can
   only name themselves. Executing it rejects a name that would change nothing.
-- **Chat commands (KCMD 44–50, v1.1).** The entity ID is the message ID. Action 48 (`pin-chat-message`) carries `on` (0 or 1) in the u8 field and no payload.
+- **Chat commands (KCMD 44–50 and 65, v1.1).** The entity ID is the message ID. Action 48 (`pin-chat-message`) carries `on` (0 or 1) in the u8 field and no payload.
+  Action 65 (`set-chat-topic`, #312) carries the topic state in the u8 field
+  (0 cleared, 1 open, 2 resolved; 3 and above are malformed) and no payload,
+  date or expiry. Executing needs a message the log holds and its author has
+  not deleted, and a change: open from no topic or a resolved one (refused
+  past 200 open or resolved topics), resolved from open, both only on a
+  message that shows (not removed by a named admin); cleared from either.
+  Every refusal is code 4.
   Poll commands (#135): action 44 with content kind 3 posts a poll: the
   `date` field carries the option count in its low byte (2–10) and 1 in the
   next byte for multiple choice; the payload is the blob pair as for text (the
@@ -588,7 +596,7 @@ tuned for printed codes under heavy blur.
 - **KCHQ v1** (chat page request, `kin_chat_page`): `"KCHQ"`, version 1,
   reserved u16, before u32 (the page ends before this message index;
   `0xFFFFFFFF` for the newest), limit u16 (1–500), flags u8 (bit 0: texts the
-  arena holds; bit 1: retired blobs; bit 2: reactions; bit 3: pins; bit 4: polls), reserved u8, admin count u32 (at most
+  arena holds; bit 1: retired blobs; bit 2: reactions; bit 3: pins; bit 4: polls; bit 5: topics, #312), reserved u8, admin count u32 (at most
   16), the admins' member IDs (16 bytes each, non-zero), then a record-less
   KINE context as for `kin_project`.
 - **KCHF v1** (chat search request, `kin_chat_search`, #124): `"KCHF"`,
@@ -665,6 +673,12 @@ tuned for printed codes under heavy blur.
   record order: per voter, in ascending member order, the member ID (16), the
   chosen options as a u16 bit set and 2 zero bytes (20 bytes). At most 64
   voters are kept per poll. A member's vote is their latest, by logical time.
+  When the request asked for topics (#312, flag bit 5), the page ends with
+  the "To talk about" list, after the votes: a count u32 (at most 200), then
+  per topic, newest change first: the message ID (16), state u8 (1 open, 2
+  resolved), 3 zero bytes, who flagged it (16), then the message as a quote
+  entry (same layout and rules as a pin's). Only topics whose message still
+  shows are listed; a topic is never cleared in a page.
 - **KAPQ v1 / KAPR v1** (voice waveform, `kin_audio_peaks`, #134):
   `"KAPQ"`, version 1, 3 reserved zero bytes, sample count u32 (1–16,000,000),
   then that many little-endian f32 samples (mono, -1.0 to 1.0); the byte length

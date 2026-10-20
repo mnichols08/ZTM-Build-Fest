@@ -1055,7 +1055,8 @@ fn malformed_page_requests_are_rejected() {
     let mut bad = vec![
         kchq(u32::MAX, 0, 0, &[], &context),
         kchq(u32::MAX, 501, 0, &[], &context),
-        kchq(u32::MAX, 10, 0b100000, &[], &context),
+        // Bit 5 asks for topics (#312); bit 6 is reserved.
+        kchq(u32::MAX, 10, 0b100_0000, &[], &context),
         kchq(u32::MAX, 10, 0, &[[0; 16]], &context),
         kchq(u32::MAX, 10, 0, &[[3; 16]; 17], &context),
         kchq(
@@ -3627,3 +3628,7 @@ fn a_page_lists_polls_with_their_state_and_who_voted_for_what() {
         .len()
     );
 }
+
+// "Talk later" topics (#312): their own file, sharing these helpers.
+#[path = "chat_topic_tests.rs"]
+mod topic_tests;

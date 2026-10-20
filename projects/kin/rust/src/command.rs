@@ -209,6 +209,15 @@ pub enum HouseholdCommand {
     CloseChatPoll {
         id: ChatMessageId,
     },
+    /// "Talk later" (#312): opens, resolves or clears the topic on a message.
+    /// Open needs a message that shows, no topic or a resolved one, and room
+    /// under `MAX_TOPICS`; resolved needs a message that shows and an open
+    /// topic; cleared needs a topic on a message not deleted. Anyone who may
+    /// post may set it (the host and the relay check that, as for pins).
+    SetChatTopic {
+        id: ChatMessageId,
+        state: crate::chat::ChatTopicState,
+    },
     /// A fridge event (#317, board.rs), against the board log only. KCMD
     /// actions 52–58 carry the event's exact payload; the board's rules
     /// (`BoardState::check_command`) decide whether it applies.
@@ -490,6 +499,10 @@ pub fn create_event(
             options: *options,
         },
         CloseChatPoll { id } => EventKind::ChatPollClosed { message_id: *id },
+        SetChatTopic { id, state } => EventKind::ChatTopicSet {
+            message_id: *id,
+            state: *state,
+        },
         Board(kind) => {
             if !kind.is_board() {
                 return Err(KinError::InvalidEvent);
@@ -729,6 +742,7 @@ pub fn execute_with(
             | HouseholdCommand::PinChatMessage { .. }
             | HouseholdCommand::VoteChatPoll { .. }
             | HouseholdCommand::CloseChatPoll { .. }
+            | HouseholdCommand::SetChatTopic { .. }
     );
     let board_command = matches!(command, HouseholdCommand::Board(_));
     if history.event_count() >= history.limit()
@@ -991,6 +1005,33 @@ pub fn execute_with(
                     crate::chat::ChatMessageStatus::Live
                 )
             {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        // A topic (#312) must change where the message stands. Opening or
+        // resolving needs a message that shows; clearing needs only a
+        // message not deleted, so a topic whose message an admin removed can
+        // still be taken off the list.
+        HouseholdCommand::SetChatTopic { id, state } => {
+            use crate::chat::{ChatMessageStatus, ChatTopicState};
+            let message = current.chat.get(id).ok_or(KinError::InvalidEvent)?;
+            let shows = matches!(
+                current.chat.shown_status(message, history.chat_admins()),
+                ChatMessageStatus::Live | ChatMessageStatus::Edited
+            );
+            let now = current.chat.topic(id).map(|topic| topic.state);
+            let allowed = match state {
+                ChatTopicState::Open => {
+                    shows
+                        && match now {
+                            None => current.chat.topics.len() < crate::chat::MAX_TOPICS,
+                            Some(now) => now == ChatTopicState::Resolved,
+                        }
+                }
+                ChatTopicState::Resolved => shows && now == Some(ChatTopicState::Open),
+                ChatTopicState::Cleared => now.is_some(),
+            };
+            if message.status == ChatMessageStatus::Deleted || !allowed {
                 return Err(KinError::InvalidEvent);
             }
         }
@@ -1327,7 +1368,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             command_context(bytes)?,
         ));
     }
-    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48..=50) {
+    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48..=50 | 65) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
@@ -1346,7 +1387,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || !(matches!(kind, 14..=16 | 30 | 49) || kind == 44 && option == 3) && date != 0
         || !matches!(
             kind,
-            1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46 | 47 | 48
+            1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46 | 47 | 48 | 65
         ) && option != 0
         || kind != 12 && expires != 0
         || matches!(kind, 12 | 13 | 29) && id != [0; 16]
@@ -1365,7 +1406,8 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 43 && id == [0; 16]
         || matches!(kind, 42 | 43 | 51) && text_length > crate::state::MAX_DEVICE_NAME_BYTES
         || kind == 51 && id != [0; 16]
-        || matches!(kind, 44..=50) && id == [0; 16]
+        || matches!(kind, 44..=50 | 65) && id == [0; 16]
+        || kind == 65 && (text_length != 0 || option > 2)
         || kind == 49 && date > u32::from(u16::MAX)
         || matches!(kind, 49 | 50) && text_length != 0
         || kind == 47
@@ -1772,6 +1814,11 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         },
         50 => CloseChatPoll {
             id: ChatMessageId(id),
+        },
+        65 => SetChatTopic {
+            id: ChatMessageId(id),
+            state: crate::chat::ChatTopicState::from_code(option)
+                .ok_or(KinError::MalformedProtocol)?,
         },
         _ => return Err(KinError::UnsupportedVersion),
     };
