@@ -314,11 +314,14 @@ export async function chatRegressions({ keepRoom = false } = {}) {
   const anchorId = anchorRow.dataset.messageId;
   scroller.scrollTop = anchorRow.offsetTop - scroller.offsetTop - 0;
   const before = anchorRow.getBoundingClientRect().top;
+  const parts = () => [...chat.querySelector(".chat-section").children].filter((node) => node.getClientRects().length)
+    .map((node) => `${(node.className || node.tagName).split(" ")[0]}:${Math.round(node.getBoundingClientRect().top)}+${Math.round(node.getBoundingClientRect().height)}`).join(" ");
+  const partsBefore = `${parts()} scrollTop:${Math.round(scroller.scrollTop)}`;
   chat.querySelector(".chat-older").click();
   await settle();
   check(rows().length === 120, `an older page joins the window (${rows().length})`);
   const after = chat.querySelector(`[data-message-id="${anchorId}"]`).getBoundingClientRect().top;
-  check(Math.abs(after - before) < 3, `position kept while paging (${before} → ${after})`);
+  check(Math.abs(after - before) < 3, `position kept while paging (${before} → ${after}) [${partsBefore}] → [${parts()} scrollTop:${Math.round(scroller.scrollTop)}]`);
   for (let i = 0; i < 5; i += 1) {
     chat.querySelector(".chat-older").click();
     await settle();

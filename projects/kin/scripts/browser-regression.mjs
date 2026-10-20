@@ -1364,16 +1364,19 @@ try {
   await visit(first, "today");
   await visit(first, "updates/handoffs");
   console.log(await first.evaluate(`(${handoffRegressions.toString()})()`));
-  assert.equal(await first.evaluate(`(()=>{
+  assert.deepEqual(await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
     const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
-    const labels=links.map((link)=>link.textContent.trim().split(/\s/)[0]).join();
+    const labels=links.map((link)=>link.textContent.trim().split(/\\s/)[0]).join();
     app.ctx.navigation.navigate('#updates/talk');
-    return labels==='Handoffs,Chat' && location.hash==='#updates/chat' && links[1].getAttribute('aria-current')==='true' &&
-      document.querySelector('#handoffs-panel').hidden && !document.querySelector('#chat-panel').hidden &&
-      app.talks.closest('.chat-topics') && !app.talks.closest('[hidden]') &&
-      app.talks.querySelector('.talk-hint').textContent.includes('Topics to discuss');
-  })()`), true, "Updates has Handoffs and Chat; an old Talk link opens Chat's To talk about list with the older topics (#312, #313)");
+    for (let i=0;i<5;i++) await new Promise((r)=>requestAnimationFrame(r));
+    const current=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
+    return { labels, hash: location.hash, current: current[1]?.getAttribute('aria-current'),
+      handoffsHidden: document.querySelector('#handoffs-panel').hidden, chatShown: !document.querySelector('#chat-panel').hidden,
+      inList: Boolean(app.talks.closest('.chat-topics')), shown: !app.talks.closest('[hidden]'),
+      hint: Boolean(app.talks.querySelector('.talk-hint')?.textContent.includes('Topics to discuss')) };
+  })()`), { labels: "Handoffs,Chat", hash: "#updates/chat", current: "true", handoffsHidden: true, chatShown: true, inList: true, shown: true, hint: true },
+    "Updates has Handoffs and Chat; an old Talk link opens Chat's To talk about list with the older topics (#312, #313)");
   console.log(await first.evaluate(`(${talkRegressions.toString()})()`));
   await visit(first, "updates/chat");
   assert.equal(await first.evaluate(`(()=>{const app=document.querySelector('kin-app');const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
