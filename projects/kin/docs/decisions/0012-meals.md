@@ -57,9 +57,13 @@ logical time and event id, so "last writer wins" is deterministic everywhere.
   cook.
 - **`DinnerCookSet` (kind 63)**: `date`, `member_id?` (absent means "No one
   yet"). A new kind, never a target of kind 41. Any current member can be the
-  cook (Adult, Limited or Temporary: children cook too). It only applies while
-  that date has a dinner; setting a dinner keeps the cook already chosen for
-  that date. Nothing is counted, ranked or compared.
+  cook (Adult, Limited or Temporary: children cook too); the cook picker offers
+  only current members, and a cook who later leaves shows as "A former
+  household member". It only applies while that date has a dinner: replay
+  ignores a cook set for a date with no dinner (one device cleared it while
+  another chose a cook), so a dinner planned later starts with no one cooking.
+  Setting a dinner keeps the cook already chosen for that date. Nothing is
+  counted, ranked or compared.
 - Merge: two devices planning the same date offline converge on the event that
   sorts last in replay (logical time, then device and event ID) — the same rule as every
   other latest-wins field. Catch-up doesn't list meal changes in this first

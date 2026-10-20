@@ -1167,6 +1167,48 @@ shared board, decided in [ADR 0011](decisions/0011-family-fridge.md).
   that it can be turned on in Security. Locking (by time, by Lock or from
   another tab) leaves full screen and shows the unlock screen.
 - Drawing is a path-based gesture and has no keyboard equivalent.
+- **Without sync** (#372) the fridge has nowhere to save a drawing, so it
+  shows no tools and the line under the board says it's shared through
+  household sync, with a link to Household → People & devices.
+
+## 8.11 Meals (#333)
+
+Lists → Meals plans the week's dinners, decided in
+[ADR 0012](decisions/0012-meals.md).
+
+- **The week** is seven day rows, Monday to Sunday, headed "This week · 19–25
+  Oct" (or "Week of …"), with Previous week, This week and Next week. Each row
+  says the day, the dinner or "Nothing planned", "Cooking: You" (or a name, or
+  "No one yet") and one **Plan** / **Change** button, at least 44 px, whose
+  accessible name names the day ("Change dinner for Monday 19 Oct"). Tonight's
+  row is marked **Tonight**.
+- **Planning** opens a dialog (a bottom sheet on phones) with **Find a
+  recipe** focused, recent recipes first; **Something else…** takes any short
+  name ("Leftovers"); **Who's cooking** lists You first, then members by
+  preferred name. Anyone may cook; nothing is counted. **Clear this dinner**
+  and **Done**; Esc or Done returns focus to the day's button.
+- **Recipes** are a name, "Ingredients (one per line)" and optional notes. An
+  ingredient that exactly matches an active Staple is linked to it and the
+  editor says "Matched to Staple “Milk”."; each line's Staple select changes or
+  removes the link. A line typed twice is kept once. A problem is shown beside
+  its field and focus goes there.
+- **Add ingredients to Shopping** (per recipe, and per planned day with a
+  recipe) adds what's missing, re-adds linked Staples, skips what's already on
+  Shopping, and says so: "Added 2 · Re-added 1 Staple (Milk) · Already on
+  Shopping 1 (Bread)", with **Open Shopping**. Adding twice never duplicates.
+  If saving stops part-way, Kin says how many were added and **Try again**
+  adds only what's missing.
+- **Tonight on Today** is one quiet line: "Tacos · Sam is cooking", or
+  "Nothing planned for tonight." with **Plan dinner**. It never nags.
+- **Layout.** Phones: one column, recipes below the week. When the Meals view
+  is 560 px or wider (tablets), the days sit in two columns. At 1180 px and
+  up the recipes sit beside a single list of days, and each recipe offers
+  **Put on** a day of the week shown, without a dialog; with the detail panel
+  open beside the list, Meals falls back to one list. Long names wrap and the
+  page never scrolls sideways, from 320 × 568 to desktop and at 200% zoom.
+- Dark mode uses the app's tokens; under forced colours tonight's row keeps a
+  system-coloured border. Planning works offline and is saved on the device;
+  with sync on, the status says it will sync when connected.
 
 # 9. States every relevant screen must handle
 

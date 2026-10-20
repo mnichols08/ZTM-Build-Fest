@@ -251,7 +251,11 @@ export class SessionController {
         ["routines", "kin-routines"],
         ["areas", "kin-areas"],
         ["detail", "kin-item-detail"],
+        // Meals (#333): recipes, notes and dinners leave with the lock.
+        ["meals", "kin-meals"],
+        ["tonight", "kin-tonight"],
       ];
+      this.ctx.meals?.reset();
       for (const [field, name] of components)
         this.app[field] = document.createElement(name);
       this.app.detailMode = null;

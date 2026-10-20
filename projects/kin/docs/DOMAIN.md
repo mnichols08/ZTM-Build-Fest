@@ -123,6 +123,19 @@ convenience choices resolved in the member's local calendar when selected;
 the stored date is thereafter fixed. Dates are not deadlines, reminders, or
 calendar events, and Kin does not infer urgency or roll them forward.
 
+## Meals (#333)
+
+A **Recipe** is a household's own: a name, up to 40 ingredient lines (each
+optionally linked to a Staple) and notes. Recipes are saved whole and
+archived, never deleted. A **Dinner** is at most one per civil date: a recipe
+(with its name copied) or "something else" by name, plus an optional **cook**
+— any household member, chosen by people, never counted or ranked. Adding a
+recipe's ingredients to Shopping makes ordinary Shopping Items: a linked
+Staple is re-added, a line already on Shopping (same text, ignoring case and
+spacing) is skipped, and the rest are added, so repeating it adds nothing
+twice. Kin doesn't track quantities, pantry stock or nutrition. See
+[ADR 0012](decisions/0012-meals.md) and [EVENTS](EVENTS.md#meals).
+
 ## Handoff
 
 A Handoff is a short context transfer one household member wants another to know. Its conceptual lifecycle is created, unacknowledged, acknowledged, and archived. Acknowledgement means receipt, not agreement, approval, or evaluation. Handoffs are implemented in v0.3.0 as a separate typed entity; see [V0.3.0](V0.3.0.md). Repeated acknowledgement is a valid no-op. Creator and acknowledger may be the same local actor; no verified identity is inferred.

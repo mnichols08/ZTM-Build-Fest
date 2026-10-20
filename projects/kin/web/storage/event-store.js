@@ -1132,6 +1132,8 @@ export class EventStore {
             pendingCount: loadedEvents.length,
             initialized: false,
           };
+          // The sync identity or bindings may change: meals and names read again (recentHistory).
+          this.recentSyncIdentity = null;
           const contextWrite = contextStore.put(updatedContext);
           const stateWrite = syncStates.add(newState);
           contextWrite.onerror = () =>
@@ -1767,6 +1769,8 @@ export class EventStore {
               abortWith(transaction, storageError(write.error));
           }
           context.sync_identity_bindings = [...bindingsByKey.values()];
+          // The sync identity or bindings may change: meals and names read again (recentHistory).
+          this.recentSyncIdentity = null;
           const contextWrite = contextStore.put(context);
           contextWrite.onerror = () =>
             abortWith(transaction, storageError(contextWrite.error));
@@ -2114,6 +2118,8 @@ export class EventStore {
             syncState.quarantine.length + syncState.quarantineDropped;
           syncState.syncCursor = nextCursor;
           syncState.cursorHighWater = nextCursor;
+          // The sync identity or bindings may change: meals and names read again (recentHistory).
+          this.recentSyncIdentity = null;
           const contextWrite = contextStore.put(context);
           const stateWrite = syncStates.put(syncState);
           contextWrite.onerror = () =>
@@ -2249,6 +2255,8 @@ export class EventStore {
             last_looked_local_sequence: boundary.localSequence,
             last_looked_at: Date.now(),
           };
+          // The sync identity or bindings may change: meals and names read again (recentHistory).
+          this.recentSyncIdentity = null;
           const write = contextStore.put(updatedContext);
           write.onerror = () =>
             abortWith(transaction, storageError(write.error));

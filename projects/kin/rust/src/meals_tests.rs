@@ -310,6 +310,57 @@ fn the_cook_needs_a_dinner_survives_replanning_and_goes_with_a_clear() {
 }
 
 #[test]
+fn a_cook_chosen_offline_for_a_dinner_cleared_meanwhile_is_dropped() {
+    // A plans soup; then, offline, A clears it while B chooses a cook.
+    let planned = execute(
+        &C::Meal(dinner(20261005, None, "Soup")),
+        context(1, ADULT, 0x11, 1),
+        request(&[]),
+    )
+    .unwrap()
+    .event;
+    let base = vec![planned];
+    let cleared = execute(
+        &C::Meal(EventKind::DinnerCleared {
+            date: date(20261005),
+        }),
+        context(2, ADULT, 0x11, 5),
+        request(&base),
+    )
+    .unwrap()
+    .event;
+    let cook = execute(
+        &C::Meal(EventKind::DinnerCookSet {
+            date: date(20261005),
+            member_id: Some(ActorId(KID)),
+        }),
+        context(3, KID, 0x22, 6),
+        request(&base),
+    )
+    .unwrap()
+    .event;
+    let mut events = base.clone();
+    events.extend([cleared, cook]);
+    let state = rebuild(&events, 1_791_475_200_100, date(TEST_DATE)).unwrap();
+    assert!(state.meals.dinners.is_empty());
+    assert!(
+        state.meals.cooks.is_empty(),
+        "the cook went with the cleared dinner"
+    );
+    // Planning that evening again starts with no one cooking.
+    let replanned = execute(
+        &C::Meal(dinner(20261005, None, "Pasta")),
+        context(4, ADULT, 0x11, 7),
+        request(&events),
+    )
+    .unwrap()
+    .event;
+    events.push(replanned);
+    let state = rebuild(&events, 1_791_475_200_100, date(TEST_DATE)).unwrap();
+    assert!(state.meals.cooks.is_empty());
+}
+
+#[test]
 fn two_devices_planning_the_same_evening_offline_converge_on_the_last_event() {
     // Device A and device B each plan 5 October at the same logical time;
     // replay order (logical time, then event ID) decides, on both devices.
