@@ -51,11 +51,17 @@ class KinRotation extends HTMLElement {
 
   send(type, detail) {
     this.message.textContent = "";
+    // Saving disables the controls, which drops focus; it comes back here.
+    const key = this.contains(document.activeElement) ? document.activeElement.dataset.key : null;
     this.dispatchEvent(new CustomEvent(type, {
       bubbles: true, composed: true,
       detail: { ...detail, done: (outcome) => {
         if (outcome?.ok) { this.editing = false; this.render(); }
         else if (this.message) this.message.textContent = outcome?.message ?? "Kin couldn't change the turns. Try again.";
+        if (this.isConnected && !this.contains(document.activeElement) && (document.activeElement === document.body || !document.activeElement)) {
+          const controls = [...this.querySelectorAll("[data-key]")].filter((node) => !node.disabled);
+          (controls.find((node) => node.dataset.key === key) ?? controls[0])?.focus({ preventScroll: true });
+        }
       } },
     }));
   }
