@@ -35,6 +35,34 @@ export function bottomObstruction(rect, { viewportHeight, viewportTop = 0 }) {
   return Math.max(0, Math.min(rect.height, visibleBottom - rect.top));
 }
 
+const px = (value) => Number.parseFloat(value) || 0;
+
+/**
+ * The layout space below `section` down to the end of the page: its own
+ * bottom margin, each ancestor's bottom padding, border and margin, and any
+ * in-flow content after it. The section leaves this much room, so the page
+ * itself never scrolls. Siblings beside it (a grid or a row) don't count.
+ */
+export function spaceBelow(section) {
+  let total = 0;
+  for (let node = section; node && node !== document.documentElement; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    total += px(style.marginBottom);
+    if (node !== section) total += px(style.paddingBottom) + px(style.borderBottomWidth);
+    const parent = node.parentElement;
+    if (!parent) break;
+    const layout = getComputedStyle(parent);
+    const stacked = layout.display.includes("flex") ? layout.flexDirection.startsWith("column") : !layout.display.includes("grid");
+    if (!stacked) continue;
+    for (let sibling = node.nextElementSibling; sibling; sibling = sibling.nextElementSibling) {
+      const look = getComputedStyle(sibling);
+      if (look.display === "none" || look.position === "absolute" || look.position === "fixed") continue;
+      total += sibling.getBoundingClientRect().height + px(look.marginTop) + px(look.marginBottom);
+    }
+  }
+  return Math.ceil(total);
+}
+
 /**
  * Keeps `section` sized while it's shown. `bar()` returns the fixed bottom
  * navigation (or null). Returns a function that stops it.
@@ -55,6 +83,7 @@ export function fitChat(section, { bar = () => null, onComposer = () => {} } = {
       viewportTop,
       sectionTop: section.getBoundingClientRect().top,
       obstruction: bottomObstruction(fixed, { viewportHeight, viewportTop }),
+      gap: 8 + spaceBelow(section),
     });
     if (height === null) return;
     section.style.setProperty("--chat-height", `${height}px`);
