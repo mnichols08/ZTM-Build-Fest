@@ -1,6 +1,21 @@
 // Busy state, status and alert messages, onboarding prompts and app-update notices.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { passkeyUnlockSupported } from "../../security/passkey-unlock.js";
+import {
+  ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY,
+  ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY,
+  BACKUP_CODE_OFFER_DISMISSED_KEY,
+  accountOffer,
+  dismissOffer,
+  dismissOfferAt,
+  dismissPasskeySuggestion,
+  migrationOffer,
+  offerDismissed,
+  offerDismissedAt,
+  passkeyOffer,
+  passkeySuggestionDismissed,
+} from "../../security/backup-key-entry.js";
+import { accountState } from "../../security/account-security.js";
 
 export class StatusController {
   constructor(ctx) {
@@ -71,6 +86,15 @@ export class StatusController {
     ].some((field) => state[field]?.length));
   }
   updateOnboardingDensity() {
+    // The first useful thing added: a password account's passkey card
+    // (#562) can show now, so the card is drawn again, once.
+    const content = this.hasHouseholdContent();
+    const firstContent = content && this.contentSeen === false;
+    this.contentSeen = content;
+    if (firstContent && this.app.accountSecurity?.password && !this.app.onboarding?.dataset.firstRun) {
+      this.renderOnboarding();
+      return;
+    }
     const card = this.app.onboarding;
     const details = card?.querySelector(".onboarding-details");
     if (!details) return;
@@ -90,6 +114,9 @@ export class StatusController {
     const card = this.app.onboarding;
     if (!card || !this.app.vault || this.app.vault.locked) return;
     card.replaceChildren();
+    delete card.dataset.passkeyOffer;
+    delete card.dataset.accountOffer;
+    delete card.dataset.firstRun;
     card.classList.remove("onboarding-compact");
     const todayPage = this.app.pages?.get("today");
     todayPage?.classList.remove("compact-onboarding");
@@ -101,6 +128,9 @@ export class StatusController {
       this.ctx.navigation.navigate("#household/people");
       this.app.household?.startIntent?.(intent);
     };
+    // The first run signing up with the service (#557): one calm line, or
+    // what went wrong with a way to fix it and try again.
+    if (this.app.firstRun) return this.renderFirstRun(card, heading);
     if (status && !status.identity && !status.claimState && status.lifecycle !== "deleted" && status.lifecycle !== "deletion_pending") {
       const details = document.createElement("details");
       details.className = "onboarding-details";
@@ -147,30 +177,62 @@ export class StatusController {
       card.hidden = false;
       return;
     }
-    if (status?.identity && passkeys === 0 && passkeyUnlockSupported() && !this.app.passkeyPromptDismissed) {
-      heading.textContent = "Unlock faster next time";
+    // Passkey unlock, offered once it can work: the device is signed in to a
+    // household (enrolment asks the identity service) and online. Right after
+    // setup it is setup's next step (#577); after a backup-key unlock it is a
+    // one-time suggestion this device remembers dismissing (#579).
+    // A member who signed up with a password has no passkey yet for
+    // passkey unlock to use; adding one is a later step (ADR 0018).
+    const passwordAccount = (this.app.security?.manifest?.wrappers ?? []).some((wrapper) => wrapper.type === "password");
+    const offer = !passwordAccount && passkeyOffer({
+      identity: Boolean(status?.identity),
+      passkeys,
+      supported: passkeyUnlockSupported(),
+      online: !this.app.offline && navigator.onLine !== false,
+      justSetUp: Boolean(this.app.security?.justSetUp),
+      sessionDismissed: Boolean(this.app.passkeyPromptDismissed),
+      suggestionDismissed: passkeySuggestionDismissed(),
+    });
+    if (offer) {
+      card.dataset.passkeyOffer = offer;
+      heading.textContent = offer === "setup"
+        ? "Unlock with your face, fingerprint or screen lock next time?"
+        : "Skip the backup key next time?";
       const intro = document.createElement("p");
-      intro.textContent = "Turn on passkey unlock so your face, fingerprint, or screen lock opens Kin on this device. Your recovery key stays as a backup.";
+      intro.textContent = offer === "setup"
+        ? "Kin can use a passkey on this device instead of the long backup key. The backup key still works if you need it."
+        : "Turn on passkey unlock so your face, fingerprint or screen lock opens Kin on this device. Your backup key still works if you need it.";
       const turnOn = document.createElement("button");
       turnOn.type = "button";
       turnOn.className = "primary-action";
-      turnOn.textContent = "Turn on passkey unlock";
+      turnOn.textContent = offer === "setup" ? "Turn on" : "Turn on passkey unlock";
       turnOn.addEventListener("click", async () => {
         turnOn.disabled = true;
         try {
           await this.app.security.run(() => this.app.security.addPasskey());
-          if (this.app.security.alert.textContent) this.showAlert(this.app.security.alert.textContent);
-          else this.ctx.status.setStatus("Passkey unlock is on for this device.");
+          if (this.app.security.alert.textContent) {
+            // Never a dead end: say what happened and carry on without it.
+            this.app.passkeyPromptDismissed = true;
+            this.showAlert(`Passkey unlock didn't turn on. ${this.app.security.alert.textContent} You can try again under More → Security.`);
+          } else this.ctx.status.setStatus("Passkey unlock is on for this device.");
         } finally { this.renderOnboarding(); }
       });
       const later = document.createElement("button");
       later.type = "button";
       later.textContent = "Not now";
-      later.addEventListener("click", () => { this.app.passkeyPromptDismissed = true; this.renderOnboarding(); });
+      later.addEventListener("click", () => {
+        this.app.passkeyPromptDismissed = true;
+        if (offer === "suggestion") dismissPasskeySuggestion();
+        this.renderOnboarding();
+      });
       card.append(heading, intro, turnOn, later);
       card.hidden = false;
       return;
     }
+    // A password account's calm offers (#562/#573): add a passkey after the
+    // first useful action, a backup code after the first week. Each is one
+    // dismissible card and opens its step under Security.
+    if (status?.identity && this.renderAccountOffer(card, heading)) return;
     // The connection and optional passkey prompts take priority. Once a new
     // household is ready, offer one real first action rather than a tutorial.
     // No sample household events or persisted activity-tracking flag is added.
@@ -195,6 +257,144 @@ export class StatusController {
       return;
     }
     card.hidden = true;
+  }
+
+  /** Today's account card, if one is due; false when none is shown. The
+   * account summary loads once per unlock (security/account.js refresh,
+   * which renders this again when it arrives). */
+  renderAccountOffer(card, heading) {
+    const account = this.app.security?.account;
+    const security = this.app.accountSecurity;
+    const state = security ? accountState(security) : null;
+    // Loaded once per unlock; again (at most every 10 seconds) while a
+    // password member's vault isn't there yet (the first run makes it).
+    const stale = !security || (security.password && !security.vault);
+    if (stale && account && !account.loading && Date.now() - (this.accountAttemptedAt ?? 0) > 10_000) {
+      this.accountAttemptedAt = Date.now();
+      void account.refresh({ render: false });
+    }
+    if (!security) return false;
+    if (this.renderMigrationOffer(card, heading, account)) return true;
+    const offer = accountOffer({
+      state,
+      supported: passkeyUnlockSupported(),
+      online: !this.app.offline && navigator.onLine !== false,
+      hasContent: this.hasHouseholdContent(),
+      sessionDismissed: Boolean(this.app.accountOfferDismissed),
+      dismissed: { passkey: offerDismissed(ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY), backupCode: offerDismissed(BACKUP_CODE_OFFER_DISMISSED_KEY) },
+    });
+    if (!offer) return false;
+    card.dataset.accountOffer = offer;
+    heading.textContent = offer === "account-passkey" ? "Sign in with your face or fingerprint?" : "Save a backup code?";
+    const intro = document.createElement("p");
+    intro.textContent = offer === "account-passkey"
+      ? "Add a passkey and your face, fingerprint or screen lock signs you in, on this device and on a new one. It also keeps your account safer: your password alone no longer opens it on a new device."
+      : "A backup code gets you back into Kin if you ever lose your password or passkey. Print it or write it down; it takes a minute.";
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "primary-action";
+    go.textContent = offer === "account-passkey" ? "Add a passkey" : "Make a backup code";
+    go.addEventListener("click", () => {
+      this.ctx.navigation.navigate("#household/privacy");
+      void this.app.security?.account?.start(offer === "account-passkey" ? "add-passkey" : "backup-code");
+    });
+    const later = document.createElement("button");
+    later.type = "button";
+    later.textContent = "Not now";
+    later.addEventListener("click", () => {
+      this.app.accountOfferDismissed = true;
+      dismissOffer(offer === "account-passkey" ? ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY : BACKUP_CODE_OFFER_DISMISSED_KEY);
+      this.renderOnboarding();
+    });
+    card.append(heading, intro, go, later);
+    card.hidden = false;
+    return true;
+  }
+
+  /** The calm invitation to move to an account (#575), or to finish the
+   * move on this device; false when none is due. "Set up" opens the step
+   * under Security; "Not now" puts it away for a week. */
+  renderMigrationOffer(card, heading, account) {
+    const offer = migrationOffer({
+      migration: account?.migration?.() ?? null,
+      online: !this.app.offline && navigator.onLine !== false,
+      sessionDismissed: Boolean(this.app.migrationOfferDismissed),
+      dismissedAt: offerDismissedAt(ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY),
+    });
+    if (!offer) return false;
+    card.dataset.accountOffer = offer;
+    heading.textContent = offer === "account-migrate" ? "Sign in on your other devices?" : "Use your account on this device?";
+    const intro = document.createElement("p");
+    intro.textContent = offer === "account-migrate"
+      ? "Choose a username and password so you can sign in on your other devices. Your passkey and backup key keep working; nothing else changes."
+      : "Your account is set up on another device. Enter your password here once, and this device uses it too.";
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "primary-action";
+    go.textContent = offer === "account-migrate" ? "Set up" : "Use my account here";
+    go.addEventListener("click", () => {
+      this.ctx.navigation.navigate("#household/privacy");
+      void this.app.security?.account?.start("migrate");
+    });
+    const later = document.createElement("button");
+    later.type = "button";
+    later.textContent = "Not now";
+    later.addEventListener("click", () => {
+      this.app.migrationOfferDismissed = true;
+      dismissOfferAt(ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY);
+      this.renderOnboarding();
+    });
+    card.append(heading, intro, go, later);
+    card.hidden = false;
+    return true;
+  }
+
+  renderFirstRun(card, heading) {
+    const { state, error, pending } = this.app.firstRun;
+    card.dataset.firstRun = state;
+    if (state === "working") {
+      heading.textContent = pending.mode === "join" ? "Sending your request…"
+        : pending.mode === "sign-in" ? "Setting up this device…" : "Setting up your household…";
+      const intro = document.createElement("p");
+      intro.textContent = "This takes a moment. You can look around meanwhile.";
+      card.append(heading, intro);
+      card.hidden = false;
+      return;
+    }
+    heading.textContent = pending.mode === "join" ? "Your request wasn't sent"
+      : pending.mode === "sign-in" ? "This device isn't set up yet" : "Your household isn't set up yet";
+    const intro = document.createElement("p");
+    intro.setAttribute("role", "alert");
+    intro.textContent = error?.message || "Kin couldn't reach your household service.";
+    const form = document.createElement("form");
+    form.className = "first-run-retry";
+    let field = null;
+    const fix = error?.code === "username_taken" || error?.code === "username_invalid" ? "username"
+      : pending.mode === "join" && ["invalid_code", "pairing_expired", "pairing_revoked", "pairing_used", "pairing_claimed"].includes(error?.code) ? "code" : null;
+    if (fix) {
+      const label = document.createElement("label");
+      label.htmlFor = `first-run-retry-${fix}`;
+      label.textContent = fix === "username" ? "Choose another username" : "Invitation code";
+      field = document.createElement("input");
+      field.id = label.htmlFor;
+      field.required = true;
+      field.autocomplete = fix === "username" ? "username" : "one-time-code";
+      if (fix === "code") field.maxLength = 9;
+      form.append(label, field);
+    }
+    const retry = document.createElement("button");
+    retry.type = "submit";
+    retry.className = "primary-action";
+    retry.textContent = "Try again";
+    form.append(retry);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const value = field?.value.trim() ?? "";
+      if (field && !value) return field.focus();
+      void this.ctx.firstRun.retry(fix === "username" ? { username: value.toLowerCase() } : fix === "code" ? { code: value } : {});
+    });
+    card.append(heading, intro, form);
+    card.hidden = false;
   }
 
   // Registers the offline shell worker; an installed update shows a calm notice.

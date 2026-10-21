@@ -1,4 +1,5 @@
 import { createReadStream, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { parseAssetLinks, serveAssetLinks } from "./asset-links.mjs";
 import { extname, join, relative, resolve } from "node:path";
 import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
@@ -12,12 +13,17 @@ import { PushService } from "./push-service.mjs";
 import { ChatBlobService } from "./chat-blob-service.mjs";
 import { ChatRelayService } from "./chat-relay-service.mjs";
 import { BoardRelayService } from "./board-relay-service.mjs";
+import { PrivateRelayService } from "./private-relay-service.mjs";
+import { PrivateBlobService } from "./private-blob-service.mjs";
+import { AccountVaultService } from "./account-vault-service.mjs";
+import { NEW_DEVICE_TTL_MS } from "./pairing-service/new-device.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
   DurableConflictError,
   DurableStore,
   DurableStoreError,
+  MAX_ACCOUNT_VAULT_BYTES,
   MAX_ATTACHMENT_BYTES,
   MAX_CHAT_HIDDEN_RECORD_BYTES,
   MAX_CHAT_RECEIPT_BYTES,
@@ -54,6 +60,11 @@ export function createKinServer(options = {}) {
     maxHouseholds: options.maxHouseholds ?? process.env.KIN_MAX_HOUSEHOLDS,
   };
   const householdPolicy = parseHouseholdPolicy(householdSettings);
+  // Google Play app link (#532): null unless both settings are given.
+  const assetLinks = parseAssetLinks({
+    packageName: options.androidPackage ?? process.env.KIN_ANDROID_PACKAGE,
+    fingerprints: options.androidCertSha256 ?? process.env.KIN_ANDROID_CERT_SHA256,
+  });
   // A passed-in service keeps its own policy unless a setting is given here.
   const householdPolicyConfigured = [householdSettings.allowNewHouseholds, householdSettings.maxHouseholds]
     .some((value) => value !== undefined && value !== null && value !== "");
@@ -97,6 +108,22 @@ export function createKinServer(options = {}) {
   // The fridge's relay (#317): board events in a third encrypted stream.
   const boardRelayService = new BoardRelayService({ syncService, store });
   syncService.boardRelayService = boardRelayService;
+  // Each member's private relay (#491, ADR 0019): a stream keyed by member.
+  const privateRelayService = new PrivateRelayService({ syncService, store });
+  syncService.privateRelayService = privateRelayService;
+  // A member's private blobs (#502): journal photos, keyed by member too.
+  const privateBlobService = new PrivateBlobService({ relay: privateRelayService, store, now: options.now ?? (() => Date.now()) });
+  syncService.privateBlobService = privateBlobService;
+  // Removing a member purges their private stream and blobs, in the
+  // removal's own transaction (removeMembership runs inside withTransaction).
+  service.onMemberRemoved = (_householdId, memberId) => {
+    privateRelayService.forgetMember(memberId);
+    privateBlobService.forgetMember(memberId);
+  };
+  // Members' encrypted key vaults (ADR 0018, #564).
+  const accountVaultService = options.accountVaultService ?? new AccountVaultService({ store, now: options.now ?? (() => Date.now()) });
+  // A removed member's account vault and password verifier go with them.
+  service.onAccountRemoved = (householdId, memberId) => accountVaultService.removeMember(householdId, memberId);
   const webauthn =
     options.webauthn ??
     new WebAuthn({
@@ -114,6 +141,9 @@ export function createKinServer(options = {}) {
     chatBlobService,
     chatRelayService,
     boardRelayService,
+    privateRelayService,
+    privateBlobService,
+    accountVaultService,
     store,
     webauthn,
     flows: new Map(),
@@ -167,6 +197,10 @@ export function createKinServer(options = {}) {
         return;
       }
       if (request.method === "GET" || request.method === "HEAD") {
+        if (url.pathname === "/.well-known/assetlinks.json") {
+          serveAssetLinks(request, response, assetLinks);
+          return;
+        }
         if (url.pathname === "/manifest.webmanifest") {
           serveManifest(request, response, context);
           return;
@@ -272,6 +306,9 @@ export function createKinServer(options = {}) {
     chatBlobService,
     chatRelayService,
     boardRelayService,
+    privateRelayService,
+    privateBlobService,
+    accountVaultService,
     liveService,
     webauthn,
     store,
@@ -407,12 +444,21 @@ async function api(request, response, url, context) {
     // A member who can't post is refused before the body is read.
     context.chatBlobService.assertCanChat(chatUploadAuth, "write");
   }
+  // A private blob upload (#502) likewise: only the member's own trusted
+  // devices, while private storage is theirs to use.
+  const privateBlobRoute = PRIVATE_BLOB_ROUTE.exec({ pathname: url.pathname })?.pathname.groups.ref ?? null;
+  let privateUploadAuth = null;
+  if (request.method === "PUT" && privateBlobRoute) {
+    privateUploadAuth = syncService.authorize(cookies(request).kin_session);
+    context.privateBlobService.assertCanUse(privateUploadAuth);
+  }
   const binaryUpload = (request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname)) ||
-    chatUploadAuth !== null ||
+    chatUploadAuth !== null || privateUploadAuth !== null ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
   // Event envelopes travel as binary batches (web/sync/envelope-wire.js).
   const envelopePush = request.method === "POST" &&
-    (url.pathname === "/api/sync/events" || url.pathname === "/api/chat/events" || url.pathname === "/api/board/events");
+    (url.pathname === "/api/sync/events" || url.pathname === "/api/chat/events" || url.pathname === "/api/board/events" ||
+      url.pathname === "/api/private/events");
   const body = envelopePush
     ? await readEnvelopeBatch(request, response)
     : binaryUpload
@@ -423,6 +469,8 @@ async function api(request, response, url, context) {
     ? await readJsonBody(request, response, MAX_CHAT_HIDDEN_RECORD_BYTES + 1024)
     : request.method === "PUT" && url.pathname === "/api/chat/receipts"
     ? await readJsonBody(request, response, MAX_CHAT_RECEIPT_BYTES + 1024)
+    : request.method === "PUT" && url.pathname.startsWith("/api/account/vault")
+    ? await readJsonBody(request, response, MAX_ACCOUNT_VAULT_BODY_BYTES)
     : ["POST", "PUT", "DELETE"].includes(request.method)
     ? await readJsonBody(request, response, MAX_JSON_BODY_BYTES)
     : {};
@@ -588,6 +636,212 @@ async function api(request, response, url, context) {
     json(response, 200, omitToken(result));
     return;
   }
+  // Username and password accounts (ADR 0018, #558). The browser sends
+  // authKey, derived from the password; the password itself never arrives.
+  if (request.method === "POST" && url.pathname === "/api/account/username") {
+    json(response, 200, service.usernameAvailable(body.username, context.clientKey(request)));
+    return;
+  }
+  // The first run checks an invitation code before a password is chosen,
+  // with the same per-client limit as every code attempt.
+  if (request.method === "POST" && url.pathname === "/api/account/invitation") {
+    json(response, 200, service.validatePairingCode(body.code, { rateKey: context.clientKey(request) }));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/bootstrap") {
+    const rateKey = context.clientKey(request);
+    // Refused before any Argon2id work, like the passkey prompt (#157).
+    service.assertBootstrapAllowed(rateKey);
+    const password = await service.preparePassword(body);
+    const result = withTransaction(context, () => service.bootstrap({
+      password,
+      deviceLabel: deviceLabel(body.deviceLabel),
+      syncPublicKeys: body.syncPublicKeys,
+      rateKey,
+    }));
+    cookie(response, "kin_session", result.sessionToken, secureCookies);
+    cookie(response, "kin_device", result.deviceToken, secureCookies, 31_536_000);
+    json(response, 201, omitToken(result));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/claim") {
+    const rateKey = context.clientKey(request);
+    // The code is checked (and a wrong one charged) before any Argon2id work.
+    const pairing = service.validatePairingCode(body.code, { rateKey });
+    if (pairing.purpose !== "adult")
+      throw new PairingError("passkey_required", "Adding a device to an existing member still uses a passkey.", 409);
+    const password = await service.preparePassword(body);
+    if (claimToken) {
+      service.clearClaim(claimToken);
+      clearCookie(response, "kin_claim", secureCookies);
+    }
+    const result = service.claimPairing({
+      code: body.code,
+      password,
+      deviceLabel: deviceLabel(body.deviceLabel),
+      syncPublicKeys: body.syncPublicKeys,
+      rateKey,
+    });
+    cookie(response, "kin_claim", result.claimToken, secureCookies);
+    cookie(response, "kin_device", result.deviceToken, secureCookies, 31_536_000);
+    json(response, 200, omitToken(result));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/login/password") {
+    const result = await service.signInWithPassword({
+      deviceToken,
+      username: body.username,
+      authKey: body.authKey,
+      rateKey: context.clientKey(request),
+    });
+    cookie(response, "kin_session", result.sessionToken, secureCookies);
+    cookie(response, "kin_device", result.deviceToken, secureCookies, 31_536_000);
+    json(response, 200, omitToken(result));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/claim/activate/password") {
+    const result = await service.activateClaimWithPassword(claimToken, body.authKey, context.clientKey(request));
+    cookie(response, "kin_session", result.sessionToken, secureCookies);
+    cookie(response, "kin_device", result.deviceToken, secureCookies, 31_536_000);
+    clearCookie(response, "kin_claim", secureCookies);
+    json(response, 200, omitToken(result));
+    return;
+  }
+  // Signing in on a device with no cookie (ADR 0018 section 4, #568). A
+  // sign-in earns a short-lived new-device capability (HttpOnly cookie
+  // kin_new_device), never a session; the capability downloads the vault and
+  // registers this browser as one of the member's devices, once.
+  const newDeviceToken = cookies(request).kin_new_device;
+  const vaultWrappers = (member) => context.accountVaultService.wrapperSummary(member.householdId, member.id);
+  const issueNewDevice = (issued) => {
+    if (issued.token) cookie(response, "kin_new_device", issued.token, secureCookies, Math.ceil(NEW_DEVICE_TTL_MS / 1000));
+    json(response, 200, issued.view);
+  };
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/parameters") {
+    json(response, 200, service.signInParameters(body.username, context.clientKey(request)));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/password") {
+    issueNewDevice(await service.signInNewDeviceWithPassword({
+      username: body.username, authKey: body.authKey, rateKey: context.clientKey(request),
+      vaultWrapperTypes: (member) => vaultWrappers(member)?.map((wrapper) => wrapper.type) ?? null,
+    }));
+    return;
+  }
+  // The third way in (#572): username and backup code.
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/backup-code") {
+    issueNewDevice(service.signInNewDeviceWithBackupCode({
+      username: body.username, codeAuth: body.codeAuth, rateKey: context.clientKey(request),
+      backupCodeVerifier: (member) => context.accountVaultService.backupCodeVerifier(member.householdId, member.id),
+    }));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/passkey/options") {
+    const rateKey = context.clientKey(request);
+    let pending = null;
+    if (newDeviceToken) {
+      try { pending = service.newDeviceCapability(newDeviceToken, { allowPending: true }).record; } catch { pending = null; }
+      if (!pending?.needsPasskey) pending = null;
+    }
+    const { memberId, credentials } = service.newDevicePasskeyCredentials({ username: body.username, pending, rateKey, vaultWrappers });
+    service.assertNewDevicePasskeyAllowed(memberId, rateKey);
+    const flow = createFlow({ purpose: "new-device", memberId, credentialIds: credentials.map((entry) => entry.id), pending: Boolean(pending) },
+      context, { anonymous: true });
+    try {
+      json(response, 200, {
+        flow,
+        publicKey: context.webauthn.authenticationOptions(flow, credentials.map((entry) => entry.id)),
+        // Each passkey's PRF input for its vault wrapper (public parameters).
+        prfSalts: Object.fromEntries(credentials.map((entry) => [entry.id, entry.prfSalt])),
+      });
+    } catch (error) {
+      context.flows.delete(flow);
+      context.webauthn.discardFlow?.(flow);
+      throw error;
+    }
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/passkey/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "new-device") throw badRequest();
+    const rateKey = context.clientKey(request);
+    service.assertNewDevicePasskeyAllowed(flow.memberId, rateKey);
+    const credentialId = body.credential?.id;
+    const credential = flow.memberId && flow.credentialIds.includes(credentialId) ? service.credentials.get(credentialId) : null;
+    try {
+      if (!credential || credential.memberId !== flow.memberId)
+        throw new PairingError("sign_in_failed", "That passkey didn't match. Try again or use your password.", 401);
+      context.webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    } catch {
+      context.webauthn.discardFlow?.(body.flow);
+      service.newDevicePasskeyFailed(flow.memberId, rateKey);
+      throw new PairingError("sign_in_failed", "That passkey didn't match. Try again or use your password.", 401);
+    }
+    const issued = service.completeNewDevicePasskey({
+      memberId: flow.memberId, credentialId, pendingToken: flow.pending ? newDeviceToken : null, vaultWrappers,
+    });
+    // The verified signature counter is kept, as for any passkey sign-in.
+    withTransaction(context, () => service.persistHousehold(service.members.get(flow.memberId).householdId));
+    issueNewDevice(issued);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/account/sign-in") {
+    json(response, 200, service.newDeviceView(service.newDeviceCapability(newDeviceToken, { allowPending: true }).record));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/cancel") {
+    if (newDeviceToken) service.cancelNewDeviceCapability(newDeviceToken);
+    clearCookie(response, "kin_new_device", secureCookies);
+    json(response, 200, { cancelled: true });
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/vault") {
+    const capability = service.spendNewDeviceDownload(newDeviceToken);
+    json(response, 200, {
+      ...context.accountVaultService.downloadWithCapability(capability, context.clientKey(request)),
+      // Whether the account has a backup code (#572): then a passkey-only
+      // sign-in asks for no per-device backup key.
+      backupCode: context.accountVaultService.backupCodeVerifier(capability.householdId, capability.memberId) !== null,
+      certificationEndorsement: service.certificationEndorsement(capability.memberId),
+    });
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/device") {
+    // A backup-code sign-in (#572) sets a new password with the device, and
+    // re-wraps (or removes) the vault wrappers that depended on the old one
+    // in the same transaction. The password is hashed first (Argon2id is
+    // asynchronous); everything else happens inside the transaction.
+    const pendingMethod = service.newDeviceCapability(newDeviceToken).record.method;
+    const newPassword = pendingMethod === "backup-code" && body.newPassword ? await service.preparePasswordChange(body.newPassword) : null;
+    const vaultChange = pendingMethod === "backup-code" && body.vaultChange ? context.accountVaultService.parseChange(body.vaultChange) : null;
+    const result = withTransaction(context, () => {
+      const { record } = service.newDeviceCapability(newDeviceToken);
+      // The vault change goes first: it only touches the database, so a
+      // refusal rolls back cleanly before the device is registered.
+      if (vaultChange && record.method === "backup-code")
+        context.accountVaultService.applyChange({ household: { id: record.householdId }, member: { id: record.memberId } }, vaultChange);
+      const registered = service.registerNewDevice({
+        newPassword: record.method === "backup-code" ? newPassword : null,
+        capability: newDeviceToken,
+        syncPublicKeys: body.syncPublicKeys,
+        certificate: body.certificate,
+        replaceDeviceId: body.replaceDeviceId ?? null,
+        deviceLabel: deviceLabel(body.deviceLabel),
+        vaultEpochs: body.vaultEpochs ?? [],
+        currentEpoch: syncService.state(record.householdId).currentEpoch,
+      });
+      // A replaced device is left out of the next epoch; the new device gets
+      // every epoch it doesn't have, like any same-member device.
+      if (registered.replacedDeviceId) syncService.onAccessChange(registered.householdId, [registered.replacedDeviceId]);
+      syncService.onDeviceAdded(registered.householdId, registered.deviceId, { historyFromEpoch: 1 });
+      return registered;
+    });
+    cookie(response, "kin_session", result.sessionToken, secureCookies);
+    cookie(response, "kin_device", result.deviceToken, secureCookies, 31_536_000);
+    clearCookie(response, "kin_new_device", secureCookies);
+    json(response, 201, omitToken(result));
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/login/options") {
     const { member, device } = service.trustedDevice(deviceToken);
     const issued = issueAuthenticationFlow(
@@ -671,8 +925,10 @@ async function api(request, response, url, context) {
       const flow = consumeFlow(body.flow, context);
       if (flow.purpose !== "link-approve" || flow.requestId !== requestId || flow.memberId !== auth.member.id)
         throw badRequest();
-      const credential = service.credentialForAuthenticatedMember(session, body.credential?.id);
-      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+      await confirmFresh(context, request, auth.member, body, () => {
+        const credential = service.credentialForAuthenticatedMember(session, body.credential?.id);
+        webauthn.verifyAuthentication(body.credential, body.flow, credential);
+      });
       const approved = linked(() => withTransaction(context, () =>
         service.approveLinkRequest(session, requestId, {
           secret: body.secret,
@@ -778,11 +1034,13 @@ async function api(request, response, url, context) {
       flow.memberId !== auth.member.id
     )
       throw badRequest();
-    const credential = service.credentialForAuthenticatedMember(
-      session,
-      body.credential?.id,
-    );
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentialForAuthenticatedMember(
+        session,
+        body.credential?.id,
+      );
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const approved = withTransaction(context, () => {
       const result = service.approvePairing(
         session,
@@ -900,10 +1158,12 @@ async function api(request, response, url, context) {
     const auth = service.authorize(session);
     if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id)
       throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== auth.member.id)
-      throw new PairingError("passkey_member_mismatch", "Use this Adult's passkey to continue.", 401);
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError("passkey_member_mismatch", "Use this Adult's passkey to continue.", 401);
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const target = service.devices.get(flow.targetDeviceId);
     const alreadyRevoked = Boolean(target?.revokedAt);
     const result = withTransaction(context, () => {
@@ -1033,6 +1293,142 @@ async function api(request, response, url, context) {
     json(response, 200, withTransaction(context, () => context.chatRelayService.push(auth, body, { chatEpoch: Number(request.headers["x-kin-chat-epoch"] ?? 0) })));
     return;
   }
+  // The member's encrypted key vault (ADR 0018, #564). Only the session's
+  // own member, from one of their trusted devices; no route names a member.
+  if (url.pathname === "/api/account/vault" && request.method === "GET") {
+    const auth = service.authorize(session);
+    json(response, 200, {
+      ...context.accountVaultService.download(auth, context.clientKey(request)),
+      // Whether the member's certification key is endorsed yet (#568).
+      certificationEndorsement: service.certificationEndorsement(auth.member.id),
+    });
+    return;
+  }
+  // A trusted device endorses its member's certification key (#570).
+  if (url.pathname === "/api/account/certification" && request.method === "PUT") {
+    syncService.authorize(session);
+    json(response, 200, withTransaction(context, () => service.putCertificationEndorsement(session, body.endorsement)));
+    return;
+  }
+  if (url.pathname === "/api/account/vault" && request.method === "PUT") {
+    json(response, 200, context.accountVaultService.upload(syncService.authorize(session), body));
+    return;
+  }
+  // One wrapper at a time (hardening after #561/#572): like every other
+  // change to how the vault opens, these need the current password, fresh
+  // (`currentAuthKey`), or a fresh passkey (`flow` and `credential` from
+  // /api/account/confirm/options). A session alone, say a browser left
+  // signed in, can't add a way into the vault or take one away.
+  const vaultWrapper = ACCOUNT_VAULT_WRAPPER_ROUTE.exec({ pathname: url.pathname })?.pathname.groups.id ?? null;
+  if (vaultWrapper && (request.method === "PUT" || request.method === "DELETE")) {
+    syncService.authorize(session);
+    const auth = await confirmAccountChange(context, request, session, body);
+    const { currentAuthKey: _current, flow: _flow, credential: _credential, ...wrapper } = body;
+    json(response, 200, request.method === "PUT"
+      ? context.accountVaultService.putWrapper(auth, vaultWrapper, wrapper)
+      : context.accountVaultService.removeWrapper(auth, vaultWrapper));
+    return;
+  }
+  // A fresh passkey confirmation for an account change (the per-wrapper
+  // routes above). A member without a passkey gets the password parameters
+  // instead, as every fresh confirmation does.
+  if (url.pathname === "/api/account/confirm/options" && request.method === "POST") {
+    const auth = service.authorize(session);
+    json(response, 200, issueAuthenticationFlow({ purpose: "account-confirm", memberId: auth.member.id, deviceId: auth.device.id },
+      [...auth.member.credentials], context));
+    return;
+  }
+  // Moving a member set up the old way (passkey and per-device backup key)
+  // to an account (#575): a fresh assertion of their passkey, then a
+  // username and password. The same touch gives the device the passkey's
+  // PRF output for the vault wrapper; the service never sees it.
+  if (url.pathname === "/api/account/migrate/options" && request.method === "POST") {
+    const auth = service.authorize(session);
+    service.assertAccountMigratable(auth.member);
+    json(response, 200, issueAuthenticationFlow({ purpose: "account-migrate", memberId: auth.member.id, deviceId: auth.device.id },
+      [...auth.member.credentials], context));
+    return;
+  }
+  if (url.pathname === "/api/account/migrate/finish" && request.method === "POST") {
+    const flow = consumeFlow(body.flow, context);
+    const auth = service.authorize(session);
+    if (flow.purpose !== "account-migrate" || flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = service.credentials.get(body.credential?.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError("passkey_member_mismatch", "Use your own passkey to continue.", 401);
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    service.assertAccountMigratable(auth.member);
+    const prepared = await service.preparePassword(body);
+    json(response, 200, withTransaction(context, () => service.migrateAccount(service.authorize(session), prepared)));
+    return;
+  }
+  // Removing one of the member's passkeys (#592 follow-up): the vault
+  // wrappers that named it go (and, for the last passkey, a password
+  // wrapper comes back) in the same transaction, after the password.
+  if (url.pathname === "/api/account/passkeys/remove" && request.method === "POST") {
+    syncService.authorize(session);
+    const vaultChange = body.vaultChange ? context.accountVaultService.parseChange(body.vaultChange) : null;
+    const auth = await service.confirmAccountPassword(session, body.currentAuthKey, context.clientKey(request));
+    json(response, 200, withTransaction(context, () => {
+      if (vaultChange) context.accountVaultService.applyChange(auth, vaultChange);
+      return service.removeAccountPasskey(auth, body.credentialId,
+        context.accountVaultService.wrapperSummary(auth.household.id, auth.member.id));
+    }));
+    return;
+  }
+  // A member's own account security (ADR 0018, #560/#571). Every change
+  // needs the current password, fresh (`currentAuthKey`).
+  if (url.pathname === "/api/account/security" && request.method === "GET") {
+    const auth = service.authorize(session);
+    json(response, 200, service.accountSecurityView(auth, context.accountVaultService.summary(auth)));
+    return;
+  }
+  // Swapping how the vault opens in one step: adding a passkey, require
+  // password and passkey on or off, a new backup code (#561/#572).
+  if (url.pathname === "/api/account/vault/wrappers" && request.method === "POST") {
+    syncService.authorize(session);
+    const auth = await service.confirmAccountPassword(session, body.currentAuthKey, context.clientKey(request));
+    const { currentAuthKey: _current, ...change } = body;
+    json(response, 200, context.accountVaultService.changeWrappers(auth, change));
+    return;
+  }
+  // Adding a passkey to a password account (#561): a registration ceremony
+  // for the signed-in member, after their password.
+  if (url.pathname === "/api/account/passkeys/options" && request.method === "POST") {
+    syncService.authorize(session);
+    const auth = await service.confirmAccountPassword(session, body.currentAuthKey, context.clientKey(request));
+    const flow = createFlow({ purpose: "account-passkey", memberId: auth.member.id, deviceId: auth.device.id }, context);
+    try {
+      json(response, 200, { flow, publicKey: context.webauthn.registrationOptions(flow, { userName: auth.member.username, displayName: auth.member.username }) });
+    } catch (error) {
+      context.flows.delete(flow);
+      context.webauthn.discardFlow?.(flow);
+      throw error;
+    }
+    return;
+  }
+  if (url.pathname === "/api/account/passkeys/finish" && request.method === "POST") {
+    const flow = consumeFlow(body.flow, context);
+    const auth = service.authorize(session);
+    if (flow.purpose !== "account-passkey" || flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = webauthn.verifyRegistration(body.credential, body.flow);
+    json(response, 200, withTransaction(context, () => service.addAccountPasskey(auth, credential)));
+    return;
+  }
+  // Changing the password (#560): the new verifier and the vault wrappers
+  // that depend on the password (re-wrapped by the device, `vaultChange`)
+  // in one transaction, after the current password.
+  if (url.pathname === "/api/account/password" && request.method === "POST") {
+    syncService.authorize(session);
+    const vaultChange = body.vaultChange ? context.accountVaultService.parseChange(body.vaultChange) : null;
+    const prepared = await service.preparePasswordChange(body);
+    const auth = await service.confirmAccountPassword(session, body.currentAuthKey, context.clientKey(request));
+    json(response, 200, withTransaction(context, () => {
+      if (vaultChange) context.accountVaultService.applyChange(auth, vaultChange);
+      return service.setAccountPassword(auth, prepared);
+    }));
+    return;
+  }
   if (url.pathname === "/api/chat/hidden" && request.method === "GET") {
     json(response, 200, context.chatRelayService.hidden(syncService.authorize(session), url.searchParams.get("since")));
     return;
@@ -1091,6 +1487,48 @@ async function api(request, response, url, context) {
           !(error instanceof DurableStoreError && error.code === "sync_store_invalid")) throw error;
       console.error(JSON.stringify({ event: "board_store_invalid", householdId: auth.household.id }));
       throw new PairingError("sync_store_invalid", "Kin's stored fridge history is invalid.", 500);
+    }
+    return;
+  }
+  // A member's private stream (#491, ADR 0019): always the session's own
+  // member's; no route names a member.
+  if (url.pathname === "/api/private/events" && request.method === "POST") {
+    const auth = syncService.authorize(session);
+    json(response, 200, withTransaction(context, () => context.privateRelayService.push(auth, body)));
+    return;
+  }
+  if (url.pathname === "/api/private/status" && request.method === "GET") {
+    const auth = syncService.authorize(session);
+    json(response, 200, { ...context.privateRelayService.status(auth), ...context.privateBlobService.usage(auth) });
+    return;
+  }
+  // A member's private blobs (#502): always the session's own member's.
+  if (privateUploadAuth) {
+    json(response, 200, withTransaction(context, () => context.privateBlobService.put(privateUploadAuth, privateBlobRoute, body)));
+    return;
+  }
+  if (privateBlobRoute && request.method === "GET") {
+    const bytes = context.privateBlobService.get(syncService.authorize(session), privateBlobRoute);
+    response.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": bytes.length, "Cache-Control": "no-store" });
+    response.end(bytes);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/private/blobs/retire") {
+    const auth = syncService.authorize(session);
+    // Not in an outer transaction: the store zeroes freed pages and then
+    // checkpoints the WAL, which needs no transaction open.
+    json(response, 200, context.privateBlobService.retire(auth, body?.refs));
+    return;
+  }
+  if (url.pathname === "/api/private/events" && request.method === "GET") {
+    const auth = syncService.authorize(session);
+    try {
+      binary(response, encodeEventPage(context.privateRelayService.pull(auth, url.searchParams.get("cursor") ?? "", url.searchParams.get("limit") ?? undefined)));
+    } catch (error) {
+      if (!(error instanceof EnvelopeWireError) &&
+          !(error instanceof DurableStoreError && error.code === "sync_store_invalid")) throw error;
+      console.error(JSON.stringify({ event: "private_store_invalid" }));
+      throw new PairingError("sync_store_invalid", "Kin's stored private history is invalid.", 500);
     }
     return;
   }
@@ -1242,11 +1680,13 @@ async function api(request, response, url, context) {
       flow.deviceId !== auth.device.id
     )
       throw badRequest();
-    const credential = service.credentialForAuthenticatedMember(
-      session,
-      body.credential?.id,
-    );
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentialForAuthenticatedMember(
+        session,
+        body.credential?.id,
+      );
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const result = withTransaction(context, () =>
       service.requestHouseholdDeletion(session, auth.member.id),
     );
@@ -1310,16 +1750,19 @@ async function api(request, response, url, context) {
       flow.deviceId !== device.id
     )
       throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== member.id)
-      throw new PairingError(
-        "passkey_member_mismatch",
-        "Use this member's passkey to continue.",
-        401,
-      );
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const credential = await confirmFresh(context, request, member, body, () => {
+      const passkey = service.credentials.get(body.credential?.id);
+      if (!passkey || passkey.memberId !== member.id)
+        throw new PairingError(
+          "passkey_member_mismatch",
+          "Use this member's passkey to continue.",
+          401,
+        );
+      webauthn.verifyAuthentication(body.credential, body.flow, passkey);
+      return passkey;
+    });
     const result = withTransaction(context, () =>
-      service.cancelHouseholdDeletion(deviceToken, credential.id),
+      service.cancelHouseholdDeletion(deviceToken, credential?.id, { passwordConfirmed: !credential }),
     );
     cookie(response, "kin_session", result.sessionToken, secureCookies);
     cookie(
@@ -1369,14 +1812,16 @@ async function api(request, response, url, context) {
     const auth = service.authorize(session);
     if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id)
       throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== auth.member.id)
-      throw new PairingError(
-        "passkey_member_mismatch",
-        "Use this member's passkey to continue.",
-        401,
-      );
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError(
+          "passkey_member_mismatch",
+          "Use this member's passkey to continue.",
+          401,
+        );
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const leaving = flow.targetMemberId === auth.member.id;
     const excludedDevices = [...service.devices.values()]
       .filter((device) => device.memberId === flow.targetMemberId)
@@ -1424,14 +1869,16 @@ async function api(request, response, url, context) {
     const auth = service.authorize(session);
     if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id)
       throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== auth.member.id)
-      throw new PairingError(
-        "passkey_member_mismatch",
-        "Use this member's passkey to continue.",
-        401,
-      );
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError(
+          "passkey_member_mismatch",
+          "Use this member's passkey to continue.",
+          401,
+        );
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     json(
       response,
       200,
@@ -1457,10 +1904,12 @@ async function api(request, response, url, context) {
     if (flow.purpose !== "set-simple-view") throw badRequest();
     const auth = service.authorize(session);
     if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== auth.member.id)
-      throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const result = withTransaction(context, () =>
       service.setSimpleView(session, flow.targetMemberId, flow.simpleView, auth.member.id),
     );
@@ -1485,12 +1934,42 @@ async function api(request, response, url, context) {
     if (flow.purpose !== "set-board-policy") throw badRequest();
     const auth = service.authorize(session);
     if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
+    const result = withTransaction(context, () =>
+      service.setBoardPolicy(session, { limited: flow.limited, temporary: flow.temporary }, auth.member.id),
+    );
+    if (result.changed) syncService.hintHousehold(auth.household.id);
+    json(response, 200, result);
+    return;
+  }
+  // Private storage for Limited members (ADR 0019): the chat policy's flow,
+  // its own purpose.
+  if (request.method === "POST" && url.pathname === "/api/household/private-policy/options") {
+    const change = service.privatePolicyContext(session);
+    if (typeof body?.limited !== "boolean") throw badRequest();
+    json(response, 200, issueAuthenticationFlow(
+      { purpose: "set-private-policy", limited: body.limited, memberId: change.memberId, deviceId: change.deviceId },
+      change.credentialIds,
+      context,
+    ));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/household/private-policy/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "set-private-policy") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
     const credential = service.credentials.get(body.credential?.id);
     if (!credential || credential.memberId !== auth.member.id)
       throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
     webauthn.verifyAuthentication(body.credential, body.flow, credential);
     const result = withTransaction(context, () =>
-      service.setBoardPolicy(session, { limited: flow.limited, temporary: flow.temporary }, auth.member.id),
+      service.setPrivatePolicy(session, { limited: flow.limited }, auth.member.id),
     );
     if (result.changed) syncService.hintHousehold(auth.household.id);
     json(response, 200, result);
@@ -1511,10 +1990,12 @@ async function api(request, response, url, context) {
     if (flow.purpose !== "set-chat-policy") throw badRequest();
     const auth = service.authorize(session);
     if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== auth.member.id)
-      throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const result = withTransaction(context, () =>
       service.setChatPolicy(session, { limited: flow.limited, temporary: flow.temporary }, auth.member.id),
     );
@@ -1615,15 +2096,63 @@ function issueRegistrationFlow(value, context, { anonymous = false } = {}) {
 function issueAuthenticationFlow(value, credentialIds, context) {
   const flow = createFlow(value, context);
   try {
+    // A member who has no passkey yet confirms with their password (#558):
+    // the options then also carry the parameters their device needs to
+    // derive authKey. Members with a passkey get exactly what they did.
+    const member = value.memberId ? context.service.members.get(value.memberId) : null;
+    const password = context.service.confirmsWithPassword?.(member) ? context.service.passwordParameters(member) : null;
     return {
       flow,
       publicKey: context.webauthn.authenticationOptions(flow, credentialIds),
+      ...(password ? { password } : {}),
     };
   } catch (error) {
     context.flows.delete(flow);
     context.webauthn.discardFlow?.(flow);
     throw error;
   }
+}
+
+/**
+ * A fresh confirmation for a sensitive action. A member with a passkey uses
+ * it: `passkey()` runs the route's own WebAuthn check, unchanged. A member
+ * who has no passkey yet (#558) re-enters their password instead: the body
+ * carries `authKey`, checked against their Argon2id verifier with the
+ * password limits. THREAT-MODEL records this as weaker than a passkey until
+ * one is added. Resolves to what `passkey()` returned, or null.
+ */
+async function confirmFresh(context, request, member, body, passkey) {
+  if (!context.service.confirmsWithPassword(member)) return passkey();
+  if (body.credential !== undefined || typeof body.authKey !== "string") throw badRequest();
+  context.webauthn.discardFlow?.(body.flow);
+  await context.service.verifyFreshPassword(member, body.authKey, context.clientKey(request));
+  return null;
+}
+
+/**
+ * A fresh confirmation for a change to how the member's vault opens: the
+ * current password (`currentAuthKey`, checked with the password limits), or
+ * a fresh passkey assertion (`flow` from /api/account/confirm/options and
+ * `credential`). Resolves to the session's authorization afterwards; a body
+ * with neither is refused (`fresh_auth_required`, 401).
+ */
+async function confirmAccountChange(context, request, session, body) {
+  const { service } = context;
+  if (typeof body.currentAuthKey === "string")
+    return service.confirmAccountPassword(session, body.currentAuthKey, context.clientKey(request));
+  if (typeof body.flow === "string" && body.credential && typeof body.credential === "object") {
+    const flow = consumeFlow(body.flow, context);
+    const auth = service.authorize(session);
+    if (flow.purpose !== "account-confirm" || flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = service.credentials.get(body.credential.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError("passkey_member_mismatch", "Use your own passkey to continue.", 401);
+    context.webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    // The verified signature counter is kept, as for any passkey sign-in.
+    withTransaction(context, () => service.persistHousehold(auth.household.id));
+    return service.authorize(session);
+  }
+  throw new PairingError("fresh_auth_required", "Confirm with your password or your passkey to change how your account opens.", 401);
 }
 
 function pruneFlows({ flows, now }) {
@@ -1680,6 +2209,8 @@ function cookies(request) {
 // JSON request bodies are small control messages; attachments and settings
 // are binary and bounded by the attachment limit (http-body.mjs).
 const MAX_JSON_BODY_BYTES = 256_000;
+// A sealed vault in base64url plus its first wrappers and JSON framing.
+const MAX_ACCOUNT_VAULT_BODY_BYTES = Math.ceil(MAX_ACCOUNT_VAULT_BYTES * 4 / 3) + 16_384;
 // Four base64url PNGs of at most 512 KB each, plus the names.
 const MAX_INSTALL_IDENTITY_BODY_BYTES = 2_850_000;
 
@@ -1784,6 +2315,8 @@ export function fingerprintedShell(html, fingerprint) {
 // New routes match with URLPattern (#106) rather than hand-written parsing.
 const INSTALL_ICON_ROUTE = new URLPattern({ pathname: "/install-icon/:file([a-z0-9\\-]+[.]png)" });
 const CHAT_BLOB_ROUTE = new URLPattern({ pathname: "/api/chat/blobs/:ref([a-f0-9]{64})" });
+const PRIVATE_BLOB_ROUTE = new URLPattern({ pathname: "/api/private/blobs/:ref([a-f0-9]{64})" });
+const ACCOUNT_VAULT_WRAPPER_ROUTE = new URLPattern({ pathname: "/api/account/vault/wrappers/:id([a-f0-9]{32})" });
 
 // The install identity (#78) a trusted device's kin_device cookie resolves
 // to, or the built-in Kin manifest and icon. Always private to the browser
@@ -1877,6 +2410,8 @@ function serve(response, pathname) {
     ".wasm": "application/wasm",
     ".webmanifest": "application/manifest+json",
     ".svg": "image/svg+xml",
+    // Kin's app and shortcut icons (web/icons, #473).
+    ".png": "image/png",
     // The chat emoji table (#113).
     ".json": "application/json; charset=utf-8",
   };

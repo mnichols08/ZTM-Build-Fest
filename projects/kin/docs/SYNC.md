@@ -570,6 +570,98 @@ epoch (there is no board key).
   (`durable-store/stream-events.mjs` serves both). Household deletion purges
   them with the rest.
 
+## Private relay (#489)
+
+A member's private events (kinds 100–199, [ADR 0019](decisions/0019-member-private-log.md))
+travel in a fourth stream, `server/private-relay-service.mjs`, **keyed by
+member instead of household**, through the same shared core
+(`server/event-stream.mjs`, which takes the stream key, envelope check and
+oldest readable epoch from each stream): the device's own envelopes only;
+a gapless per-device private sequence counted apart from every other
+stream; identical-bytes idempotency; the logical-time advance bound on the
+member stream's own clock. Private events are sealed under the **member
+key** (MK), not a household key epoch: the envelope's `keyEpoch` is an MK
+epoch (1–128), which the service can only range-check, and every page shows
+every epoch, since all of them are the member's own.
+
+- **Routes.** `POST /api/private/events` takes a KSEV batch (at most 20
+  envelopes); `GET /api/private/events?cursor=&limit=` returns a KSEP page of
+  at most 200; `GET /api/private/status` returns `{ deviceSequence,
+  latestCursor, events, eventLimit }`. No route names a member: each request
+  reaches the session's own member's stream. Pushes need household sync set
+  up (`private_sync_unavailable`, 409); a pending household key rotation
+  doesn't pause them, since the member key is apart.
+- **Who.** Only the member's own trusted devices. Another member's device,
+  an admin's included, reaches only its own stream and can't post an envelope
+  naming any device but its own (`event_envelope_invalid`); a removed member
+  or a revoked device has no session; Temporary members are refused
+  (`private_unavailable`, 403); Limited members are refused
+  (`private_off`, 403) while the household admin has turned **private storage
+  for children and teens** off (`/api/household/private-policy/options` and
+  `/finish`, a fresh passkey like "Who can chat", schema 22, default on).
+  `GET /api/sync/status` carries `private.access` (`write` or `none`), and
+  `private.policy.limited` for an admin; `GET /api/household/settings` carries
+  `privatePolicy` for an admin.
+- **Limits.** 50,000 private events per member (`private_limit`, 413, the
+  engine's private log cap) and 120 per device per minute
+  (`private_rate_limited`, 429); a retry of events already held is free.
+- **Hints.** An accepted batch sends the live sync hint to **the member's own
+  other devices only**, so no one else's device learns when they write. No
+  push notification.
+- **Storage and purge.** Server schema 22 adds `private_relay_state`,
+  `private_events` and `private_device_sequences` keyed by member (each with
+  the member's household; no foreign key to members, like the account vault),
+  served by `durable-store/private-events.mjs`. Removing a member purges their
+  stream in the removal's transaction; household deletion purges every
+  member's stream with the rest.
+- **The device side.** `web/private/private-log.js` runs a private pass after
+  the board pass in the sync coordinator, and only once the member key is on
+  the device: it starts a new MK epoch if one of the member's devices was
+  revoked after the newest epoch was made (the device directory each pass
+  reads says so), pushes pending envelopes (resealing any under an older
+  epoch), then pulls and authenticates each event: signed by one of **this
+  member's** devices (its verified key history), not by a device revoked
+  before the epoch it uses, a private kind, and the same identity inside as
+  out. The member key comes from the account vault
+  ([CRYPTOGRAPHY](CRYPTOGRAPHY.md#member-key-and-private-envelopes-adr-0019)).
+
+### Private blobs (#502)
+
+A member's journal photos and thumbnails are sealed on the device
+(`web/private/private-blobs.js`): each under a fresh random AES-256-GCM key,
+format 1 (version byte, 12-byte nonce, ciphertext and tag) with additional
+data binding the format, the household and the member. The key travels only
+inside the journal record that names the photo, which is sealed under the
+member key, so only the member's own devices can open it. The blob's
+reference is the SHA-256 of its sealed bytes.
+
+- **Routes.** `PUT /api/private/blobs/<ref>` (the sealed bytes, checked
+  against the reference; authorized before the body is read),
+  `GET /api/private/blobs/<ref>` (404 `private_blob_missing` when not held)
+  and `POST /api/private/blobs/retire` (`{ refs }`, at most 64; ones not held
+  are skipped). `GET /api/private/status` adds `blobs`, `blobBytes`,
+  `blobLimit` and `blobByteLimit`. No route names a member: each request
+  reaches the session's own member's blobs, so another member's device, an
+  admin's included, finds nothing. The same rules as the stream decide who
+  may: never Temporary members, Limited ones only while the household allows
+  it, never a revoked device.
+- **Limits.** 29 bytes to 4 MiB + 4 KiB a blob (the household attachment
+  bound), 2,000 blobs and 256 MiB per member (`private_storage_full`, 409),
+  60 uploads a minute and 128 MiB per ten minutes per device
+  (`private_rate_limited`, 429); an upload already held costs nothing.
+- **The device side.** A sealed blob is kept locally as pending and uploaded
+  on the next private pass, before that pass pushes events. A device opening
+  an entry fetches what it lacks, checks it against its reference and keeps
+  it. Deleting a photo (removed from an entry, or its entry deleted, once
+  Undo has passed) drops the local copy and queues the reference; the next
+  pass deletes it on the service. There are no tombstones: only the member's
+  own devices name their blobs. A device drops cached copies the journal no
+  longer names (never a pending one).
+- **Storage and purge.** Server schema 24 adds `private_blobs` keyed by
+  member, with the member's household (`durable-store/private-blobs.mjs`).
+  Removing a member purges their blobs with their stream; household deletion
+  purges every member's. Freed pages are zeroed.
+
 ## Chat relay (v1.1, #111)
 
 Chat events are canonical events in the same signed, encrypted envelopes as
@@ -726,7 +818,8 @@ of messages from others, not deleted or hidden, after the position, over the
 newest 100 messages (`99+` past that); the "New messages" divider above the
 first of them, placed when the chat is opened or returned to and not moved
 while reading; the count on **Updates → Chat**; and the installed app's
-badge through `navigator.setAppBadge`. No count is sent to the service. The service sees each position change as a
+badge through `navigator.setAppBadge` when the member turned that on (#476,
+off by default). No count is sent to the service. The service sees each position change as a
 new revision of the record, so it can tell when a member reads, though not
 what; with no position yet (a new device, or before the first sync) every
 message from others counts until the chat is opened.

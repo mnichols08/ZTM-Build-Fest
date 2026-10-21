@@ -9,6 +9,7 @@ import { clearLegacyDrafts } from "../kin-security.js";
 import { loadAppearance } from "../../appearance/store.js";
 import { resolveAppearance } from "../../appearance/household.js";
 import { getActiveVault, setActiveVault } from "../../security/local-vault.js";
+import { wipeSignIn } from "../../security/new-device.js";
 import { AUTO_LOCK_KEY, START_ERROR } from "./constants.js";
 import { assertCurrentSession, captureSession, isCurrentSession } from "../shared/session-guard.js";
 
@@ -76,7 +77,7 @@ export class SessionController {
       await this.ctx.appearance.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
       // The household and security panels go in place first, then Simple
       // view (#345, ADR 0013) applies the cached layout before anything shows.
-      this.app.peoplePage.append(this.app.household, this.app.notifications, this.app.chatSettings);
+      this.app.peoplePage.append(this.app.household, this.app.notifications, this.app.appBadge, this.app.chatSettings);
       this.app.privacyPage.append(this.app.security);
       await this.ctx.simple.restore(snapshot.syncIdentity, session);
       this.assertCurrentSession(session);
@@ -138,6 +139,8 @@ export class SessionController {
       const editorValue = resolveAppearance(appearance, this.app.householdSettings);
       this.app.appearance.initialize(editorValue);
       this.ctx.appearance.applyEffectiveAppearance();
+      // A synced theme (#525) that arrived before the saved one loaded.
+      void this.ctx.privatePrefs.refresh();
     } catch (error) {
       this.assertCurrentSession(session);
       this.app.appearance.initialize({ version: 1, owner: null, mode: "system", colorSource: "default", seed: "#984D38", manual: null, image: null });
@@ -151,9 +154,13 @@ export class SessionController {
     // Seal this unlock for a refresh of this tab; a lock meanwhile undoes it.
     void this.app.reloadResume?.arm(vault).then(() => this.app.reloadResume.sweep()).catch(() => {});
   }
-  lockHousehold(broadcast = true, { preserveSecurityOperation = false, endSession = false, keepReloadResume = false } = {}) {
+  lockHousehold(broadcast = true, { preserveSecurityOperation = false, endSession = false, keepReloadResume = false, keepBadge = false } = {}) {
     // Every lock but the one on page unload ends refresh-resume (#351).
     if (!keepReloadResume) void this.app.reloadResume?.disarm();
+    // Every lock but closing Kin clears the app icon count (#476); sign-out
+    // is a lock that ends the session. The unread count goes with the room.
+    if (!keepBadge) this.ctx.badge?.clear();
+    this.app.chatUnread = null;
     if (broadcast) {
       // A protected read holds a native transaction while crypto runs. Notify
       // peers before the epoch write queues behind that read, so they abort it
@@ -182,8 +189,11 @@ export class SessionController {
     const vault = this.app.vault ?? getActiveVault();
     // Reminder timers hold decrypted titles; none may fire once locked. A lock
     // suspends them as { id, at, vaultId } only; ending the session clears them.
-    if (endSession) this.app.localReminders.clearAll();
-    else this.app.localReminders.suspendAll(vault?.vaultId ?? null);
+    if (endSession) {
+      this.app.localReminders.clearAll();
+      this.ctx.privatePrefs?.forget();
+    } else this.app.localReminders.suspendAll(vault?.vaultId ?? null);
+    this.ctx.privatePrefs?.detach({ render: false });
     this.app.vault = null;
     vault?.lock();
     clearTimeout(this.app.autoLockTimer);
@@ -220,6 +230,12 @@ export class SessionController {
     clearAttachmentProgress();
     this.app.householdStatus = null;
     this.app.passkeyPromptDismissed = false;
+    // A first run still signing up ends with the session; its keys go too.
+    if (this.app.firstRun?.pending?.signUp) for (const key of ["authKey", "passwordKey", "localKek"]) this.app.firstRun.pending.signUp[key]?.fill?.(0);
+    // A new-device sign-in (#568) still finishing: its vault key goes too.
+    if (this.app.firstRun?.pending?.signIn) wipeSignIn(this.app.firstRun.pending.signIn.opened);
+    this.app.firstRun = null;
+    this.app.pendingProfile = null;
     if (this.app.onboarding) { this.app.onboarding.hidden = true; this.app.onboarding.replaceChildren(); }
     this.app.syncCoordinator?.stop();
     this.app.syncCoordinator = null;
@@ -244,6 +260,7 @@ export class SessionController {
     this.ctx.status.clearAlert();
     clearLegacyDrafts();
     this.ctx.simple?.reset();
+    this.ctx.journal?.reset();
     this.app.quickAdd?.reset();
     this.app.chatShare?.reset();
     if (this.app.main) {
@@ -272,6 +289,8 @@ export class SessionController {
         ["tonight", "kin-tonight"],
       ];
       this.ctx.meals?.reset();
+      // Just for me (#510): the decrypted private list leaves with the lock.
+      this.ctx.privateItems?.reset();
       for (const [field, name] of components)
         this.app[field] = document.createElement(name);
       this.app.detailMode = null;

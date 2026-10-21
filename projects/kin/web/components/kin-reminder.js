@@ -3,10 +3,16 @@ import { describeReminderTime, localDateValue, localTimeValue, reminderShortcut,
 // In-app replacement for the window.prompt reminder entry. Labelled date and
 // time inputs, shortcuts that only fill those inputs, a readable confirmation
 // of the resolved local time, validation, and Set/Cancel. Dispatches the
-// existing kin:set-local-reminder / kin:cancel-local-reminder intents; the
-// browser-local LocalReminders model is unchanged.
+// existing kin:set-local-reminder / kin:cancel-local-reminder intents.
+//
+// `scope` says where a reminder lives: "device" (this device only, as
+// before private storage) or "devices" (#522: the member's private log, so
+// it goes off on each of their devices that allows notifications). The
+// owner sets it on every control (app/commands/records.js renderReminders);
+// KinReminder.scope is the default for a control made since.
 
 const DEVICE_NOTE = "On this device only, while Kin is open in this browser.";
+const DEVICES_NOTE = "On your devices that allow notifications, while Kin is open.";
 
 class KinReminder extends HTMLElement {
   constructor() {
@@ -18,10 +24,19 @@ class KinReminder extends HTMLElement {
     this.draft = { date: "", time: "" };
     this.error = "";
     this.instanceId = `reminder-${++KinReminder.instances}`;
+    this.reminderScope = KinReminder.scope;
+  }
+
+  get scope() { return this.reminderScope; }
+  set scope(value) {
+    const next = value === "devices" ? "devices" : "device";
+    if (next === this.reminderScope) return;
+    this.reminderScope = next;
+    this.render();
   }
 
   set target(value) { this.targetRecord = value ?? null; this.render(); }
-  set reminder(value) { this.current = value?.at ? { at: value.at } : null; this.render(); }
+  set reminder(value) { this.current = value?.at ? { at: value.at, where: value.where ?? "" } : null; this.render(); }
   set disabled(value) {
     this.isDisabled = Boolean(value);
     for (const control of this.querySelectorAll("button, input")) control.disabled = this.isDisabled;
@@ -50,11 +65,14 @@ class KinReminder extends HTMLElement {
     wrap.className = "reminder";
     const status = document.createElement("p");
     status.className = "reminder-status";
-    status.textContent = this.current ? `Reminds ${describeReminderTime(this.current.at)} on this device.` : "";
+    const devices = this.reminderScope === "devices";
+    // Set in another time zone (#522): the time where it was set, too.
+    const where = devices && this.current?.where ? ` (${this.current.where})` : "";
+    status.textContent = this.current ? `Reminds ${describeReminderTime(this.current.at)}${where}${devices ? "" : " on this device"}.` : "";
     wrap.append(status);
     const note = document.createElement("p");
     note.className = "reminder-note";
-    note.textContent = DEVICE_NOTE;
+    note.textContent = devices ? DEVICES_NOTE : DEVICE_NOTE;
     if (this.current || this.editing) wrap.append(note);
 
     if (!this.editing) {
@@ -62,7 +80,7 @@ class KinReminder extends HTMLElement {
       actions.className = "reminder-actions";
       const set = this.button(this.current ? "Change reminder" : "Remind me", () => this.open());
       set.setAttribute("aria-label", `${this.current ? "Change" : "Set"} reminder for ${title}`);
-      if (!this.current) set.title = DEVICE_NOTE;
+      if (!this.current) set.title = devices ? DEVICES_NOTE : DEVICE_NOTE;
       set.dataset.reminderAction = "open";
       actions.append(set);
       if (this.current) {
@@ -127,7 +145,7 @@ class KinReminder extends HTMLElement {
     const update = () => {
       this.draft = { date: date.value, time: time.value };
       const result = resolveReminderTime({ date: date.value, time: time.value, now: Date.now() });
-      preview.textContent = result.at ? `Reminds ${describeReminderTime(result.at)} on this device.` : "";
+      preview.textContent = result.at ? `Reminds ${describeReminderTime(result.at)}${devices ? "" : " on this device"}.` : "";
       if (this.error && !result.error) { this.error = ""; error.textContent = ""; }
     };
     date.addEventListener("input", update);
@@ -165,7 +183,7 @@ class KinReminder extends HTMLElement {
   }
 
   // Called by the owner once the reminder model accepted the time.
-  saved(at) { this.current = at ? { at } : null; this.close(); }
+  saved(at) { this.current = at ? { at, where: "" } : null; this.close(); }
 
   button(label, action) {
     const button = document.createElement("button");
@@ -181,6 +199,7 @@ class KinReminder extends HTMLElement {
   }
 }
 KinReminder.instances = 0;
+KinReminder.scope = "device";
 
 export { localDateValue, localTimeValue };
 customElements.define("kin-reminder", KinReminder);

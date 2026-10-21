@@ -75,7 +75,7 @@ class KinItemDetail extends HTMLElement {
 
   get itemId() { return this.record?.itemId ?? this.requestedId; }
 
-  set reminder(value) { this.reminderRecord = value?.at ? { at: value.at } : null; if (this.reminderControl) this.reminderControl.reminder = this.reminderRecord; }
+  set reminder(value) { this.reminderRecord = value?.at ? { at: value.at, scope: value.scope, where: value.where } : null; if (this.reminderControl) this.reminderControl.reminder = this.reminderRecord; }
 
   set disabled(value) {
     this.isDisabled = Boolean(value);
@@ -279,6 +279,8 @@ defineProps(KinItemDetail, {
   // Item picture (#347): the item's emoji, and whether this member sets one.
   emoji: { field: "emojiValue", coerce: (value) => value || null },
   canSetPicture: { field: "pictureAllowed", coerce: Boolean },
+  // Just for me (#517): whether this member may make the item private.
+  canMakePrivate: { field: "makePrivateAllowed", coerce: Boolean },
 });
 
 customElements.define("kin-item-detail", KinItemDetail);

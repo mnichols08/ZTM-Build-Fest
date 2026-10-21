@@ -32,7 +32,7 @@ export async function rootRotationUiChecks(oldRecovery) {
   confirmation.form.requestSubmit();
   await wait(() => !app.security.busy && Boolean(app.store));
   check(app.security.alert.textContent === "", "replacement finishes without security errors");
-  check(app.security.message.textContent.includes("Recovery protection updated"), "replacement announces success");
+  check(app.security.message.textContent.includes("Backup key replaced"), "replacement announces success");
   const after = await EventStore.securityStatus();
   check(after.rootVersion === before.rootVersion + 1 && after.wrappers.length === 1,
     "UI publishes exactly the next root and only the new recovery wrapper");

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "./durable-store.mjs";
-import { boardAccess, boardPolicyOf, canManageTrust, canParticipate, chatAccess, chatPolicyOf, isHouseholdAdmin, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
+import { boardAccess, boardPolicyOf, canManageTrust, canParticipate, chatAccess, chatPolicyOf, isHouseholdAdmin, PairingError, privatePolicyOf, requireTrustAuthority } from "./pairing-service.mjs";
 import { INSTALL_ICONS, installContentTag, installIconUrl, validateInstallIdentity } from "./install-identity.mjs";
 import {
   canonicalEventEnvelope,
@@ -62,6 +62,8 @@ export class EncryptedSyncService {
     this.chatBlobService?.forgetHousehold(householdId);
     this.chatRelayService?.forgetHousehold(householdId);
     this.boardRelayService?.forgetHousehold(householdId);
+    this.privateRelayService?.forgetHousehold(householdId);
+    this.privateBlobService?.forgetHousehold(householdId);
     this.liveService?.revalidate(householdId);
   }
 
@@ -86,6 +88,9 @@ export class EncryptedSyncService {
         access: boardAccess(auth.member, auth.household, this.now()),
         ...(isHouseholdAdmin(auth.member, this.now()) ? { policy: (({ limited, temporary }) => ({ limited, temporary }))(boardPolicyOf(auth.household)) } : {}),
       },
+      // Private storage (#491, ADR 0019): whether this member may have a
+      // private stream, and the Limited setting for an admin.
+      private: this.privateRelayService?.summary(auth) ?? { access: "none" },
       currentEpoch: state.currentEpoch,
       enabled: state.enabled,
       rotationPending: state.rotationPending,
@@ -150,7 +155,7 @@ export class EncryptedSyncService {
     const policy = chatPolicyOf(auth.household);
     // The chat policy (#123) rides along for admins, who alone may see it.
     const board = boardPolicyOf(auth.household);
-    return { admin, ...(admin ? { chatPolicy: { limited: policy.limited, temporary: policy.temporary }, boardPolicy: { limited: board.limited, temporary: board.temporary } } : {}), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
+    return { admin, ...(admin ? { chatPolicy: { limited: policy.limited, temporary: policy.temporary }, boardPolicy: { limited: board.limited, temporary: board.temporary }, privatePolicy: { limited: privatePolicyOf(auth.household).limited } } : {}), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
   }
 
   updateHouseholdSettings(sessionToken, value) {

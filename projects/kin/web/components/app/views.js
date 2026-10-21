@@ -1,6 +1,5 @@
 // Building the destination pages and their components.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
-import { setAppBadge } from "../../chat/chat-badge.js";
 import { routeHash, SEGMENTS } from "../../routes.js";
 import { DESTINATION_DESCRIPTIONS } from "./constants.js";
 import { currentPlatform, installHelp } from "../../platform.js";
@@ -114,6 +113,14 @@ export class ViewBuilder {
     this.app.meals.dataset.segment = "meals";
     lists.append(this.app.meals);
     listPanels.set("meals", this.app.meals);
+    // Just for me (#510): built with the views, so a lock drops it and
+    // everything it showed.
+    this.app.justForMe = document.createElement("kin-just-for-me");
+    this.app.justForMe.dataset.segment = "mine";
+    this.app.justForMe.controller = this.ctx.privateItems;
+    lists.append(this.app.justForMe);
+    listPanels.set("mine", this.app.justForMe);
+    this.ctx.privateItems.refresh();
     this.app.segmentPanels.set("lists", listPanels);
 
     const search = page("search", "Search");
@@ -148,15 +155,13 @@ export class ViewBuilder {
     handoffPanel.append(this.app.talksStandalone);
     chatPanel.append(this.app.chat);
     this.ctx.views.placeTalks();
-    // The unread count (#133) from the chat view: on the Chat link and, where
-    // the browser supports it, on the installed app's icon. Both are set from
-    // what this device decrypted; no count is sent anywhere. A locked
-    // household has no chat room, so the count and the icon badge clear
-    // when Kin locks (docs/UX.md).
+    // The unread count (#133) from the chat view: on the Chat link and, if
+    // the member chose it (#476), on the installed app's icon. Both are set
+    // from what this device decrypted; no count is sent anywhere.
     this.app.chat.addEventListener("kin:chat-unread", (event) => {
       this.app.chatUnread = event.detail;
       this.ctx.render.renderUpdatesNav();
-      setAppBadge(event.detail.count);
+      this.ctx.badge.update();
     });
     // The admin's chat policy (#123): with no access, Chat leaves Updates.
     this.app.chat.addEventListener("kin:chat-access", (event) => {
@@ -187,7 +192,7 @@ export class ViewBuilder {
       ["notes", "Notes, reference details, and maintenance history."],
       ["areas", "Areas, household mode, and Pulse."],
       ["people", "Members, pairing, trusted devices, and access."],
-      ["privacy", "Lock, passkeys, recovery key, export, and restore."],
+      ["privacy", "Lock, passkeys, backup key, export, and restore."],
       ["appearance", "Your colors and optional background on this device."],
     ]) {
       const entry = SEGMENTS.household.find((candidate) => candidate.id === segment);
@@ -205,7 +210,31 @@ export class ViewBuilder {
       item.append(link);
       hubLinks.append(item);
     }
-    hub.append(this.app.householdGlance, hubLinks);
+    // Just for you (#497, ADR 0019): private pages, apart from the
+    // household's. The journal is a page of its own, not a destination.
+    const personalHeading = document.createElement("h2");
+    personalHeading.className = "hub-personal-heading";
+    personalHeading.id = "hub-personal-heading";
+    personalHeading.textContent = "Just for you";
+    const personalLinks = document.createElement("ul");
+    personalLinks.className = "hub-links hub-personal";
+    personalLinks.setAttribute("aria-labelledby", personalHeading.id);
+    {
+      const item = document.createElement("li");
+      const link = document.createElement("a");
+      link.className = "hub-link journal-hub-link";
+      link.href = "#journal";
+      const name = document.createElement("span");
+      name.className = "hub-link-name";
+      name.textContent = "Journal";
+      const text = document.createElement("span");
+      text.className = "hub-link-text";
+      text.textContent = "Your own dated entries and photos. Only you can see them.";
+      link.append(name, text);
+      item.append(link);
+      personalLinks.append(item);
+    }
+    hub.append(this.app.householdGlance, hubLinks, personalHeading, personalLinks);
     const hubTools = document.createElement("div");
     hubTools.className = "hub-tools";
     this.app.installButton = document.createElement("button");
@@ -306,6 +335,8 @@ export class ViewBuilder {
     // Per-device notification settings (#85), shown once this browser is a
     // trusted household device.
     this.app.notifications = document.createElement("kin-notifications");
+    // The count on the app icon (#476): this device's choice, under it.
+    this.app.appBadge = document.createElement("kin-app-badge");
     // Read receipts and typing (#120): per member, so shown with the room.
     this.app.chatSettings = document.createElement("kin-chat-settings");
     this.app.chatSettings.hidden = true;
@@ -330,7 +361,10 @@ export class ViewBuilder {
     this.app.chatPolicy = document.createElement("kin-chat-policy");
     // Who can use the fridge (#323), beside who can chat.
     this.app.boardPolicy = document.createElement("kin-board-policy");
-    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance);
+    // Text size, motion and reminder alerts, and where they live (#524).
+    this.app.personalSettings = document.createElement("kin-personal-settings");
+    this.app.personalSettings.update(this.ctx.privatePrefs.settingsView());
+    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance, this.app.personalSettings);
 
     // For the sitter (#441, ADR 0017).
     const sitterPage = document.createElement("section");
@@ -345,7 +379,11 @@ export class ViewBuilder {
     const foryou = page("foryou", "For you", "What the family left for you.");
     this.app.sitterView = document.createElement("kin-sitter-page");
     foryou.append(this.app.sitterView);
-    for (const section of [today, week, foryou, lists, search, routines, updates, household]) {
+    // A member's journal (#497): private, reached from Household.
+    const journal = page("journal", "Journal", "Your own record of your days, on your own devices.");
+    this.app.journal = document.createElement("kin-journal");
+    journal.append(this.app.journal);
+    for (const section of [today, week, foryou, lists, search, routines, updates, household, journal]) {
       this.app.pages.set(section.id, section);
       main.append(section);
     }
@@ -355,6 +393,7 @@ export class ViewBuilder {
     this.app.detailPanel.setAttribute("aria-label", "Item details");
     this.app.detailPanel.hidden = true;
     main.append(this.app.detailPanel);
+    this.ctx.journal?.render();
     this.ctx.navigation.showPageFromLocation();
   }
 

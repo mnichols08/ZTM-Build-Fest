@@ -179,8 +179,14 @@ export async function todayActionableRegressions(recovery) {
   const fallbackHeadings = () => [app.today.querySelector('[data-section="today"] h2'), app.main.querySelector(".app-view:not([hidden]) h1")].filter(Boolean);
   for (let attempt = 0; attempt < 80 && !(!quick.dialog.open && fallbackHeadings().includes(document.activeElement)); attempt++)
     await frame();
+  // What happened instead, for triage (#469): a refresh that re-rendered
+  // Today after the dialog closed would show here as busy/refreshing or a
+  // heading that is no longer the one focused.
+  const focusFacts = () => JSON.stringify({ open: quick.dialog.open, active: document.activeElement?.outerHTML?.slice(0, 120) ?? null,
+    headings: fallbackHeadings().map((node) => node.textContent.slice(0, 40)), busy: app.busy, refreshing: app.refreshing,
+    pendingRefresh: app.pendingRefresh, route: location.hash });
   check(!quick.dialog.open && fallbackHeadings().includes(document.activeElement),
-    "A. when the empty-state action disappears, focus returns to a visible Today or page heading, not the body");
+    `A. when the empty-state action disappears, focus returns to a visible Today or page heading, not the body (${focusFacts()})`);
 
   // B. Live Today over the real store and WASM projection.
   const earlierA = await add(`Earlier A ${stamp}`, shift(-3));

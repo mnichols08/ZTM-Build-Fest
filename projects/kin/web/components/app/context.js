@@ -31,17 +31,22 @@ import { AppearanceController } from "./appearance.js";
 import { MealsController } from "./meals.js";
 import { SimpleController } from "./simple.js";
 import { ShareController } from "./share.js";
+import { BadgeController } from "./badge.js";
+import { PrivatePrefsController } from "./private-prefs.js";
 import { WeekController } from "./week.js";
 import { SitterController } from "./sitter.js";
+import { JournalController } from "./journal.js";
 import { RotationsController } from "./rotations.js";
 import { ImportController } from "./import.js";
 import { SectionsController } from "./sections.js";
+import { PrivateItemsController } from "./private-items.js";
 import { AppendCommands } from "./commands/append.js";
 import { AttachmentController } from "./attachments.js";
 import { ChatShareController } from "./chat-share.js";
 import { BulkCommands } from "./commands/bulk.js";
 import { ConversationCommands } from "./commands/conversations.js";
 import { DetailController } from "./detail.js";
+import { FirstRunController } from "./first-run.js";
 import { ItemCommands } from "./commands/items.js";
 import { NavigationController } from "./navigation.js";
 import { PeerChannel } from "./peer-channel.js";
@@ -78,15 +83,22 @@ export function createAppContext(app) {
   ctx.attachments = new AttachmentController(ctx);
   ctx.chatShare = new ChatShareController(ctx);
   ctx.share = new ShareController(ctx);
+  ctx.badge = new BadgeController(ctx);
+  ctx.privatePrefs = new PrivatePrefsController(ctx);
   ctx.week = new WeekController(ctx);
   ctx.sitter = new SitterController(ctx);
+  // The member's journal (#496): private, never household state.
+  ctx.journal = new JournalController(ctx);
   ctx.rotations = new RotationsController(ctx);
   ctx.importList = new ImportController(ctx);
   ctx.sections = new SectionsController(ctx);
+  // Just for me (#510): the member's private list.
+  ctx.privateItems = new PrivateItemsController(ctx);
   ctx.navigation = new NavigationController(ctx);
   ctx.detail = new DetailController(ctx);
   ctx.appearance = new AppearanceController(ctx);
   ctx.status = new StatusController(ctx);
+  ctx.firstRun = new FirstRunController(ctx);
   ctx.undo = new UndoController(ctx);
   ctx.render = new RenderController(ctx);
   ctx.shell = new ShellBuilder(ctx);
@@ -159,6 +171,10 @@ export function initializeAppState(app) {
     // Item picture (#347), from the item details.
     app.onSetItemEmoji = (event) => void app.ctx.simple.setItemEmoji(event.detail);
     app.onReplenishStaple = (event) => app.ctx.items.handleReplenishStaple(event);
+    // Just for me (#510, #517): a private item done or reopened from Today
+    // or This week, and "Make private" from a household item's details.
+    app.onTogglePrivateItem = (event) => void app.ctx.privateItems.toggle(event.detail ?? {});
+    app.onMakeItemPrivate = (event) => void app.ctx.privateItems.makePrivate(event.detail?.itemId);
     app.syncState = null;
     // Follows the browser's own offline/online events, like the state notice.
     app.offline = typeof navigator !== "undefined" && navigator.onLine === false;
@@ -252,7 +268,16 @@ export function initializeAppState(app) {
     app.onOpenChatMessage = (event) => app.ctx.navigation.handleOpenChatMessage(event.detail);
     app.onPlaybookIntent = (event) => app.ctx.routines.handlePlaybookIntent(event);
     app.onLocalReminder = (event) => app.ctx.records.handleLocalReminder(event.detail);
-    app.onCancelLocalReminder = (event) => { app.localReminders.cancel(event.detail.id); app.ctx.records.renderReminders(); app.ctx.status.setStatus("Reminder canceled on this device."); };
+    app.onCancelLocalReminder = (event) => {
+      const synced = app.ctx.privatePrefs.available;
+      void app.ctx.privatePrefs.endReminder(event.detail.id, "canceled").catch(() => {}).then(() => app.ctx.records.renderReminders());
+      app.ctx.records.renderReminders();
+      app.ctx.status.setStatus(synced ? "Reminder canceled on all your devices." : "Reminder canceled on this device.");
+    };
+    // Text size, motion and reminder alerts (#524), and "Use different
+    // settings on this device".
+    app.onPersonalSetting = (event) => { void app.ctx.privatePrefs.setDisplaySetting(event.detail.name, event.detail.value); };
+    app.onSettingsThisDevice = (event) => { event.detail.kept = app.ctx.privatePrefs.setDeviceOnly(event.detail.on); };
     app.onModeChange = () => app.ctx.records.saveMode(app.modeSelect.value);
     app.pulseTimer = null;
     app.catchUpCursor = null;
@@ -272,6 +297,9 @@ export function initializeAppState(app) {
       // A same-page jump to an invitation link (/pair#code=…) takes its code
       // first, so it never lingers in the address bar or history (#97).
       if (captureInvitationCode()) app.household?.offerInvitationCode?.();
+      // A home-screen shortcut opened into a running Kin (#472) lands
+      // itself (or waits for unlock); its address is already cleared.
+      if (app.ctx.share.handleLaunchAddress()) return;
       app.ctx.navigation.showPageFromLocation();
     };
     app.onNavigationClick = (event) => {
@@ -364,6 +392,12 @@ export function initializeAppState(app) {
       void app.ctx.sync.checkHouseholdAuthorization();
     };
     app.onPeerMessage = (event) => app.ctx.peers.handlePeerMessage(event);
+    // Count on the app icon (#476): <kin-app-badge> asks; the answer says
+    // whether the choice could be kept on this device.
+    app.onAppBadgeChoice = (event) => {
+      event.detail.kept = app.ctx.badge.setChoice(event.detail.value);
+      void app.ctx.privatePrefs.settingsChanged(["app-badge"]);
+    };
     // Logout and leaving the household end the session for good; a plain
     // lock request only suspends it.
     app.onLockRequest = (event) => app.ctx.session.lockHousehold(true, { endSession: event?.detail?.endSession === true });
@@ -385,7 +419,9 @@ export function initializeAppState(app) {
       const autoLockAt = app.autoLockMinutes && app.lastActivityAt !== null
         ? app.lastActivityAt + app.autoLockMinutes * 60_000 : null;
       app.reloadResume.write({ vault: app.vault, autoLockAt });
-      app.ctx.session.lockHousehold(false, { keepReloadResume: true });
+      // Closing Kin leaves the app icon count as it was (#476): that is what
+      // the member chose it for. Lock and sign-out clear it.
+      app.ctx.session.lockHousehold(false, { keepReloadResume: true, keepBadge: true });
     };
     // Coming back from the back/forward cache is navigating, not a refresh.
     app.onPageShow = (event) => { if (event?.persisted) void app.reloadResume.disarm(); };

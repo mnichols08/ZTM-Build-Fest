@@ -212,9 +212,9 @@ export async function mobileUxRegressions(recovery) {
     "settings show that passkey unlock is off on this device");
   check([...app.security.querySelectorAll("button")].some((button) => button.textContent === "Turn on passkey unlock"),
     "settings offer to turn on passkey unlock");
-  check(app.security.querySelector("details.security-guidance summary")?.textContent === "Recovery guidance" &&
-    [...app.security.querySelectorAll("button")].some((button) => button.textContent === "Replace recovery key"),
-    "recovery guidance and replacement remain available");
+  check(app.security.querySelector("details.security-guidance summary")?.textContent === "Backup key guidance" &&
+    [...app.security.querySelectorAll("button")].some((button) => button.textContent === "Replace backup key"),
+    "backup key guidance and replacement remain available");
   const autoLock = app.security.querySelector("#auto-lock-minutes");
   check(autoLock?.value === "0" && app.autoLockTimer === null, "automatic lock defaults to lock-on-close only");
   autoLock.value = "5";

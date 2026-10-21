@@ -5,6 +5,57 @@ import { installDom } from "../qr-test-dom.mjs";
 
 installDom();
 const { StatusController } = await import("./status.js");
+const { PASSKEY_SUGGESTION_DISMISSED_KEY } = await import("../../security/backup-key-entry.js");
+
+// Per-device browser storage, as the passkey suggestion's dismissal uses it.
+const stored = new Map();
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  value: { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, String(value)) },
+});
+
+// A browser that can use passkeys (passkeyUnlockSupported), for one test.
+async function withPasskeySupport(action) {
+  const credentials = Object.getOwnPropertyDescriptor(globalThis.navigator, "credentials");
+  globalThis.PublicKeyCredential = class {};
+  Object.defineProperty(globalThis.navigator, "credentials", { configurable: true, value: { get() {} } });
+  try { return await action(); } finally {
+    delete globalThis.PublicKeyCredential;
+    if (credentials) Object.defineProperty(globalThis.navigator, "credentials", credentials);
+    else delete globalThis.navigator.credentials;
+    stored.clear();
+  }
+}
+
+function passkeyRig({ justSetUp = false, offline = false, addPasskey = async () => {} } = {}) {
+  const card = document.createElement("section");
+  card.classList = { remove() {}, toggle() {} };
+  card.querySelector = () => null;
+  const statuses = [];
+  const security = {
+    justSetUp,
+    passkeyWrappers: [],
+    alert: { textContent: "" },
+    async run(action) { try { await action(); } catch (error) { security.alert.textContent = error.message; } },
+    addPasskey: () => addPasskey(security),
+  };
+  const app = {
+    onboarding: card,
+    vault: { locked: false },
+    offline,
+    state: { items: [{ text: "Get milk" }] },
+    householdStatus: { identity: { deviceId: "trusted" } },
+    security,
+    pages: new Map(),
+    alert: { textContent: "", hidden: true },
+    retryButton: {},
+  };
+  const ctx = { app, navigation: { navigate() {} } };
+  const controller = new StatusController(ctx);
+  ctx.status = { setStatus: (message) => statuses.push(message) };
+  controller.renderOnboarding();
+  return { card, app, controller, security, statuses };
+}
 
 function rig({ connected = true, hasItems = false } = {}) {
   const card = document.createElement("section");
@@ -63,3 +114,53 @@ test("welcome is absent for a household that already has content", () => {
   assert.equal(r.card.hidden, true);
   assert.equal(r.card.byText("Add something"), null);
 });
+
+test("right after setup, passkey unlock is offered as one calm step (#577)", () => withPasskeySupport(async () => {
+  const r = passkeyRig({ justSetUp: true, addPasskey: async (security) => { security.passkeyWrappers = [{ type: "prf" }]; } });
+  assert.equal(r.card.hidden, false);
+  assert.equal(r.card.dataset.passkeyOffer, "setup");
+  assert.match(r.card.textContent, /Unlock with your face, fingerprint or screen lock next time\?/);
+  assert.match(r.card.textContent, /backup key still works/);
+  r.card.byText("Turn on").click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(r.statuses, ["Passkey unlock is on for this device."]);
+  assert.equal(r.card.dataset.passkeyOffer, undefined, "once on, the step is gone");
+}));
+
+test("Not now after setup goes on without remembering a dismissal", () => withPasskeySupport(() => {
+  const r = passkeyRig({ justSetUp: true });
+  r.card.byText("Not now").click();
+  assert.equal(r.app.passkeyPromptDismissed, true);
+  assert.equal(r.card.dataset.passkeyOffer, undefined);
+  assert.equal(stored.has(PASSKEY_SUGGESTION_DISMISSED_KEY), false, "the later suggestion is still allowed");
+}));
+
+test("a failed enrolment says so plainly and carries on", () => withPasskeySupport(async () => {
+  const r = passkeyRig({ justSetUp: true, addPasskey: async () => { throw new Error("This device isn't signed in to a household yet."); } });
+  r.card.byText("Turn on").click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(r.app.alert.textContent, /^Passkey unlock didn't turn on\. This device isn't signed in/);
+  assert.match(r.app.alert.textContent, /More → Security/);
+  assert.equal(r.app.passkeyPromptDismissed, true);
+  assert.equal(r.card.dataset.passkeyOffer, undefined, "the step does not come back and block");
+}));
+
+test("not offered offline or where passkeys can't be used", async () => {
+  await withPasskeySupport(() => {
+    const r = passkeyRig({ justSetUp: true, offline: true });
+    assert.equal(r.card.dataset.passkeyOffer, undefined);
+  });
+  const unsupported = passkeyRig({ justSetUp: true });
+  assert.equal(unsupported.card.dataset.passkeyOffer, undefined);
+});
+
+test("after a backup-key unlock, a one-time suggestion this device remembers dismissing (#579)", () => withPasskeySupport(() => {
+  const r = passkeyRig();
+  assert.equal(r.card.dataset.passkeyOffer, "suggestion");
+  assert.match(r.card.textContent, /Skip the backup key next time\?/);
+  assert.ok(r.card.byText("Turn on passkey unlock"));
+  r.card.byText("Not now").click();
+  assert.equal(stored.get(PASSKEY_SUGGESTION_DISMISSED_KEY), "1");
+  const next = passkeyRig();
+  assert.equal(next.card.dataset.passkeyOffer, undefined, "a later unlock doesn't suggest it again");
+}));

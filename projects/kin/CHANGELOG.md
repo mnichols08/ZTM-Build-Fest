@@ -9,6 +9,170 @@ documentation only.
 
 ### Added
 
+- **App link for a Google Play app** (#532): the service serves
+  `/.well-known/assetlinks.json` when `KIN_ANDROID_PACKAGE` and
+  `KIN_ANDROID_CERT_SHA256` are set, so a Play Store wrapper can open Kin
+  without an address bar. Off (404) by default.
+- **Move to an account, without starting over** (#574, #575, #576, [ADR
+  0018](docs/decisions/0018-account-key-vault.md) "Migration"): if you set
+  Kin up with a passkey and a backup key, Today now calmly invites you, once,
+  to choose a username and password so you can sign in on your other
+  devices (`Not now` puts it away for a week). One touch of your passkey
+  confirms it; your device makes your account's key vault from what it
+  holds, and where your passkey supports it, the passkey alone signs you in
+  on a new device (no password-only way in is ever stored). Your password
+  unlocks this device too; your passkey and backup key keep working. Your
+  other old-style devices offer `Use my account here`. Interrupted setups
+  pick up where they stopped. Once you have a backup code, Security says the
+  per-device backup key is no longer needed. Members who decline keep using
+  Kin exactly as before.
+- **Unlock with your passkey offline** (#551, #552, #553): on the train with
+  no signal, your face or fingerprint opens Kin: the passkey unlocks with a
+  challenge made on the device, user verification required. Online unlock
+  is unchanged. A documented contract change (CRYPTOGRAPHY, "Offline passkey
+  unlock").
+- **Your private things in your own export** (#493, #494, #495, [ADR
+  0019](docs/decisions/0019-member-private-log.md)): Security → Backup and
+  move → `Save my private things` saves your journal, Just for me list,
+  reminders and settings (and journal photos, as many as fit in 64 MiB; the
+  rest are named) in a file only you can open, on your devices or with your
+  backup code. `Restore my private things` puts them back only for you,
+  without duplicates. Household exports never include them.
+- **Remove a passkey; start over on a browser** (#592 follow-ups): each
+  passkey under Security has `Remove this passkey` (after your password;
+  never your last way in: removing the last one brings your password back).
+  A device whose passkey no longer works offers `Start over on this
+  browser`, which clears Kin from that browser after a clear warning and
+  opens Sign in, instead of asking you to clear site data.
+
+### Security
+
+- The one-wrapper vault routes (`PUT`/`DELETE /api/account/vault/wrappers/<id>`)
+  now need your current password or a fresh passkey, like every other change
+  to how your account opens.
+- A password changed on another device: at its next unlock with a
+  connection, a device asks for the new password before opening, and
+  switches to it. Offline, the old password still opens that device until it
+  is online (THREAT-MODEL).
+
+- **Add a passkey: it signs you in alone, or require password and passkey**
+  (#560, #561, #562, [ADR 0018](docs/decisions/0018-account-key-vault.md)
+  D3/D4): once you've added something, Today calmly offers a passkey (and
+  Security always does). Adding it asks for your password once, then your
+  face, fingerprint or screen lock; from then on your passkey signs you in
+  on a new device by itself and unlocks Kin on this one, and your password
+  alone no longer opens your account anywhere new, so a stolen copy of Kin's
+  service holds nothing a password guess opens. Household admin actions ask
+  for the passkey again. **Require password and passkey** (Security, off by
+  default) makes a new-device sign-in ask for both. **Change password** is
+  under Security too: your account and this device move to the new password
+  in one step, and your other devices follow when they next sign in. The
+  service now refuses any set of vault wrappers that would let a password
+  alone open the vault beside a passkey, or a passkey alone beside
+  require-both; changes swap wrappers in one transaction, after a fresh
+  password check. No server schema change.
+- **A backup code for your account** (#571, #572, #573): one printable code
+  (8 groups of 7 letters and numbers, with a typo check), offered on Today
+  after your first week and under Security, never at sign-up. It signs you
+  in on a new device as a third way in (limited like a password), and then
+  you choose a new password. Making a new one stops the old one at once.
+  Exports from a device without a backup key (one set up with a password or
+  a passkey) now work and open with the code; exports made with a device's
+  backup key keep opening as before, and Kin no longer asks a member who has
+  a backup code for a per-device backup key.
+- **Sign in on a new device: add it, or replace an old one** (#568, #569,
+  #570, [ADR 0018](docs/decisions/0018-account-key-vault.md)): on a phone or
+  browser with no Kin on it, `Sign in` with your username and password (or a
+  passkey, once your account has one) and say whether this is a new device or
+  replaces one of yours (that device is signed out for good, with a clear
+  warning). No other device needs to be there: the browser gets a
+  ten-minute, single-use new-device permission (never a session), opens your
+  account vault, certifies its own keys with your certification key from the
+  vault, and installs the household's keys, then lands on Today. Your
+  devices endorse your certification key automatically, and the household's
+  devices accept a device it certified, pinning that key per member. Losing
+  every device is now recoverable with your password. Pairing from another
+  device still works. No server schema change.
+- **Just for me: a private list on all your devices** (#510, #511, #514,
+  #517): Lists › Just for me holds private to-dos and short notes only you
+  can see, with an optional date, complete and reopen, and delete with
+  Undo; it works offline and syncs between your devices through your
+  private stream. Dated ones show on your own Today and This week, marked
+  "Private" (a setting, on by default; never in Simple view or household
+  search). **Share with the household…** moves an item to To do after a
+  confirmation naming who will see it; **Make private** moves something you
+  added into your list, with Undo. Both are safe to retry after a failure.
+  Engine: private kinds 110–118, KPRV section 11 and the
+  `kin_private_execute` export.
+- **A personal journal** (#496: #497, #501, #504, #507, [ADR 0019](docs/decisions/0019-member-private-log.md)):
+  each member can write dated entries, with an optional title, plain text and
+  up to ten photos, on a Journal page reached from Household's "Just for
+  you" and marked "Only you can see this". Entries are sealed in the
+  member's private log and sync to their own devices only; photos are sealed
+  per member as private blobs. A draft is kept while Kin is unlocked; delete
+  and photo removal offer Undo. Local search, a month jump and a quiet "On
+  this day" on the journal page only. The share sheet offers "Add to my
+  journal", and a "New journal entry" home-screen shortcut opens the editor.
+  Never in household search, Today, chat or exports; no streaks, prompts or
+  counts. Private kinds 101–104 (kind 100 reserved) through `kin_private_execute`,
+  KPRV section 101, and server schema 24 (`private_blobs`).
+- **A gentle first run: your name and a password, then you're in** (#557,
+  #558, #559, [ADR 0018](docs/decisions/0018-account-key-vault.md)): a new
+  device asks at most three screens (start or join; your name and the
+  household's name or invitation code; a username and password) and lands
+  on Today, with no backup key or security choices up front. The password
+  unlocks the device daily, offline, and signs it in; the service stores only
+  a username and an Argon2id verifier of a key derived from the password.
+  The member's encrypted account vault is created on their first device and
+  kept current. Joining still needs the inviter's approval. A member with no
+  passkey yet confirms admin actions with a fresh password. Server schema 23
+  (`members.username`). The passkey and backup-key setup stays available as
+  "Set up with a passkey instead".
+- **Private storage for each member, groundwork** (#485, #489, [ADR 0019](docs/decisions/0019-member-private-log.md)):
+  a member key kept only in the member's account vault (vault contents
+  format 2) and rotated when one of their devices is revoked; a private log
+  in the engine (kinds from 100, KPRV), a private relay stream on the service
+  keyed by member (server schema 22, the admin's "private storage for
+  children and teens" setting, purge on member removal), and a private log
+  store and sync pass on the device. Nothing visible yet: the pass stays off
+  until the vault key is kept on the device (#557) and the journal, list and
+  reminder stories add the first private records.
+- **My reminders and settings on all my devices** (#520, #521, #522, #523,
+  #524, #525, #526): with private storage on (members with an account), a
+  reminder set on one device goes off at the same instant on each of the
+  member's devices that allows notifications, and dismissing it on one
+  clears it on all of them; a reminder set in another time zone also says
+  the time where it was set. Theme, text size (new: Standard, Large,
+  Larger), Kin's own reduced-motion setting (new), whether reminders show as
+  notifications (new) and the app icon count follow the member, last change
+  winning per setting; **Use different settings on this device** keeps a
+  shared screen such as a kitchen tablet to itself. A device's own
+  reminders move into private storage once, without duplicates. Members set
+  up with a passkey and backup key keep everything on the device as before,
+  with one line offering an account. Private kinds 120, 121 and 130, KPRV
+  sections 12 and 13, made through `kin_private_execute` (no server
+  change).
+- **Home-screen shortcuts, finished** (#471, #472): long-press the installed
+  icon for **Add to shopping**, **Add a task**, **This week**, Shopping, Chat
+  and Today. The Add shortcuts open Quick add on Shopping or To do with the
+  title field focused. A locked Kin unlocks first, then lands; a shortcut
+  used while Kin is open lands at once. Simple view lands on Today, and a
+  Temporary member stays where the shortcut took them. Each shortcut has
+  its own 96 and 192 px PNG icon (Android ignores SVG-only ones), and the
+  app now has 192 and 512 px PNG icons and a maskable 512 px icon, all drawn
+  by `scripts/render-icons.mjs` with Node built-ins only and cached for
+  offline use.
+- **Count on the app icon** (#476): an optional number on the installed
+  app's icon, set per device under Notifications: Off (the default), Unread
+  messages, or Unread messages and my things today. Never shows content;
+  Lock and sign-out clear it.
+- **Encrypted key vault on the service, groundwork** (#564, [ADR 0018](docs/decisions/0018-account-key-vault.md)):
+  the vault and wrapper formats, password/passkey/backup-code key
+  derivations, server schema 21 with the vault routes (own member, trusted
+  device, compare-and-set, rate-limited downloads) and the Argon2id password
+  verifier helper, and re-sealing a member's vault when a device installs a
+  new epoch key. Nothing visible yet: no vault is created until the first-run
+  story.
 - **Taking turns on routines** (#428, [ADR 0016](docs/decisions/0016-routine-rotations.md)):
   people take turns at a routine in an order you choose; the turn passes when
   it's done, with Skip to next and Give this turn to…, and Today shows whose
@@ -106,8 +270,29 @@ documentation only.
 
 ### Changed
 
+- **Kin loads itself again if its start was cut short** (#594): on Edge for
+  Windows a page load sometimes had its module requests cancelled by the
+  browser part way, which left a blank page with only "Skip to content". A
+  small start-up guard (`web/boot-guard.js`) now notices and loads the page
+  again, at most twice in a row, then offers Try again. A load that wasn't a
+  refresh stays locked: the guard's reload never resumes it (#351).
 - The page no longer triggers the browser's pull-to-refresh where the browser
   allows turning it off (#353).
+- **Calmer unlock until accounts arrive** (#563): screens call the recovery
+  key the **backup key for this device** ("Each device has its own"; stored
+  format unchanged, #578); right after setup, once the device is in a
+  household and online, Today asks "Unlock with your face, fingerprint or
+  screen lock next time?" with Turn on and Not now (#577); new
+  password-manager entries are named for the device ("Kin backup key — Chrome
+  on Android (K-7F3A)"), the unlock form asks for that entry and names it
+  under the field, older "Kin recovery key" entries still match, and after a
+  backup-key unlock a one-time suggestion offers passkey unlock (#579).
+- **The unread chat count on the app icon is now opt-in** (#476): it used to
+  appear wherever the browser supported it; now it shows only after a member
+  chooses it under Notifications. The "Quick add" shortcut is now "Add a
+  task" and opens To do (its address is unchanged, so existing installs keep
+  working). A household's published install identity no longer puts its own
+  icon on every shortcut; each keeps Kin's shortcut icon.
 
 ## v1.3.0 — Member Names and Clearer Setup
 

@@ -2,7 +2,7 @@
 // address, tidying what was shared, and fetching it from the worker once.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchShared, sharedText, takeLaunchAction, takeShareId } from "./share-target.js";
+import { captureLaunchAction, consumeLaunchAction, fetchShared, sharedText, shortcutLanding, takeLaunchAction, takeShareId } from "./share-target.js";
 
 const history = () => { const calls = []; return { calls, replaceState: (...args) => calls.push(args[2]) }; };
 const ID = "ab".repeat(16);
@@ -21,8 +21,35 @@ test("a shortcut's action is taken the same way; unknown actions do nothing", ()
   const past = history();
   assert.equal(takeLaunchAction({ hash: "#kin-action=quick-add" }, past), "quick-add");
   assert.deepEqual(past.calls, ["/"]);
-  assert.equal(takeLaunchAction({ hash: "#kin-action=delete-everything" }, history()), "");
-  assert.equal(takeLaunchAction({ hash: "#lists" }, history()), "");
+  assert.equal(takeLaunchAction({ hash: "#KIN-ACTION=Add-Shopping" }, history()), "add-shopping");
+  const stale = history();
+  assert.equal(takeLaunchAction({ hash: "#kin-action=delete-everything" }, stale), "");
+  assert.deepEqual(stale.calls, ["/"], "an unknown or stale action is still cleared from the address");
+  const route = history();
+  assert.equal(takeLaunchAction({ hash: "#lists" }, route), "");
+  assert.deepEqual(route.calls, [], "a page shortcut (#week, #lists/shopping) stays a route");
+});
+
+test("a shortcut held across the lock is taken once", () => {
+  assert.equal(captureLaunchAction({ hash: "#kin-action=add-shopping" }, history()), "add-shopping");
+  assert.equal(captureLaunchAction({ hash: "#today" }, history()), "", "a plain route leaves the waiting shortcut alone");
+  assert.equal(consumeLaunchAction(), "add-shopping");
+  assert.equal(consumeLaunchAction(), "", "once");
+  captureLaunchAction({ hash: "#kin-action=quick-add" }, history());
+  captureLaunchAction({ hash: "#kin-action=add-shopping" }, history());
+  assert.equal(consumeLaunchAction(), "add-shopping", "the newer shortcut wins");
+});
+
+test("where each shortcut lands: Quick add on the right list, or Today in Simple view", () => {
+  assert.deepEqual(shortcutLanding("add-shopping"), { hash: "#lists/shopping", quickAdd: true });
+  assert.deepEqual(shortcutLanding("quick-add"), { hash: "#lists/todo", quickAdd: true });
+  assert.deepEqual(shortcutLanding("add-shopping", { simpleView: true }), { hash: "#today", quickAdd: false });
+  assert.deepEqual(shortcutLanding("quick-add", { simpleView: true }), { hash: "#today", quickAdd: false });
+  // "New journal entry" (#509): the journal editor; Simple view has no journal.
+  assert.deepEqual(shortcutLanding("new-journal-entry"), { hash: "#journal", quickAdd: false, journal: true });
+  assert.deepEqual(shortcutLanding("new-journal-entry", { simpleView: true }), { hash: "#today", quickAdd: false });
+  assert.equal(shortcutLanding(""), null);
+  assert.equal(shortcutLanding("delete-everything"), null);
 });
 
 test("shared text becomes an item line and a note body", () => {

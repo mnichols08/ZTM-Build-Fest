@@ -67,7 +67,7 @@ The [changelog](CHANGELOG.md) has every version, newest first, and marks the one
 
 ## Install, build, and run
 
-Requirements: Rust/Cargo with the `wasm32-unknown-unknown` target, Node.js 24.16.0 or later, npm, and a modern browser with WebAssembly, Web Crypto, Web Locks, ES modules, Custom Elements and IndexedDB. Passkeys are needed for server identity/pairing. Where the passkey supports the PRF extension, it becomes the everyday unlock on that device; the user-held recovery key remains the explicit backup unlock and the only unlock while offline. Use HTTPS outside localhost.
+Requirements: Rust/Cargo with the `wasm32-unknown-unknown` target, Node.js 24.16.0 or later, npm, and a modern browser with WebAssembly, Web Crypto, Web Locks, ES modules, Custom Elements and IndexedDB. Passkeys are needed for server identity/pairing. Where the passkey supports the PRF extension, it becomes the everyday unlock on that device, online and offline; a password (for an account) or the user-held recovery key remains the backup unlock. Use HTTPS outside localhost.
 
 From the repository root in PowerShell:
 
@@ -130,6 +130,17 @@ limit key. IPv4 clients are limited per address and IPv6 clients per /64
 network. Only failed code attempts count toward a client's limit, so a
 household's own successful pairing never uses it up. An invalid
 `KIN_TRUSTED_PROXIES` value stops startup with an explanation.
+
+### Linking a Google Play app
+
+If Kin is also published as an Android app from Google Play (a Trusted Web
+Activity, epic #527), Android checks `/.well-known/assetlinks.json` to confirm
+the app and this site belong together; without it the app shows a browser
+address bar. Set `KIN_ANDROID_PACKAGE` to the app's package name and
+`KIN_ANDROID_CERT_SHA256` to its signing certificate's SHA-256 fingerprint
+(`AA:BB:…`, comma-separated if there are several, such as the Play App Signing
+key and an upload key). With neither set the file answers 404; setting only
+one, or a malformed value, stops startup with an explanation.
 
 ### Limiting new households
 

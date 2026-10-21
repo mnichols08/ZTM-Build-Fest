@@ -4,6 +4,16 @@
 
 All four household draft surfaces now retain text only in unlocked inputs. Reload/lock discards drafts, and startup removes historical sessionStorage draft keys before components mount. No household plaintext is written to localStorage, sessionStorage, Cache Storage, cookies, OPFS or debug persistence.
 
+localStorage holds per-device preferences only (such as the inactivity lock,
+`kin.auto-lock-minutes`). Since #563 that includes the name of the password-manager
+entry this device saved its backup key under with that key's label
+(`kin.backup-key-entry`: up to three, newest first, e.g.
+`[{"label":"K-7F3A","name":"Kin backup key — Chrome on Android (K-7F3A)"}]`;
+never the key, never a nickname) and whether
+the passkey suggestion was dismissed (`kin.passkey-suggestion-dismissed`).
+Losing them only changes which entry the unlock form asks for and whether the
+suggestion shows.
+
 ## Session event arena (refactor track)
 
 An unlocked `EventStore` keeps the decrypted canonical history in memory
@@ -314,6 +324,78 @@ renumbering take a Web Lock per household, and the store writes that add or
 renumber pending events check the sequence they started from, so two tabs
 can't take the same sequence even without Web Locks. Deleting the log with the household, like the blob database,
 is still to come.
+
+## Private log (#489)
+
+A member's private log is kept apart from every other store, in its own
+database per member, `kin-private-log:<householdId>:<memberId>`, version 1
+(`web/private/private-log-store.js`, modelled on the board log):
+
+- `events`: `{ order, eventId, envelope }`, every private event as the signed
+  envelope it travelled in, sealed under a member-key epoch. Only the member's
+  account vault holds the member key, so the log needs no sealing of its own
+  and root rotation doesn't touch it. Signatures are checked once, when an
+  event arrives; reopening the log only decrypts.
+- `ids`: `{ eventId, order }`, so each event is stored once even when two
+  tabs store it together.
+- `outbox`: `{ deviceSequence, eventId }`, this device's private events the
+  relay hasn't accepted yet.
+- `meta`: `{ key: "state", nextOrder, cursor, deviceSequence, provisional,
+  refused, vault }`: the relay position read up to, this device's last
+  private sequence ([SYNC](SYNC.md#private-relay-489)), the last 100 relay
+  events skipped because they failed authentication, and `vault`, the last
+  sealed account vault seen (`{ version, ciphertext }`, ciphertext under the
+  vault key exactly as the service stores it) so an offline unlock can still
+  open the member key. A cached version newer than the service's is preferred.
+
+While Kin is unlocked the decrypted log is held in memory
+(`web/chat/chat-records.js`, as the fridge does) for the engine's private log
+to mirror, and the member key's epochs are held as non-extractable
+CryptoKeys; locking zeroes and drops both. Writing and renumbering take a Web
+Lock per member, and the store writes that add or renumber pending events
+check the sequence they started from. The database is created only once the
+device holds a vault key (ADR 0018); it stays on a device that leaves the
+household, sealed under keys that device keeps, like the other logs.
+
+Reminders and personal settings that follow the member (#520) are private
+events in this log (kinds 120, 121 and 130); nothing about them is stored
+anywhere else on the device in a readable form, except what the device
+itself applies:
+
+- The theme a synced setting picks is saved into the device's personal
+  appearance record (`personal_appearance`, encrypted with the household
+  data), so an offline unlock opens with it.
+- Text size (`kin.text-size`: `large` or `larger`), Kin's reduced-motion
+  override (`kin.motion`: `reduce`), whether reminders show as notifications
+  (`kin.reminder-alerts`: `off`) and "Use different settings on this
+  device" (`kin.settings-this-device`: `on`) are localStorage values, as the
+  automatic lock and the app icon count (`kin.app-badge`) already were, so the
+  lock screen shows the chosen size and motion. Defaults are stored as
+  nothing. They say nothing about the household.
+- Reminder timers are still in-memory only (`web/reminders.js`); a lock
+  suspends them as before. The device remembers, in memory, which reminders it
+  armed from the log and which it already showed, so a reminder never goes
+  off twice in one session.
+
+**Private blobs (#502).** Journal photos are kept in their own database per
+member, `kin-private-blobs:<householdId>:<memberId>`, version 1
+(`web/private/private-blobs.js`): `blobs` (`{ ref, ciphertext, storedAt,
+pending }`, sealed bytes by reference, pending until the service has them)
+and `retire` (`{ ref, queuedAt }`, references to delete on the service on
+the next pass). Ciphertext only: each blob's key lives in the journal record,
+under the member key. The journal's draft is not stored: it stays in the
+unlocked page and locking discards it, like every Kin draft.
+
+## Account key vault on the service (ADR 0018, #564)
+
+Not a device store: the service keeps each member's sealed key vault in
+server schema 21 (`account_vaults`, `account_vault_wrappers`,
+`account_passwords`), with a forward migration from 20, purged with the
+household. The vault holds the member's household and chat epoch keys (read
+from this device's `epochs` store, opened with the device key), the member's
+certification key and, once they use private storage, their member-key
+epochs (contents format 2, ADR 0019), sealed by the member's device. No IndexedDB database or record format changes; the key database
+stays at version 6. Formats and parameters: [CRYPTOGRAPHY](CRYPTOGRAPHY.md#account-key-vault-adr-0018).
 
 ## Handoff storage
 

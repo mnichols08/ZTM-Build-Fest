@@ -54,6 +54,8 @@ export class AppearanceController {
       const effective = resolveAppearance(saved, this.app.householdSettings);
       this.ctx.appearance.applyAppearance(effective);
       complete(effective, null);
+      // Theme follows the member to their other devices (#525).
+      void this.ctx.privatePrefs.settingsChanged(["theme-mode", "theme-color"]);
     } catch (error) {
       if (this.ctx.session.isCurrentSession(session)) complete(null, new Error("Kin couldn't save your appearance. Your previous saved appearance is unchanged."));
     }
@@ -67,6 +69,7 @@ export class AppearanceController {
       this.app.appearance.initialize(effective);
       this.ctx.appearance.applyAppearance(effective);
       this.ctx.status.setStatus("Now following the household appearance on this device.");
+      void this.ctx.privatePrefs.settingsChanged(["theme-mode", "theme-color"]);
     } catch { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
   }
   async handleInheritAppearanceProperty(event) {
@@ -85,6 +88,7 @@ export class AppearanceController {
       this.app.appearance.initialize(effective);
       this.ctx.appearance.applyAppearance(effective);
       this.ctx.status.setStatus(`Now following the household ${event.detail.property} on this device.`);
+      void this.ctx.privatePrefs.settingsChanged(["theme-mode", "theme-color"]);
     } catch { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
   }
   applyEffectiveAppearance() {

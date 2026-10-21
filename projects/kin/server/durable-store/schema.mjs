@@ -1,8 +1,13 @@
 // DurableStore schema: migrations to SERVER_SCHEMA_VERSION and the schema check.
 import { MAX_ACTIVE_MEMBERS } from "../identity-limits.mjs";
 import {
+  ACCOUNT_VAULT_WRAPPED_KEY_BYTES,
   DurableStoreError,
+  MAX_ACCOUNT_VAULT_BYTES,
+  MAX_ACCOUNT_VAULT_WRAPPER_PARAMS_BYTES,
   MAX_ATTACHMENT_BYTES,
+  MIN_ACCOUNT_PASSWORD_ITERATIONS,
+  MIN_ACCOUNT_VAULT_BYTES,
   MAX_CHAT_BLOB_BYTES,
   MIN_CHAT_BLOB_BYTES,
   SERVER_SCHEMA_VERSION,
@@ -792,6 +797,159 @@ export const schemaMethods = {
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;
         throw new DurableStoreError("Kin could not complete the Simple view migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 20) {
+      try {
+        this.transaction(() => {
+          // ADR 0018 (#564): each member's encrypted key vault, the wrappers
+          // that hold its vault key, and the password verifier for the later
+          // password sign-in (#557). All opaque to the service: the vault and
+          // wrappers are ciphertext, the verifier is Argon2id(authKey).
+          // No foreign key to members: like chat_hidden, a row outlives an
+          // authority restore that rewrites the members table.
+          this.db.exec(`
+            CREATE TABLE account_vaults (
+              member_id TEXT PRIMARY KEY CHECK (length(member_id) = 32),
+              household_id TEXT NOT NULL REFERENCES households(id),
+              version INTEGER NOT NULL CHECK (version >= 1),
+              updated_at INTEGER NOT NULL,
+              ciphertext BLOB NOT NULL CHECK (length(ciphertext) BETWEEN ${MIN_ACCOUNT_VAULT_BYTES} AND ${MAX_ACCOUNT_VAULT_BYTES})
+            );
+            CREATE INDEX account_vaults_by_household ON account_vaults(household_id);
+            CREATE TABLE account_vault_wrappers (
+              member_id TEXT NOT NULL REFERENCES account_vaults(member_id) ON DELETE CASCADE,
+              household_id TEXT NOT NULL REFERENCES households(id),
+              wrapper_id TEXT NOT NULL CHECK (length(wrapper_id) = 32),
+              type TEXT NOT NULL CHECK (type IN ('password', 'passkey', 'password-passkey', 'backup-code')),
+              version INTEGER NOT NULL CHECK (version >= 1),
+              params TEXT NOT NULL CHECK (length(params) <= ${MAX_ACCOUNT_VAULT_WRAPPER_PARAMS_BYTES}),
+              wrapped BLOB NOT NULL CHECK (length(wrapped) = ${ACCOUNT_VAULT_WRAPPED_KEY_BYTES}),
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (member_id, wrapper_id)
+            );
+            CREATE INDEX account_vault_wrappers_by_household ON account_vault_wrappers(household_id);
+            CREATE TABLE account_passwords (
+              member_id TEXT PRIMARY KEY CHECK (length(member_id) = 32),
+              household_id TEXT NOT NULL REFERENCES households(id),
+              kdf_salt BLOB NOT NULL CHECK (length(kdf_salt) = 16),
+              kdf_iterations INTEGER NOT NULL CHECK (kdf_iterations >= ${MIN_ACCOUNT_PASSWORD_ITERATIONS}),
+              verifier TEXT NOT NULL CHECK (length(verifier) BETWEEN 1 AND 256),
+              updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX account_passwords_by_household ON account_passwords(household_id);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(21, Date.now());
+          sqlitePragma(this.db, "user_version = 21");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the account vault migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 21) {
+      try {
+        this.transaction(() => {
+          // ADR 0019 (#491): each member's private relay stream, keyed by
+          // member, laid out like the chat and board relays; and "private
+          // storage for Limited members" (on by default), plaintext
+          // authorization metadata the service enforces like the chat and
+          // fridge policies. The household column lets a household's
+          // deletion purge the streams; there is no foreign key to members,
+          // so a stream outlives an authority restore (removal purges it).
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN private_limited INTEGER NOT NULL DEFAULT 1
+              CHECK (private_limited IN (0, 1));
+            ALTER TABLE households ADD COLUMN private_policy_revision INTEGER NOT NULL DEFAULT 0
+              CHECK (private_policy_revision >= 0);
+            CREATE TABLE private_relay_state (
+              member_id TEXT PRIMARY KEY CHECK (length(member_id) = 32),
+              household_id TEXT NOT NULL REFERENCES households(id),
+              next_sequence INTEGER NOT NULL CHECK (next_sequence >= 1),
+              max_logical_time TEXT NOT NULL
+            );
+            CREATE INDEX private_relay_state_by_household ON private_relay_state(household_id);
+            CREATE TABLE private_events (
+              member_id TEXT NOT NULL CHECK (length(member_id) = 32),
+              household_id TEXT NOT NULL REFERENCES households(id),
+              relay_sequence INTEGER NOT NULL CHECK (relay_sequence >= 1),
+              event_id TEXT NOT NULL,
+              device_id TEXT NOT NULL,
+              device_sequence INTEGER NOT NULL CHECK (device_sequence >= 1),
+              key_epoch INTEGER NOT NULL CHECK (key_epoch BETWEEN 1 AND 128),
+              canonical_envelope TEXT NOT NULL,
+              PRIMARY KEY (member_id, relay_sequence),
+              UNIQUE (member_id, event_id)
+            );
+            CREATE INDEX private_events_by_household ON private_events(household_id);
+            CREATE TABLE private_device_sequences (
+              member_id TEXT NOT NULL CHECK (length(member_id) = 32),
+              household_id TEXT NOT NULL REFERENCES households(id),
+              device_id TEXT NOT NULL,
+              last_sequence INTEGER NOT NULL CHECK (last_sequence >= 1),
+              PRIMARY KEY (member_id, device_id)
+            );
+            CREATE INDEX private_device_sequences_by_household ON private_device_sequences(household_id);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(22, Date.now());
+          sqlitePragma(this.db, "user_version = 22");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the private storage migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 22) {
+      try {
+        this.transaction(() => {
+          // #558 (ADR 0018): a member's username for password sign-in, in its
+          // normalized form (web/security/account-credentials.js). Unique on
+          // the service among active members, so a removed member's name can
+          // be chosen again. Members who signed up with a passkey have none.
+          this.db.exec(`
+            ALTER TABLE members ADD COLUMN username TEXT
+              CHECK (username IS NULL OR (length(username) BETWEEN 3 AND 32 AND username = lower(username)));
+            CREATE UNIQUE INDEX members_active_username ON members(username)
+              WHERE username IS NOT NULL AND active = 1;
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(23, Date.now());
+          sqlitePragma(this.db, "user_version = 23");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the username migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 23) {
+      try {
+        this.transaction(() => {
+          // #502: each member's private blobs (sealed journal photos and
+          // thumbnails), keyed by member like the private relay stream, with
+          // the member's household for its deletion and no foreign key to
+          // members (removal purges them with the stream).
+          this.db.exec(`
+            CREATE TABLE private_blobs (
+              member_id TEXT NOT NULL CHECK (length(member_id) = 32),
+              household_id TEXT NOT NULL REFERENCES households(id),
+              blob_ref TEXT NOT NULL CHECK (length(blob_ref) = 64),
+              size_bytes INTEGER NOT NULL CHECK (size_bytes BETWEEN 29 AND 4198400),
+              uploader_device_id TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              ciphertext BLOB NOT NULL,
+              PRIMARY KEY (member_id, blob_ref)
+            );
+            CREATE INDEX private_blobs_by_household ON private_blobs(household_id);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(24, Date.now());
+          sqlitePragma(this.db, "user_version = 24");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the private blob migration.", { cause: error });
       }
     }
   },

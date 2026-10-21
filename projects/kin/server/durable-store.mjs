@@ -29,9 +29,12 @@ import { pushMethods } from "./durable-store/push.mjs";
 import { chatBlobMethods } from "./durable-store/chat-blobs.mjs";
 import { chatEventMethods } from "./durable-store/chat-events.mjs";
 import { boardEventMethods } from "./durable-store/board-events.mjs";
+import { privateEventMethods } from "./durable-store/private-events.mjs";
+import { privateBlobMethods } from "./durable-store/private-blobs.mjs";
 import { chatHiddenMethods } from "./durable-store/chat-hidden.mjs";
 import { chatKeyMethods } from "./durable-store/chat-keys.mjs";
 import { chatReceiptMethods } from "./durable-store/chat-receipts.mjs";
+import { accountVaultMethods } from "./durable-store/account-vault.mjs";
 import { lifecycleMethods } from "./durable-store/lifecycle.mjs";
 import {
   acquireDatabaseMaintenanceLock,
@@ -72,6 +75,18 @@ export {
   MAX_CHAT_HIDDEN_RECORD_BYTES,
   MAX_CHAT_RECEIPT_BYTES,
   MAX_MEMBER_CHAT_CLAIMS,
+  MAX_MEMBER_PRIVATE_EVENTS,
+  MAX_MEMBER_PRIVATE_BLOB_BYTES,
+  MAX_MEMBER_PRIVATE_BLOBS,
+  MAX_PRIVATE_BLOB_BYTES,
+  MIN_PRIVATE_BLOB_BYTES,
+  MAX_ACCOUNT_VAULT_BYTES,
+  MAX_ACCOUNT_VAULT_WRAPPERS,
+  MIN_ACCOUNT_VAULT_BYTES,
+  ACCOUNT_VAULT_WRAPPED_KEY_BYTES,
+  ACCOUNT_VAULT_WRAPPER_TYPES,
+  MAX_ACCOUNT_VAULT_WRAPPER_PARAMS_BYTES,
+  MIN_ACCOUNT_PASSWORD_ITERATIONS,
   MAX_HOUSEHOLD_CHAT_TOMBSTONES,
   MIN_CHAT_BLOB_BYTES,
   sqlitePragma,
@@ -457,4 +472,4 @@ export class DurableStore {
   }
 }
 
-addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, chatBlobMethods, chatEventMethods, boardEventMethods, chatHiddenMethods, chatKeyMethods, chatReceiptMethods, lifecycleMethods, authorityMethods, envelopeMethods);
+addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, chatBlobMethods, chatEventMethods, boardEventMethods, privateEventMethods, privateBlobMethods, chatHiddenMethods, chatKeyMethods, chatReceiptMethods, accountVaultMethods, lifecycleMethods, authorityMethods, envelopeMethods);

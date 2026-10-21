@@ -1,4 +1,5 @@
 import { createHash, createPublicKey } from "node:crypto";
+import { validEndorsementShape, validMemberCertificateShape } from "./account-certification.mjs";
 import { canonicalJson, MAX_KEY_EPOCHS } from "./sync-contract.mjs";
 
 const isRecord = (value) =>
@@ -132,6 +133,21 @@ export function validStoredDevice(device) {
         canonicalJson(device.syncPublicKeys)
     )
       return false;
+  }
+  // A member's endorsed certification key (#568) is kept on the device that
+  // endorsed it, and names that device.
+  if (device.certificationEndorsement !== undefined &&
+      (!hasKeys || !validEndorsementShape(device.certificationEndorsement,
+        { householdId: device.householdId, memberId: device.memberId, issuerDeviceId: device.id })))
+    return false;
+  if (device.deviceAuthorizationCertificate?.version === 2) {
+    // Signed by the member's certification key (#570), for the device's
+    // original keys.
+    const original = device.syncKeyHistory?.[0] ?? { publicKeys: device.syncPublicKeys, fingerprint: device.syncKeyFingerprint };
+    return hasKeys && validMemberCertificateShape(device.deviceAuthorizationCertificate, {
+      householdId: device.householdId, memberId: device.memberId, deviceId: device.id,
+      fingerprint: original.fingerprint, publicKeys: original.publicKeys,
+    });
   }
   if (device.deviceAuthorizationCertificate !== undefined) {
     const certificate = device.deviceAuthorizationCertificate;

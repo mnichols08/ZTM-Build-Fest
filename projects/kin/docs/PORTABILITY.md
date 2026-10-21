@@ -28,10 +28,12 @@ AES-GCM ciphertext, avoiding redundant
 base64 expansion of the whole archive. HKDF purpose `kin/archive/v1` separates its
 key from local-record keys; manifest metadata is authenticated as AAD. The encrypted
 body contains exact canonical rows and protected replay/catch-up context. The
-normal export includes recovery wrappers; it never emits plaintext JSON or device
-private keys. Store the export and its recovery key in different places, and
-write down which key label goes with which export (see Recovery key labels
-below).
+normal export includes recovery wrappers (never a password or passkey
+wrapper) and, for a member with an account backup code, a wrapper that opens
+with that code (see "Exports that open with the backup code" below); it
+never emits plaintext JSON or device private keys. Store the export and its
+recovery key (or backup code) in different places, and write down which key
+label goes with which export (see Recovery key labels below).
 
 Restore requires an unlocked empty target and the archive's recovery key. Kin
 validates the manifest, authenticates and decrypts the complete payload, checks
@@ -105,6 +107,83 @@ chance (1 in 65,536); it is for a person to match, not an identifier.
 The storage rule, used everywhere Kin mentions exports: **Store the export and
 its recovery key in different places, and write down which key label goes
 with which export.**
+
+## Exports that open with the backup code (#572)
+
+**Decision: an export from a member with an account backup code opens with
+that code**, not with the password. A device set up with a password (or with
+a passkey alone) has no per-device backup key, and the backup code is the
+one secret such a member keeps for exactly this: 256 random bits, printed
+and kept at home. Sealing exports for the password instead was rejected: an
+export file can be copied anywhere, and a password-sealed export could be
+guessed offline at PBKDF2 cost, which is the very exposure adding a passkey
+removes from the service (ADR 0018 D3).
+
+How (CRYPTOGRAPHY, "Exports for a member with a backup code"): the export's
+security manifest gets one more `recovery`-type root wrapper, **after** the
+device's own recovery wrappers if it has any. Its 32-byte secret is
+HKDF(VK, "kin/export-backup-code/v1", vault ID), and it carries the code's
+vault wrapper as `backupCode: { householdId, memberId, wrapperId, version,
+wrapped }`. Restoring with the code: the code opens that vault wrapper (VK),
+VK derives the secret, the secret opens the root. Offline, with nothing but
+the file and the code.
+
+- **Format.** Still package format 3 (and 2 still read); the only addition is
+  the optional `backupCode` field on one recovery wrapper of the header's
+  manifest, which the archive key authenticates with the rest of the header.
+  Exports made before #572 are unchanged and open exactly as before.
+- **Which code.** The one current when the export was made: making a new
+  code doesn't change exports already made, and the old code keeps opening
+  them (and only them). Keep each code until you no longer need the exports
+  made under it, or make a new export after a new code.
+- **Both.** A device that also has its own backup key (households set up
+  before accounts) makes exports that open with either; older Kin releases
+  find the device key first, as they always did, and can't use the code.
+- **Restore screen.** It says whether an export opens with the account
+  backup code, a device's backup key, or both; one field takes either (the
+  code is recognised by its shape: 8 groups of 7 letters and numbers).
+- **Needs a connection.** The device fetches the code's current vault wrapper
+  from the service when exporting; a device with its own backup key still
+  exports offline.
+- The export grants no authority, as before: the code opens the history in
+  the file, never membership or device trust.
+
+## A member's private things (#493, #494, #495)
+
+**A household export never includes private data.** The journal, the "Just
+for me" list, and the reminders and settings that follow a member live in
+that member's private log (ADR 0019), which the household export never
+reads. A member saves their own copy separately, under Security → Backup and
+move → **Your private things**:
+
+- **Save my private things** makes one file, `kin-private-<date>.kinp`
+  (format KPEX 1, CRYPTOGRAPHY "A member's own export of their private
+  things"): every private change this device holds, exactly as it's kept
+  (each sealed under the member key for its epoch), and the member's journal
+  photos, newest first, **as long as the file stays under 64 MiB**. Photos
+  that don't fit are counted and named in the message ("3 journal photos
+  didn't fit in the file and aren't included; they stay in your account").
+  The whole is sealed under the member key; nothing of the household's (no
+  household event, key, setting or chat) is in it.
+- **Who can open it.** Only that member: on any of their own devices (their
+  vault gives the member key), or, for a member with an account backup code,
+  with the code alone (the file carries the code's vault wrapper and the
+  member keys under the vault key). Without a backup code the message says
+  so, and suggests making one.
+- **Restore my private things** takes the file and, only if Kin asks, the
+  backup code. Kin restores private things **only for the member who saved
+  them**: a file naming another member or household is refused before
+  anything is opened, and every change in it must open under this member's
+  own key. What's already here is skipped by event ID, so restoring twice, or
+  on a device that already has it all, adds nothing ("Everything in this file
+  is already here. Nothing was duplicated."). Photos come back as pending
+  uploads.
+- **What a restore can't do.** Changes the service no longer has (for
+  example after a service restore from an old backup) come back on the
+  device that restores them; the relay takes only a device's own new
+  changes, so another device gets them by restoring the same file there.
+- **Format.** New, additive (V1.0-COMPATIBILITY): the household package
+  formats (2 and 3) are unchanged.
 
 ## Ownership principle
 

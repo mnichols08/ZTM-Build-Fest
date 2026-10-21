@@ -112,3 +112,13 @@ test("For you and For the sitter (#441)", () => {
   assert.equal(resolveRoute({ hash: "#household/sitter" }).canonical, "household/sitter");
   assert.equal(resolveSimpleRoute({ hash: "#foryou" }, { chat: true, fridge: true }).canonical, "today");
 });
+
+test("the journal is a page reached from Household, not a sixth destination (#497)", () => {
+  const journal = resolveRoute({ hash: "#journal" });
+  assert.equal(journal.canonical, "journal");
+  assert.equal(journal.title, "Journal");
+  assert.equal(journal.destination, "household");
+  assert.equal(PRIMARY_DESTINATIONS.length, 5);
+  assert.ok(!PRIMARY_DESTINATIONS.some((entry) => entry.id === "journal"));
+  assert.equal(resolveSimpleRoute({ hash: "#journal" }, { chat: true, fridge: true }).canonical, "today", "Simple view has no journal");
+});

@@ -39,6 +39,20 @@ as are reminders from another vault. Logout, leaving or deletion of the
 household, and restoring an export discard reminders entirely. Reload and tab
 close also discard them.
 
+With private storage on (#520), a reminder is a private record in the
+member's own private log instead: sealed under their member key, relayed only
+to their own devices, and readable by none of the household's other members,
+its admins or the service. It names the item or routine by ID, its due
+instant, and the setter's UTC offset and IANA time zone at that instant (so
+another device can say "9:00 where it was set"); never the item's text. Each
+device that allows notifications arms it from the log with the title read
+from the household records while unlocked, exactly as above; dismissing it
+on one device records that it was dismissed, which clears it on the others.
+The time zone is a coarse location; it stays inside the member's private
+storage. Personal settings that follow the member (theme, text size, reduced
+motion, reminder alerts, the app icon count) are private records the same
+way.
+
 Same-origin tabs may exchange the fixed `events-changed` notification over `BroadcastChannel` after a committed write. The notification contains no household or event content; each tab reloads the event log from IndexedDB and reconstructs its own view locally.
 
 Since You Last Looked stores only a local event cursor and local timestamp in the existing `local_context` singleton. A cursor means that this installation explicitly advanced through a boundary; it does not identify a person or assert that a named member read anything. Viewing or marking the summary does not write a household event. The additional `view-state-changed` BroadcastChannel message is a fixed, content-free marker; it carries no cursor, IDs, count, text, actor, or device.
@@ -143,6 +157,16 @@ Mozilla, Apple or Microsoft) sees its own endpoint and when pushes arrive.
 Revocation, removal and household deletion delete subscriptions. See
 [Push notifications](PUSH.md).
 
+Count on the app icon (#476): off by default, per device. When a member
+turns it on, the installed app's icon shows a number (unread messages, and
+optionally their own things today), worked out on the device from decrypted
+state; nothing about it is sent to the service. The number is shown
+**outside the lock**: anyone who can see the device's home screen, dock or
+taskbar sees it, including after Kin is closed, and it tells them how much
+is waiting (never what). Locking Kin and signing out clear it; turning the
+setting off clears it at once. The browser and operating system receive only
+the number.
+
 Published install identity (v1.1, #78): off by default. If a household admin
 turns on "Show our name and icon on home screens", the service stores the
 household name, a short name, an optional description and the icons without
@@ -167,6 +191,107 @@ zeroed and the write-ahead log truncated. Backups taken before that still
 contain them until they are rotated out, and restoring one brings them back
 until the next start resets them again. See
 [Identity](IDENTITY.md#device-names).
+
+Account key vaults (ADR 0018, #564): a member's device may store the
+member's keys on the service, sealed so the service can't read them. The
+service learns that the member has a vault, its size, its version and when
+it changes (which hints at key rotations), how many ways it can be opened
+and of which kind (password, passkey, both, backup code), and the public
+parameters for those (a password salt, a passkey's credential ID). It never
+receives the vault key, a password, a passkey's PRF output or a backup
+code. Deleting the household deletes the vaults; backups keep old copies.
+See [Cryptography](CRYPTOGRAPHY.md#account-key-vault-adr-0018).
+
+A passkey and a backup code for an account (#560, #571): the service also
+learns **when a member adds a passkey, changes their password, turns
+"require password and passkey" on or off, or makes a new backup code**
+(each changes their wrappers or verifier; the audit log records
+`passkey_added`, `password_changed` and `password_reset`), and keeps, for a
+backup code, **SHA-256 of a key derived from it** so it can check a
+backup-code sign-in. That value never leaves the service and can't be turned
+back into the code. A backup-code sign-in is recorded like any new-device
+sign-in (method `backup-code`). The code itself, its printout and the
+exports it opens stay with the member.
+
+Username and password sign-in (#557, #558): for a member who signs up with
+a password, the service now stores **a username** (with the member, in
+normalized lower-case form, unique among active members) and **an Argon2id
+verifier of a key derived from the password** (`authKey`), with the
+password's salt and iteration count. It never receives the password itself,
+nor the separate password-derived key that opens the member's vault and
+their devices' local data. It learns when the member signs in with the
+password and from which address (as for a passkey login), and how many
+attempts failed (to limit them). Whether a username is taken is answered to
+anyone signing up, as on any sign-up page, at a limited rate. A username is
+chosen by the member and can be anything that fits the rules; it need not
+be a real name or an email address, and Kin has no email system. Deleting
+the household deletes the usernames and verifiers. Removing a member, or a
+member leaving, deletes their username, verifier, account vault and its
+wrappers on the service (backups keep old copies), and the username can be
+chosen again. The member's preferred display name, typed at
+first run, is a household event like before: encrypted, never seen by the
+service.
+
+A member set up the old way who moves to an account (#575) gives the service
+the same things, from then on: a username, the password's verifier and
+parameters, and an account vault (`account_migrated` in the audit log); the
+service still never sees the password, the passkey's PRF output or the
+vault key. Members who decline give it nothing new. "Not now" on the Today
+invitation is remembered on that device only (a date in browser storage).
+
+"Start over on this browser" (#592 follow-up) removes Kin's databases and
+storage entries from that browser and ends its session; the service learns
+only that the session ended, and later that the member signed in again.
+
+**Private storage for each member (ADR 0019, #489).** A member's private
+things (the journal, "Just for me", reminders that follow them) are sealed
+under a member key that only their own devices hold, read from their account
+vault; no other member, household admins included, can read them, and the
+service can't either. For each member who uses private storage the service
+learns: that they use it; how many private events and blobs they have, how
+large and when; which of their devices sent each one; and the member-key
+epoch number each is sealed under (which says how many times their key
+changed after a device of theirs was revoked). Never their content. Only that
+member's other devices are hinted that something changed. A household admin
+can turn private storage off for children and teens (it is on by default);
+that only stops the service relaying it, and nobody gains access to what is
+already on the child's devices. Temporary members have none. Removing a
+member deletes their private stream on the service; deleting the household
+deletes every member's. Copies on the member's own devices stay, as for
+household data. Household exports never include private logs; a member saves
+their own private things in a separate file only they can open (#493,
+PORTABILITY "A member's private things"), made on their device and never sent
+to the service, and restorable only for themselves. Reminders and
+settings that follow a member (#520) make the member key on the member's
+first private change: a reminder, or a setting changed from Kin's default
+(a device that already has some brings them the first time it opens with
+private storage). From then on the service learns that the member uses
+private storage.
+
+**Just for me (#510).** Private to-dos, notes on them and the member's
+"show on my Today" setting are private-log records (kinds 110–118): sealed
+like every private event, so the service sees only their count, size and
+timing. They show only on that member's devices: in Lists › Just for me
+and, when the member's setting is on, on their own Today and This week,
+marked "Private"; never in Simple view, household search, the sitter page,
+calendar (.ics) exports or household exports. A deleted item stays in the
+member's private log (so Undo can restore it), like every private record.
+Moving something between private and the household is always an explicit
+choice: **Share with the household…** asks first and names who will see it,
+then writes an ordinary household item, which every member can read from
+then on; **Make private** archives the household item (the household keeps
+its archived record, as with Archive) and keeps a private copy. The
+household item made by sharing has an ID derived one way (SHA-256) from the
+private item's, so it reveals nothing about the private log.
+
+**The journal (#496).** Entries and their photos are private records: the
+service learns how many private events and photo blobs a member has, their
+sizes and times, never a word or a picture. Photos are drawn again before
+sealing, so no location or camera details are kept. Search, the month jump
+and On this day run on the member's own device over what it decrypted;
+nothing is indexed on the service, nothing reaches household search, Today,
+chat, catch-up or exports, and nothing is ever a notification. The draft
+stays in the unlocked page only.
 
 The planning design for these boundaries is documented in [Identity](IDENTITY.md), [Pairing](PAIRING.md), [Synchronization](SYNC.md), [Cryptography](CRYPTOGRAPHY.md), and the [Threat Model](THREAT-MODEL.md). These documents specify intended properties and open decisions; they do not establish implemented security guarantees.
 

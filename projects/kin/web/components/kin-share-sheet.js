@@ -10,6 +10,8 @@ const DESTINATIONS = Object.freeze([
   ["note", "Save as a note"],
   ["handoff", "Make a handoff"],
   ["chat", "Send in Chat"],
+  // A member's own journal (#508): private, never household data.
+  ["journal", "Add to my journal"],
 ]);
 
 class KinShareSheet extends HTMLElement {
@@ -30,7 +32,7 @@ class KinShareSheet extends HTMLElement {
     this.choices.setAttribute("aria-labelledby", "share-sheet-title");
     const hint = document.createElement("p");
     hint.className = "quick-add-hint";
-    hint.textContent = "Nothing is saved until you choose and confirm. Everyone in your household will see what you add.";
+    hint.textContent = "Nothing is saved until you choose and confirm. Everyone in your household will see what you add, except in your journal, which only you can see.";
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "share-sheet-cancel";

@@ -7,7 +7,9 @@ import "./kin-chat-share.js";
 import "./kin-share-sheet.js";
 import "./kin-shopping-mode.js";
 import "./kin-week.js";
+import "./kin-just-for-me.js";
 import "./kin-sitter-editor.js";
+import "./kin-journal.js";
 import "./kin-import.js";
 import "./kin-command-palette.js";
 import "./kin-item.js";
@@ -29,13 +31,16 @@ import "./kin-pulse.js";
 import "./kin-catch-up.js";
 import "./kin-household.js";
 import "./kin-notifications.js";
+import "./kin-app-badge.js";
 import "./kin-security.js";
 import "./kin-appearance.js";
+import "./kin-personal-settings.js";
 import "./kin-household-defaults.js";
 import { createAppContext, initializeAppState } from "./app/context.js";
 import { captureInvitationCode } from "../pairing-link.js";
 import { takeSignInLink } from "../device-link.js";
 import { captureLaunchAction, captureShare } from "../share-target.js";
+import { applyStoredDisplayPrefs } from "../appearance/display-prefs.js";
 
 // An invitation link (/pair#code=…) hands over its code before any route is
 // resolved, and the address bar drops it at once (#97). A computer's sign-in
@@ -47,6 +52,9 @@ takeSignInLink();
 // out of the address the same way, and offered once Kin is unlocked.
 captureShare();
 captureLaunchAction();
+// Text size and motion (#524) apply before anything shows, the lock screen
+// included: they are this device's, kept unencrypted (display-prefs.js).
+applyStoredDisplayPrefs();
 
 // The application root. It owns lifecycle, event wiring and the state the
 // controllers in ./app/ share; each behavior lives in one of those controllers.
@@ -67,6 +75,7 @@ const ELEMENT_EVENTS = [
   ["kin:retry-attachments", "onRetryAttachments"], ["kin:change-responsibility", "onChangeResponsibility"], ["kin:simple-done", "onSimpleDone"], ["kin:set-item-emoji", "onSetItemEmoji"],
   ["kin:replenish-staple", "onReplenishStaple"], ["kin:complete-item", "onCompleteItem"], ["kin:start-shopping", "onStartShopping"], ["kin:save-sitter-page", "onSaveSitterPage"], ["kin:set-routine-rotation", "onSetRoutineRotation"], ["kin:set-routine-turn", "onSetRoutineTurn"], ["kin:set-item-section", "onSetItemSection"], ["kin:save-shopping-sections", "onSaveShoppingSections"], ["kin:import-list", "onImportList"],
   ["kin:reopen-item", "onReopenItem"], ["kin:archive-item", "onArchiveItem"],
+  ["kin:toggle-private-item", "onTogglePrivateItem"], ["kin:make-item-private", "onMakeItemPrivate"],
   ["kin:add-item-step", "onAddItemStep"], ["kin:complete-item-step", "onCompleteItemStep"],
   ["kin:reopen-item-step", "onReopenItemStep"], ["kin:archive-item-step", "onArchiveItemStep"],
   ["kin:change-item-area", "onItemAreaChange"], ["kin:set-item-planning-date", "onItemPlanningDateChange"],
@@ -83,7 +92,8 @@ const ELEMENT_EVENTS = [
   ["kin:set-pulse", "onSetPulse"], ["kin:clear-pulse", "onClearPulse"],
   ["kin:caught-up", "onCaughtUp"], ["kin:sync-enabled", "onSyncEnabled"],
   ["kin:sync-now", "onSyncNow"], ["kin:sync-stop", "onSyncStop"],
-  ["kin:lock", "onLockRequest"], ["kin:appearance-preview", "onAppearancePreview"],
+  ["kin:lock", "onLockRequest"], ["kin:app-badge-choice", "onAppBadgeChoice"],
+  ["kin:personal-setting", "onPersonalSetting"], ["kin:settings-this-device", "onSettingsThisDevice"], ["kin:appearance-preview", "onAppearancePreview"],
   ["kin:save-appearance", "onSaveAppearance"], ["kin:use-household-appearance", "onUseHouseholdAppearance"],
   ["kin:inherit-appearance-property", "onInheritAppearanceProperty"], ["kin:household-defaults-preview", "onHouseholdDefaultsPreview"],
   ["kin:household-defaults-cancel", "onHouseholdDefaultsCancel"], ["kin:save-household-defaults", "onSaveHouseholdDefaults"],

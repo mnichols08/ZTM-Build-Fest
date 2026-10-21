@@ -20,7 +20,7 @@ export class WeekController {
         const today = this.ctx.navigation.currentCivilDate();
         const days = await session.store.week(today);
         if (!this.ctx.session.isCurrentSession(session) || !this.app.week) return;
-        this.app.week.update({ days, today, state: this.app.state, context: this.ctx.detail.responsibilityContext() });
+        this.app.week.update({ days, today, state: this.app.state, context: this.ctx.detail.responsibilityContext(), privateItems: this.ctx.privateItems.todayItems() });
       } catch {
         // The page keeps what it showed; the next render tries again.
       } finally {

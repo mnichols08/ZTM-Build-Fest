@@ -873,12 +873,315 @@ Not:
 
 Once a device holds a passkey that can unlock Kin, the lock screen reads
 "Welcome back" with `Unlock with passkey` as the only primary action and
-`Use recovery key` as a secondary control that reveals the recovery form. The
-recovery key is a backup, never the everyday login. Offline, the screen says
-plainly that passkey unlock needs a connection and shows recovery directly.
-First run is a welcome, a "Save your recovery key" step, then create/join
-choices; passkey unlock is offered as soon as the device holds a household
-credential. Security settings state whether passkey unlock is on.
+`Use backup key` as a secondary control that reveals the backup-key form. The
+backup key is a backup, never the everyday login. Offline, the passkey still
+unlocks (#551, below): the screen says "You're offline. Your passkey still
+unlocks Kin on this device; Kin signs you in again once you're connected." and
+keeps the backup key one tap away as usual. First run is a welcome, a "Save your backup key for this device"
+step, then create/join choices; passkey unlock is offered as soon as the
+device holds a household credential (§8.1, "Calmer unlock"). Security settings
+state whether passkey unlock is on.
+
+### A gentle first run: your name and a password — Adopted (#557, #559)
+
+The owner's principle for accounts ([ADR 0018](decisions/0018-account-key-vault.md)):
+don't overwhelm people at the start. A new device opens on **at most three
+screens before Today**, with no keys and no security choices:
+
+1. **Welcome to Kin.** `Start a new household` (primary), `I have an
+   invitation`, or `Sign in` ("You already use Kin, on another device or one
+   you lost"; below). Nothing to type. A quiet `Set up with a passkey instead`
+   leads to the earlier setup (backup key, then passkey create or join),
+   which is also where adding a device you already use and signing in with
+   your phone live.
+2. **Start your household** — `Your name` (`autocomplete="name"`) and an
+   optional `Household name`; or **Join your household** — `Your name` and
+   the `Invitation code`. An invitation link opens straight on this screen
+   with the code filled in, so a joiner sees two screens. A wrong or used
+   code is said here, before a password is chosen. "Step 1 of 2".
+3. **Choose how you'll sign in** — `Username` (`autocomplete="username"`) and
+   `Password` (`autocomplete="new-password"`), so password managers save a
+   new account. Plain guidance: "Use at least 10 characters. A few unrelated
+   words works well." One short line states the trade-off: "Kin can't reset
+   this password. Until you add a passkey or another device, a forgotten
+   password means this household can't be opened." `Create household` or
+   `Join household`. "Step 2 of 2".
+
+Each screen checks its answers when sent and says what to fix beside the
+field (`aria-invalid`, `aria-describedby`); nothing typed is lost, the
+password included, and the first field with a problem takes focus. A taken
+username is checked before anything is created. Then Kin derives the
+password's keys (a second or so on a phone, "Setting up your household on
+this device…"), makes this device's encrypted storage and opens **Today**
+right away. Meanwhile Today's card reads "Setting up your household…"; the
+household is created with the service, sync turns on, and the names typed on
+screen 2 are recorded once sync is ready (the member's name as Set my name
+does, the household's name as an admin's shared setting). If that fails
+(offline, a username taken meanwhile, a code that ended), the card says so
+in one line with what to change and `Try again`; Kin stays usable on this
+device meanwhile. A joiner lands on People & devices, waiting for approval
+exactly as before (compare the device keys), and after approval finishes
+with `Finish joining`, without typing the password again unless the page was
+reloaded meanwhile, then lands on Today.
+
+### Sign in on a new device — Adopted (#568, #569)
+
+For a member on a new phone or a wiped browser, from `Sign in` on the
+welcome screen; two screens, then Today, with no other device needed:
+
+1. **Sign in to your household** — `Username` (`autocomplete="username"`)
+   and `Password` (`autocomplete="current-password"`), so a password manager
+   offers the saved login. `Sign in` and `Back`; below, a quiet `Sign in with
+   a passkey` for members who added one. A wrong username or password says
+   "That username and password didn't match. Check them and try again." in
+   the alert line and keeps the form. A member whose account signs in with a
+   passkey is told so; a member who requires both sees **Confirm with your
+   passkey** next (`Use my passkey`).
+2. **Which device is this?** "Signed in as <username>." A radio group (a
+   fieldset with the question as its legend): **Add this as a new device**
+   (chosen), then one **This replaces <device name>** per trusted device of
+   theirs, with the date it was added. Choosing a replacement shows, and ties
+   to that choice with `aria-describedby`, the warning "The device you choose
+   is signed out for good: it can't open your household again, even if it
+   turns up. Choose this only for a device that's lost, broken or wiped."
+   `Continue` / `Cancel`. At the household's device limit, adding says to
+   choose a device to replace instead.
+
+Then this device's storage is made with the same password (it unlocks this
+device every day, offline, as after the first run) and Today opens; the card
+reads "Setting up this device…" while the device registers and installs the
+household's keys, and the household's items arrive with the first sync. A
+failure says so on the card with `Try again`. After a passkey-only sign-in,
+a backup key for this device is shown once (with "I've saved this key
+somewhere safe") before Today, since there is no password to protect it with.
+
+**Daily unlock.** The lock screen of a device set up this way reads "Unlock
+Kin", "Enter your password to open your household on this device.", with
+the username shown and offered to password managers (an off-screen
+`autocomplete="username"` field) and one `Password` field
+(`autocomplete="current-password"`) with `Unlock`. It works offline, and
+signs the device in when online. A wrong password says "That password didn't
+work. Check it and try again." and keeps the form, focused on the field. A
+passkey, once added, is offered beside it. `Forgot your password?` explains
+plainly that Kin can't reset it and what still works.
+
+**Confirming important actions.** Where a passkey member confirms with their
+passkey (approving a device or a member, admin changes, removing someone,
+deleting the household), a member who has no passkey yet sees a small dialog,
+"Confirm it's you" — "Enter your Kin password to continue." `Confirm` /
+`Cancel` (Cancel reads as "cancelled", nothing changes). Messages say
+"Confirm … with your password" for them.
+
+**Later, calmly.** No passkey or backup code is asked for at sign-up. The
+passkey offer card (#577) stays for devices set up with a passkey. A
+password member is offered the passkey and the backup code at calm moments
+(below). Security settings show a **Password** section instead of the
+backup-key one.
+
+### A passkey and a backup code for an account — Adopted (#560, #571)
+
+The owner's principle holds: each is one optional card at a quiet moment,
+never a wall of steps, and everything is also under Security.
+
+**On Today, one card at a time** (the onboarding card; `data-account-offer`):
+
+- **"Sign in with your face or fingerprint?"** — after the first useful
+  action (the household has something in it), where passkeys work and while
+  online: "Add a passkey and your face, fingerprint or screen lock signs you
+  in, on this device and on a new one. It also keeps your account safer:
+  your password alone no longer opens it on a new device." `Add a passkey` /
+  `Not now`.
+- **"Save a backup code?"** — after the member's first week: "A backup code
+  gets you back into Kin if you ever lose your password or passkey. Print it
+  or write it down; it takes a minute." `Make a backup code` / `Not now`.
+
+`Not now` hides the card on this device for good (it's remembered in browser
+storage, like the passkey suggestion, #579); the same step stays under
+Security. The action opens Security with that step already open.
+
+**Security → Passkey** (account members): the status line (`On — your
+passkey signs you in on a new device by itself.`, `On — signing in on a new
+device asks for your password and your passkey.`, `Off — you sign in with
+your password.`, or `Your passkey doesn't open your account on a new device
+yet.` with `Set up my passkey`), one line on whether it also unlocks this
+device (`Unlock this device with my passkey` when it doesn't), the
+**Require password and passkey** checkbox (off by default, with a line
+explaining the difference), and always: "If you lose your passkey (a lost
+phone, a reset password manager), your backup code gets you back in. …"
+Every change opens a small inline form under the section: `Your password`
+(`autocomplete="current-password"`, labelled, described by the alert line),
+then the device's passkey prompt. Cancel closes it; nothing changes until the
+service confirms, and the status line then says what changed.
+
+**Security → Password**: what unlocks this device, a line about what Kin
+can't do (reset it) and what can (the backup code), and `Change password`:
+current password, new password (with the guidance line) and the new password
+again (`autocomplete="new-password"`); with require-both on, the passkey is
+asked for too. A note says other devices keep their old password until they
+next sign in (they ask for the new one at their next online unlock).
+
+**Security → Backup code**: whether there is one (and when it was made),
+what it's for, and `Make a backup code` (`Make a new backup code` when one
+exists). Making one shows the code in 8 groups of 7 in a large monospaced
+card (read by screen readers group by group), with `Print` (a print view
+with only the card, `@media print`) and `Copy`; then "I've printed this code
+or saved it somewhere safe" and `Your password`, and `Turn on this code`.
+The code is only turned on after both, so an abandoned screen never leaves
+the member without a working code; a new code replaces the old one at that
+moment, and the screen says so.
+
+**Signing in on a new device**: `Sign in with a passkey` needs the username
+first (it says so beside the field). `Use my backup code` ("Lost your
+password or passkey?") asks for the username and the code (dashes, spaces,
+case and look-alike letters don't matter; a typo is named before anything is
+sent), then "Which device is this?", then **Choose a new password**, which
+is required. After a passkey-alone sign-in, a member with a backup code isn't
+shown a backup key for the device; the lock screen offers the passkey (online
+and offline) and, under "Can't use your passkey?", **Start over on this
+browser** (below).
+
+**Exports** from a member with a backup code open with it: the success line
+says "It opens with your account backup code" (or "… or this device's backup
+key K-XXXX"), and the restore screen's single field takes either.
+
+**Security → Passkey → your passkeys** (#592 follow-up): each passkey is
+listed ("Your passkey", or "Passkey 1", "Passkey 2", with "(unlocks this
+device)" where it does) with `Remove this passkey` (`Remove passkey 2`). It
+opens the same inline form: one line on what removing it means ("Your
+passkey will stop signing you in. Your password signs you in on a new device
+again, until you add another passkey." for the last one; "This passkey will
+stop signing you in. Your password and your other passkeys keep working."
+otherwise), whether it also stops unlocking this device (and that the
+password then unlocks it; Kin then locks, as removing any unlock path from a
+device does, and says so before), `Your password`, `Remove passkey` /
+`Cancel`. Status: "Passkey removed. It no longer signs you in."
+
+**Start over on this browser** (#592 follow-up): on the lock screen of a
+device whose only way in is its passkey, under "Can't use your passkey?": one
+sentence on why ("This device has no backup key of its own: your account is
+its way back. …") and the button, described by it. A confirmation says
+plainly what goes ("Kin removes everything it keeps in this browser: this
+device's copy of your household, its keys and anything it hasn't synced yet.
+Your household stays on your other devices and in your account.") and what
+to do next ("sign in again and choose “This replaces” this device"). Then
+Kin opens straight on **Sign in to your household**. Nobody is sent to the
+browser's settings to clear site data.
+
+**A password changed on another device** (#560 follow-up): the password lock
+screen, online, after the previous password: "Your password was changed on
+another device. Enter your new password to open Kin here; this device then
+unlocks with it from now on." `New password` (`autocomplete="current-password"`,
+username offered to password managers) / `Unlock`, and `Cancel` (locks again).
+A wrong one: "That isn't your new password. Check it and try again." If the
+new password is typed first: "That's your new password, and it signed you
+in. This device still opens with your previous password: enter it once more,
+and Kin switches this device to the new one." with the field labelled
+`Previous password`. Afterwards: "Your new password unlocks Kin on this
+device from now on." Offline, nothing is asked: the previous password works
+until the device is online.
+
+### Moving to an account — Adopted (#574, #575, #576)
+
+For members who set Kin up with a passkey and a backup key before accounts.
+Never forced, one calm offer:
+
+- **On Today** (after the next unlock, online, `data-account-offer="account-migrate"`):
+  **"Sign in on your other devices?"** — "Choose a username and password so
+  you can sign in on your other devices. Your passkey and backup key keep
+  working; nothing else changes." `Set up` / `Not now`. `Not now` puts it
+  away for a week on this device (back once, never nagging). On another
+  old-style device of a member who already moved: **"Use your account on
+  this device?"** — "Your account is set up on another device. Enter your
+  password here once, and this device uses it too." `Use my account here` /
+  `Not now`.
+- **Security → Your account** (first, for those members): the status ("You
+  unlock Kin with your passkey and this device's backup key.", or "Your
+  account (<username>) is set up, but not on this device yet."), one line on
+  what it gives, and `Choose a username and password` (`Use my account
+  here`). The inline form: `Username` (`autocomplete="username"`, with the
+  username guidance), `Password` and `Password again`
+  (`autocomplete="new-password"`, with the password guidance), and "Kin can't
+  reset this password. Next, confirm with your passkey." `Set up my account`
+  / `Cancel`. Problems are said in the alert line before anything is sent
+  (two different passwords, a weak one, a taken username). Progress reads
+  "Confirming with your passkey…", "Making your account's key vault…",
+  "Getting your account ready for new devices…", "Letting your password
+  unlock this device…"; then "Your account is ready. On another device, sign
+  in with your username and your passkey. Your password unlocks this device
+  too." The section is replaced by the account's Passkey, Password and
+  Backup code sections.
+- **The lock screen** then asks for the password (`Unlock`), offers `Unlock
+  with passkey`, and keeps `Use backup key` one tap away.
+- **Backup key for this device** (#576): once the member has a backup code,
+  the section says "You no longer need this device's backup key: your
+  account backup code is your way back in now. The key still unlocks this
+  device, and still opens the exports made with it, so keep it until you
+  don't need those." and no longer offers `Replace backup key` or the key
+  guidance.
+
+### Your private things — Adopted (#493, #494, #495)
+
+Under **Security → Backup and move**, after the household export, where the
+member's private storage is open: **Your private things** — "Your journal,
+your Just for me list, and the reminders and settings that follow you.
+Household exports never include them. Save your own copy: only you can open
+it, on your devices or with your account backup code." `Save my private
+things` / `Restore my private things`.
+
+- **Save** downloads `kin-private-<date>.kinp` and says what went in: "Saved
+  12 private changes and 3 journal photos. It opens on your devices, or with
+  your account backup code." Without a backup code: "It opens on your
+  devices. Make a backup code to be able to open it without them." Photos
+  that didn't fit: "2 journal photos didn't fit in the file and aren't
+  included; they stay in your account."
+- **Restore** shows one file field (`accept=".kinp"`), describes the file
+  once chosen ("Saved on <date>: 12 private changes and 3 journal photos."),
+  and asks for `Account backup code` only when this device can't open the
+  file ("Only needed if this device doesn't hold the key the file was saved
+  with."). Results: "Restored 12 private changes; 3 were already here." or
+  "Everything in this file is already here. Nothing was duplicated." Another
+  member's file: "This file holds someone else's private things, or another
+  household's. Kin restores private things only for the member who saved
+  them."
+
+### Calmer unlock until accounts arrive — Adopted (#563)
+
+A tester unlocked with the recovery key every time, and a synced password
+manager offered that key on other devices, where it can't work: each device
+has its own local root and its own key. Until one account works on every
+device (#546), three changes make the passkey the everyday way in and the key
+plainly this device's backup:
+
+- **Backup key for this device.** Every screen calls it the *backup key*
+  (`Save your backup key for this device`, `Use backup key`, `Unlock with
+  backup key`, `Replace backup key`, the `Backup key for this device`
+  settings section and its `Backup key guidance`). Where it is introduced
+  (setup, the unlock field, settings) the copy adds "Each device has its own".
+  Only words changed: wrapper types, manifest and event fields, the stored
+  format, element IDs and code names still say *recovery*.
+- **Passkey unlock as setup's next step (#577).** Once the person has said
+  they saved the key and the device can reach the identity service (it is
+  signed in to a household and online, which enrolment needs), Today shows
+  one card: "Unlock with your face, fingerprint or screen lock next time?"
+  with `Turn on` (the ordinary PRF enrolment) and `Not now`. It never blocks:
+  `Not now` goes on, and a failed enrolment says plainly what happened, points
+  to More → Security and goes on. On a new device setup comes before the
+  household, so the card appears as soon as create or join finishes, in the
+  same session. Nothing is shown where the browser can't use passkeys or the
+  device is offline.
+- **The password-manager entry names the device (#579).** New entries are
+  named "Kin backup key — Chrome on Android (K-7F3A)": the device's automatic
+  name (§8.1, first-run fixes) and the key's label. A nickname is not used,
+  because the name is remembered in this browser's storage and nicknames are
+  encrypted household data. The unlock form asks for the same entry, and a
+  line under the field says "Use the saved entry ending K-7F3A." (both the new
+  and the older format end with the label). Entries saved earlier keep
+  working: when the device has no remembered name for the current label, the
+  form asks for the older "Kin recovery key K-7F3A".
+- **A one-time suggestion (#579).** After an unlock with the backup key while
+  passkey unlock is off and possible, Today suggests "Skip the backup key next
+  time?" with `Turn on passkey unlock` and `Not now`. `Not now` is remembered
+  on this device, so it isn't suggested again.
 
 ### First-run friction fixes — Adopted (v1.0 reality check, #163)
 
@@ -889,7 +1192,8 @@ Testers on real phones found three setup snags:
   longer asks them to paste it back. The form carries off-screen
   `username`/`new-password` fields so the browser can offer to save it as a
   password named for the key's label ("Kin recovery key K-7F3A"; one shared
-  name would let a second device's key overwrite the first). The recovery
+  name would let a second device's key overwrite the first; since #563 the
+  name is "Kin backup key — <device> (K-7F3A)", see "Calmer unlock"). The recovery
   unlock form asks for `current-password` under the current key's name, so a
   saved key can autofill; key replacement offers the new key under its own
   label. The copy says not to count on the browser's offer: copying the key
@@ -1249,6 +1553,177 @@ service enforces only the switch and Chat and Fridge access.
   (Picture: type or pick one emoji, **Save picture**, **Remove picture**). It
   shows small beside the item's text in lists and large on a child's Simple
   view.
+
+## 8.13 Just for me (#510)
+
+A member's own private to-dos and short notes, on all their devices, that
+the household never sees ([ADR 0019](decisions/0019-member-private-log.md)).
+They live in the member's private log; nothing about them enters a
+household record.
+
+- **Where.** Lists › **Just for me** (`#lists/mine`), after Meals. The
+  heading is followed by a lock and **Only you can see this.**, then one line:
+  "Private to-dos and short notes, on all your devices. Your household never
+  sees them."
+- **When it isn't available.** One calm sentence instead of the list.
+  Without an account vault key on the device: "Just for me needs your Kin
+  account on this device, so your private things can follow you to your other
+  devices. Set up your account." (linking to Privacy & recovery). When the
+  household turned private storage off for a child or teen, or for a
+  Temporary member: "Your household has turned off private things for you,
+  so Just for me isn't available."
+- **Capture.** One field, **Add something just for you**, and an optional
+  **Date**; Enter or **Add** saves it and leaves the field focused and empty.
+  The member's first private thing creates their member key; nothing else is
+  asked.
+- **The list.** Open things first (dated soonest first, then undated in the
+  order added); a checkbox completes and reopens; done things go under
+  **Completed (n)**. Each item's **More** holds its wording, its date, a short
+  note (up to 2,048 bytes, line breaks kept) and **Share with the
+  household…** and **Delete**. Deleting says "Deleted “…”." with **Undo**,
+  which takes focus and stays until the next change (it never times out);
+  Undo brings the item back with its note and date.
+- **My Today and This week (#514).** A setting at the foot of the list, on by
+  default and kept in the private log so it follows the member: **Show my
+  dated private things on my Today and This week**. With it on, dated
+  private items join Today's Earlier plans, Today, Coming up and Completed,
+  and This week's days (open ones from before the week on its first day),
+  each with a **Private** tag and a lock, and named "Private: …" for
+  assistive technology. They complete and reopen there; Today's counts
+  include them. Never in Simple view (a shared kitchen screen), never on
+  anyone else's device, never in household search, the sitter page,
+  calendar exports or household exports.
+- **Share with the household… (#517).** Not offered for done items. A
+  dialog names who will see it ("“…” will move to To do, where Alex and Sam
+  will see it.", or everyone in the household, including anyone who joins
+  later, when no one else is there yet) and says it leaves Just for me and
+  its note stays private. **Keep it private** has the focus; **Share with the
+  household** adds it to To do with its date and then removes it from Just
+  for me. If the second step fails, the alert says it's already in To do and
+  that trying again won't add it twice.
+- **Make private (#517).** In a household item's details, under History,
+  only for something this member added: **Make private** copies it into Just
+  for me (with its date, and done if it was done) and archives the household
+  item; the household sees it archived, as with Archive. The status line says
+  so and the toast offers **Undo**, which brings the household item back
+  (as an archive's Undo does) and removes the private copy. There is no
+  Redo. A failure after the copy says so, and trying again copies nothing
+  twice.
+
+## 8.14 Reminders and settings on all my devices (#520)
+
+A member's reminders and personal settings follow them to every device they
+use, in their private storage ([ADR 0019](decisions/0019-member-private-log.md)):
+no other member, admin or the service can read them.
+
+- **Reminders.** "Remind me" on an item or a routine is unchanged: date,
+  time, three shortcuts, a readable preview, **Set reminder**. With private
+  storage on, the group is headed "Reminder" (not "Reminder on this
+  device"), the preview reads "Reminds Tue, Oct 20, 9:00 AM." and the note
+  under it "On your devices that allow notifications, while Kin is open."
+  Setting it says "Reminder set. It goes off on your devices that allow
+  notifications while Kin is open."; where this browser blocks
+  notifications, "Reminder set for your other devices. Notifications are
+  blocked in this browser's settings." It goes off at the same instant on
+  each of the member's devices that allows notifications and is open. A
+  reminder set in another time zone also says the time where it was set:
+  "Reminds Tue, Oct 20, 3:00 PM (9:00 AM in America/New_York, where it was
+  set)." Clicking or closing the notification on one device clears it on
+  all of them (their notifications close on the next sync); **Cancel
+  reminder** cancels it everywhere ("Reminder canceled on all your
+  devices."); completing or archiving the item, finishing or archiving the
+  routine, or changing the item's date or the routine's schedule ends it
+  everywhere, as it already did on one device. A reminder that came due
+  more than ten minutes before a device opened Kin stays quiet there.
+- **Settings that follow you.** Theme (light, dark, system or the
+  household's; the color, unless it comes from this device's own background
+  picture, which stays here), text size, reduced motion, whether reminders
+  show as notifications, and the count on the app icon. Household →
+  Identity & appearance gains **Text, motion and reminders**: Text size
+  (Standard, Large, Larger), **Reduce motion in Kin** (Kin also follows the
+  device's own setting), **Show my reminders as notifications**, and, where
+  private storage is on, **Use different settings on this device** ("For a
+  shared screen such as a kitchen tablet: changes here stay here, and
+  changes on your other devices don't arrive."). Reminders follow the member
+  either way. When two devices change the same setting, the later change
+  wins; different settings never overwrite each other. Simple view is not a
+  personal setting: it stays the household admin's choice for the member
+  ([§8.12](#812-simple-view-341)), so a kitchen tablet keeps its own layout.
+  "Show my dated private things on my Today and This week" is Just for me's
+  own setting ([§8.13](#813-just-for-me-510)), which already follows the
+  member; setting key 7 stays reserved for it.
+- **One line says where they live:** "Your theme, the app icon count and
+  these choices follow you to your other devices, and so do your
+  reminders."; "This device keeps its own settings. Your reminders still
+  follow you."; "Your household has turned off private storage for you, so
+  your reminders and these choices stay on this device."; or, for a member
+  set up the old way (passkey and backup key, no account), "Your reminders
+  and these choices stay on this device. Set up an account to have them on
+  all your devices." Without private storage everything works exactly as
+  before, on this device.
+- **The first device** to open with private storage brings what it has: a
+  reminder set on it before (they lived only in that tab) moves into the
+  member's private storage once, without duplicates, and settings it changed
+  from the defaults become the member's where nothing synced yet. A device
+  opening later takes the member's settings. The member key is made on the
+  first private change; a device that was already open picks it up on its
+  next sync.
+- **Text size** scales the whole page as browser zoom does (Large 112.5%,
+  Larger 125%): lines reflow, nothing scrolls sideways, and it composes with
+  the browser's own zoom up to 200%. Text size and reduced motion are kept
+  on the device unencrypted (they say nothing about the household), so the
+  lock screen opens at the same size.
+
+## 8.15 Your journal (#496)
+
+A private place to write about the household's days, built on each member's
+private storage ([ADR 0019](decisions/0019-member-private-log.md)). Only the
+member's own devices can read it; no other member, household admins
+included, and not the service.
+
+- **Where.** Household's overview has a **Just for you** group with
+  **Journal**; the page (`#journal`) marks Household in the navigation and is
+  not a sixth destination. It isn't in Simple view. A pill under the heading
+  says **Only you can see this**.
+- **Before it opens.** The journal needs the member's Kin account on the
+  device (password sign-up keeps the vault key there, #557). Without it, one
+  calm sentence says so and links to **Set up your account** (People &
+  devices). Temporary members are told it isn't available to guests; a child
+  or teen whose household turned private storage off is told that. The first
+  save makes the member key.
+- **Write.** **New entry** opens an editor: the date (today by default), an
+  optional title, the body (plain text, line breaks kept) and photos. Focus
+  goes to the body. The draft is kept as it is typed while Kin is unlocked,
+  so closing the editor (Close or Escape) or leaving the page keeps it, and
+  **New entry** becomes **Continue your draft**; **Discard draft** drops it.
+  Like every Kin draft, locking discards it. One draft at a time. Saving
+  moves focus to the saved entry; Close returns focus to the button that
+  opened the editor.
+- **The list.** Newest first under date headings ("Saturday, 3 October
+  2026"); each entry shows its title, body and thumbnails, with **Edit** and
+  **Delete**. The empty journal explains its privacy in one sentence.
+- **Delete and Undo.** Delete offers **Undo** in a bar at the top of the
+  journal, with focus on it; it stays until the next action or until
+  dismissed (never timed). Undo puts the entry back and focuses it.
+- **Photos.** **Add photos** takes JPEG, PNG or WebP up to 4 MB each, ten an
+  entry, with the household attachment wording when one can't be added.
+  Photos are drawn again (no location or camera details) with a thumbnail.
+  Removing a photo in the editor offers Undo. A thumbnail opens the photo in
+  the same viewer as household photos, with Save file. A photo still
+  uploading from another of the member's devices says "Photo on its way".
+- **Find.** **Search your journal** matches every word in titles and bodies,
+  ignoring case and accents, on this device only; it never reaches
+  household Search. **Jump to a month** focuses that month's first day.
+  **On this day** lists entries from the same day in earlier years ("1 year
+  ago"), on the journal page only, never as a notification, and steps aside
+  while searching.
+- **Send things to it.** The share sheet into Kin offers **Add to my
+  journal**, which opens a new entry with the shared text and photos; the
+  sheet says that only you see what goes to the journal. The **New journal
+  entry** home-screen shortcut opens the editor after unlock.
+- **Never.** No streaks, prompts to write, word counts, moods or reminders
+  to journal (PRODUCT-BOUNDARIES). Entries never appear in household
+  search, Today, chat, catch-up or household exports.
 
 # 9. States every relevant screen must handle
 
@@ -2000,13 +2475,15 @@ and receive a short ID suffix in selection/management labels until renamed.
   mention you. Limitation: a mention is highlighted by its current label, so
   a member renamed later no longer matches the old "@Name" text, which then
   shows as plain text. Push notifications stay generic ([ADR 0008](decisions/0008-household-chat.md)).
-- Where the browser supports the Badging API, the installed app's icon shows
-  the same count, set on the device from decrypted state.
+- The installed app's icon shows this count only if the member turns on
+  "Count on the app icon" (§40, #476); it is off by default.
 - **Decision: the home-screen badge clears when Kin locks.** The badge is only
   a number, but a number on a locked app still tells anyone who sees the
   screen that the household is active. Locking stops the chat room, which
   clears the count and the badge; unlocking brings both back from the saved
   position. Messages that arrive while locked are counted at the next unlock.
+  Since #476, closing Kin (rather than locking it) leaves the last count on
+  the icon for a member who turned the count on; see §40.
 
 # 24. Pinned chat messages (#131)
 
@@ -2242,11 +2719,35 @@ tried them.
   page's memory until unlock. Nothing is written to storage or the cache. A
   share that reaches the server (no service worker yet) is discarded unread
   and the app simply opens. Simple view doesn't take shares.
-- **Shortcuts.** A long press on the home-screen icon offers Quick add,
-  Shopping, Chat and Today. Quick add opens after unlock.
-- Support: Android and desktop Chrome/Edge support share targets for
-  installed apps; Safari on iOS doesn't offer installed web apps in the share
-  sheet yet. Shortcuts work where the platform supports manifest shortcuts.
+- **Shortcuts** (#472). A long press on the home-screen icon (right-click on
+  a desktop dock or taskbar) offers **Add to shopping**, **Add a task**,
+  **This week**, **Shopping**, **Chat** and **Today**, each with its own icon
+  (a bag with a plus, a ticked box, a calendar, a bag, a speech bubble, a
+  sun). Launchers show as many as they have room for, in that order.
+  - **Add to shopping** and **Add a task** open Shopping or To do with Quick
+    add open on that list ("Adds to Shopping." / "Adds to To do.") and focus
+    in the title field: type, Enter, done. The action is taken out of the
+    address as Kin starts (`#kin-action=…`, which never reaches the server),
+    so Back or a refresh doesn't repeat it; an unknown or stale action does
+    nothing.
+  - **This week**, **Shopping**, **Chat** and **Today** are ordinary pages
+    (`#week`, `#lists/shopping`, `#updates/chat`, `#today`).
+  - **The lock always comes first.** A shortcut never skips unlocking: a
+    locked Kin shows the unlock screen, holds the shortcut in memory, and
+    lands on it after unlock, focus in the title field for the Add
+    shortcuts and at the start of the page for the others. A shortcut used
+    while Kin is already open and unlocked lands at once.
+  - **Simple view** has no Quick add, so an Add shortcut opens Today (focus
+    on its heading) and says "Adding things isn't available in Simple view,
+    so Kin opened Today."; page shortcuts open Today, or Chat where it's
+    open to the member. A **Temporary member** lands where the shortcut
+    says, not on For you; the Today shortcut still takes them to For you.
+- Support: Android and desktop Chrome/Edge support share targets and
+  shortcuts for installed apps; Safari on iOS doesn't offer installed web apps
+  in the share sheet yet, and iPhone home-screen apps have no shortcuts, so
+  the long press shows nothing extra there. The icons are PNGs (Android
+  ignores SVG-only shortcut icons) and are cached with the app, so shortcuts
+  open offline too.
 
 # 35. Shopping mode (#403)
 
@@ -2348,3 +2849,30 @@ tried them.
   device agrees. With fewer than two people left, the routine says taking
   turns is paused.
 - **No scores.** Kin never counts turns per person or shows who did more.
+
+# 40. Count on the app icon (#476)
+
+- **Where.** Household → People & devices, right under "Notifications on
+  this device": **Count on the app icon**, a choice for this device only
+  (kept in this browser's local storage as `kin.app-badge`, like the
+  auto-lock time). **Off** (the default), **Unread messages**, or **Unread
+  messages and my things today**. Choosing says what the icon now shows in a
+  status line. The section isn't shown where the browser has no Badging API
+  (for example Firefox, or Safari outside a home-screen app).
+- **The number.** Unread messages are Chat's own unread count (§23). "My
+  things today" adds the items planned for today and the routines due today
+  ("every day", "every weekday", still open) that the member is responsible
+  for, including a routine whose turn is theirs; unassigned things and
+  other people's don't count, and routines don't count while the household
+  is paused. The count is worked out on the device from decrypted state and
+  updates on every change: sync, reading, completing, adding.
+- **Never content.** Only a number, never what the messages or things are.
+  The hint says so, and that anyone who can see the screen can see it.
+- **Lock and sign-out clear it.** Locking (the Lock button, auto-lock,
+  another tab locking) and signing out clear the icon. Closing Kin leaves
+  the last count on the icon: that is what the member asked for. Nothing
+  updates it while Kin is closed or locked (no background decryption), so it
+  can be out of date until Kin is next unlocked. Turning the setting Off
+  clears the icon at once.
+- **Not a nag.** Off by default, no prompt to turn it on, and no counting
+  of anyone else's things (PRODUCT-BOUNDARIES).

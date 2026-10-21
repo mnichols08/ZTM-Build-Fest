@@ -236,7 +236,23 @@ async function setupPasskey() {
     Boolean(app.household.identity),
     "WebAuthn registration verified by Kin: " + app.household.textContent,
   );
-  await app.security.run(() => app.security.addPasskey());
+  // #577: once setup's device can reach the identity service, the unlocked
+  // shell asks one calm question; "Turn on" runs the ordinary PRF enrolment.
+  await wait(() => app.onboarding?.dataset.passkeyOffer === "setup" && !app.onboarding.hidden);
+  check(
+    app.security.justSetUp === true &&
+      app.onboarding.textContent.includes("Unlock with your face, fingerprint or screen lock next time?"),
+    "right after setup, passkey unlock is offered as the next step",
+  );
+  const turnOn = [...app.onboarding.querySelectorAll("button")].find((button) => button.textContent === "Turn on");
+  const notNow = [...app.onboarding.querySelectorAll("button")].find((button) => button.textContent === "Not now");
+  check(Boolean(turnOn) && Boolean(notNow) && turnOn.classList.contains("primary-action"),
+    "the step offers Turn on and Not now");
+  turnOn.click();
+  await wait(() =>
+    !app.security.busy &&
+    (app.security.passkeyWrappers.length > 0 || Boolean(app.security.alert.textContent)) &&
+    app.onboarding.dataset.passkeyOffer === undefined);
   check(
     (await persistedEvents()) === ciphertextBefore,
     "credential enrollment does not re-encrypt the canonical corpus",
@@ -290,8 +306,8 @@ async function lockScreenChecks() {
   const recoveryForm = app.security.querySelector(".recovery-form");
   check(recoveryForm?.hidden === true && Boolean(app.security.querySelector("#recovery-unlock")),
     "recovery entry stays available but secondary");
-  const reveal = [...app.security.querySelectorAll("button")].find((button) => button.textContent === "Use recovery key");
-  check(Boolean(reveal), "recovery key is offered as a secondary action");
+  const reveal = [...app.security.querySelectorAll("button")].find((button) => button.textContent === "Use backup key");
+  check(Boolean(reveal), "the backup key is offered as a secondary action");
   reveal.click();
   check(!recoveryForm.hidden && document.activeElement === app.security.querySelector("#recovery-unlock"),
     "choosing recovery reveals and focuses the recovery form");

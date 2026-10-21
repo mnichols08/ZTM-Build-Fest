@@ -82,6 +82,160 @@ The authenticator's local biometric/PIN operation is handled by the platform; Ki
 
 v0.1.0 had no login. The v0.8.x incubation line supports one passkey per member. v0.9 adds a same-member device-pairing flow with a separate credential per trusted device; account credential replacement remains unsupported. Device-specific keys are generated locally and the existing member approves the device fingerprint before its keys are provisioned.
 
+## Username and password sign-in (#557, #558)
+
+Since [ADR 0018](decisions/0018-account-key-vault.md) the first run signs a
+member up with a **username and a password** instead of a passkey; a passkey
+is offered later (#560, below), never at sign-up. The passkey
+paths above are unchanged and stay one tap away ("Set up with a passkey
+instead").
+
+- **Usernames** are unique among the service's active members,
+  case-insensitive, and stored in normalized form with the member
+  (`members.username`, server schema 23): NFKC, trimmed, lower-cased, 3 to 32
+  ASCII letters, digits, dots, dashes or underscores
+  (`web/security/account-credentials.js`, used by both the browser and the
+  service). A removed member's username can be chosen again. A claim waiting
+  for approval holds its username until it ends.
+- **The password never reaches the service.** The browser derives `authKey`
+  and `passwordKey` from it (CRYPTOGRAPHY, "Password keys") and sends only
+  `authKey`; the service stores Argon2id(`authKey`) and the PBKDF2 salt and
+  iterations (`account_passwords`).
+- **Creating a household** (`POST /api/account/bootstrap`) and **accepting an
+  invitation** (`POST /api/account/claim`) take `{ username, authKey, salt,
+  iterations }` in place of a passkey registration. Both keep their existing
+  limits (household creation per client, pairing-code attempts per client).
+  A password claim is for a **new member only**: adding a device to an
+  existing member, replacing one and member recovery still use a passkey.
+- **Joining still needs the inviter's approval.** The joiner's device key and
+  fingerprint comparison, the inviter's device certificate and the approval
+  are exactly as before; only the joiner's credential differs. An approved
+  password claim is activated with `POST /api/claim/activate/password`
+  (`authKey`) instead of a passkey assertion.
+- **Signing in on a trusted device** (`POST /api/login/password`): the
+  `kin_device` cookie names the device, and the username and `authKey` must
+  match its member. A success issues a session and rotates the device token,
+  as a passkey login does. Every failure (wrong username, wrong password, a
+  member without a password) gets the same message and the same Argon2id work
+  (a decoy verifier stands in), so neither the answer nor its timing says
+  whether a username exists. Failures are limited to 10 per 15 minutes per
+  member, per device and per client address; past that even a correct
+  password waits. Unlocking with the password signs the device in this way,
+  so household actions don't ask again.
+- **A sign-in without a device cookie** (a new browser, #568): see "Signing
+  in on a new device" below. Pairing from another device works as before.
+- **Fresh confirmations.** Actions that need "a fresh passkey" (approving a
+  device or a member, signing in a computer, revoking a device, removing a
+  member or leaving, household admins, Simple view, chat and fridge access,
+  deleting the household and cancelling that) accept a **fresh password
+  re-entry** from a member who has no passkey yet: the options response then
+  carries `password: { username, salt, iterations }` and the finish request
+  `authKey`. A member with a passkey always uses it, exactly as before, and
+  an `authKey` is no substitute for it. THREAT-MODEL records this as weaker
+  than a passkey until one is added.
+- A household needs a usable admin; an admin who signed up with a password
+  counts as one (they can confirm freshly).
+- `GET /api/claim` reports `signIn: "password" | "passkey"` so the joining
+  device knows how to finish. `POST /api/account/username` answers whether a
+  username is free (30 checks per client address in 15 minutes) and
+  `POST /api/account/invitation` checks an invitation code before a password
+  is chosen (the pairing-code limit).
+
+## Signing in on a new device (#568, #569, #570)
+
+A member signs in on a browser that has no `kin_device` cookie and no local
+household, and the browser becomes one of their trusted devices, with no
+other device's approval (ADR 0018 section 4; RECOVERY, "Signing in on a new
+device"). Routes (`server/pairing-service/new-device.mjs`):
+
+| Route | What it does |
+| --- | --- |
+| `POST /api/account/sign-in/parameters` `{ username }` | The PBKDF2 salt and iterations for that username (a stable made-up salt for an unknown one). 30 per address per 15 minutes. |
+| `POST /api/account/sign-in/password` `{ username, authKey }` | The usual password check and limits, then a **new-device capability** in the HttpOnly cookie `kin_new_device` and its view: method, expiry, member, the device ID this browser will get, the member's trusted devices (ID, automatic name, date) and the household's device count and limit. |
+| `POST /api/account/sign-in/passkey/options` / `…/finish` | A passkey sign-in (WebAuthn, user verification, PRF input per passkey from the vault's passkey wrappers), or the passkey step of require-both. |
+| `POST /api/account/sign-in/vault` | With the capability: the sealed vault, the one wrapper this sign-in opens, and the member's certification-key endorsement. |
+| `POST /api/account/sign-in/device` `{ syncPublicKeys, certificate, replaceDeviceId?, deviceLabel, vaultEpochs }` | Spends the capability: checks the version 2 certificate against the endorsement, revokes `replaceDeviceId` (one of the member's own active devices) in the same transaction, checks the trusted-device limit after that, trusts the device with same-member history and the vault's epochs recorded as provisioned, starts a key rotation, and issues a session and `kin_device`. |
+| `POST /api/account/sign-in/backup-code` `{ username, codeAuth }` | The third way in (#572): `codeAuth` is HKDF of the backup code; the service compares SHA-256 of it with the check value kept beside the backup-code wrapper, in constant time, charged and limited like a password. A capability whose registration must set a new password. |
+| `GET /api/account/sign-in`, `POST /api/account/sign-in/cancel` | The capability's view; ending it. |
+| `PUT /api/account/certification` `{ endorsement }` | A trusted device endorses its member's certification key (CRYPTOGRAPHY, "Certification key chain"). |
+
+**Which sign-in opens the vault** is decided by the service from the vault's
+wrapper types (ADR 0018 D3/D4): the password alone while there is a
+password wrapper and no passkey wrapper; once a passkey wrapper exists, only
+the passkey; with "require password and passkey" (a password-passkey
+wrapper and no passkey-only one), the password first and then the passkey.
+The backup code always works, and its sign-in opens the backup-code
+wrapper. A member without a vault, or whose certification key isn't endorsed
+yet, is told to add the device by pairing instead.
+
+`POST /api/account/sign-in/device` after a backup-code sign-in also carries
+`newPassword: { salt, iterations, authKey }` (required; `new_password_required`
+without it) and `vaultChange: { put, remove }`: the member's password is
+replaced and the vault's password wrappers are re-wrapped under it (combined
+password-and-passkey wrappers are removed) in the same transaction that
+trusts the device. The audit log records `password_reset`.
+
+## A passkey, the password and the backup code for an account (#560, #571)
+
+A member with a password account manages how it opens under **Security**
+(and is offered the first two calmly on Today; UX). Every change needs the
+current password (`currentAuthKey`, checked fresh with the password limits)
+and is one request (`server/pairing-service/account.mjs`, `server.mjs`):
+
+| Route | What it does |
+| --- | --- |
+| `GET /api/account/security` | The session's member: username, whether they have a password and its current salt and iterations, their passkeys' credential IDs, since when they've had a device, and their vault wrappers (IDs, types, versions, public parameters and update times; no wrapped keys, no backup-code check value). Not counted as a vault download. |
+| `POST /api/account/passkeys/options` `{ currentAuthKey }` / `…/finish` `{ flow, credential }` | Registers a passkey for the signed-in member (WebAuthn registration with user verification; the passkey is named for the username). From then on the member's admin-only actions ask for a passkey, not the password. |
+| `POST /api/account/vault/wrappers` `{ currentAuthKey, put, remove }` | Removes and adds vault wrappers in one transaction, if the resulting set keeps the wrapper-set rules (`vault_wrapper_rules`; CRYPTOGRAPHY). Adding a passkey's wrapper removes the password-only one; "require password and passkey" swaps the passkey wrapper for a combined one and back; a new backup code replaces the old. |
+| `POST /api/account/password` `{ currentAuthKey, salt, iterations, authKey, vaultChange? }` | A new password: the new Argon2id verifier and the re-wrapped password wrappers in one transaction (`password_changed` in the audit log). |
+| `POST /api/account/passkeys/remove` `{ currentAuthKey, credentialId, vaultChange? }` | Removes one of the member's passkeys (#592 follow-up): the vault wrappers that named it (and, for the last passkey, a password wrapper back) and the service's record of it, in one transaction (`passkey_removed`). Never the last way in: a member without a password keeps one passkey (`last_way_in`), and the vault keeps a wrapper a password or passkey opens. |
+| `PUT` / `DELETE /api/account/vault/wrappers/<id>` | One wrapper at a time, after the same fresh confirmation: `currentAuthKey`, or `{ flow, credential }` from `POST /api/account/confirm/options` (a fresh assertion of the member's own passkey); otherwise `fresh_auth_required` (401). |
+| `POST /api/account/migrate/options` / `…/finish` `{ flow, credential, username, salt, iterations, authKey }` | Moves a member set up the old way to an account (#575): a fresh assertion of their own passkey, then their username and password (`account_migrated`). Refused once they have a password (`account_exists`) and for Temporary members (`account_unavailable`). |
+
+**Moving an existing member to an account** (#574/#575): a member who set
+Kin up with a passkey and a per-device backup key, before accounts, is
+invited on the next unlock (a calm Today card, and **Your account** under
+Security; never forced) to choose a username and password. One touch of
+their passkey confirms it and, where the passkey supports PRF, gives the
+vault its passkey wrapper, so they never have a password-only one and their
+next device signs in with the passkey alone; without PRF, the password
+opens the vault. The device then makes the vault from the household and
+chat keys it holds and a new certification key, endorses that key, and
+adds a password unlock beside its passkey and backup key. A device of a
+member who moved on another device offers **Use my account here**: the
+password (and, if the vault only opens with a passkey, one touch of it)
+gives this device the vault key too. Every step resumes after an
+interruption. Members who decline keep using Kin exactly as before. The
+per-device backup keys keep working; once the member has a backup code,
+Security says they're no longer needed (#576).
+
+**Removing a passkey** (#592 follow-up): under Security, each passkey has
+**Remove this passkey**, after the password; the last one's going puts the
+account back in the password-only stage.
+
+**Adding a passkey** (#561): after the password, the browser registers the
+passkey, takes two PRF outputs from it (from the registration where the
+authenticator gives them, otherwise from one more assertion), sends the
+passkey's vault wrapper and removes the password-only one, then adds passkey
+unlock to this device. Once added, **the passkey alone signs in on a new
+device** (ADR 0018 D4) and the password alone no longer does.
+
+**Require password and passkey** (#562): a Security setting, off by default.
+On, a new-device sign-in asks for the password and then the passkey, and
+only both together open the vault; the passkey alone is offered nothing
+real. Turning it off asks for both once more and restores the passkey alone.
+
+**The backup code** (#572/#573): one per member, made under Security (and
+offered on Today after the first week, never at sign-up), printed or saved,
+and turned on with the password. It is the third way in on a new device and
+replaces the per-device backup keys for that member (RECOVERY).
+
+The new device is the member's like any other: same member ID, its own keys
+and certificate, same-member history (every epoch), and admin-only and
+household-authority actions keep their existing requirements (an admin who
+signs in on a new device is still an admin, and still confirms admin
+actions freshly).
+
 ## Device authorization
 
 A device is trusted only after explicit enrollment by an active member through the pairing flow. The device has its own ID and device key material, separate from the member's credential and household content key. Each accepted event records its originating `device_id` for later sync and audit context; this must not become a covert activity feed.

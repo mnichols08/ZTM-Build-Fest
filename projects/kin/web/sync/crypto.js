@@ -44,6 +44,20 @@ export async function createHouseholdEpochKey({
   }
 }
 
+/**
+ * An epoch key taken from the member's account vault (ADR 0018, #570), in
+ * the shape saveEpoch stores: usable key, bytes sealed to this device's keys,
+ * fingerprint. `householdId` is the key family label ("<id>" or "chat:<id>").
+ * The caller zeroes `rawKey`.
+ */
+export async function importVaultEpochKey({ rawKey, householdId, keyEpoch, deviceKeys }) {
+  if (!(rawKey instanceof Uint8Array) || rawKey.length !== 32)
+    throw new SyncCryptoError("provisioning_key_invalid", "The household key could not be provisioned.");
+  const householdKey = await crypto.subtle.importKey("raw", rawKey, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  const sealed = await sealKeyBytes({ rawKey, householdId, keyEpoch, deviceKeys });
+  return { householdKey, sealed, fingerprint: await fingerprintKey(rawKey) };
+}
+
 export async function createProvisionedHouseholdEpoch({
   householdId,
   keyEpoch,
@@ -122,6 +136,22 @@ export async function verifyStoredHouseholdEpoch({ record, deviceKeys }) {
       throw new SyncCryptoError("stored_key_mismatch", "The epoch fingerprint does not match its sealed key.");
     return await crypto.subtle.importKey("raw", rawKey, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
   } finally { rawKey.fill(0); }
+}
+
+/**
+ * The raw bytes of a stored epoch key, checked against its fingerprint, for
+ * the member's account vault (ADR 0018, web/security/account-vault.js). The
+ * caller zeroes them as soon as they are sealed into the vault.
+ */
+export async function exportStoredEpochKey({ record, deviceKeys }) {
+  if (record?.sealed?.householdId !== record.householdId || record?.sealed?.keyEpoch !== record.keyEpoch)
+    throw new SyncCryptoError("stored_key_mismatch", "The epoch metadata does not match its sealed key.");
+  const rawKey = await openSealedKey({ sealed: record.sealed, deviceKeys });
+  if (rawKey.length !== 32 || await fingerprintKey(rawKey) !== record.fingerprint) {
+    rawKey.fill(0);
+    throw new SyncCryptoError("stored_key_mismatch", "The epoch fingerprint does not match its sealed key.");
+  }
+  return rawKey;
 }
 
 export async function wrapEpochKey({

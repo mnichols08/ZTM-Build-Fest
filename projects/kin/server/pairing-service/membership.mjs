@@ -6,6 +6,7 @@ import {
   canParticipate,
   boardPolicyOf,
   chatPolicyOf,
+  privatePolicyOf,
   isHouseholdAdmin,
   normalizeMemberKind,
   PairingError,
@@ -291,6 +292,34 @@ export const membershipMethods = {
     return { ...household.boardPolicy, changed: true };
   },
 
+  // Private storage for Limited members (ADR 0019): admin only, fresh
+  // passkey, like the chat policy. Off means the service refuses Limited
+  // members' private streams; nobody can read them either way.
+  privatePolicyContext(sessionToken) {
+    const { member, household, device } = this.authorize(sessionToken);
+    requireHouseholdAdmin(member, "change private storage for children and teens", this.now());
+    return { memberId: member.id, deviceId: device.id, householdId: household.id, credentialIds: [...member.credentials] };
+  },
+
+  setPrivatePolicy(sessionToken, policy, reauthenticatedMemberId) {
+    if (typeof policy?.limited !== "boolean")
+      throw new PairingError("private_policy_invalid", "Choose whether children and teens have private storage.");
+    const context = this.privatePolicyContext(sessionToken);
+    if (reauthenticatedMemberId !== context.memberId)
+      throw new PairingError("fresh_auth_required", "Authenticate with your passkey again before changing private storage.", 401);
+    const household = this.households.get(context.householdId);
+    const current = privatePolicyOf(household);
+    if (current.limited === policy.limited) return { ...current, changed: false };
+    household.privatePolicy = { limited: policy.limited, revision: current.revision + 1 };
+    household.version += 1;
+    this.audit("private_policy_changed", {
+      householdId: household.id, actorId: context.memberId,
+      limited: policy.limited, revision: household.privatePolicy.revision,
+    });
+    this.persistHousehold(household.id);
+    return { ...household.privatePolicy, changed: true };
+  },
+
   hasUsableTrustedDevice(memberId) {
     return [...this.devices.values()].some((device) =>
       device.memberId === memberId && !device.revokedAt,
@@ -302,16 +331,17 @@ export const membershipMethods = {
       if (memberId === excludingMemberId) return false;
       const other = this.members.get(memberId);
       return isHouseholdAdmin(other, this.now()) &&
-        other.credentials?.size > 0 && this.hasUsableTrustedDevice(other.id);
+        this.canConfirmFreshly(other) && this.hasUsableTrustedDevice(other.id);
     });
   },
 
-  // Usable admin access needs a recorded admin with a passkey and an
-  // unrevoked trusted device; the admin flag alone is not enough.
+  // Usable admin access needs a recorded admin who can confirm freshly (a
+  // passkey, or a password until they add one, #558) and an unrevoked
+  // trusted device; the admin flag alone is not enough.
   hasUsableAdminAccess(household, excludingDeviceIds = []) {
     return [...household.members].some((memberId) => {
       const admin = this.members.get(memberId);
-      return isHouseholdAdmin(admin, this.now()) && admin.credentials?.size > 0 &&
+      return isHouseholdAdmin(admin, this.now()) && this.canConfirmFreshly(admin) &&
         [...this.devices.values()].some((device) =>
           device.memberId === memberId && !device.revokedAt &&
           !excludingDeviceIds.includes(device.id));
@@ -334,7 +364,7 @@ export const membershipMethods = {
       if (memberId === excludingMemberId) return false;
       const other = this.members.get(memberId);
       return other?.active && canManageTrust(other, this.now()) &&
-        other.credentials?.size > 0 && this.hasUsableTrustedDevice(other.id);
+        this.canConfirmFreshly(other) && this.hasUsableTrustedDevice(other.id);
     });
   },
 
@@ -360,7 +390,17 @@ export const membershipMethods = {
       memberId,
       actorId,
     });
+    // Their sign-in and account vault go with them (ADR 0018/0019): the
+    // username can be chosen again, and the service keeps no verifier,
+    // vault or wrappers for someone who is no longer a member. Copies on
+    // their own devices stay, as for household data.
+    delete target.username;
+    delete target.password;
+    this.onAccountRemoved?.(household.id, memberId);
     this.persistHousehold(household.id);
+    // Their private stream goes with them (ADR 0019); copies on their own
+    // devices stay, as for household data.
+    this.onMemberRemoved?.(household.id, memberId);
     return { memberId, removed: true };
   },
 };

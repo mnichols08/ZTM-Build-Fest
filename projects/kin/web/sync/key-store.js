@@ -1,6 +1,7 @@
 import {
   deviceKeyFingerprint,
   exportDevicePublicKeys,
+  exportStoredEpochKey,
   generateProtectedDeviceKeys,
   importProtectedDeviceKeys,
   createDeviceKeyTransition,
@@ -36,6 +37,28 @@ const HOUSEHOLD_SETTINGS_STORE = "household_settings";
 const MEMBER_VIEW_STORE = "member_view";
 const PENDING_DEVICE_ID = "pending";
 const MAX_KEY_EPOCHS = 128;
+
+// Listeners told when this device installs a household or chat epoch key it
+// didn't have (ADR 0018, #567): the account vault keeper re-seals the
+// member's vault with it. Told after the key is committed; a listener's
+// failure never fails the install.
+const epochInstalledListeners = new Set();
+
+/** Calls `listener({ householdId, keyEpoch })` after each newly installed
+ * epoch key; `householdId` is the key family label ("<id>" or "chat:<id>").
+ * Returns a function that removes the listener. */
+export function onEpochInstalled(listener) {
+  epochInstalledListeners.add(listener);
+  return () => epochInstalledListeners.delete(listener);
+}
+
+function announceEpochInstalled(householdId, keyEpoch) {
+  for (const listener of epochInstalledListeners) {
+    try {
+      Promise.resolve(listener({ householdId, keyEpoch })).catch(() => {});
+    } catch { /* Installing the key already succeeded. */ }
+  }
+}
 
 export class SyncKeyStoreError extends Error {
   constructor(message, cause) {
@@ -206,6 +229,49 @@ export class SyncKeyStore {
     });
   }
 
+  /** Every device this browser pinned for `householdId`:
+   * `[{ deviceId, memberId, fingerprint }]` (no certification-key pins). */
+  listPinnedDevices(householdId) {
+    const transaction = this.database.transaction(TRUSTED_DEVICE_STORE, "readonly");
+    const request = transaction.objectStore(TRUSTED_DEVICE_STORE).getAll();
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => finish((request.result ?? [])
+        .filter((pin) => pin.householdId === householdId && pin.kind !== "certification")
+        .map(({ deviceId, memberId, fingerprint }) => ({ deviceId, memberId, fingerprint })));
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
+  /**
+   * Pins a member's certification key (ADR 0018, #568) the first time this
+   * browser accepts a device it certified: the same trusted-device store,
+   * under its own key, so no storage format changes. A different key for the
+   * same member afterwards is refused (SyncKeyStoreError), as a changed
+   * device key is.
+   */
+  pinCertificationKey({ householdId, memberId, fingerprint }) {
+    this.vault?.assertUnlocked();
+    if (!/^[a-f0-9]{64}$/.test(fingerprint ?? "")) throw new SyncKeyStoreError("Kin could not pin this certification key.");
+    const pin = { key: `${householdId}:certification:${memberId}`, kind: "certification", householdId, memberId, fingerprint };
+    const transaction = this.database.transaction(TRUSTED_DEVICE_STORE, "readwrite");
+    const store = transaction.objectStore(TRUSTED_DEVICE_STORE);
+    const request = store.get(pin.key);
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => {
+        const existing = request.result;
+        if (existing && existing.fingerprint !== fingerprint)
+          return abortWith(transaction, new SyncKeyStoreError("Kin detected that a member's certification key changed."));
+        if (!existing) store.add(pin);
+        finish(existing ?? pin);
+      };
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
+  getPinnedCertificationKey(householdId, memberId) {
+    return this.getPinnedDevice(householdId, `certification:${memberId}`);
+  }
+
   getPinnedDevice(householdId, deviceId) {
     const transaction = this.database.transaction(
       TRUSTED_DEVICE_STORE,
@@ -285,6 +351,7 @@ export class SyncKeyStore {
     const store = transaction.objectStore(EPOCH_STORE);
     const key = `${householdId}:${keyEpoch}`;
     const request = store.get(key);
+    let added = false;
     return transactionResult(transaction, (finish) => {
       request.onsuccess = () => {
         const existing = request.result;
@@ -308,6 +375,7 @@ export class SyncKeyStore {
           sealed,
           fingerprint,
         });
+        added = true;
         finish({
           key,
           householdId,
@@ -317,7 +385,86 @@ export class SyncKeyStore {
         });
       };
       request.onerror = () => abortWith(transaction, request.error);
-    }).then(record => ({ ...record, householdKey }));
+    }).then(record => {
+      if (added) announceEpochInstalled(householdId, keyEpoch);
+      return { ...record, householdKey };
+    });
+  }
+
+  /**
+   * Every epoch key this device holds for `householdId`, household and chat
+   * families, as raw bytes for the member's account vault (ADR 0018):
+   * `[{ family: "household" | "chat", epoch, key }]`. The caller zeroes the
+   * keys once they are sealed. A key this device can't open is left out
+   * (another device's vault update carries it).
+   */
+  async vaultEpochKeys(householdId) {
+    this.vault.assertUnlocked();
+    const deviceTx = this.database.transaction(DEVICE_STORE, "readonly");
+    const deviceRequest = deviceTx.objectStore(DEVICE_STORE).getAll();
+    const stored = await transactionResult(deviceTx, finish => { deviceRequest.onsuccess = () => finish(deviceRequest.result); });
+    const devices = [];
+    for (const record of stored)
+      if (record.deviceId !== PENDING_DEVICE_ID && record.householdId === householdId) devices.push(await hydrateDevice(record, this.vault));
+    const entries = [];
+    for (const [family, label] of [["household", householdId], ["chat", `chat:${householdId}`]]) {
+      const tx = this.database.transaction(EPOCH_STORE, "readonly");
+      const request = tx.objectStore(EPOCH_STORE).index("household_id").getAll(label);
+      const records = await transactionResult(tx, finish => {
+        request.onsuccess = () => finish(request.result);
+        request.onerror = () => abortWith(tx, request.error);
+      });
+      for (const record of records) {
+        for (const device of devices) {
+          try {
+            entries.push({ family, epoch: record.keyEpoch, key: await exportStoredEpochKey({ record, deviceKeys: device.keys }) });
+            break;
+          } catch (error) {
+            if (!["stored_key_invalid", "stored_key_mismatch"].includes(error.code)) throw error;
+          }
+        }
+      }
+    }
+    this.vault.assertUnlocked();
+    return entries;
+  }
+
+  /**
+   * Keeps the member's account vault key (ADR 0018, #558) with this
+   * device's bound record, so it is sealed under the local root like the
+   * device keys (encrypted at rest, readable only while unlocked) and moves
+   * with them through a root rotation. One vault key per device record.
+   */
+  setAccountVaultKey(deviceId, vaultKey) {
+    if (!(vaultKey instanceof Uint8Array) || vaultKey.length !== 32 || deviceId === PENDING_DEVICE_ID)
+      throw new SyncKeyStoreError("Kin could not keep this account's vault key.");
+    const transaction = this.database.transaction(DEVICE_STORE, "readwrite");
+    const store = transaction.objectStore(DEVICE_STORE);
+    const request = store.get(deviceId);
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => {
+        const record = request.result;
+        if (!record?.householdId) return abortWith(transaction, new SyncKeyStoreError("This device isn't bound to a household yet."));
+        store.put({ ...record, accountVaultKey: vaultKey.slice() });
+        finish(true);
+      };
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
+  /** A fresh copy of the account vault key this device keeps for
+   * `householdId`, or null. The caller zeroes it. */
+  accountVaultKey(householdId) {
+    const transaction = this.database.transaction(DEVICE_STORE, "readonly");
+    const request = transaction.objectStore(DEVICE_STORE).getAll();
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => {
+        const record = request.result.find((entry) => entry.deviceId !== PENDING_DEVICE_ID &&
+          entry.householdId === householdId && entry.accountVaultKey instanceof Uint8Array);
+        finish(record ? record.accountVaultKey.slice() : null);
+      };
+      request.onerror = () => abortWith(transaction, request.error);
+    });
   }
 
   getEpoch(householdId, keyEpoch) {
@@ -828,6 +975,12 @@ async function verifyProtectedKeyRows(rows, check) {
   }
   for (const pin of rows.trusted_devices) {
     await check();
+    // A member's certification-key pin (#568) has no device keys.
+    if (pin.kind === "certification") {
+      if (pin.key !== `${pin.householdId}:certification:${pin.memberId}` || !/^[a-f0-9]{64}$/.test(pin.fingerprint ?? ""))
+        throw new SyncKeyStoreError("A replacement trusted-device pin is inconsistent.");
+      continue;
+    }
     if (pin.key !== `${pin.householdId}:${pin.deviceId}` || await deviceKeyFingerprint(pin.publicKeys) !== pin.fingerprint)
       throw new SyncKeyStoreError("A replacement trusted-device pin is inconsistent.");
   }

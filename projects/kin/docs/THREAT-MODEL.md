@@ -158,6 +158,119 @@ Assets include household plaintext (items, handoffs, Talk topics, Pulse), event 
 
 Trust boundaries include the browser UI ↔ Rust/WASM engine, local browser storage, authorized device ↔ sync service, service ↔ database/logs, and one pairing device ↔ another. The service should relay ciphertext, while household content and content keys remain on authorized clients. A compromised authorized client is inside the confidentiality boundary and can expose what it can access.
 
+## Account key vault (ADR 0018, #564)
+
+| Threat | With the vault |
+| --- | --- |
+| Stolen copy of the service's database | Vault ciphertext and wrappers. With a passkey added: nothing to guess (256-bit PRF). Password-only wrapper (D3): weak passwords can be guessed offline at PBKDF2 cost (600,000 SHA-256 iterations per guess); the Argon2id(authKey) verifier (19 MiB, 2 passes) slows checking the password too. Old database backups keep old vaults and wrappers, including a password-only wrapper removed since. |
+| Malicious or compromised service | Can withhold the vault, refuse updates or serve an older version under its own number (the version is authenticated, so it can't relabel one as newer); a device detects rollback only against a version it has seen. Can't read the vault, move it to another member, or swap a wrapper's type or owner (all authenticated). |
+| Another member, a removed member or a revoked device | Refused by the routes: only the session's own member, on a trusted device, reads or writes their vault. |
+
+The ADR's full table (stolen password, phished passkey account, phishing)
+applies now that password sign-in (#557) and new-device sign-in (#568) are in;
+the new-device rows are below.
+
+### Password sign-in (#557, #558)
+
+| Threat | With password sign-in |
+| --- | --- |
+| Stolen password, no device | Since #568, **enough to sign in as that member on a new device while they have no passkey in their vault** (ADR 0018 D3, the owner's accepted trade-off): see "New-device sign-in" below. Joining as a new member still needs an invitation code and the inviter's approval. |
+| Stolen password and an unlocked or stolen trusted device | The password unlocks that device's local copy offline and signs it in. Same as a stolen backup key today, except a password can be guessed: at a full PBKDF2 (600,000 iterations) per guess against the device, and the strength floor (10 characters, not one of ~200 very common passwords, not the username) only stops the first guesses. |
+| Online guessing against the service | From a trusted device's cookie, or (#568) from any browser through the new-device sign-in; failures are limited to 10 per 15 minutes per member, per device and per address, and past that even the right password waits. One message and the same Argon2id work for every failure, so neither says whether a username exists. |
+| A **fresh password** instead of a fresh passkey | Weaker than a passkey until one is added. For a member with no passkey, admin-only and trust actions (approving a device or a member, signing in a computer, revoking a device, removing a member, household admins, Simple view, chat and fridge access, deleting the household or cancelling that) accept a password re-entry. Anyone who has the member's password *and* one of their trusted devices (or an open session on one) can do those things; with a passkey, they'd also need the passkey's device or account. A member who has a passkey always confirms with it, and an `authKey` is no substitute. |
+| Usernames can be listed | Whether a username is free is answered at sign-up, as on every sign-up page, limited to 30 checks per client address in 15 minutes. A claim waiting for approval holds its username. |
+| Forgotten password, one device, no other way in | With a backup code (#571): sign in with it (on a new device, or on this one after "Start over on this browser") and choose a new password. Without one, the household can't be opened on that device (RECOVERY, "Members who signed up with a password"); the first run says so in one line and Today offers the backup code after the first week. |
+| Password changed on one device, another device still has the old one | **Online:** at the other device's next unlock it asks the service for the account's current password parameters; when they differ from its wrapper's, it doesn't open the household until the **new** password signs in, then re-wraps its local root under it (#560 follow-up; the old password, or the new one typed first, opens the root once to do that). **The remaining offline window:** while that device has no connection (or the service doesn't answer), its local wrapper still opens with the old password, since only the device itself can re-wrap it; someone who knows the old password and holds that device offline can open its local copy, as before the change. A device that never comes online keeps that window. Changing the password doesn't revoke a device: to shut a lost device out, revoke or replace it. |
+| Phishing for the password | Possible, as for any password; another reason to add a passkey (offered on Today after the first useful action, #562). A phished `authKey` alone opens nothing locally (the local wrapper's key is derived separately). |
+
+Nothing in the vault, the verifier or the local wrapper lets the service
+read household content: it sees `authKey` (from which the password-derived
+keys can't be computed) and stores only its Argon2id hash.
+
+### New-device sign-in (#568, #569, #570)
+
+A browser with no trusted-device cookie signs in with a password or passkey
+and gets a **new-device capability**, not a session.
+
+| Threat | What Kin does |
+| --- | --- |
+| **What a stolen password allows before a passkey exists** | Everything the member can do from a new device: sign in, open the vault (password wrapper, D3), certify a new device of theirs that the household trusts, read the household, and replace (revoke) one of their devices. The owner accepted this for the first run (ADR 0018 D3); the member sees the new device in their device list and the audit log records it (`new_device_sign_in`, `device_trusted` with reason `account_sign_in`). Admin-only actions still need a fresh confirmation, which for a member without a passkey is the same password (see above). Adding a passkey closes this: the password alone then signs in nowhere new. |
+| Capability theft | It is a random 256-bit token in an HttpOnly, SameSite=Strict cookie (`kin_new_device`), never in a URL or a response body, kept on the service only as a hash and only in memory. It lasts 10 minutes, is bound to one member and one pre-assigned device ID, downloads the vault at most 3 times, and is spent by the first registration (3 failed registration attempts spend it too). A thief still needs the password or passkey to use the vault it downloads. |
+| Capability replay | Single use: registration deletes it before trusting the device, in the same transaction; any later download or registration with it is `new_device_expired`. A restart cancels every capability. |
+| Online guessing | The password check is the existing one: Argon2id work for every attempt (also for unknown usernames), one generic answer, 10 failures per 15 minutes per member (or per unknown name) and per address, after which even the right password waits. Passkey failures are charged to the same limits. Capabilities issued per member: 6 per 15 minutes, at most 2 live per member, 256 in all. Username parameter lookups: 30 per address per 15 minutes; an unknown name gets a stable made-up salt and a made-up passkey, so neither answer says whether an account exists. |
+| A member's device count | No per-member cap beyond the household's 16 trusted devices (the replaced device's place is freed first). A thief with the password could fill the household's remaining places (a denial of service the members see in their device lists); the issuance limit slows it. |
+| A revoked device coming back | It can't with its own keys, cookie or sessions (all refused as before). Signing in again needs the password or passkey and always makes a **new** device with new keys and a new certificate; "This replaces …" revokes the old record in the same step as trusting the new one, and the household rotates its key so the replaced device gets nothing new. |
+| A service minting a device the household trusts | Not possible without the member's certification key, which exists only inside their vault: other devices accept a version 2 certificate only when it is signed by the certification key that one of the member's own trusted devices endorsed, and they pin that key per member. A colluding service plus a stolen **device** key of that member could endorse a different certification key; devices that already pinned the member's key refuse it, devices that never saw one could accept it (the same exposure as that stolen device key approving a device today). |
+| A service lying to the new device | It can't make the new device trust another certification key or extra anchors: the endorsement must be the vault's own key and signed by it. It can withhold the vault, the endorsement or the directory (the sign-in then stops), or serve an older vault version (the new device may start without the newest household key and waits for another device to provision it). |
+| Passkey-alone sign-in (D4) and require-both | The service lets the password sign in on a new device only while the vault has a password wrapper and no passkey wrapper; with a passkey wrapper, only the passkey (WebAuthn with user verification, then its PRF output opens the wrapper); with "require password and passkey", the password step leaves the capability pending until the passkey assertion completes it, and only the combined wrapper is released. Whoever controls a synced passkey can sign in on a new device unless require-both is on (ADR 0018). |
+
+Deferred (not claimed): rotating a member's certification key; showing the
+member a notice on their other devices when a new device signs in.
+
+### A passkey and a backup code for an account (#560, #571)
+
+What each way into an account protects against (the success criterion of
+epic #546), with the wrapper-set rules the service enforces (CRYPTOGRAPHY,
+"Which wrappers may exist together"):
+
+| The account has | Stolen copy of the service's database | Stolen password | Stolen or phished synced passkey (the account that syncs it) | Lost every device |
+| --- | --- | --- | --- | --- |
+| Password only (sign-up, D3) | Weak passwords can be guessed offline at PBKDF2 cost | Opens the account on a new device | n/a | Password signs in on a new device |
+| Password + passkey (default once added, D4) | Nothing to guess: the password-only wrapper is gone, the passkey wrapper's key is 256 PRF bits. Older database backups still hold the old password-only wrapper. | Not enough on its own: the service refuses the password alone (`passkey_required`) and holds no wrapper it opens | **Enough** on its own: whoever controls the synced passkey signs in on a new device (ADR 0018 D4, owner's choice) | Passkey signs in on a new device |
+| "Require password and passkey" on | Nothing to guess (the combined key needs the PRF output) | Not enough | Not enough: the passkey alone is offered nothing real and opens nothing; both are needed | Password and passkey together |
+| + a backup code (any of the above) | Nothing to guess: the code is 256 random bits; the service keeps only SHA-256 of a key derived from it | — | — | The backup code signs in and sets a new password |
+
+| Threat | What Kin does |
+| --- | --- |
+| **Stolen backup code** | Enough on its own, with the username, to sign in on a new device, open the vault and replace the password (it is the way back when everything else is lost). That's why it's printed and kept at home, never asked for at sign-up, and offered only after the first week. The sign-in is charged and limited like a password (10 failures per 15 minutes per member and per address, one generic answer) and appears in the member's device list and the audit log (`new_device_sign_in` with method `backup-code`, `password_reset`). Making a new code stops the old one at once (its wrapper and check value are replaced in one step); exports made under the old code still open with it (PORTABILITY). |
+| Guessing a backup code online | 256 bits, behind the password limits: not feasible. A typo is caught on the device (a 24-bit check) before anything is sent, so honest typos don't spend the limit. |
+| A session alone (a browser left signed in) changing how the account opens | Every account change (adding or removing a passkey, require-both on or off, a new backup code, a new password) needs the current password, checked fresh with the password limits, and goes to the service as one request; the service also checks the resulting wrapper set. The one-wrapper routes (`PUT`/`DELETE /api/account/vault/wrappers/<id>`) need the same: the current password, or a fresh assertion of the member's own passkey (a single-use challenge from `/api/account/confirm/options`); without one they answer `fresh_auth_required` (#592 follow-up). |
+| Removing a passkey | After the password, its vault wrappers and the service's record of it go in one transaction; it stops signing in and stops confirming admin actions (with no passkey left, the password confirms them again, as before one was added). Never the last way in: a member without a password keeps at least one passkey, and the vault keeps a wrapper a password or passkey opens; removing the last passkey brings the password wrapper back (the password-only stage, D3, with its offline-guessing trade-off). This device's passkey unlock goes with it; a device whose only unlock it was gets a password unlock instead. Other devices' passkey unlock for it keeps working **offline** (their local PRF wrapper is theirs) until they unlock online, where the service no longer accepts it. |
+| A passkey without the PRF extension | Kin keeps it for confirming household actions but can't use it for the vault; Security says so and the password keeps working. |
+| Admin actions after a passkey is added | They ask for the passkey again (as for members who started with one); the password is no longer accepted as a fresh confirmation. |
+| A device signed in with a passkey alone, for a member with a backup code | It has no backup key; its passkey unlocks it offline too (#551). Its final path is the account (RECOVERY): if the passkey stops working there, "Start over on this browser" (#592 follow-up) removes Kin's data from that browser after a clear warning and opens Sign in, where the member signs in again (password, passkey or backup code) and replaces that device; anything it hadn't synced is lost. Start over removes only Kin's own databases and storage entries and ends the browser's session; it needs no proof of who is asking, because it only deletes what that browser holds and gives access to nothing. |
+
+### Moving an existing household to accounts (#574, #575)
+
+| Threat | What Kin does |
+| --- | --- |
+| Someone with an unlocked device sets a password for its member | Choosing the username and password needs a fresh assertion of the member's own passkey (WebAuthn with user verification, a single-use challenge for this member and device); a session or an unlocked screen alone isn't enough. Once a member has a password, the service refuses to set another this way (`account_exists`); changing it needs the current one. |
+| A stolen copy of the service's database right after the move | A member whose passkey has PRF gets only a passkey wrapper, so nothing in the database can be guessed (D4). A passkey without PRF gives a password wrapper: the password-only stage (D3), with its trade-off, until a passkey with PRF is added. |
+| An interrupted move | Each step looks at what is done: the password set but no vault (the next run checks the typed password by signing in, then makes the vault), the vault key kept before the vault is uploaded (the next run uploads the same key), a vault made by another of the member's devices (opened through its password or passkey wrapper). No step ever makes a second account or a second vault. |
+| Members who decline | Nothing changes for them: the invitation is a card they can put away (for a week), and their passkey and backup keys work as before. Guests (Temporary members) are never invited. |
+| The per-device backup key after the move | Keeps working (#576); once the member has a backup code, Security says it's no longer needed and stops offering a new one, and it still opens the exports made with it. Someone holding that key and the device can still open that device's local copy, as before. |
+
+### Offline passkey unlock (#551, #552)
+
+| Threat | What Kin does |
+| --- | --- |
+| A stolen device, offline | The passkey unlocks it only through the authenticator: a challenge made on the device, user verification required, the wrapper's credential only, and the PRF output for the wrapper's salt is what unwraps the local root. A thief needs the passkey's authenticator and its user verification (face, fingerprint or screen lock), exactly as online. |
+| No service check | Online, the service also checks the assertion and refreshes the session; offline it can't. That check never protected local data (the PRF output did), so nothing it guarded is lost; what the device skips is the session, so it doesn't sync until it signs in again. |
+| A passkey removed from the account, or a revoked device | Offline, a device's own PRF wrapper keeps opening its local copy (as its backup key or password would); it can't sync or reach anything on the service. Online, the service refuses the passkey as before and the device doesn't fall back to the local challenge. |
+| A spoofed "offline" | Kin uses the local challenge only when the browser says it's offline or the service can't be reached (no connection, or a 5xx); a reachable service's refusal is never bypassed. Making the service unreachable gains an attacker nothing they couldn't do offline with the authenticator. |
+
+### A member's own export of their private things (#493)
+
+| Threat | What Kin does |
+| --- | --- |
+| Someone else opens the file | It is sealed under the member key; only the member's own devices hold it (from their vault), or their backup code opens it (the file carries the code's vault wrapper and the member keys under the vault key). Without one of those, nothing in it is readable; its header says only who made it and when, how many private changes and photos it holds, and which member-key epoch seals it. |
+| Restoring someone else's file | Refused before anything is opened (the header names another member or household), and every envelope must open under the restoring member's own key for the member it is bound to; one that doesn't makes the whole file refused. |
+| A household export leaking private things | Household exports never read the private log or private blobs; private things are only in this separate file, and this file holds nothing of the household's. |
+| Duplicates or replays | Restore merges by event ID: restoring a file twice, or one whose events the device already has, adds nothing. Restored events the service no longer has stay on that device (the relay accepts only a device's own new envelopes); the file restores them on another device too. |
+| Photos left out | When photos don't fit (64 MiB per file), the newest go in and the rest are counted and named in the message; they stay in the member's account. |
+
+## Private storage per member (ADR 0019, #489)
+
+| Threat | With private storage |
+| --- | --- |
+| Another member, an Adult or a household admin, wants to read someone's private things | Can't: private envelopes are sealed under that member's member key, which lives only in their vault (sealed under their vault key) and on their unlocked devices. No route names a member, so another member's device reaches only its own private stream, and a device refuses a private event signed by anyone else's device. An admin can turn private storage off for children and teens, which stops the relay, and can remove a member, which purges their stream; neither reveals anything. |
+| Malicious or compromised service | Sees only ciphertext, sizes, times, the sending device and the member-key epoch number of each private envelope, per member; can withhold or delay them, or serve an older vault version (a device prefers a newer one it has cached). Can't read them, move one into another member's stream (the member is in the AAD), or forge one (device signatures). |
+| A revoked device of the member | Loses its session, so it reaches nothing. It keeps what it already had, including member-key epochs it held. The member's remaining devices start a new epoch once they see the revocation, and new private envelopes use it; an envelope claiming that device under a later epoch is refused. |
+| Lost every device | Not a loss: signing in on a new device (ADR 0018) opens the vault, which holds every member-key epoch, and the private stream is pulled again. |
+| Timing and volume | The service and anyone watching it can see when and how much a member writes privately. Live hints go only to that member's own devices, so other members' devices don't learn it. |
+| Another member fetches a journal photo (#502) | Can't: private blobs are stored per member and no route names one, so their request reaches only their own blobs (404). The bytes are sealed under a per-photo key that lives only inside the member's private record. |
+| A deleted journal photo lingers | The device deletes it on the service once Undo has passed, on the next private pass. If Kin locks before that, the sealed blob stays on the service (counted in the member's quota) until the member is removed or the household deleted; its key remains only in the member's private log. |
+
 ## v0.9.x threat assessment (historical; local lock added above)
 
 | Threat                                            | Protected                                                                                                           | Partially protected                                                                                                        | Not protected                                                                  |
@@ -319,12 +432,18 @@ key.
 a new password, so the browser may offer to save it, and the recovery unlock
 form can autofill it. That is the person's choice; it puts the key wherever
 their password manager keeps and syncs passwords, protected by that account.
-Each entry is named for the key's label ("Kin recovery key K-7F3A"), because
-each device has its own key: under one shared name, saving a second device's
-key, or a replacement, would overwrite the first. A replaced key's old entry
-stays until the person deletes it; unlock asks for the current label's entry,
-so autofill doesn't offer the old key. If setup fails and is retried, the
-retry has a new key and label, so an unused entry may be left behind.
+Each entry is named for the device and the key's label ("Kin backup key —
+Chrome on Android (K-7F3A)" since #563; "Kin recovery key K-7F3A" before),
+because each device has its own key: under one shared name, saving a second
+device's key, or a replacement, would overwrite the first, and a synced
+password manager would offer it on devices where it can't work. The device
+name is the automatic one, which the household service already knows, never
+a nickname. The device remembers the entry name (with its label, never the
+key) in its own browser storage so unlock asks for that entry; without it,
+unlock asks for the older name. A replaced key's old entry stays until the
+person deletes it; unlock asks for the current label's entry, so autofill
+doesn't offer the old key. If setup fails and is retried, the retry has a new
+key and label, so an unused entry may be left behind.
 
 ### C6: an export's header is readable without the key
 

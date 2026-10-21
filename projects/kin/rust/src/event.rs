@@ -40,6 +40,8 @@ id_type!(BoardId);
 id_type!(RecipeId);
 // A Shopping store section, such as "Dairy" (#411, store_sections.rs).
 id_type!(StoreSectionId);
+// A record in a member's private log (#489, private.rs).
+id_type!(PrivateRecordId);
 
 /// What a chat message's content blob holds (#109).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -466,6 +468,40 @@ pub enum EventKind {
         intro: String,
         entries: Vec<crate::sitter::SitterEntry>,
     },
+    /// A member's private log (#489, private.rs): the placeholder private
+    /// note, set to `text`; empty text removes it.
+    PrivateNoteSet {
+        note_id: PrivateRecordId,
+        text: String,
+    },
+    /// "Just for me" (#510, private_items.rs, kinds 110–118), in a member's
+    /// private log only.
+    PrivateItem(crate::private_items::PrivateItemEvent),
+    /// A reminder that follows its member (#522, private_prefs.rs): set or moved
+    /// to the absolute instant `at`, with the setter's UTC offset and time
+    /// zone at that instant.
+    ReminderSet {
+        target: crate::private_prefs::ReminderTarget,
+        at: i64,
+        utc_offset_minutes: i16,
+        time_zone: String,
+    },
+    /// A reminder canceled, done or dismissed (#522, private_prefs.rs). Done and
+    /// dismissed clear only the reminder still set for `at`.
+    ReminderCleared {
+        target: crate::private_prefs::ReminderTarget,
+        reason: crate::private_prefs::ReminderClearReason,
+        at: i64,
+    },
+    /// One personal setting that follows its member (#525, private_prefs.rs); an
+    /// empty value unsets it.
+    SettingSet {
+        key: u16,
+        value: String,
+    },
+    /// A member's journal (#496, journal.rs), in their private log: entry
+    /// created, edited, deleted or restored (kinds 101–104).
+    Journal(crate::journal::JournalEvent),
 }
 
 impl EventKind {
@@ -482,6 +518,20 @@ impl EventKind {
                 | EventKind::ChatPollVote { .. }
                 | EventKind::ChatPollClosed { .. }
                 | EventKind::ChatTopicSet { .. }
+        )
+    }
+
+    /// Whether this is a private event (#489, ADR 0019), which only a
+    /// member's private log holds.
+    pub const fn is_private(&self) -> bool {
+        matches!(
+            self,
+            EventKind::PrivateNoteSet { .. }
+                | EventKind::PrivateItem(_)
+                | EventKind::ReminderSet { .. }
+                | EventKind::ReminderCleared { .. }
+                | EventKind::SettingSet { .. }
+                | EventKind::Journal(_)
         )
     }
 

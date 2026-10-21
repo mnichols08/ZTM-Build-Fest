@@ -288,6 +288,124 @@ Replay (rust/src/board.rs) never fails on a decoded board event:
 - Commands are stricter: a new ID, room in the budget, a change that changes
   something, and a logical time after the board log's latest.
 
+## A member's private log
+
+Kinds 100–199 (#489, [ADR 0019](decisions/0019-member-private-log.md)) are
+reserved for records only one member's devices can read. They live only in
+that member's private log, a fourth log beside the household history, chat
+and the fridge, with its own cap (50,000 events) and checkpoint, sealed under
+the member key and relayed in the member's own stream. Every other log
+refuses them, so they never enter household replay, the KINS projection, the
+catch-up summary, household search or household exports.
+
+| Kind | Name | Payload |
+|---|---|---|
+| 100 | `PRIVATE_NOTE_SET` | note ID, text length u32 (0 removes it; at most 2,048 bytes), text (line feeds allowed, no other control characters) |
+| 110–118 | "Just for me" | below |
+| 120 | `REMINDER_SET` (#522) | target kind u8 (1 item, 2 routine), target ID, due instant (Unix ms, UTC), the setter's UTC offset in minutes (−720 to 840) and IANA time zone (0–64 ASCII bytes; empty when unknown) |
+| 121 | `REMINDER_CLEARED` (#522) | target kind, reason u8 (1 canceled, 2 done, 3 dismissed), target ID, the instant it clears |
+| 130 | `SETTING_SET` (#525) | key u16 (1–255), value (0–32 bytes of `a-z 0-9 -`; empty unsets the key) |
+
+Kind 100 is a placeholder that proves the log end to end; the journal (#496)
+and "Just for me" (#510) add their own kinds and replace it if they need to.
+Codes 120–129 belong to reminders and 130–139 to settings (#520,
+`rust/src/private_prefs.rs`). Replay (`rust/src/private.rs`) never fails on
+a decoded private event, except that every event in one log must have the
+same author: the latest note for an ID in replay order wins, and empty text
+removes it.
+
+**Reminders and settings that follow a member (#520).** A reminder is keyed
+by the item or routine it is about, so a member has at most one per thing
+and setting it again (on any device) moves it; that keeps the one-time move
+of a device's own reminders into the log free of duplicates. It keeps an
+absolute instant, so every device fires at the same moment whatever its
+zone, and the setter's zone and offset only to say "9:00 where it was set".
+Replay order (logical time, then device ID, then event ID) decides, never a
+device clock:
+
+- `REMINDER_SET` replaces the thing's reminder.
+- `REMINDER_CLEARED` for "canceled" removes it whatever its instant; "done"
+  and "dismissed" remove it only while it is still set for the instant they
+  name, so a dismissal of 9:00 that arrives after someone moved it to 10:00
+  leaves 10:00.
+- `SETTING_SET` is last-writer-wins per key: the latest in replay order
+  wins (by logical time, then device ID), and an empty value unsets the key.
+  Keys 1 `theme-mode` (household, system, light, dark), 2 `theme-color`
+  (household, default, `preset-` or `custom-` and six lowercase hex digits),
+  3 `text-size` (standard, large, larger), 4 `motion` (system, reduce), 5
+  `reminder-alerts` (on, off), 6 `app-badge` (off, messages,
+  messages-and-mine) and 7 `private-on-today` (on, off; reserved: Just for
+  me keeps its Today setting as kind 118, which already follows the member)
+  take only those values; any other key takes any token, so an older engine
+  keeps a later release's settings unchanged.
+
+Commands (`kin_private_execute`) must change something: a reminder set
+exactly as it is, a clear of a thing with no reminder (or a done or dismissed
+for an instant it no longer has), or a setting set to its current value is
+refused with code 4.
+
+### Just for me (kinds 110–119)
+
+"Just for me" (#510, `rust/src/private_items.rs`) owns kinds 110–119 (the
+journal uses 101–109; reminders and settings that follow a member use
+120–139). All are schema 1. IDs are never zero; dates are 0 (none) or a
+valid civil date (YYYYMMDD); text is 1–4,096 bytes of UTF-8 with no control
+characters; a note is at most 2,048 bytes and may hold line feeds; reserved
+bytes are zero; nothing is left over.
+
+| Kind | Name | Payload |
+|---|---|---|
+| 110 | `PRIVATE_ITEM_ADDED` | item ID, date u32, text length u32, text |
+| 111 | `PRIVATE_ITEM_EDITED` | item ID, text length u32, text |
+| 112 | `PRIVATE_ITEM_COMPLETED` | item ID |
+| 113 | `PRIVATE_ITEM_REOPENED` | item ID |
+| 114 | `PRIVATE_ITEM_DATED` | item ID, date u32 (0 clears it) |
+| 115 | `PRIVATE_ITEM_DELETED` | item ID |
+| 116 | `PRIVATE_ITEM_RESTORED` | item ID (Undo of a delete) |
+| 117 | `PRIVATE_ITEM_NOTE_SET` | item ID, note length u32 (0 clears it), note |
+| 118 | `PRIVATE_ITEMS_ON_TODAY_SET` | on u8 (0 or 1), 3 zero bytes: whether dated items show on the member's own Today and This week (on until set) |
+
+Kind 119 is reserved and decodes as unsupported. The Today setting is kept
+here, in the member's own range, so it follows the member to their other
+devices; the settings story (#520) may move it into its own range later
+with a migration that reads 118.
+
+Replay never fails on a decoded item event: an add for an ID the list
+already has (live or deleted), a change to an ID it lacks, and an add or
+restore beyond 2,000 live items change nothing. Delete keeps a tombstone
+(text, note, date) so a restore brings the item back as it was; deleted
+items are left out of KPRV. Commands (`kin_private_execute`) are stricter:
+a new ID, a live item, a change that changes something, trimmed text and
+notes, and room in the list.
+
+### The journal (#496)
+
+Kinds 101–109 are the journal's share of the private range; 101–104 are
+defined and 105–109 fail with code 3 until a later release defines them.
+Kind 100 stays reserved and decodable; no surface writes it. "Just for me" (#510) takes 110–119 and
+reminders and settings (#520) 120–139.
+
+| Kind | Name | Payload |
+|---|---|---|
+| 101 | `JOURNAL_ENTRY_CREATED` | entry ID, then the content: civil date, title, body, photos |
+| 102 | `JOURNAL_ENTRY_EDITED` | entry ID, then the whole new content |
+| 103 | `JOURNAL_ENTRY_DELETED` | entry ID |
+| 104 | `JOURNAL_ENTRY_RESTORED` | entry ID (Undo of a delete) |
+
+Content: a civil date, an optional title (at most 200 bytes, one line,
+trimmed), a plain-text body (at most 20,000 bytes, line feeds allowed,
+trimmed) and at most ten photos, each naming its sealed blob and thumbnail
+with the keys that open them; an entry has a title, a body or a photo.
+Replay (`rust/src/journal.rs`) never fails on a decoded journal event: the
+first creation of an ID wins, an edit replaces the content of an entry it
+knows, a delete hides a live entry and a restore shows a deleted one, and
+events for an unknown entry are ignored; the latest in replay order wins.
+Commands (`kin_private_execute`) also require an unused ID for a new entry,
+a live entry that changes for an edit, a live entry to delete and a deleted
+one to restore, and keep at most 10,000 live entries and 32 MiB of their
+text. Journal events never enter household replay, KINS, catch-up, household
+search or household exports.
+
 ## Meals
 
 Kinds 59–63 (#333, [ADR 0012](decisions/0012-meals.md)) are schema 1 events in

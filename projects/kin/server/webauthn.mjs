@@ -27,15 +27,18 @@ export class WebAuthn {
     this.challenges = new Map();
   }
 
-  registrationOptions(flow, { anonymous = false } = {}) {
+  // `userName` names the passkey in the person's passkey manager: a
+  // password account's username (#561), so its passkey sits beside the
+  // saved password; otherwise a random name, as before.
+  registrationOptions(flow, { anonymous = false, userName = null, displayName = null } = {}) {
     const challenge = this.challenge("register", flow, { anonymous });
     return {
       challenge,
       rp: { id: this.rpId, name: "Kin" },
       user: {
         id: b64url(randomBytes(32)),
-        name: `adult-${randomBytes(6).toString("hex")}`,
-        displayName: "Kin adult",
+        name: userName ?? `adult-${randomBytes(6).toString("hex")}`,
+        displayName: displayName ?? "Kin adult",
       },
       pubKeyCredParams: [
         { type: "public-key", alg: -7 },
@@ -200,7 +203,7 @@ export class WebAuthn {
       if (stored > 0 && count <= stored)
         throw new PairingError(
           "credential_replayed",
-          "This passkey reported an unexpected sign-in count, which can mean it was copied, so Kin won't accept it. Sign in with another passkey or your recovery key, then remove this passkey and add a new one.",
+          "This passkey reported an unexpected sign-in count, which can mean it was copied, so Kin won't accept it. Sign in with another passkey or your backup key, then remove this passkey and add a new one.",
           401,
         );
       if (count > stored) credential.signCount = count;

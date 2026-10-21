@@ -30,6 +30,7 @@ const SOURCES = {
   "chat-hidden": [["web/chat/chat-hidden.js", /const VERSION = (\d+);/]],
   "chat-attachment": [["web/chat/chat-attachments.js", /const VERSION = (\d+);/]],
   "chat-receipt": [["web/chat/chat-presence.js", /const SLOT_VERSION = (\d+);/]],
+  "account-vault": [["web/security/account-vault.js", /export const VAULT_FORMAT = (\d+);/]],
 };
 
 async function frozenVersions() {
@@ -81,6 +82,7 @@ test("the table in the compatibility document agrees with the machine-readable b
     "chat-hidden": "Chat delete-for-me record",
     "chat-attachment": "Chat attachment manifest",
     "chat-receipt": "Chat receipt slot",
+    "account-vault": "Account key vault",
   };
   for (const [name, label] of Object.entries(rows)) {
     const row = doc.split("\n").find((line) => line.startsWith(`| ${label} |`));

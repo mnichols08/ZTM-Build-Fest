@@ -206,6 +206,20 @@ export class AttachmentController {
       if (error.code !== "locked" && this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(ATTACHMENT_OPEN_ERROR);
     }
   }
+  /** Shows an image the caller already decrypted (a journal photo, #503)
+   * in the same viewer; Save file saves that blob. */
+  viewBlob({ blob, name, opener = null }) {
+    if (!this.app.viewer) return;
+    this.closeViewer();
+    this.app.viewerUrl = URL.createObjectURL(blob);
+    this.app.viewerDetail = { blob, name };
+    this.app.viewerOpener = opener ?? (this.app.contains(document.activeElement) ? document.activeElement : null);
+    this.app.viewer.viewerTitle.textContent = name;
+    this.app.viewer.viewerImage.alt = name;
+    this.app.viewer.viewerImage.src = this.app.viewerUrl;
+    this.app.viewer.showModal();
+    this.app.viewer.querySelector(".attachment-viewer-close")?.focus();
+  }
   async loadPreviewBlob(record) {
     const session = this.ctx.session.captureSession();
     this.ctx.session.assertCurrentSession(session);
@@ -239,6 +253,16 @@ export class AttachmentController {
     save.textContent = "Save file";
     save.addEventListener("click", () => {
       if (!this.app.viewerDetail) return;
+      if (this.app.viewerDetail.blob) {
+        const link = document.createElement("a");
+        link.href = this.openedUrls.create(this.app.viewerDetail.blob);
+        link.download = this.app.viewerDetail.name;
+        link.hidden = true;
+        document.body.append(link);
+        link.click();
+        link.remove();
+        return;
+      }
       void this.handleOpenAttachment({ detail: { ...this.app.viewerDetail, download: true } });
     });
     actions.append(save);
@@ -270,7 +294,12 @@ export class AttachmentController {
     if (opener?.isConnected) { opener.focus(); return; }
     // The row that opened the viewer may have been rebuilt meanwhile (a sync
     // tick, a progress update); return focus to the equivalent control.
-    const { attachmentId, action } = opener?.dataset ?? {};
+    const { attachmentId, action, photoRef } = opener?.dataset ?? {};
+    // A journal thumbnail (#503), redrawn by a private sync pass meanwhile.
+    if (photoRef) {
+      [...this.app.querySelectorAll(".journal-thumb[data-photo-ref]")].find((node) => node.dataset.photoRef === photoRef)?.focus();
+      return;
+    }
     if (!attachmentId) return;
     const matches = (root) => [...(root?.querySelectorAll?.("[data-attachment-id]") ?? [])]
       .find((node) => node.dataset.attachmentId === attachmentId && node.dataset.action === action &&

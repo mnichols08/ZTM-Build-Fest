@@ -4,6 +4,7 @@
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
 import { createDeviceAuthorizationCertificate, deviceKeyFingerprint } from "../../sync/crypto.js";
 import { authenticationOptions, credentialJson } from "./auth.js";
+import { freshConfirmation } from "./fresh-confirmation.js";
 import { invitationLink } from "../../pairing-link.js";
 
 export class HouseholdPairing {
@@ -60,10 +61,7 @@ export class HouseholdPairing {
           body: JSON.stringify({ expectedVersion: this.host.pairing.version }),
         },
       );
-      const credential = await navigator.credentials.get({
-        publicKey: authenticationOptions(started.publicKey),
-        signal: this.host.connectionAbort.signal,
-      });
+      const proof = await freshConfirmation(started, { signal: this.host.connectionAbort.signal });
       const ownDevice = await this.host.syncKeyStore.getDevice(
         this.host.identity.deviceId,
       );
@@ -89,7 +87,7 @@ export class HouseholdPairing {
           method: "POST",
           body: JSON.stringify({
             flow: started.flow,
-            credential: credentialJson(credential),
+            ...proof,
             deviceCertificate,
           }),
         },

@@ -1,5 +1,7 @@
-// Setting up and replacing local protection: the recovery-key setup and
+// Setting up and replacing local protection: the backup-key setup and
 // replacement flows, the root rotation they run, and adding a passkey.
+// The person sees "backup key for this device"; internally it is still the
+// recovery wrapper, and no stored name or format changed (#578).
 // Part of <kin-security>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-security.js lists them).
 import { getActiveVault, LocalVault, randomRecoverySecret } from "../../security/local-vault.js";
@@ -8,12 +10,8 @@ import { EventStore } from "../../storage/event-store.js";
 import { commitRootRotationKeys, prepareRootRotationKeys } from "../../sync/key-store.js";
 import { loadKinEngine } from "../../wasm/kin-engine.js";
 import { manifestRecoveryLabels, recoveryKeyLabel } from "../../security/key-label.js";
-
-// The password-manager entry name for a recovery key, shared with the unlock
-// form. It carries the key's label because each device has its own key: under
-// one shared name, saving a second device's key (or a replacement) would
-// overwrite the first in a synced password manager.
-export const recoveryKeyAccount = (label) => (label ? `Kin recovery key ${label}` : "Kin recovery key");
+import { backupKeyEntryName, rememberEntry } from "../../security/backup-key-entry.js";
+import { automaticDeviceName, currentPlatform } from "../../platform.js";
 
 // A field only a password manager reads: off screen, out of the tab order,
 // hidden from assistive technology.
@@ -34,16 +32,36 @@ export class SecurityProtection {
     this.host = ctx.host;
   }
 
-  // The new key's label ("Recovery key K-7F3A"), shown with the key so it can
+  // The new key's label ("backup key K-7F3A"), shown with the key so it can
   // be written down next to it. The wrapper ID is chosen here for that.
   keyLabelLine(wrapperId, rootVersion, onLabel = () => {}) {
     const line = this.host.text("");
     line.className = "recovery-key-label";
     void recoveryKeyLabel(wrapperId, rootVersion).then((label) => {
-      line.textContent = `This is recovery key ${label}. Write the label down with the key: exports made on this device name the key they need by its label.`;
+      line.textContent = `This is backup key ${label}. Write the label down with the key: exports made on this device name the key they need by its label.`;
       onLabel(label);
     }, () => line.remove());
     return line;
+  }
+
+  // Shows the key's label and names the off-screen username field
+  // "Kin backup key — Chrome on Android (K-7F3A)" once the label is known.
+  // Each device has its own key: under one shared name, saving a second
+  // device's key (or a replacement) would overwrite the first in a synced
+  // password manager, and the device name says which entry is whose. Returns a
+  // function, called on submit, that remembers the name so the unlock form
+  // asks for the same entry.
+  //
+  // The name is the device's automatic one (#579), not a nickname: nicknames
+  // are encrypted household data, and the remembered entry name lives in
+  // browser storage, which never holds household plaintext (STORAGE.md).
+  offerToPasswordManager(account, wrapperId, rootVersion) {
+    let entryLabel = null;
+    this.keyLabelLine(wrapperId, rootVersion, (label) => {
+      entryLabel = label;
+      account.value = backupKeyEntryName(label, automaticDeviceName(currentPlatform()));
+    });
+    return () => rememberEntry(entryLabel, account.value);
   }
 
   showSetup() {
@@ -51,21 +69,21 @@ export class SecurityProtection {
     const secret = randomRecoverySecret();
     const wrapperId = LocalVault.newWrapperId();
     this.host.render({ frameOnly: true });
-    this.host.heading.textContent = "Save your recovery key";
-    this.host.text("This key is your backup way into Kin on this device if the passkey is ever lost. Save it somewhere safe outside Kin, such as a password manager. You won't need to type it now.");
+    this.host.heading.textContent = "Save your backup key for this device";
+    this.host.text("This key is your backup way into Kin on this device if the passkey is ever lost. Each device has its own, so it won't open Kin anywhere else. Save it somewhere safe outside Kin, such as a password manager. You won't need to type it now.");
     const warning = this.host.text("Anyone with the key can unlock this device's copy of the household. If every unlock method is lost, Kin cannot recover the data.");
     warning.className = "security-note";
     const output = document.createElement("code");
     output.textContent = secret;
     output.className = "recovery-key";
     this.host.append(output);
-    const account = passwordManagerField("text", "username", recoveryKeyAccount());
-    this.keyLabelLine(wrapperId, 1, (label) => { account.value = recoveryKeyAccount(label); });
+    const account = passwordManagerField("text", "username", backupKeyEntryName(null, null));
+    const rememberAccount = this.offerToPasswordManager(account, wrapperId, 1);
     if (navigator.clipboard?.writeText) {
       this.host.button("Copy key", async () => {
         try {
           await navigator.clipboard.writeText(secret);
-          this.host.message.textContent = "Recovery key copied. Paste it somewhere safe before continuing.";
+          this.host.message.textContent = "Backup key copied. Paste it somewhere safe before continuing.";
         } catch {
           this.host.message.textContent = "Copy is unavailable. Select the key and copy it manually.";
         }
@@ -75,8 +93,9 @@ export class SecurityProtection {
     tip.className = "security-note";
     // No retyping (#163): the person confirms they saved the key. The hidden
     // username and new-password fields let the browser offer to save the key
-    // in its password manager on submit, as "Kin recovery key K-XXXX"; the
-    // unlock form asks for the same entry, so it can autofill there later.
+    // in its password manager on submit, as "Kin backup key — <device>
+    // (K-XXXX)"; the unlock form asks for the same entry, so it can autofill
+    // there later.
     const form = document.createElement("form");
     form.append(account, passwordManagerField("password", "new-password", secret));
     const saved = document.createElement("label");
@@ -93,7 +112,8 @@ export class SecurityProtection {
     form.append(saved, button);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      if (!confirmation.checked) return this.host.error(new Error("Save the recovery key first, then tick the box."));
+      if (!confirmation.checked) return this.host.error(new Error("Save the backup key first, then tick the box."));
+      rememberAccount();
       output.textContent = "";
       void this.host.run(() => this.host.establishProtection(secret, { recoveryWrapperId: wrapperId }));
     });
@@ -109,15 +129,15 @@ export class SecurityProtection {
     const wrapperId = LocalVault.newWrapperId();
     const rootVersion = (getActiveVault()?.rootVersion ?? this.host.manifest?.rootVersion ?? 0) + 1;
     this.host.render();
-    this.host.heading.textContent = "Replace recovery key";
-    this.host.text("Save this new recovery key outside Kin. It replaces your current recovery key for this browser. Add passkey unlock again afterward. Exports you already made still open only with the key they name.");
+    this.host.heading.textContent = "Replace backup key";
+    this.host.text("Save this new backup key for this device outside Kin. It replaces your current backup key for this browser. Add passkey unlock again afterward. Exports you already made still open only with the key they name.");
     const output = document.createElement("code");
     output.className = "recovery-key";
     output.textContent = secret;
     const form = document.createElement("form");
     const label = document.createElement("label");
     label.htmlFor = "confirm-replacement";
-    label.textContent = "Re-enter the saved new recovery key";
+    label.textContent = "Re-enter the saved new backup key";
     const confirmation = document.createElement("input");
     confirmation.id = label.htmlFor;
     confirmation.type = "password";
@@ -133,15 +153,16 @@ export class SecurityProtection {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       if (confirmation.value.trim() !== secret)
-        return this.host.error(new Error("The recovery keys do not match. Save and re-enter the complete new key."));
+        return this.host.error(new Error("The backup keys do not match. Save and re-enter the complete new key."));
+      rememberAccount();
       confirmation.value = "";
       output.textContent = "";
       void this.host.run(() => this.host.replaceProtection(secret, { recoveryWrapperId: wrapperId }));
     });
-    const account = passwordManagerField("text", "username", recoveryKeyAccount());
+    const account = passwordManagerField("text", "username", backupKeyEntryName(null, null));
     form.prepend(account);
     this.host.append(output);
-    this.keyLabelLine(wrapperId, rootVersion, (keyLabel) => { account.value = recoveryKeyAccount(keyLabel); });
+    const rememberAccount = this.offerToPasswordManager(account, wrapperId, rootVersion);
     this.host.append(form);
     this.host.button("Cancel", () => this.host.render());
     confirmation.focus();
@@ -186,7 +207,7 @@ export class SecurityProtection {
       this.host.assertCurrentOperation(operation);
       const [label] = await manifestRecoveryLabels(candidate.manifest);
       await this.ctx.unlock.finishUnlock(candidate, operation);
-      this.host.message.textContent = `Recovery protection updated. Use your new recovery key${label ? ` (${label})` : ""} and add passkey unlock again if needed.`;
+      this.host.message.textContent = `Backup key replaced. Use your new backup key${label ? ` (${label})` : ""} and add passkey unlock again if needed.`;
     } catch (error) {
       candidate?.lock();
       if (operation === this.host.operation) this.host.phase = "locked";
@@ -208,8 +229,10 @@ export class SecurityProtection {
       const current = await EventStore.securityStatus();
       this.host.assertCurrentOperation(operation);
       this.host.manifest = current;
+      // The unlocked shell offers passkey unlock as the next step (#577).
+      this.host.justSetUp = true;
       await this.ctx.unlock.finishUnlock(vault, operation);
-    } catch (error) { vault.lock(); throw error; }
+    } catch (error) { this.host.justSetUp = false; vault.lock(); throw error; }
   }
 
   async addPasskey() {
@@ -228,7 +251,8 @@ export class SecurityProtection {
       this.host.assertCurrentOperation(operation);
       this.host.manifest = current;
       if (this.host.phase === "unlocked") this.host.render();
-      this.host.message.textContent = "Passkey unlock is on for this device. Your recovery key still works as a backup.";
+      const types = new Set((current?.wrappers ?? []).map((wrapper) => wrapper.type));
+      this.host.message.textContent = `Passkey unlock is on for this device.${types.has("recovery") ? " Your backup key still works if you need it." : types.has("password") ? " Your password still works too." : ""}`;
       this.host.dispatchEvent(new CustomEvent("kin:security-changed", { bubbles: true, composed: true }));
     } finally { secret.fill(0); }
   }

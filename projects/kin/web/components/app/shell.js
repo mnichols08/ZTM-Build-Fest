@@ -169,6 +169,8 @@ export class ShellBuilder {
       notifyPeerLock: (lockEpoch) => this.ctx.session.notifyPeerLock(lockEpoch),
       lockHousehold: (broadcast, options) => this.ctx.session.lockHousehold(broadcast, options),
       setAutoLockMinutes: (minutes) => this.ctx.session.setAutoLockMinutes(minutes),
+      // The first run's sign-up, finished once the household panel is up (#557).
+      completeFirstRun: (pending) => void this.ctx.firstRun.complete(pending),
       takeReloadResume: async (readManifest) => {
         const resumed = await this.app.reloadResume.take({ navigationType: currentNavigationType(), readManifest });
         void this.app.reloadResume.sweep();
@@ -194,7 +196,7 @@ export class ShellBuilder {
     updateNow.textContent = "Update now";
     updateNow.addEventListener("click", () => {
       const focusedEditor = document.activeElement?.matches?.("input, textarea, select, [contenteditable='true']");
-      const hasDraft = this.app.compose?.input?.value.trim() || this.app.routines?.hasDraft || this.app.detail?.hasDraft || this.app.notes?.editor?.title.trim() || this.app.notes?.editor?.body.trim() ||
+      const hasDraft = this.app.compose?.input?.value.trim() || this.app.journal?.draft || this.app.routines?.hasDraft || this.app.detail?.hasDraft || this.app.notes?.editor?.title.trim() || this.app.notes?.editor?.body.trim() ||
         [this.app.needs, this.app.shopping, this.app.staples].some((list) => list.composer?.input?.value.trim());
       if (this.app.busy || focusedEditor || hasDraft) {
         this.ctx.status.setStatus("Finish or save your current edit before updating Kin.");
