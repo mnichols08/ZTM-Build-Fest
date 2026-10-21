@@ -17,11 +17,11 @@ documentation only.
   picture of Kin's screen drawn by Kin itself. A preview shows exactly what
   goes and where; nothing is sent without Send; offline reports wait in an
   outbox; each gets a reference number. Household admins can suggest
-  features (Household › Identity & appearance for now). What I've sent shows
+  features (Household › Features). What I've sent shows
   each one's status. A local diagnostic ring buffer (the last 50 codes,
   numbers only, in memory) is recorded at sync, engine, storage, render,
   route and unexpected-error sites. The service stores reports in **server
-  schema 25** (`feedback`, `feedback_screenshots`) with routes `POST
+  schema 26** (`feedback`, `feedback_screenshots`) with routes `POST
   /api/feedback`, `POST /api/feedback/anonymous`, `GET /api/feedback/mine`
   and `GET /api/feedback/channel`, per-member and per-address limits,
   180-day retention and purge with member removal and household deletion;
@@ -77,6 +77,26 @@ documentation only.
   closed test with 12+ testers, production submission, when a change needs a
   Play release rather than a web deploy, version codes, staged rollout and
   rollback. Linked from [RELEASES](docs/RELEASES.md).
+- **Household features** (#623, #624, #625, #626, epic #603,
+  [ADR 0021](docs/decisions/0021-kin-for-everyone.md) §2): **Household ›
+  Features** lists Chat, Fridge, Meals, Routines, Taking turns, This week,
+  Talk later, Store sections, Shopping mode, Maintenance, Notes & reference,
+  Sitter page, Journal and Just for me, each with a plain sentence. A
+  household admin switches them off for everyone and saves with a fresh
+  passkey or password; other members see the list read-only with "Ask a
+  household admin". Off means hidden, never deleted: the feature leaves the
+  navigation, segment links, Today, This week, Search, Quick add's repeat,
+  the share sheet, chat actions, shortcuts and the command palette on every
+  member's device, its routes open Today with a calm line, and members see a
+  one-time note on Today. The service keeps the set (server schema 25,
+  `households.features_off` and `features_revision`), changes it through
+  `POST /api/household/features/options` and `/finish` (unknown bits and
+  stale revisions refused), delivers it as `features` in `/api/sync/status`,
+  and refuses the Chat and Fridge routes while they are off. Devices keep
+  the last set (`kin.household-features`); a household that doesn't sync
+  keeps its own. `ctx.features.routeAvailable(route)` is the one question
+  other surfaces (easy mode, Help) ask. Browser regression
+  `scripts/household-features-regression.mjs`.
 
 ### Fixed
 

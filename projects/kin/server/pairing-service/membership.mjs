@@ -6,6 +6,8 @@ import {
   canParticipate,
   boardPolicyOf,
   chatPolicyOf,
+  featuresOf,
+  KNOWN_FEATURE_MASK,
   privatePolicyOf,
   isHouseholdAdmin,
   normalizeMemberKind,
@@ -318,6 +320,45 @@ export const membershipMethods = {
     });
     this.persistHousehold(household.id);
     return { ...household.privatePolicy, changed: true };
+  },
+
+  // Household features (ADR 0021 §2, #624): admin only, fresh passkey (or
+  // password for an admin without one), like the policies above. The change
+  // names the revision it was made from, so two admins can't overwrite each
+  // other's choice unseen.
+  featuresContext(sessionToken) {
+    const { member, household, device } = this.authorize(sessionToken);
+    requireHouseholdAdmin(member, "turn household features on or off", this.now());
+    return { memberId: member.id, deviceId: device.id, householdId: household.id, credentialIds: [...member.credentials] };
+  },
+
+  /** Throws unless `change` is `{ off, expectedRevision }` with only known
+   * feature bits, and the revision is the household's current one. */
+  checkFeatureChange(household, change) {
+    const { off, expectedRevision } = change ?? {};
+    // Bitwise operators see 32 bits; the range check catches larger values.
+    if (!Number.isSafeInteger(off) || off < 0 || (off & ~KNOWN_FEATURE_MASK) !== 0 || off > KNOWN_FEATURE_MASK ||
+        !Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
+      throw new PairingError("features_invalid", "Choose which features are on.");
+    if (featuresOf(household).revision !== expectedRevision)
+      throw new PairingError("features_stale", "Household features changed on another device. Look again and try once more.", 409);
+  },
+
+  setFeatures(sessionToken, change, reauthenticatedMemberId) {
+    const context = this.featuresContext(sessionToken);
+    if (reauthenticatedMemberId !== context.memberId)
+      throw new PairingError("fresh_auth_required", "Authenticate again before turning household features on or off.", 401);
+    const household = this.households.get(context.householdId);
+    this.checkFeatureChange(household, change);
+    const current = featuresOf(household);
+    if (current.off === change.off) return { ...current, changed: false };
+    household.features = { off: change.off, revision: current.revision + 1 };
+    household.version += 1;
+    this.audit("household_features_changed", {
+      householdId: household.id, actorId: context.memberId, off: change.off, revision: household.features.revision,
+    });
+    this.persistHousehold(household.id);
+    return { ...household.features, changed: true };
   },
 
   hasUsableTrustedDevice(memberId) {

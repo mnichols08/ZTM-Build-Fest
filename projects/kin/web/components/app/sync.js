@@ -95,7 +95,8 @@ export class SyncController {
         if (!room && this.app.chat.room !== coordinator.chat && this.app.chat.room) return;
         this.app.chat.room = room;
         if (this.app.chatSettings) this.app.chatSettings.room = room;
-        if (this.app.search) this.app.search.chatRoom = room;
+        // Search finds chat messages only while Chat is on (#625).
+        if (this.app.search) this.app.search.chatRoom = this.ctx.features.isOn("chat") ? room : null;
         this.ctx.simple?.updateAccess();
       },
       // The member's account vault key (#557), unsealed from this device's
@@ -105,6 +106,11 @@ export class SyncController {
         if (!this.ctx.session.isCurrentSession(session)) return null;
         try { return await this.app.household?.syncKeyStore?.accountVaultKey(identity.householdId) ?? null; }
         catch { return null; }
+      },
+      // Household features (#625, ADR 0021): what the household switched off.
+      onFeatures: (features) => {
+        if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
+        this.ctx.features.receive(features, { householdId: identity.householdId });
       },
       // Simple view (#343, ADR 0013): the layout this member's admin chose.
       onSimpleView: (on, options) => {

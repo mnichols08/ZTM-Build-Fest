@@ -49,6 +49,7 @@ import { DetailController } from "./detail.js";
 import { FirstRunController } from "./first-run.js";
 import { ItemCommands } from "./commands/items.js";
 import { NavigationController } from "./navigation.js";
+import { FeaturesController } from "./features.js";
 import { PeerChannel } from "./peer-channel.js";
 import { RecordCommands } from "./commands/records.js";
 import { RefreshController } from "./refresh.js";
@@ -95,6 +96,8 @@ export function createAppContext(app) {
   ctx.sections = new SectionsController(ctx);
   // Just for me (#510): the member's private list.
   ctx.privateItems = new PrivateItemsController(ctx);
+  // Household features (#625, ADR 0021): what this household switched off.
+  ctx.features = new FeaturesController(ctx);
   ctx.navigation = new NavigationController(ctx);
   ctx.detail = new DetailController(ctx);
   ctx.appearance = new AppearanceController(ctx);
@@ -158,7 +161,9 @@ export function initializeAppState(app) {
     app.pendingScheduleChange = null;
     app.householdStatus = null;
     app.passkeyPromptDismissed = false;
-    app.onHouseholdStatus = (event) => { app.householdStatus = event.detail; app.ctx.sitter.landTemporaryMember(); app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
+    app.onHouseholdStatus = (event) => { app.householdStatus = event.detail;
+      // Household features (#625) ride along with the household's status.
+      if (event.detail?.features) app.ctx.features.receive(event.detail.features, { householdId: event.detail.householdId ?? null }); app.ctx.sitter.landTemporaryMember(); app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
     app.onSecurityChanged = () => app.ctx.status.renderOnboarding();
     app.autoLockMinutes = readAutoLockPreference();
     app.autoLockTimer = null;
@@ -259,7 +264,7 @@ export function initializeAppState(app) {
       event.detail?.done?.(outcome);
     };
     app.onStartShopping = (event) => {
-      if (!app.simpleView && app.state) app.shoppingMode?.open({ opener: event.detail?.opener ?? null });
+      if (!app.simpleView && app.state && app.ctx.features.isOn("shopping-mode")) app.shoppingMode?.open({ opener: event.detail?.opener ?? null });
     };
     app.onRoutineIntent = (event) => app.ctx.routines.saveRoutine({ ...event.detail, type: event.type.slice(4) });
     app.onChangeRoutineSchedule = (event) => app.ctx.routines.changeRoutineSchedule(event.detail);

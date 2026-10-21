@@ -7,7 +7,7 @@
 // keyboard help, every error message, after an unexpected error, the lock
 // screen and setup (signed out), and Help, which fires `kin:report-problem`
 // (any element or the window may; this listens on the window). "Suggest
-// something" is in Household settings for admins (`kin:suggest-feature`),
+// something" is in Household › Features for admins (`kin:suggest-feature`),
 // and "What I've sent" opens with `kin:feedback-sent`.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { collectDiagnostics } from "../../feedback/collect.js";

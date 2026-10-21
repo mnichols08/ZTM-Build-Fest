@@ -184,7 +184,7 @@ function browserLiveChannel(options) {
 }
 
 export class SyncCoordinator {
-  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {}, onSimpleView = () => {}, privateLog = openBrowserPrivateLog, onPrivateLog = () => {}, vaultKey = async () => null }) {
+  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {}, onSimpleView = () => {}, onFeatures = () => {}, privateLog = openBrowserPrivateLog, onPrivateLog = () => {}, vaultKey = async () => null }) {
     this.store = store;
     this.engine = engine;
     this.identity = identity;
@@ -238,6 +238,8 @@ export class SyncCoordinator {
     this.vaultKey = vaultKey;
     // Simple view (#343, ADR 0013): this member's layout as last reported.
     this.onSimpleView = onSimpleView;
+    // Household features (ADR 0021): the switched-off set, from each status.
+    this.onFeatures = onFeatures;
     this.simpleView = null;
   }
 
@@ -505,6 +507,7 @@ export class SyncCoordinator {
     if (this.stopped) return;
     let status = await this.request("/api/sync/status");
     await this.noteSimpleView(status);
+    this.noteFeatures(status);
     if (!status.enabled) {
       this.onState({ state: "disabled", message: "Device sync is off." });
       return { disabled: true, hasMore: false };
@@ -803,6 +806,13 @@ export class SyncCoordinator {
     } catch { /* the next pass tries again */ this.simpleView = null; cached = false; }
     if (this.stopped) return;
     try { this.onSimpleView(on, { cached }); } catch { /* the view's trouble isn't sync's */ }
+  }
+
+  /** Hands the household's switched-off features (ADR 0021) to the app,
+   * which keeps them on the device and ignores a repeat. */
+  noteFeatures(status) {
+    if (!status?.features || this.stopped) return;
+    try { this.onFeatures?.(status.features); } catch { /* the view's trouble isn't sync's */ }
   }
 
   /** Opens the fridge once (#317); null where its storage isn't available.

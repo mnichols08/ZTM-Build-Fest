@@ -3,7 +3,7 @@
 // signed up with a password) reports a problem from Household with a detail
 // removed in the preview, then one with a cropped picture of the screen, then
 // one while offline that waits in the outbox and goes once online; suggests
-// something from Household settings; sees both with their status in What I've
+// something from Household › Features; sees both with their status in What I've
 // sent after the operator's command sets one; reaches the report from the
 // keyboard help, an error message and `kin:report-problem`; and, locked,
 // reports a problem without signing in. On the service: what arrived, with
@@ -155,9 +155,9 @@ async function suggestSomething() {
   const { app, wait, dialog, button, type } = window.__report;
   const checks = [];
   const check = (value, message) => { if (!value) throw new Error(message); checks.push(message); };
-  app.ctx.navigation.navigate("#household/appearance");
+  app.ctx.navigation.navigate("#household/features");
   await wait(() => !app.suggestSection.hidden, "Suggest something shows for the admin");
-  check(true, "Household settings offer Suggest something to an admin");
+  check(app.pages.get("household").querySelector(".features-page").contains(app.suggestSection), "Household › Features offers Suggest something to an admin");
   app.suggestSection.querySelector(".suggest-button").click();
   await wait(() => dialog()?.open && dialog().dataset.mode === "suggestion", "the suggestion form");
   button("Review what will be sent").click();

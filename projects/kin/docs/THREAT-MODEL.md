@@ -177,7 +177,7 @@ the new-device rows are below.
 | Stolen password, no device | Since #568, **enough to sign in as that member on a new device while they have no passkey in their vault** (ADR 0018 D3, the owner's accepted trade-off): see "New-device sign-in" below. Joining as a new member still needs an invitation code and the inviter's approval. |
 | Stolen password and an unlocked or stolen trusted device | The password unlocks that device's local copy offline and signs it in. Same as a stolen backup key today, except a password can be guessed: at a full PBKDF2 (600,000 iterations) per guess against the device, and the strength floor (10 characters, not one of ~200 very common passwords, not the username) only stops the first guesses. |
 | Online guessing against the service | From a trusted device's cookie, or (#568) from any browser through the new-device sign-in; failures are limited to 10 per 15 minutes per member, per device and per address, and past that even the right password waits. One message and the same Argon2id work for every failure, so neither says whether a username exists. |
-| A **fresh password** instead of a fresh passkey | Weaker than a passkey until one is added. For a member with no passkey, admin-only and trust actions (approving a device or a member, signing in a computer, revoking a device, removing a member, household admins, Simple view, chat and fridge access, deleting the household or cancelling that) accept a password re-entry. Anyone who has the member's password *and* one of their trusted devices (or an open session on one) can do those things; with a passkey, they'd also need the passkey's device or account. A member who has a passkey always confirms with it, and an `authKey` is no substitute. |
+| A **fresh password** instead of a fresh passkey | Weaker than a passkey until one is added. For a member with no passkey, admin-only and trust actions (approving a device or a member, signing in a computer, revoking a device, removing a member, household admins, Simple view, chat and fridge access, household features, deleting the household or cancelling that) accept a password re-entry. Anyone who has the member's password *and* one of their trusted devices (or an open session on one) can do those things; with a passkey, they'd also need the passkey's device or account. A member who has a passkey always confirms with it, and an `authKey` is no substitute. |
 | Usernames can be listed | Whether a username is free is answered at sign-up, as on every sign-up page, limited to 30 checks per client address in 15 minutes. A claim waiting for approval holds its username. |
 | Forgotten password, one device, no other way in | With a backup code (#571): sign in with it (on a new device, or on this one after "Start over on this browser") and choose a new password. Without one, the household can't be opened on that device (RECOVERY, "Members who signed up with a password"); the first run says so in one line and Today offers the backup code after the first week. |
 | Password changed on one device, another device still has the old one | **Online:** at the other device's next unlock it asks the service for the account's current password parameters; when they differ from its wrapper's, it doesn't open the household until the **new** password signs in, then re-wraps its local root under it (#560 follow-up; the old password, or the new one typed first, opens the root once to do that). **The remaining offline window:** while that device has no connection (or the service doesn't answer), its local wrapper still opens with the old password, since only the device itself can re-wrap it; someone who knows the old password and holds that device offline can open its local copy, as before the change. A device that never comes online keeps that window. Changing the password doesn't revoke a device: to shut a lost device out, revoke or replace it. |
@@ -749,6 +749,27 @@ prevent it. The flag is cached on the child's device so an offline unlock
 keeps Simple view; turning it off reaches that device only when it next
 connects. A device belongs to one member, so a tablet registered to an Adult
 shows the Adult's Kin; a child needs their own device.
+
+### Household features are a layout, except Chat and Fridge (#623)
+
+A household admin can switch features off for everyone
+([ADR 0021](decisions/0021-kin-for-everyone.md) §2). The service records the
+set (`households.features_off`), and only a household admin with a fresh
+passkey (or password, for an admin without one; see above) can change it;
+a change names the revision it was made from, so a stale screen can't
+overwrite another admin's choice. The service enforces **Chat and Fridge**:
+while either is off, its routes refuse every member, admins included, as
+for "No access", and nothing new reaches the chat or the fridge. Everything
+else is a **layout, not a lock**, as for Simple view: household events are
+end-to-end encrypted, so the service can't tell a meal or a routine from
+any other change, and every device still holds the household key and the
+whole history. A member's device with other software, or one that hasn't
+heard of the change yet (offline, or a Kin from before this addition), still
+shows and writes Meals, Routines, notes and the rest, and other devices
+accept those events; they stay in the history and show again when the
+feature is switched on. The device keeps the last set it heard of, so an
+offline unlock hides the same things; a household that doesn't sync keeps
+its set on its one device. Switching a feature off never deletes data.
 
 ### The sitter page is a layout, not a lock (#442)
 

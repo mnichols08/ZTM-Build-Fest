@@ -102,6 +102,9 @@ export class HouseholdApi {
         claimState: this.host.claim?.state ?? null,
         memberKind: this.host.syncStatus?.memberKind ?? null,
         lifecycle: this.host.householdLifecycle?.state ?? null,
+        // Household features (#625, ADR 0021): the switched-off set.
+        features: this.host.identity ? this.host.syncStatus?.features ?? null : null,
+        householdId: this.host.identity?.householdId ?? null,
       },
     }));
   }

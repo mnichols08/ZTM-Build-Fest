@@ -16,7 +16,7 @@
 // 180 days after it arrived. Freed pages are zeroed on purge.
 import { DurableStoreError } from "./shared.mjs";
 
-/** The tables, as created by the schema 25 migration and the in-memory
+/** The tables, as created by the schema 26 migration and the in-memory
  * store (feedback-service.mjs memoryFeedbackStore). */
 export const FEEDBACK_TABLES_SQL = `
   CREATE TABLE feedback (

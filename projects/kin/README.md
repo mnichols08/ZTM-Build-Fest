@@ -188,7 +188,7 @@ screen without signing in), and household admins can suggest a feature
 ([ADR 0021](docs/decisions/0021-kin-for-everyone.md) §3). Nothing is sent
 until the person presses Send on a preview that shows every detail (each
 removable) and where it goes. Reports arrive on this service, in server
-schema 25's `feedback` and `feedback_screenshots` tables: the typed text and
+schema 26's `feedback` and `feedback_screenshots` tables: the typed text and
 the diagnostics the person kept (a version, browser, screen size, route
 name, sync state, recent error codes; never household text, names,
 usernames or IDs), plus a cropped picture of Kin's screen of at most 1 MiB

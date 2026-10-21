@@ -43,8 +43,10 @@ export class RotationsController {
     void this.reconcile();
   }
 
-  /** Recomputes the turns (active members change without a new event). */
-  publish() {
+  /** Recomputes the turns (active members change without a new event).
+   * `force` hands them on again, as after Taking turns is switched on or
+   * off (#625): Today names whose turn it is only while it is on. */
+  publish({ force = false } = {}) {
     const active = this.app.activeMemberIds ?? null;
     const next = new Map((this.raw ?? []).map((rotation) => [rotation.routineId, { memberIds: rotation.memberIds, ...turnAmong(rotation, active) }]));
     const previous = this.app.rotations;
@@ -52,10 +54,10 @@ export class RotationsController {
       const old = previous.get(id);
       return old && old.current === value.current && old.next === value.next && old.memberIds.join() === value.memberIds.join();
     });
-    if (same) return;
+    if (same && !force) return;
     this.app.rotations = next;
     if (this.app.routines) this.app.routines.rotations = next;
-    if (this.app.today) this.app.today.turns = next;
+    if (this.app.today) this.app.today.turns = this.ctx.features?.isOn("turns") === false ? null : next;
   }
 
   /** Starts, changes (`memberIds` in turn order, first takes the next turn)

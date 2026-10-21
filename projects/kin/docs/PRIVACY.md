@@ -293,6 +293,18 @@ nothing is indexed on the service, nothing reaches household search, Today,
 chat, catch-up or exports, and nothing is ever a notification. The draft
 stays in the unlocked page only.
 
+**Household features (#623, ADR 0021).** When a household admin switches
+parts of Kin off (Household › Features), the service learns **which features
+the household switched off**, when, and which admin did it (its audit log),
+and tells every member's device the set with its revision. It learns nothing
+about how the household uses the features that stay on, and nothing about
+what is inside the ones switched off: that data stays end-to-end encrypted in
+the household's history, untouched. Each device keeps the last set it heard
+of in browser storage (`kin.household-features`, with the household's ID), so
+an offline unlock hides the same things; it names features, never content,
+and "Start over on this browser" removes it. A household that doesn't sync
+keeps its choice on its one device and the service never learns it.
+
 The planning design for these boundaries is documented in [Identity](IDENTITY.md), [Pairing](PAIRING.md), [Synchronization](SYNC.md), [Cryptography](CRYPTOGRAPHY.md), and the [Threat Model](THREAT-MODEL.md). These documents specify intended properties and open decisions; they do not establish implemented security guarantees.
 
 ## Data lifecycle

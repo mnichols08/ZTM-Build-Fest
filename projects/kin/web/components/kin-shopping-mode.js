@@ -49,6 +49,8 @@ class KinShoppingMode extends HTMLElement {
     this.sectionsToggle = document.createElement("button");
     this.sectionsToggle.type = "button";
     this.sectionsToggle.className = "shopping-mode-sections-toggle";
+    // Store sections (#625): their editor leaves with the feature.
+    this.sectionsToggle.dataset.feature = "sections";
     this.sectionsToggle.textContent = "Sections";
     this.sectionsToggle.setAttribute("aria-expanded", "false");
     this.sectionsToggle.setAttribute("aria-controls", "shopping-sections-editor");
@@ -117,6 +119,7 @@ class KinShoppingMode extends HTMLElement {
     const editor = document.createElement("section");
     editor.id = "shopping-sections-editor";
     editor.className = "shopping-sections-editor";
+    editor.dataset.feature = "sections";
     editor.hidden = true;
     editor.setAttribute("aria-labelledby", "shopping-sections-title");
     const heading = document.createElement("h3");

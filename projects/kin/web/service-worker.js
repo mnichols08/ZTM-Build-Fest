@@ -28,6 +28,8 @@ const SHELL = [
   "/security/backup-code.js", "/security/account-wrappers.js", "/security/account-passkey.js", "/security/account-security.js",
   "/security/account-migration.js", "/security/start-over.js", "/private/private-export.js",
   "/private/member-key.js", "/private/private-envelope.js", "/private/private-log-store.js", "/private/private-log.js", "/private/synced-prefs.js", "/private/private-blobs.js", "/private/journal.js", "/private/journal-view.js",
+  // Household features (#625, ADR 0021).
+  "/features.js", "/features-cache.js", "/components/app/features.js", "/components/kin-household-features.js",
   // Just for me (#510).
   "/private-items.js", "/components/kin-just-for-me.js", "/components/app/private-items.js", "/components/shared/private-marker.js",
   "/appearance/palette.js", "/appearance/display-prefs.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js", "/appearance/install-icons.js",
