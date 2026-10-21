@@ -1638,7 +1638,8 @@ no other member, admin or the service can read them.
 - **Settings that follow you.** Theme (light, dark, system or the
   household's; the color, unless it comes from this device's own background
   picture, which stays here), text size, reduced motion, whether reminders
-  show as notifications, and the count on the app icon. Household →
+  show as notifications, the count on the app icon, and easy mode (§41,
+  setting 8). Household →
   Identity & appearance gains **Text, motion and reminders**: Text size
   (Standard, Large, Larger), **Reduce motion in Kin** (Kin also follows the
   device's own setting), **Show my reminders as notifications**, and, where
@@ -2876,3 +2877,97 @@ tried them.
   clears the icon at once.
 - **Not a nag.** Off by default, no prompt to turn it on, and no counting
   of anyone else's things (PRODUCT-BOUNDARIES).
+
+# 41. Easy mode and Help on every screen (#616, #620)
+
+For someone who rarely uses apps: bigger, clearer and calmer, with a short
+explanation on every screen ([ADR 0021](decisions/0021-kin-for-everyone.md)
+section 1; accessibility details in
+[ACCESSIBILITY](ACCESSIBILITY.md#easy-mode-and-help-on-every-screen-616-620-adr-0021)).
+
+## Easy mode (#617)
+
+- **Where.** Household → Identity & appearance → Text, motion and reminders
+  starts with **Easy mode: bigger text and buttons, fewer things on screen**
+  ("Every button gets a word, and after each change a line at the bottom
+  lets you undo it. Places you haven't used for two weeks are tucked away;
+  the Household page still lists everything."). Choosing says "Easy mode is
+  on." It is not a lock: the person turns it off the same way.
+- **Offered once.** In this browser's first week, Today shows one calm card,
+  after the day's list: "Would bigger text help?" with **Turn on easy mode**
+  and **No thanks**. Either puts it away for good (§ First-week tips below).
+- **Follows the member.** It is setting 8 `easy-mode` (on, off) of the
+  synced settings (§8.14): on every device of a member with private storage,
+  last change wins, and "Use different settings on this device" keeps a
+  shared tablet its own. Without private storage it stays on the device.
+  Like text size it is kept on the device unencrypted (`kin.easy-mode`), so
+  the lock screen opens the same way. Setting it for someone at setup
+  (#612) is a later story.
+- **What changes.** The whole page scales by 125% (with Large 137.5%,
+  Larger 150%): base text 20 px, buttons, tabs and navigation links at
+  least 56 px, more space between things. The tick on a row says
+  **Complete** (or **Reopen**); on phones Search and Lock show their words
+  and the header scrolls away instead of staying on top; the Undo line is
+  larger and its close button says **Dismiss**; the focus ring is thicker
+  and darker. Rows keep **Complete** and **Details**; **Add photo** moves to
+  Details. Everyday actions (add, complete, undo) are never in a menu, and
+  nothing needs a swipe or a long press.
+- **Confirmation with Undo.** After each change the existing undo line
+  (§ undo) says what happened, with **Undo**, until the next action or until
+  dismissed; it never times out.
+- **Fewer places.** The navigation keeps Today, Lists, Updates and
+  Household; Lists keeps To do and Shopping; Updates keeps Handoffs and
+  Chat; Household keeps its overview. Anything else the person opened in
+  the last two weeks stays, and so does the page on screen. Nothing is
+  removed: the Household overview links every Household page and, in easy
+  mode, Routines; Search finds everything. Only route names are remembered
+  for this (`kin.easy-recent`, on the device). Household features an admin
+  switches off (ADR 0021 section 2) stay out, as in the regular layout.
+- **Simple view wins.** When an admin has turned Simple view on for a
+  member, easy mode doesn't apply; the setting comes back if Simple view
+  goes.
+- **Plain words (#618).** The page lines and the Household overview use
+  plain words ("Things to do, your shopping list, and staples: things you
+  buy again and again."; "Locking Kin, ways to sign in, and keeping a safe
+  copy of everything."). Kin's own words — sync, archive, passkey, backup
+  key, household, admin, handoff, routine, staple and others — each have
+  one plain sentence in the glossary (`web/help/glossary.js`); Help lists
+  the ones its screen uses under **Words on this page**. A unit test fails
+  if a screen's fixed words use a listed term that its Help doesn't
+  explain, or if the tips or the setting use one at all.
+
+## Help on every screen (#621, #622)
+
+- **Where.** A **Help** button (a question mark and the word) beside every
+  page's heading — Simple view's pages too — and in Quick add, item details
+  and Shopping mode. It looks the same in the regular layout and in easy
+  mode.
+- **The panel.** "Help: To do", then what the screen is for in a sentence or
+  two, **What you can do** (two or three steps), **Who sees it** ("Everyone
+  in your household."; "Only you. Nobody else in your household can see
+  it."), **Words on this page**, and **Still stuck?**, then **Close**. The
+  topic follows the page and tab on screen; each route and tab in
+  `web/routes.js` has one (a unit test checks), and so do the three
+  dialogs.
+- **Show me** beside a step, when its control is on screen, closes Help and
+  points at the control: it scrolls there, opens a closed section around it,
+  outlines it for a few seconds and puts the focus on it.
+- **Still stuck?** **Message a household admin** opens Chat with an admin's
+  name ready ("@Sam ") when Chat is on, or Handoffs with the note field
+  ready where Chat is off, and says what to do next. **Report a problem**
+  asks for the report dialog (#630) with `kin:report-problem`; it shows only
+  when something in Kin takes reports (a listener calls `preventDefault()`
+  on a probe that has `detail.probe: true`). In Simple view without Chat
+  there is no admin button, because Simple view has no Handoffs.
+
+## First-week tips (#617, #622)
+
+During the first seven days after this browser first opened Kin unlocked,
+Today shows at most one tip, after the day's list: first the easy mode
+offer (unless easy mode is already on), then "Help is on every page — Not
+sure what something does? Press Help at the top of any page for a short
+explanation." with **Show me** (it points at the Help button) and **Got
+it**. A tip that was dismissed or used never comes back, and only one is
+dealt with per unlock, so they never queue up. None in Simple view. Kept on
+the device: when Kin was first opened (`kin.first-seen`) and the tips done
+(`kin.tips-done`), nothing about the household.
