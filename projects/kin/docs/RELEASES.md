@@ -1,8 +1,8 @@
 # Release Process
 
-**Status:** Current release: v1.5.0 — One Account and Private Spaces,
-released 2026-10-21 as `kin-v1.5.0`. The release before it was v1.4.0 —
-Fridge, Meals and Household Helpers (`kin-v1.4.0`). Neither is production certification or an
+**Status:** Current release: v1.6.0 — Kin for Everyone,
+released 2026-10-21 as `kin-v1.6.0`. The release before it was v1.5.0 —
+One Account and Private Spaces (`kin-v1.5.0`). Neither is production certification or an
 independent audit.
 
 Before any v1.x release, check it against the
@@ -37,6 +37,8 @@ push notifications, a sandboxed Node service, and QR pairing/phone-approved
 computer sign-in. It preserves the v1.0 formats and reads v1.0 data under the
 [compatibility commitment](V1.0-COMPATIBILITY.md); server schemas 10 and 11
 are forward migrations, so keep a pre-upgrade backup if rollback matters.
+
+v1.6.0 makes Kin easier for someone who rarely uses apps (ADR 0021, epic #603): easy mode, Help on every screen, household features an admin can switch off, reporting a problem or suggesting a feature (optionally forwarded to GitHub issues) and setting Kin up for someone else. It also adds the Android app for Google Play, the public privacy policy and the Play release runbook (ADR 0020, epic #527); the app is built in CI but not yet published. Server schemas 25–27 are forward migrations, so keep a pre-upgrade backup if rollback matters; an older device ignores switched-off features except that Chat and the Fridge stop working for it while they are off.
 
 v1.5.0 adds accounts (ADR 0018: username and password, an optional passkey, a backup code, signing in on a new device, and moving an existing household to accounts) and each member's private space (ADR 0019: a private log and relay stream, the journal, Just for me, and reminders and settings that follow the member, with a private export). Server schemas 21–24 are forward migrations, so keep a pre-upgrade backup if rollback matters; a device set up with a password must not be downgraded below v1.5.0, and once a member has endorsed their certification key the server must not be rolled back.
 

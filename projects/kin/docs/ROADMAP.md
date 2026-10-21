@@ -1,7 +1,7 @@
 # Roadmap
 
-Current release: `v1.5.0 — One Account and Private Spaces`, released
-2026-10-21 as `kin-v1.5.0`. The release before it was `v1.4.0 — Fridge, Meals and Household Helpers`.
+Current release: `v1.6.0 — Kin for Everyone`, released
+2026-10-21 as `kin-v1.6.0`. The release before it was `v1.5.0 — One Account and Private Spaces`.
 The work between v0.10.3 and v1.0.0 shipped per the owner's
 [review-gate decisions](audits/V1.0_REVIEW_GATES.md); this page records how Kin
 got there and continues through v1.1. Work after v1.0 is tracked as GitHub
@@ -473,4 +473,10 @@ ADR 0018: first run #557, passkey and backup code #560 and #571, new-device
 sign-in #568, moving to an account #574, offline passkey unlock #551) and
 each member's private space (#485, ADR 0019: the journal #496, Just for me
 #510, reminders and settings #520, the private export #493), with the
-finished home-screen shortcuts (#471) and app-icon count (#476).
+finished home-screen shortcuts (#471) and app-icon count (#476). v1.6.0
+makes Kin easier for someone who rarely uses apps (epic #603, ADR 0021: easy
+mode #616, Help on every screen #620, household features #623, reports and
+suggestions #630, #627 and #635, setting Kin up for someone #612, the
+easy-mode sweep #638) and prepares Kin for Google Play (epic #527, ADR 0020:
+the Android app, the privacy policy #541, the listing #540 and the release
+runbook #545); the moderated session (#608) remains open.
