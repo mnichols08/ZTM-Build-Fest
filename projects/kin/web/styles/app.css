@@ -2674,9 +2674,8 @@ button.show-password { justify-self: start; }
 .setup-sheet-call { font-size: 1.5rem; font-weight: 700; }
 .setup-sheet-ends { color: var(--ink-muted); }
 @media print {
-  @page { margin: 14mm; }
-  html.printing-setup-sheet body * { visibility: hidden; }
-  html.printing-setup-sheet .setup-sheet, html.printing-setup-sheet .setup-sheet * { visibility: visible; }
+  html.printing-setup-sheet body * { visibility: hidden !important; }
+  html.printing-setup-sheet .setup-sheet, html.printing-setup-sheet .setup-sheet * { visibility: visible !important; }
   html.printing-setup-sheet .setup-sheet {
     position: absolute; inset: 0 auto auto 0; width: 100%; max-width: none; margin: 0; padding: 0;
     border: 0; background: #fff; color: #000; font-size: 16pt;

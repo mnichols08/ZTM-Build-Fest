@@ -108,7 +108,11 @@ export function printedParts() {
     const node = document.querySelector(selector);
     return node ? getComputedStyle(node).visibility === "visible" && getComputedStyle(node).display !== "none" : null;
   };
-  return { sheet: visible(".setup-sheet"), steps: visible(".setup-sheet-steps"), header: visible(".site-header"), actions: visible(".setup-sheet-actions") };
+  return { sheet: visible(".setup-sheet"), steps: visible(".setup-sheet-steps"), header: visible(".site-header"), actions: visible(".setup-sheet-actions"),
+    // Why, should it fail.
+    why: { marked: document.documentElement.classList.contains("printing-setup-sheet"), print: matchMedia("print").matches,
+      headerVisibility: getComputedStyle(document.querySelector(".site-header")).visibility,
+      brandVisibility: getComputedStyle(document.querySelector(".site-header .brand") ?? document.body).visibility } };
 }
 
 export async function backFromSheet() {
@@ -269,7 +273,7 @@ export async function setupForSomeoneRegressions({ endpoint, browserClient }) {
     await helper.send("Emulation.setEmulatedMedia", { media: "print" });
     const printed = await helper.evaluate(`(${printedParts.toString()})()`);
     await helper.send("Emulation.setEmulatedMedia", { media: "" });
-    assert.deepEqual(printed, { sheet: true, steps: true, header: false, actions: false }, `only the sheet prints: ${JSON.stringify(printed)}`);
+    assert.deepEqual({ sheet: printed.sheet, steps: printed.steps, header: printed.header, actions: printed.actions }, { sheet: true, steps: true, header: false, actions: false }, `only the sheet prints: ${JSON.stringify(printed)}`);
     assert.equal(await helper.evaluate(`(${backFromSheet.toString()})()`), `${ROSE.name}'s invitation is ready`);
     checks += 2;
 
