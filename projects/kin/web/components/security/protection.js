@@ -251,7 +251,8 @@ export class SecurityProtection {
       this.host.assertCurrentOperation(operation);
       this.host.manifest = current;
       if (this.host.phase === "unlocked") this.host.render();
-      this.host.message.textContent = "Passkey unlock is on for this device. Your backup key still works if you need it.";
+      const types = new Set((current?.wrappers ?? []).map((wrapper) => wrapper.type));
+      this.host.message.textContent = `Passkey unlock is on for this device.${types.has("recovery") ? " Your backup key still works if you need it." : types.has("password") ? " Your password still works too." : ""}`;
       this.host.dispatchEvent(new CustomEvent("kin:security-changed", { bubbles: true, composed: true }));
     } finally { secret.fill(0); }
   }

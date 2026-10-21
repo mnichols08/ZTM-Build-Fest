@@ -6,11 +6,13 @@
 // an adult creates a pairing), claim.mjs (stage 2: the new device claims it),
 // approve.mjs (stage 3: approval or revocation), then devices.mjs,
 // membership.mjs, lifecycle.mjs, link.mjs (phone-approved sign-in, #99) and
-// passwords.mjs (username and password sign-in, #558) and new-device.mjs
-// (signing in on a device with no cookie, #568). shared.mjs holds the constants, errors
+// passwords.mjs (username and password sign-in, #558), new-device.mjs
+// (signing in on a device with no cookie, #568) and account.mjs (a member's
+// passkey and password changes, #560/#571). shared.mjs holds the constants, errors
 // and member-kind rules; its public names are re-exported here.
 import { createHmac, randomBytes } from "node:crypto";
 import { addMethods } from "./mixins.mjs";
+import { accountMethods } from "./pairing-service/account.mjs";
 import { approveMethods } from "./pairing-service/approve.mjs";
 import { bootstrapLimitMethods, parseHouseholdPolicy } from "./pairing-service/bootstrap-limits.mjs";
 import { claimMethods } from "./pairing-service/claim.mjs";
@@ -209,4 +211,4 @@ export class PairingService {
 
 }
 
-addMethods(PairingService, bootstrapLimitMethods, sessionMethods, createMethods, claimMethods, approveMethods, deviceMethods, membershipMethods, lifecycleMethods, linkMethods, passwordMethods, newDeviceMethods);
+addMethods(PairingService, bootstrapLimitMethods, sessionMethods, createMethods, claimMethods, approveMethods, deviceMethods, membershipMethods, lifecycleMethods, linkMethods, passwordMethods, newDeviceMethods, accountMethods);

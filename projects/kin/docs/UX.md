@@ -972,12 +972,76 @@ deleting the household), a member who has no passkey yet sees a small dialog,
 "Confirm … with your password" for them.
 
 **Later, calmly.** No passkey or backup code is asked for at sign-up. The
-passkey offer card (#577) stays for devices set up with a passkey; for a
-password member, adding a passkey is the passkey-second-step story, and the
-backup code is #571. Security settings show a **Password** section instead
-of the backup-key one, and passkey unlock reads "Off — you unlock with your
-password." A password-only device can't make an export yet (exports open
-with a backup key), and says so plainly.
+passkey offer card (#577) stays for devices set up with a passkey. A
+password member is offered the passkey and the backup code at calm moments
+(below). Security settings show a **Password** section instead of the
+backup-key one.
+
+### A passkey and a backup code for an account — Adopted (#560, #571)
+
+The owner's principle holds: each is one optional card at a quiet moment,
+never a wall of steps, and everything is also under Security.
+
+**On Today, one card at a time** (the onboarding card; `data-account-offer`):
+
+- **"Sign in with your face or fingerprint?"** — after the first useful
+  action (the household has something in it), where passkeys work and while
+  online: "Add a passkey and your face, fingerprint or screen lock signs you
+  in, on this device and on a new one. It also keeps your account safer:
+  your password alone no longer opens it on a new device." `Add a passkey` /
+  `Not now`.
+- **"Save a backup code?"** — after the member's first week: "A backup code
+  gets you back into Kin if you ever lose your password or passkey. Print it
+  or write it down; it takes a minute." `Make a backup code` / `Not now`.
+
+`Not now` hides the card on this device for good (it's remembered in browser
+storage, like the passkey suggestion, #579); the same step stays under
+Security. The action opens Security with that step already open.
+
+**Security → Passkey** (account members): the status line (`On — your
+passkey signs you in on a new device by itself.`, `On — signing in on a new
+device asks for your password and your passkey.`, `Off — you sign in with
+your password.`, or `Your passkey doesn't open your account on a new device
+yet.` with `Set up my passkey`), one line on whether it also unlocks this
+device (`Unlock this device with my passkey` when it doesn't), the
+**Require password and passkey** checkbox (off by default, with a line
+explaining the difference), and always: "If you lose your passkey (a lost
+phone, a reset password manager), your backup code gets you back in. …"
+Every change opens a small inline form under the section: `Your password`
+(`autocomplete="current-password"`, labelled, described by the alert line),
+then the device's passkey prompt. Cancel closes it; nothing changes until the
+service confirms, and the status line then says what changed.
+
+**Security → Password**: what unlocks this device, a line about what Kin
+can't do (reset it) and what can (the backup code), and `Change password`:
+current password, new password (with the guidance line) and the new password
+again (`autocomplete="new-password"`); with require-both on, the passkey is
+asked for too. A note says other devices keep their old password until they
+next sign in.
+
+**Security → Backup code**: whether there is one (and when it was made),
+what it's for, and `Make a backup code` (`Make a new backup code` when one
+exists). Making one shows the code in 8 groups of 7 in a large monospaced
+card (read by screen readers group by group), with `Print` (a print view
+with only the card, `@media print`) and `Copy`; then "I've printed this code
+or saved it somewhere safe" and `Your password`, and `Turn on this code`.
+The code is only turned on after both, so an abandoned screen never leaves
+the member without a working code; a new code replaces the old one at that
+moment, and the screen says so.
+
+**Signing in on a new device**: `Sign in with a passkey` needs the username
+first (it says so beside the field). `Use my backup code` ("Lost your
+password or passkey?") asks for the username and the code (dashes, spaces,
+case and look-alike letters don't matter; a typo is named before anything is
+sent), then "Which device is this?", then **Choose a new password**, which
+is required. After a passkey-alone sign-in, a member with a backup code isn't
+shown a backup key for the device; the lock screen offers the passkey and,
+under "Can't use your passkey?", how to sign the browser in again with the
+backup code.
+
+**Exports** from a member with a backup code open with it: the success line
+says "It opens with your account backup code" (or "… or this device's backup
+key K-XXXX"), and the restore screen's single field takes either.
 
 ### Calmer unlock until accounts arrive — Adopted (#563)
 

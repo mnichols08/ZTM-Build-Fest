@@ -86,7 +86,7 @@ v0.1.0 had no login. The v0.8.x incubation line supports one passkey per member.
 
 Since [ADR 0018](decisions/0018-account-key-vault.md) the first run signs a
 member up with a **username and a password** instead of a passkey; a passkey
-is offered later (the passkey second step), never at sign-up. The passkey
+is offered later (#560, below), never at sign-up. The passkey
 paths above are unchanged and stay one tap away ("Set up with a passkey
 instead").
 
@@ -155,6 +155,7 @@ device"). Routes (`server/pairing-service/new-device.mjs`):
 | `POST /api/account/sign-in/passkey/options` / `…/finish` | A passkey sign-in (WebAuthn, user verification, PRF input per passkey from the vault's passkey wrappers), or the passkey step of require-both. |
 | `POST /api/account/sign-in/vault` | With the capability: the sealed vault, the one wrapper this sign-in opens, and the member's certification-key endorsement. |
 | `POST /api/account/sign-in/device` `{ syncPublicKeys, certificate, replaceDeviceId?, deviceLabel, vaultEpochs }` | Spends the capability: checks the version 2 certificate against the endorsement, revokes `replaceDeviceId` (one of the member's own active devices) in the same transaction, checks the trusted-device limit after that, trusts the device with same-member history and the vault's epochs recorded as provisioned, starts a key rotation, and issues a session and `kin_device`. |
+| `POST /api/account/sign-in/backup-code` `{ username, codeAuth }` | The third way in (#572): `codeAuth` is HKDF of the backup code; the service compares SHA-256 of it with the check value kept beside the backup-code wrapper, in constant time, charged and limited like a password. A capability whose registration must set a new password. |
 | `GET /api/account/sign-in`, `POST /api/account/sign-in/cancel` | The capability's view; ending it. |
 | `PUT /api/account/certification` `{ endorsement }` | A trusted device endorses its member's certification key (CRYPTOGRAPHY, "Certification key chain"). |
 
@@ -163,8 +164,47 @@ wrapper types (ADR 0018 D3/D4): the password alone while there is a
 password wrapper and no passkey wrapper; once a passkey wrapper exists, only
 the passkey; with "require password and passkey" (a password-passkey
 wrapper and no passkey-only one), the password first and then the passkey.
-A member without a vault, or whose certification key isn't endorsed yet, is
-told to add the device by pairing instead.
+The backup code always works, and its sign-in opens the backup-code
+wrapper. A member without a vault, or whose certification key isn't endorsed
+yet, is told to add the device by pairing instead.
+
+`POST /api/account/sign-in/device` after a backup-code sign-in also carries
+`newPassword: { salt, iterations, authKey }` (required; `new_password_required`
+without it) and `vaultChange: { put, remove }`: the member's password is
+replaced and the vault's password wrappers are re-wrapped under it (combined
+password-and-passkey wrappers are removed) in the same transaction that
+trusts the device. The audit log records `password_reset`.
+
+## A passkey, the password and the backup code for an account (#560, #571)
+
+A member with a password account manages how it opens under **Security**
+(and is offered the first two calmly on Today; UX). Every change needs the
+current password (`currentAuthKey`, checked fresh with the password limits)
+and is one request (`server/pairing-service/account.mjs`, `server.mjs`):
+
+| Route | What it does |
+| --- | --- |
+| `GET /api/account/security` | The session's member: username, whether they have a password and its current salt and iterations, their passkeys' credential IDs, since when they've had a device, and their vault wrappers (IDs, types, versions, public parameters and update times; no wrapped keys, no backup-code check value). Not counted as a vault download. |
+| `POST /api/account/passkeys/options` `{ currentAuthKey }` / `…/finish` `{ flow, credential }` | Registers a passkey for the signed-in member (WebAuthn registration with user verification; the passkey is named for the username). From then on the member's admin-only actions ask for a passkey, not the password. |
+| `POST /api/account/vault/wrappers` `{ currentAuthKey, put, remove }` | Removes and adds vault wrappers in one transaction, if the resulting set keeps the wrapper-set rules (`vault_wrapper_rules`; CRYPTOGRAPHY). Adding a passkey's wrapper removes the password-only one; "require password and passkey" swaps the passkey wrapper for a combined one and back; a new backup code replaces the old. |
+| `POST /api/account/password` `{ currentAuthKey, salt, iterations, authKey, vaultChange? }` | A new password: the new Argon2id verifier and the re-wrapped password wrappers in one transaction (`password_changed` in the audit log). |
+
+**Adding a passkey** (#561): after the password, the browser registers the
+passkey, takes two PRF outputs from it (from the registration where the
+authenticator gives them, otherwise from one more assertion), sends the
+passkey's vault wrapper and removes the password-only one, then adds passkey
+unlock to this device. Once added, **the passkey alone signs in on a new
+device** (ADR 0018 D4) and the password alone no longer does.
+
+**Require password and passkey** (#562): a Security setting, off by default.
+On, a new-device sign-in asks for the password and then the passkey, and
+only both together open the vault; the passkey alone is offered nothing
+real. Turning it off asks for both once more and restores the passkey alone.
+
+**The backup code** (#572/#573): one per member, made under Security (and
+offered on Today after the first week, never at sign-up), printed or saved,
+and turned on with the password. It is the third way in on a new device and
+replaces the per-device backup keys for that member (RECOVERY).
 
 The new device is the member's like any other: same member ID, its own keys
 and certificate, same-member history (every epoch), and admin-only and

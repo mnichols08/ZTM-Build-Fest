@@ -93,8 +93,11 @@ stale server state.
 
 A member on a new phone, or a browser whose Kin data was cleared, chooses
 **Sign in** on the first screen and enters their username and password (or
-uses "Sign in with a passkey" once they've added one). No other device has to
-be present.
+uses "Sign in with a passkey" once they've added one, #560, or "Use my
+backup code", #572, which then asks for a new password). No other device has
+to be present. Once a passkey is added, the password alone no longer signs in
+on a new device; with "require password and passkey" on, the password comes
+first and the passkey confirms.
 
 1. The service checks the password (or passkey) exactly as for any sign-in,
    with the same limits and the same generic answer, and issues a
@@ -151,29 +154,65 @@ unlock path" still holds; what counts as that path is now:
 | Device set up | Its verified unlock path | Can it be removed? |
 | --- | --- | --- |
 | With a backup key (every household before #557, and "Set up with a passkey instead") | The recovery (backup key) wrapper | No, exactly as before; a passkey alone never counts |
-| With a password (the first run since #557) | The password wrapper | No; a passkey unlock added later can be removed, the password wrapper can't |
+| With a password (the first run since #557, or a password sign-in, #568) | The password wrapper | No; a passkey unlock added later can be removed, the password wrapper can't |
+| With a passkey alone, by a member whose account has a backup code (#572) | The account: the backup code signs this browser in again | The last passkey wrapper can't be removed; the manifest records `accountRecovery: "backup-code"` |
+| With a passkey alone, by a member without a backup code (#568) | A backup key shown for this device at sign-in | No, as for any backup key |
 
-The rule is one test (`hasVerifiedUnlockPath` in `web/security/local-vault.js`)
-that the vault, `EventStore.prepareSecurity` and `updateSecurityManifest`
-all apply. A device set up with a backup key has no password wrapper, so the
-test is the old rule for it, unchanged.
+The rule is one test (`hasFinalUnlockPath`, built on `hasVerifiedUnlockPath`,
+in `web/security/local-vault.js`) that the vault, `EventStore.prepareSecurity`
+and `updateSecurityManifest` all apply. A device set up with a backup key has
+no password wrapper and no `accountRecovery`, so the test is the old rule for
+it, unchanged. The passkey-only case is the one place the final path isn't on
+the device: if that passkey can't open it, the member clears Kin's site data,
+signs in with the backup code and chooses "This replaces" that device; the
+household comes back from sync, and only what the device hadn't synced is
+lost. The lock screen says so under "Can't use your passkey?".
+
+**The account vault's own rule (#561/#572).** The vault always keeps at least
+one wrapper, and the service refuses any set where a password alone opens it
+beside a passkey, or a passkey alone beside "require password and passkey"
+(CRYPTOGRAPHY, "Which wrappers may exist together"). So the ways back into an
+account are, in order of what's set up: the password (until a passkey is
+added), the passkey (alone, or with the password when that's required), and
+the backup code, always.
 
 **The trade-off, plainly.** Kin can't reset a password: the service never
-sees it, only a key derived from it. Until the member adds a passkey or a
-backup code (later stories, #571), or has another trusted device, **a
-forgotten password on a member's only device means that household can't be
-opened on it**: the local data stays encrypted, and with no other device
-there is nobody to pair a new one. The account vault doesn't help with a
-*forgotten* password (it opens with the same password); it helps with a
-*lost device*: with the password remembered, the member signs in on a new
-device (#568, above). With
-another trusted device of theirs, the member pairs a new device as before;
-another adult can authorize member recovery as before. The first run says
-this in one line where the password is chosen; the lock screen's "Forgot
-your password?" says what to do.
+sees it, only a key derived from it. **The backup code (#571) is the way
+back** from a forgotten password or a lost passkey: on a new device (or this
+one, after clearing Kin's site data), Sign in → Use my backup code, then
+choose a new password; it replaces the old one in the same step that trusts
+the device, and the vault's password wrappers are re-wrapped under it. A
+"require password and passkey" wrapper needs the passkey too, so a
+backup-code sign-in removes it; afterwards the passkey doesn't open the
+account on a new device until the member sets it up again under Security
+("Set up my passkey") and, if they want, turns the setting back on. Until
+then the backup code is how the account signs in on a new device. Without a
+backup code or another trusted device, **a forgotten
+password on a member's only device means that household can't be opened on
+it**: the local data stays encrypted, and with no other device there is
+nobody to pair a new one. The account vault doesn't help with a *forgotten*
+password when the password is its only wrapper; it helps with a *lost
+device*: with the password (or passkey) remembered, the member signs in on a
+new device (#568, above). With another trusted device of theirs, the member
+pairs a new device as before; another adult can authorize member recovery as
+before. The first run says this in one line where the password is chosen;
+the lock screen's "Forgot your password?" says what to do.
 
-A device set up with a password also can't make an export yet: exports open
-with a backup key, and it has none. Its household syncs as usual.
+**Per-device backup keys.** Once a member has a backup code, Kin no longer
+asks them for a backup key on any device: a passkey-only sign-in shows none,
+Security stops offering "Replace backup key", and exports open with the code
+(PORTABILITY). Backup keys a device already has keep unlocking it and keep
+opening the exports made with them.
+
+A device set up with a password exports once the member has a backup code;
+before that it has nothing for an export to open with, and says so. Its
+household syncs as usual.
+
+**Changing the password (#560).** Under Security → Password, with the
+current password: the service's verifier, the vault's password wrappers and
+this device's local password wrapper all move to the new password. Another
+device keeps unlocking with the old one until it next signs in to the
+service, which takes the new password and re-wraps that device's wrapper.
 
 ## Stale backups and rollback
 

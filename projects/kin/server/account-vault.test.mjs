@@ -35,6 +35,9 @@ const passkeyWrapper = (overrides = {}) => wrapper({
   wrapperId: "2".repeat(32), type: "passkey",
   params: { credentialId: b64(Buffer.alloc(32, 4)), prfSalt: b64(Buffer.alloc(32, 5)) }, ...overrides,
 });
+const backupWrapper = (overrides = {}) => wrapper({ wrapperId: "a".repeat(32), type: "backup-code", params: { verifier: b64(Buffer.alloc(32, 6)) }, ...overrides });
+const bothWrapper = (overrides = {}) => wrapper({ wrapperId: "4".repeat(32), type: "password-passkey",
+  params: { ...wrapper().params, ...passkeyWrapper().params }, ...overrides });
 
 function addAdult(pairing, inviter, suffix) {
   const request = pairing.createPairing(inviter.sessionToken);
@@ -91,13 +94,16 @@ bothStores("a vault is created with at least one wrapper, and wrappers change on
   h.vaults.upload(auth, { expectedVersion: 0, ciphertext: sealedVault(), wrappers: [wrapper()] });
   assert.throws(() => h.vaults.upload(auth, { expectedVersion: 1, ciphertext: sealedVault(), wrappers: [wrapper()] }), rejects("vault_invalid", 400));
 
-  // Add a passkey wrapper, replace it, then drop the password wrapper.
-  assert.deepEqual(h.vaults.putWrapper(auth, "2".repeat(32), passkeyWrapper()), { wrapperId: "2".repeat(32), version: 1, added: true });
+  // A passkey wrapper can't join the password-only one (D3); adding it
+  // swaps them in one step. Then replace it.
+  assert.throws(() => h.vaults.putWrapper(auth, "2".repeat(32), passkeyWrapper()), rejects("vault_wrapper_rules", 409));
+  assert.deepEqual(h.vaults.changeWrappers(auth, { put: [passkeyWrapper()], remove: ["1".repeat(32)] }).wrappers.map((entry) => entry.type), ["passkey"]);
   assert.throws(() => h.vaults.putWrapper(auth, "2".repeat(32), passkeyWrapper()), rejects("vault_wrapper_conflict", 409));
   assert.throws(() => h.vaults.putWrapper(auth, "2".repeat(32), wrapper({ wrapperId: "2".repeat(32), version: 2 })), rejects("vault_wrapper_conflict", 409));
   assert.deepEqual(h.vaults.putWrapper(auth, "2".repeat(32), passkeyWrapper({ version: 2 })), { wrapperId: "2".repeat(32), version: 2, added: false });
   assert.throws(() => h.vaults.putWrapper(auth, "3".repeat(32), wrapper({ version: 2 })), rejects("vault_wrapper_conflict", 409));
-  assert.deepEqual(h.vaults.removeWrapper(auth, "1".repeat(32)), { remaining: 1 });
+  // A password-only wrapper can't come back beside the passkey.
+  assert.throws(() => h.vaults.putWrapper(auth, "1".repeat(32), wrapper()), rejects("vault_wrapper_rules", 409));
   // The last wrapper stays.
   assert.throws(() => h.vaults.removeWrapper(auth, "2".repeat(32)), rejects("vault_last_wrapper", 409));
   assert.throws(() => h.vaults.removeWrapper(auth, "1".repeat(32)), rejects("vault_wrapper_not_found", 404));
@@ -106,8 +112,52 @@ bothStores("a vault is created with at least one wrapper, and wrappers change on
 
   // At most eight.
   for (let index = 3; index < 10; index += 1)
-    h.vaults.putWrapper(auth, String(index).repeat(32), wrapper({ type: "backup-code", params: {} }));
-  assert.throws(() => h.vaults.putWrapper(auth, "a".repeat(32), wrapper({ type: "backup-code", params: {} })), rejects("vault_wrapper_limit", 409));
+    h.vaults.putWrapper(auth, String(index).repeat(32), passkeyWrapper({ wrapperId: String(index).repeat(32), params: { ...passkeyWrapper().params, credentialId: b64(Buffer.alloc(32, index + 10)) } }));
+  assert.throws(() => h.vaults.putWrapper(auth, "a".repeat(32), backupWrapper()), rejects("vault_wrapper_limit", 409));
+  // A change that removes first frees its place.
+  assert.equal(h.vaults.changeWrappers(auth, { put: [backupWrapper()], remove: ["3".repeat(32)] }).wrappers.length, 8);
+});
+
+bothStores("wrapper-set rules hold through every transition, and a refused change changes nothing", (h) => {
+  const auth = h.auth(h.adult);
+  const types = () => h.vaults.summary(auth).map((entry) => entry.type).sort();
+  // A first vault must already keep the rules.
+  assert.throws(() => h.vaults.upload(auth, { expectedVersion: 0, ciphertext: sealedVault(), wrappers: [wrapper(), passkeyWrapper()] }), rejects("vault_wrapper_rules", 409));
+  h.vaults.upload(auth, { expectedVersion: 0, ciphertext: sealedVault(), wrappers: [wrapper(), backupWrapper()] });
+  assert.deepEqual(types(), ["backup-code", "password"]);
+  // The summary never shows the backup code's check value; downloads neither.
+  assert.deepEqual(h.vaults.summary(auth).find((entry) => entry.type === "backup-code").params, {});
+  assert.deepEqual(h.vaults.download(auth, "client").wrappers.find((entry) => entry.type === "backup-code").params, {});
+  assert.equal(h.vaults.backupCodeVerifier(auth.household.id, auth.member.id), b64(Buffer.alloc(32, 6)));
+  // Password only -> passkey: the password-only wrapper goes in the same step.
+  assert.throws(() => h.vaults.changeWrappers(auth, { put: [passkeyWrapper()] }), rejects("vault_wrapper_rules", 409));
+  assert.deepEqual(types(), ["backup-code", "password"], "a refused change leaves everything as it was");
+  h.vaults.changeWrappers(auth, { put: [passkeyWrapper()], remove: ["1".repeat(32)] });
+  assert.deepEqual(types(), ["backup-code", "passkey"]);
+  // Require password and passkey: the combined wrapper replaces the passkey-alone one.
+  assert.throws(() => h.vaults.changeWrappers(auth, { put: [bothWrapper()] }), rejects("vault_wrapper_rules", 409), "never both kinds at once");
+  h.vaults.changeWrappers(auth, { put: [bothWrapper()], remove: ["2".repeat(32)] });
+  assert.deepEqual(types(), ["backup-code", "password-passkey"]);
+  // ... and back.
+  h.vaults.changeWrappers(auth, { put: [passkeyWrapper({ wrapperId: "5".repeat(32) })], remove: ["4".repeat(32)] });
+  assert.deepEqual(types(), ["backup-code", "passkey"]);
+  // One passkey opens it once; one backup code.
+  assert.throws(() => h.vaults.putWrapper(auth, "6".repeat(32), passkeyWrapper({ wrapperId: "6".repeat(32) })), rejects("vault_wrapper_rules", 409));
+  assert.throws(() => h.vaults.putWrapper(auth, "b".repeat(32), backupWrapper({ wrapperId: "b".repeat(32) })), rejects("vault_wrapper_rules", 409));
+  // A new backup code replaces the old one in one step.
+  h.vaults.changeWrappers(auth, { put: [backupWrapper({ wrapperId: "b".repeat(32), params: { verifier: b64(Buffer.alloc(32, 7)) } })], remove: ["a".repeat(32)] });
+  assert.equal(h.vaults.backupCodeVerifier(auth.household.id, auth.member.id), b64(Buffer.alloc(32, 7)));
+  // Malformed changes.
+  for (const body of [{}, { put: [] }, { remove: ["x"] }, { put: [backupWrapper()], remove: ["a".repeat(32)] }, { put: "no" },
+    { put: [backupWrapper({ type: "backup-code", params: {} })] }])
+    assert.throws(() => h.vaults.changeWrappers(auth, body), rejects("vault_invalid", 400), JSON.stringify(body));
+  // A backup-code sign-in gets that wrapper and the others' metadata, no wrapped keys.
+  const capability = { householdId: auth.household.id, memberId: auth.member.id, method: "backup-code", credentialId: null };
+  const released = h.vaults.downloadWithCapability(capability, "client");
+  assert.deepEqual(released.wrappers.map((entry) => entry.type), ["backup-code"]);
+  assert.deepEqual(released.wrappers[0].params, {});
+  assert.deepEqual(released.others.map((entry) => entry.type), ["passkey"]);
+  assert.equal(released.others[0].wrapped, undefined);
 });
 
 bothStores("sizes, formats and wrapper parameters are bounded", (h) => {
@@ -127,6 +177,8 @@ bothStores("sizes, formats and wrapper parameters are bounded", (h) => {
     wrapper({ params: { kdf: "pbkdf2-sha256", iterations: 600_000, salt: b64(Buffer.alloc(16)), extra: 1 } }),
     passkeyWrapper({ params: { credentialId: b64(Buffer.alloc(32)), prfSalt: b64(Buffer.alloc(16)) } }),
     wrapper({ type: "backup-code", params: { salt: "x" } }),
+    wrapper({ type: "backup-code", params: {} }),
+    wrapper({ type: "backup-code", params: { verifier: b64(Buffer.alloc(16)) } }),
     wrapper({ type: "password-passkey" }),
   ];
   for (const entry of bad) assert.throws(() => create({ ciphertext: sealedVault(), wrappers: [entry] }), rejects("vault_invalid", 400), JSON.stringify(entry));
@@ -166,15 +218,18 @@ test("a no-cookie download (#568) needs a checked capability and releases only t
   const auth = { household: { id: "a".repeat(32) }, member: { id: "b".repeat(32) } };
   const passkey = wrapper({ wrapperId: "2".repeat(32), type: "passkey",
     params: { credentialId: Buffer.alloc(32, 4).toString("base64url"), prfSalt: Buffer.alloc(32, 5).toString("base64url") } });
-  vaults.upload(auth, { expectedVersion: 0, ciphertext: sealedVault(), wrappers: [wrapper(), passkey] });
+  vaults.upload(auth, { expectedVersion: 0, ciphertext: sealedVault(), wrappers: [wrapper(), backupWrapper()] });
   const capability = { householdId: auth.household.id, memberId: auth.member.id };
   const byPassword = vaults.downloadWithCapability({ ...capability, method: "password" }, "client");
   assert.deepEqual(byPassword.wrappers.map((entry) => entry.type), ["password"]);
+  assert.equal(byPassword.others, undefined, "only a backup-code sign-in hears of the other wrappers");
+  vaults.changeWrappers(auth, { put: [passkey], remove: ["1".repeat(32)] });
   const byPasskey = vaults.downloadWithCapability({ ...capability, method: "passkey", credentialId: passkey.params.credentialId }, "client");
   assert.deepEqual(byPasskey.wrappers.map((entry) => entry.type), ["passkey"]);
   assert.throws(() => vaults.downloadWithCapability({ ...capability, method: "passkey", credentialId: "other" }, "client"), rejects("vault_not_found", 404));
   assert.throws(() => vaults.downloadWithCapability({ ...capability, method: "password-passkey", credentialId: passkey.params.credentialId }, "client"), rejects("vault_not_found", 404));
-  assert.deepEqual(vaults.wrapperSummary(auth.household.id, auth.member.id).map((entry) => entry.type).sort(), ["passkey", "password"]);
+  assert.throws(() => vaults.downloadWithCapability({ ...capability, method: "password" }, "client"), rejects("vault_not_found", 404), "no password-only wrapper is left");
+  assert.deepEqual(vaults.wrapperSummary(auth.household.id, auth.member.id).map((entry) => entry.type).sort(), ["backup-code", "passkey"]);
 });
 
 test("the vault routes serve only the session's own member on a trusted device", { timeout: 30_000 }, async (t) => {
@@ -215,7 +270,10 @@ test("the vault routes serve only the session's own member on a trusted device",
   const last = await call(`/api/account/vault/wrappers/${"1".repeat(32)}`, { cookie: cookieOf(founder), method: "DELETE" });
   assert.equal(last.status, 409);
   assert.equal((await last.json()).error, "vault_last_wrapper");
-  const added = await call(`/api/account/vault/wrappers/${"2".repeat(32)}`, { cookie: cookieOf(founder), method: "PUT", body: passkeyWrapper() });
+  const refused = await call(`/api/account/vault/wrappers/${"2".repeat(32)}`, { cookie: cookieOf(founder), method: "PUT", body: passkeyWrapper() });
+  assert.equal(refused.status, 409, "a passkey wrapper can't join a password-only one");
+  assert.equal((await refused.json()).error, "vault_wrapper_rules");
+  const added = await call(`/api/account/vault/wrappers/${"a".repeat(32)}`, { cookie: cookieOf(founder), method: "PUT", body: backupWrapper() });
   assert.equal(added.status, 200);
   assert.equal((await call(`/api/account/vault/wrappers/${"1".repeat(32)}`, { cookie: cookieOf(founder), method: "DELETE" })).status, 200);
   // A body past the bound is refused before it's read.

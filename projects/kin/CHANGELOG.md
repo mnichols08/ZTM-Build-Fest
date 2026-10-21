@@ -9,6 +9,31 @@ documentation only.
 
 ### Added
 
+- **Add a passkey: it signs you in alone, or require password and passkey**
+  (#560, #561, #562, [ADR 0018](docs/decisions/0018-account-key-vault.md)
+  D3/D4): once you've added something, Today calmly offers a passkey (and
+  Security always does). Adding it asks for your password once, then your
+  face, fingerprint or screen lock; from then on your passkey signs you in
+  on a new device by itself and unlocks Kin on this one, and your password
+  alone no longer opens your account anywhere new, so a stolen copy of Kin's
+  service holds nothing a password guess opens. Household admin actions ask
+  for the passkey again. **Require password and passkey** (Security, off by
+  default) makes a new-device sign-in ask for both. **Change password** is
+  under Security too: your account and this device move to the new password
+  in one step, and your other devices follow when they next sign in. The
+  service now refuses any set of vault wrappers that would let a password
+  alone open the vault beside a passkey, or a passkey alone beside
+  require-both; changes swap wrappers in one transaction, after a fresh
+  password check. No server schema change.
+- **A backup code for your account** (#571, #572, #573): one printable code
+  (8 groups of 7 letters and numbers, with a typo check), offered on Today
+  after your first week and under Security, never at sign-up. It signs you
+  in on a new device as a third way in (limited like a password), and then
+  you choose a new password. Making a new one stops the old one at once.
+  Exports from a device without a backup key (one set up with a password or
+  a passkey) now work and open with the code; exports made with a device's
+  backup key keep opening as before, and Kin no longer asks a member who has
+  a backup code for a per-device backup key.
 - **Sign in on a new device: add it, or replace an old one** (#568, #569,
   #570, [ADR 0018](docs/decisions/0018-account-key-vault.md)): on a phone or
   browser with no Kin on it, `Sign in` with your username and password (or a

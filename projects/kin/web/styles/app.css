@@ -1194,6 +1194,16 @@ kin-app > .security-panel {
 .security-panel input[type="checkbox"] { width: 22px; height: 22px; vertical-align: middle; }
 .security-panel .error-message { position: static; box-shadow: none; padding: 0; border: 0; background: transparent; font-weight: 600; }
 .recovery-key { display: block; overflow-wrap: anywhere; padding: 14px; border: 1px solid var(--line); border-radius: var(--r-control); background: var(--surface-secondary); user-select: all; }
+/* The account backup code (#573): 8 groups of 7, easy to read and copy by hand. */
+.backup-code-card { margin-block: 12px; padding: 16px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface-secondary); }
+.backup-code-title { margin: 0 0 8px; font-weight: 650; }
+.backup-code { margin: 0 0 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 18px; line-height: 1.9; letter-spacing: .06em; overflow-wrap: anywhere; user-select: all; }
+.backup-code span { display: inline-block; margin-inline-end: .4em; }
+@media print {
+  html.printing-backup-code body * { visibility: hidden; }
+  html.printing-backup-code #backup-code-print, html.printing-backup-code #backup-code-print * { visibility: visible; }
+  html.printing-backup-code #backup-code-print { position: absolute; inset: 0 auto auto 0; width: 100%; margin: 0; border: 2px solid #000; background: #fff; color: #000; }
+}
 .security-panel [aria-busy="true"] { cursor: progress; }
 .security-lead { margin: 10px 0 2px; font-size: 24px; font-weight: 650; letter-spacing: -.02em; }
 .security-panel > p + .security-lead { margin-top: 4px; }

@@ -56,6 +56,7 @@ import { eventArenaPeerRegressions } from "./event-arena-regression.mjs";
 import { incrementalRenderPeerRegressions } from "./incremental-render-regression.mjs";
 import { firstRunRegressions } from "./first-run-regression.mjs";
 import { newDeviceRegressions } from "./new-device-regression.mjs";
+import { accountSecurityRegressions } from "./account-security-regression.mjs";
 import { justForMeRegressions } from "./just-for-me-regression.mjs";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -2984,6 +2985,9 @@ try {
   if (REGRESSION_PART !== "1") console.log(await firstRunRegressions({ endpoint, browserClient }));
   // Signing in on a new device (#568), on its own service too.
   if (REGRESSION_PART !== "1") console.log(await newDeviceRegressions({ endpoint, browserClient }));
+  // A password account's passkey and backup code (#560, #571), with a virtual
+  // authenticator, on its own service too.
+  if (REGRESSION_PART !== "1") console.log(await accountSecurityRegressions({ endpoint, browserClient }));
   // Just for me (#510) needs private storage, which opens after a password
   // sign-up (#557): like the first run, it runs its own service and context.
   if (REGRESSION_PART !== "1") console.log(await justForMeRegressions({ endpoint, browserClient }));

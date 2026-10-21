@@ -19,6 +19,20 @@
 //
 // Failed unlocks are never reported to the service (it can't see them); a
 // device counts its own.
+//
+// Wrapper-set rules (ADR 0018 D3/D4, #561/#572), checked on the set a change
+// would leave, before anything is stored (`wrapperSetProblem`):
+// - at least one wrapper;
+// - no password-only wrapper beside a passkey or password-and-passkey
+//   wrapper: once a passkey is added, a copy of this database holds nothing a
+//   password guess opens;
+// - no passkey-alone wrapper beside a password-and-passkey wrapper: "require
+//   password and passkey" means a passkey alone opens nothing;
+// - each passkey opens the vault at most once, and there is at most one
+//   backup code.
+// Transitions that swap one kind for another (adding a passkey, turning
+// "require password and passkey" on or off, a new backup code) go through
+// `changeWrappers`, which removes and adds in one transaction.
 import { DeviceWindow } from "./chat-limits.mjs";
 import {
   ACCOUNT_VAULT_WRAPPED_KEY_BYTES,
@@ -82,6 +96,35 @@ class MemoryAccountVaultStore {
     row.wrappers.set(wrapper.wrapperId, { ...structuredClone(wrapper), updatedAt: now });
     return { version: wrapper.version, added: !existing };
   }
+  changeAccountVaultWrappers(householdId, memberId, { put = [], remove = [] }, now, check = () => {}) {
+    const row = this.vaults.get(memberId);
+    if (!row || row.householdId !== householdId) throw new DurableConflictError("vault_not_found", "There is no vault to add this to.");
+    const saved = row.wrappers;
+    row.wrappers = new Map([...saved].map(([key, value]) => [key, structuredClone(value)]));
+    try {
+      for (const wrapperId of remove) {
+        if (!row.wrappers.delete(wrapperId)) throw new DurableConflictError("vault_wrapper_not_found", "That way of opening the vault was not found.");
+      }
+      for (const wrapper of put) {
+        const existing = row.wrappers.get(wrapper.wrapperId);
+        if (!existing) {
+          if (row.wrappers.size >= MAX_ACCOUNT_VAULT_WRAPPERS) throw new DurableConflictError("vault_wrapper_limit", "This vault already has as many ways to open it as Kin allows.");
+          if (wrapper.version !== 1) throw new DurableConflictError("vault_wrapper_conflict", "That way of opening the vault changed meanwhile.");
+        } else if (existing.type !== wrapper.type || wrapper.version !== existing.version + 1) {
+          throw new DurableConflictError("vault_wrapper_conflict", "That way of opening the vault changed meanwhile.");
+        }
+        row.wrappers.set(wrapper.wrapperId, { ...structuredClone(wrapper), updatedAt: now });
+      }
+      const wrappers = [...row.wrappers.values()].sort((a, b) => (a.wrapperId < b.wrapperId ? -1 : 1))
+        .map(({ wrapperId, type, version, params }) => ({ wrapperId, type, version, params: structuredClone(params) }));
+      if (!wrappers.length) throw new DurableConflictError("vault_last_wrapper", "Keep at least one way to open your vault.");
+      check(wrappers);
+      return wrappers;
+    } catch (error) {
+      row.wrappers = saved;
+      throw error;
+    }
+  }
   removeAccountVaultWrapper(householdId, memberId, wrapperId) {
     const row = this.vaults.get(memberId);
     if (!row || row.householdId !== householdId || !row.wrappers.has(wrapperId))
@@ -117,7 +160,31 @@ const CONFLICTS = {
   vault_wrapper_limit: 409,
   vault_wrapper_not_found: 404,
   vault_last_wrapper: 409,
+  vault_wrapper_rules: 409,
 };
+
+/**
+ * Why a set of wrappers (`[{ type, params }]`) breaks the wrapper-set rules
+ * above, in plain words, or null when it keeps them.
+ */
+export function wrapperSetProblem(wrappers) {
+  const count = (type) => wrappers.filter((wrapper) => wrapper.type === type).length;
+  if (!wrappers.length) return "Keep at least one way to open your vault.";
+  if (count("password") && (count("passkey") || count("password-passkey")))
+    return "Once you add a passkey, your password alone no longer opens your account.";
+  if (count("passkey") && count("password-passkey"))
+    return "Your account asks for your password and your passkey, so a passkey alone can't open it.";
+  if (count("backup-code") > 1) return "Your account has one backup code. A new one replaces the old one.";
+  const credentials = wrappers.filter((wrapper) => wrapper.type === "passkey" || wrapper.type === "password-passkey")
+    .map((wrapper) => wrapper.params?.credentialId);
+  if (new Set(credentials).size !== credentials.length) return "That passkey already opens your account.";
+  return null;
+}
+
+function checkWrapperSet(wrappers) {
+  const problem = wrapperSetProblem(wrappers);
+  if (problem) throw new DurableConflictError("vault_wrapper_rules", problem);
+}
 
 export class AccountVaultService {
   constructor({ store = null, now = () => Date.now() } = {}) {
@@ -157,18 +224,30 @@ export class AccountVaultService {
    */
   downloadWithCapability(capability, clientKey) {
     const { householdId, memberId, method, credentialId } = capability ?? {};
-    if (!householdId || !memberId || !["password", "passkey", "password-passkey"].includes(method))
+    if (!householdId || !memberId || !["password", "passkey", "password-passkey", "backup-code"].includes(method))
       throw new PairingError("new_device_expired", "This sign-in expired or was already used. Sign in again.", 401);
     if (!this.addressDownloads.allows(`address:${clientKey}`) || !this.memberDownloads.allows(memberId))
       throw rateLimited();
     this.addressDownloads.spend(`address:${clientKey}`);
     this.memberDownloads.spend(memberId);
     const row = this.storage.accountVault(householdId, memberId);
-    const opens = (wrapper) => wrapper.type === method && (method === "password" || wrapper.params.credentialId === credentialId);
+    const opens = (wrapper) => wrapper.type === method && (["password", "backup-code"].includes(method) || wrapper.params.credentialId === credentialId);
     const wrappers = row?.wrappers.filter(opens) ?? [];
     if (!row || !wrappers.length)
       throw new PairingError("vault_not_found", "Kin couldn't find a way to open your vault with that sign-in.", 404);
-    return present({ ...row, wrappers });
+    // A backup-code sign-in sets a new password next (#572), which re-wraps
+    // or removes the wrappers that depend on the old one: it is told which
+    // exist (IDs, types, versions and public parameters, no wrapped keys).
+    // The code is 256 random bits and opens the vault on its own, so this
+    // tells its holder nothing they couldn't already reach.
+    const others = method === "backup-code" ? row.wrappers.filter((wrapper) => !opens(wrapper)).map(summarize) : undefined;
+    return { ...present({ ...row, wrappers }), ...(others ? { others } : {}) };
+  }
+
+  /** The member's backup-code check value (#572), or null without a code. */
+  backupCodeVerifier(householdId, memberId) {
+    const row = this.storage.accountVault(householdId, memberId);
+    return row?.wrappers.find((wrapper) => wrapper.type === "backup-code")?.params.verifier ?? null;
   }
 
   /** The member's wrappers without their wrapped keys (`type`, `params`),
@@ -177,6 +256,15 @@ export class AccountVaultService {
   wrapperSummary(householdId, memberId) {
     const row = this.storage.accountVault(householdId, memberId);
     return row ? row.wrappers.map(({ wrapperId, type, params }) => ({ wrapperId, type, params: structuredClone(params) })) : null;
+  }
+
+  /** The signed-in member's wrappers for the security settings: IDs, types,
+   * versions, public parameters and update times, no wrapped keys and no
+   * backup-code check value; null without a vault. Not a download: nothing
+   * here helps a guesser, so it isn't counted against the download limits. */
+  summary(auth) {
+    const row = this.storage.accountVault(auth.household.id, auth.member.id);
+    return row ? row.wrappers.map((wrapper) => ({ ...summarize(wrapper), updatedAt: wrapper.updatedAt })) : null;
   }
 
   /**
@@ -197,6 +285,7 @@ export class AccountVaultService {
       wrappers = body.wrappers.map((wrapper) => parseWrapper(wrapper));
       if (new Set(wrappers.map((wrapper) => wrapper.wrapperId)).size !== wrappers.length || wrappers.some((wrapper) => wrapper.version !== 1))
         throw invalid();
+      this.guard(() => checkWrapperSet(wrappers));
     } else if (body.wrappers !== undefined) {
       throw invalid();
     }
@@ -205,18 +294,44 @@ export class AccountVaultService {
     return { version };
   }
 
-  /** Adds (version 1) or replaces (its version plus one) one wrapper. */
+  /** Adds (version 1) or replaces (its version plus one) one wrapper, if
+   * the set it leaves keeps the wrapper-set rules. */
   putWrapper(auth, wrapperId, body) {
     this.spendWrite(auth);
     const wrapper = parseWrapper({ ...body, wrapperId });
-    return { wrapperId, ...this.guard(() => this.storage.putAccountVaultWrapper(auth.household.id, auth.member.id, wrapper, this.now())) };
+    this.applyChange(auth, { put: [wrapper], remove: [] });
+    return { wrapperId, version: wrapper.version, added: wrapper.version === 1 };
   }
 
   /** Removes one wrapper; the last one can't be removed. */
   removeWrapper(auth, wrapperId) {
     this.spendWrite(auth);
     if (!ID.test(wrapperId ?? "")) throw invalid();
-    return { remaining: this.guard(() => this.storage.removeAccountVaultWrapper(auth.household.id, auth.member.id, wrapperId)) };
+    return { remaining: this.applyChange(auth, { put: [], remove: [wrapperId] }).length };
+  }
+
+  /**
+   * Removes and adds wrappers in one step (#561/#572): `body` is
+   * `{ put: [wrapper], remove: [wrapperId] }`, at most eight of each, no ID
+   * twice. The resulting set must keep the wrapper-set rules
+   * (`vault_wrapper_rules`, 409); nothing changes otherwise. Returns the
+   * resulting wrappers (as `summary`, without update times).
+   */
+  changeWrappers(auth, body) {
+    this.spendWrite(auth);
+    return { wrappers: this.applyChange(auth, parseChange(body)).map(summarize) };
+  }
+
+  /** Checks a change body as `changeWrappers` would, without applying it
+   * (a backup-code sign-in, #572, sends one with its device registration). */
+  parseChange(body) {
+    return parseChange(body);
+  }
+
+  /** Applies a parsed change for `auth`'s member (`{ household: { id },
+   * member: { id } }`), keeping the wrapper-set rules; no write is charged. */
+  applyChange(auth, change) {
+    return this.guard(() => this.storage.changeAccountVaultWrappers(auth.household.id, auth.member.id, change, this.now(), checkWrapperSet));
   }
 
   /** A removed member's vault, wrappers and password verifier go (the
@@ -245,10 +360,27 @@ function present(row) {
   return {
     vault: { version: row.version, ciphertext: Buffer.from(row.ciphertext).toString("base64url"), updatedAt: row.updatedAt },
     wrappers: row.wrappers.map((wrapper) => ({
-      wrapperId: wrapper.wrapperId, type: wrapper.type, version: wrapper.version, params: wrapper.params,
-      wrapped: Buffer.from(wrapper.wrapped).toString("base64url"), updatedAt: wrapper.updatedAt,
+      ...summarize(wrapper), wrapped: Buffer.from(wrapper.wrapped).toString("base64url"), updatedAt: wrapper.updatedAt,
     })),
   };
+}
+
+/** A wrapper without its wrapped key or the backup-code check value: only
+ * what a device needs to rebuild its KEK. */
+function summarize({ wrapperId, type, version, params }) {
+  const { verifier: _verifier, ...shown } = params ?? {};
+  return { wrapperId, type, version, params: structuredClone(shown) };
+}
+
+function parseChange(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw invalid();
+  const { put = [], remove = [] } = body;
+  if (!Array.isArray(put) || !Array.isArray(remove) || put.length > MAX_ACCOUNT_VAULT_WRAPPERS ||
+      remove.length > MAX_ACCOUNT_VAULT_WRAPPERS || put.length + remove.length === 0) throw invalid();
+  const parsed = put.map((wrapper) => parseWrapper(wrapper));
+  if (remove.some((wrapperId) => !ID.test(wrapperId ?? "")) ||
+      new Set([...parsed.map((wrapper) => wrapper.wrapperId), ...remove]).size !== parsed.length + remove.length) throw invalid();
+  return { put: parsed, remove: [...remove] };
 }
 
 /** A sealed vault: canonical base64url of "KVLT" format-1 bytes in bounds.
@@ -275,8 +407,10 @@ function parseWrapper(value) {
 /**
  * The public parameters a device needs to rebuild a wrapper's KEK, by type:
  * a password wrapper's PBKDF2 salt and iterations; a passkey wrapper's
- * credential ID and PRF salt; both for password-and-passkey; nothing for a
- * backup code. Only these exact fields are kept.
+ * credential ID and PRF salt; both for password-and-passkey. A backup code
+ * has no KEK parameters; it carries the service's check value for a
+ * backup-code sign-in (#572), SHA-256 of the code's authKey, which the
+ * service never hands out. Only these exact fields are kept.
  */
 function parseParams(type, params) {
   if (!params || typeof params !== "object" || Array.isArray(params)) throw invalid();
@@ -295,6 +429,11 @@ function parseParams(type, params) {
     if (!credential || credential.length < 16 || decodeBase64Url(params.prfSalt, 32)?.length !== 32) throw invalid();
     Object.assign(result, { credentialId: params.credentialId, prfSalt: params.prfSalt });
     expected.push("credentialId", "prfSalt");
+  }
+  if (type === "backup-code") {
+    if (decodeBase64Url(params.verifier, 32)?.length !== 32) throw invalid();
+    result.verifier = params.verifier;
+    expected.push("verifier");
   }
   if (Object.keys(params).some((key) => !expected.includes(key))) throw invalid();
   return result;

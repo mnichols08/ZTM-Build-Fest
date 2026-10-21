@@ -406,6 +406,36 @@ export function backupCodeKek(codeBytes) {
   return hkdfBytes(codeBytes, new Uint8Array(), "kin/vault-backup/v1");
 }
 
+/**
+ * What a backup-code sign-in sends to the service (#572): HKDF of the code's
+ * bytes under its own purpose, so it is never the wrapper's KEK. The service
+ * keeps only SHA-256 of it (`backupCodeVerifier`): the code is 256 random
+ * bits, so a plain hash is already beyond guessing and no stretching is needed.
+ */
+export function backupCodeAuthKey(codeBytes) {
+  requireSecret(codeBytes, "backup code");
+  return hkdfBytes(codeBytes, new Uint8Array(), "kin/backup-auth/v1");
+}
+
+/** The service's check value for a backup code: base64url SHA-256 of its authKey. */
+export async function backupCodeVerifier(authKey) {
+  requireSecret(authKey, "backup code key");
+  return base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", authKey)));
+}
+
+/**
+ * The secret that opens one export's root wrapper for a member with a
+ * backup code (#572, PORTABILITY): HKDF of the vault key, bound to the
+ * exporting device's vault ID. The export carries the backup-code wrapper
+ * of VK, so the code opens VK, VK derives this, and this opens the export.
+ * Never stored; derived when exporting and when restoring.
+ */
+export function exportUnlockSecret(vaultKey, vaultId) {
+  requireVaultKey(vaultKey);
+  if (!/^[a-f0-9]{32}$/.test(vaultId ?? "")) throw new AccountVaultError("The export context is invalid.");
+  return hkdfBytes(vaultKey, new Uint8Array(), JSON.stringify(["kin/export-backup-code/v1", vaultId]));
+}
+
 // ---- Wrappers ------------------------------------------------------------
 
 /**
@@ -534,4 +564,10 @@ function equalBytes(left, right) {
 
 function hex(bytes) {
   return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function base64Url(bytes) {
+  let value = "";
+  for (const byte of bytes) value += String.fromCharCode(byte);
+  return btoa(value).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
