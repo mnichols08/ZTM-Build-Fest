@@ -201,19 +201,25 @@ async function browserUiChecks() {
   let recovery = app.security.querySelector(".recovery-key").textContent;
   check(recovery.length === 64, "setup displays user-held recovery secret");
   check(
-    app.security.heading.textContent === "Save your recovery key" &&
+    app.security.heading.textContent === "Save your backup key for this device" &&
       app.security.querySelector("#confirm-recovery")?.type === "checkbox" &&
       app.security.querySelector("#confirm-recovery").labels?.[0]?.textContent.includes("saved this key") &&
       app.security.querySelector('input[autocomplete="new-password"]')?.value === recovery,
     "setup asks the person to save the key, not retype it, and offers it to the password manager",
   );
   // Not wait(): its timeout message would print the displayed recovery key.
-  for (let i = 0; i < 400 && !/recovery key K-[0-9A-F]{4}/.test(app.security.querySelector(".recovery-key-label")?.textContent ?? ""); i++)
+  for (let i = 0; i < 400 && !/backup key K-[0-9A-F]{4}/.test(app.security.querySelector(".recovery-key-label")?.textContent ?? ""); i++)
     await new Promise((r) => setTimeout(r, 25));
-  check(/recovery key K-[0-9A-F]{4}/.test(app.security.querySelector(".recovery-key-label")?.textContent ?? ""), "setup shows the new key's label");
+  check(/backup key K-[0-9A-F]{4}/.test(app.security.querySelector(".recovery-key-label")?.textContent ?? ""), "setup shows the new key's label");
+  check(app.security.textContent.includes("Each device has its own"), "setup says the backup key belongs to this device");
   const setupLabel = /K-[0-9A-F]{4}/.exec(app.security.querySelector(".recovery-key-label").textContent)[0];
-  check(app.security.querySelector('input[autocomplete="username"]')?.value === `Kin recovery key ${setupLabel}`,
-    "the password-manager entry is named for this key's label, so another device's key isn't overwritten");
+  // #579: the entry carries this device's automatic name and the key's label.
+  const { automaticDeviceName, currentPlatform } = await import("/platform.js");
+  const { backupKeyEntryName, BACKUP_KEY_ENTRY_KEY } = await import("/security/backup-key-entry.js");
+  // Named in the same step that shows the label, which the loop above waited for.
+  const setupEntry = backupKeyEntryName(setupLabel, automaticDeviceName(currentPlatform()));
+  check(app.security.querySelector('input[autocomplete="username"]')?.value === setupEntry && setupEntry.endsWith(`(${setupLabel})`),
+    "the password-manager entry is named for this device and key label, so another device's key isn't overwritten or offered");
   const confirm = app.security.querySelector("#confirm-recovery");
   confirm.form.requestSubmit();
   check(!app.security.busy && !app.store, "setup waits until the person says the key is saved");
@@ -295,6 +301,22 @@ async function browserUiChecks() {
     "without a passkey the lock screen shows recovery directly and no passkey button",
   );
   {
+    // #578/#579: the unlock form asks for the entry this device saved and says which one to pick.
+    const unlockAccount = () => app.security.querySelector('.recovery-form input[autocomplete="username"]');
+    // The lock screen no longer shows the key, so wait() may print the page.
+    await wait(() => unlockAccount()?.value === setupEntry);
+    const entryLine = app.security.querySelector("#recovery-unlock-entry");
+    check(unlockAccount()?.value === setupEntry && entryLine?.textContent === `Use the saved entry ending ${setupLabel}.` && !entryLine.hidden &&
+      app.security.querySelector("#recovery-unlock").getAttribute("aria-describedby").includes("recovery-unlock-entry"),
+      "the unlock form requests this device's entry and names it under the field");
+    check(app.security.querySelector('label[for="recovery-unlock"]')?.textContent === "Backup key for this device" &&
+      app.security.querySelector("#recovery-unlock-help")?.textContent.includes("Each device has its own") &&
+      [...app.security.querySelectorAll("button")].some((button) => button.textContent === "Unlock with backup key"),
+      "the unlock screen calls it the backup key for this device");
+    const remembered = localStorage.getItem(BACKUP_KEY_ENTRY_KEY) ?? "";
+    check(remembered.includes(setupLabel) && !remembered.includes(recovery), "only the entry name is remembered, never the key");
+  }
+  {
     // Presentation-only probe: a synthetic PRF wrapper must switch the lock
     // screen to passkey-first without any unlock attempt or persistence.
     const realManifest = app.security.manifest;
@@ -306,7 +328,7 @@ async function browserUiChecks() {
     check(primary?.textContent === "Unlock with passkey" && form?.hidden === true &&
       Boolean(app.security.querySelector("#recovery-unlock")),
       "a saved passkey makes passkey unlock primary and recovery secondary");
-    [...app.security.querySelectorAll("button")].find((button) => button.textContent === "Use recovery key").click();
+    [...app.security.querySelectorAll("button")].find((button) => button.textContent === "Use backup key").click();
     check(form.hidden === false && document.activeElement === app.security.querySelector("#recovery-unlock"),
       "recovery stays one tap away and receives focus");
     app.security.manifest = realManifest;
@@ -860,7 +882,7 @@ async function browserUiChecks() {
     );
     check(
       app.state === null &&
-        app.security.alert.textContent.includes("recovery key"),
+        app.security.alert.textContent.includes("backup key"),
       "unsupported secure credential path stays locked with explicit recovery",
     );
     check(

@@ -108,6 +108,15 @@ documentation only.
 
 - The page no longer triggers the browser's pull-to-refresh where the browser
   allows turning it off (#353).
+- **Calmer unlock until accounts arrive** (#563): screens call the recovery
+  key the **backup key for this device** ("Each device has its own"; stored
+  format unchanged, #578); right after setup, once the device is in a
+  household and online, Today asks "Unlock with your face, fingerprint or
+  screen lock next time?" with Turn on and Not now (#577); new
+  password-manager entries are named for the device ("Kin backup key — Chrome
+  on Android (K-7F3A)"), the unlock form asks for that entry and names it
+  under the field, older "Kin recovery key" entries still match, and after a
+  backup-key unlock a one-time suggestion offers passkey unlock (#579).
 
 ## v1.3.0 — Member Names and Clearer Setup
 

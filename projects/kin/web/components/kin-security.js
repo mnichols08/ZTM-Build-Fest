@@ -51,6 +51,9 @@ class KinSecurity extends HTMLElement {
     this.restoreStage = null;
     // Presentation only: whether the secondary recovery form is expanded on the lock screen.
     this.recoveryExpanded = false;
+    // True from a completed setup until the next lock: the unlocked shell then
+    // offers passkey unlock as setup's next step (#577).
+    this.justSetUp = false;
   }
 
   get busy() { return this.operations.busy; }
@@ -87,6 +90,7 @@ class KinSecurity extends HTMLElement {
     this.operationAbort = new AbortController();
     this.phase = "locked";
     this.recoveryExpanded = false;
+    this.justSetUp = false;
     this.setAttribute("aria-busy", "false");
     clearLegacyDrafts();
     this.render();

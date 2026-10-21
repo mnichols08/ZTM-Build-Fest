@@ -276,7 +276,7 @@ export async function openArchiveVault(manifest, recoverySecret) {
     try { labels = await manifestRecoveryLabels(manifest); } catch { /* fall back to the generic message */ }
     if (!labels.length) throw error;
     throw new VaultError(
-      `This export opens with recovery key ${labels[0]} from the device that made it, and Kin couldn't open it with the key you entered. Check that you're using that key. Saved data was not changed.`,
+      `This export opens with backup key ${labels[0]} from the device that made it, and Kin couldn't open it with the key you entered. Check that you're using that key. Saved data was not changed.`,
       "archive_key_mismatch", error,
     );
   }

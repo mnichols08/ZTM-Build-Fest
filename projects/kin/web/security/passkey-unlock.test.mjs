@@ -81,7 +81,7 @@ test("an unreachable identity service is reported as a connection problem, not a
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { credentials: { get: async () => { throw new Error("must not reach the authenticator"); } } } });
   globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
   try {
-    await assert.rejects(authenticatePrf(), (error) => error.code === "connection_unavailable" && /recovery key/.test(error.userMessage));
+    await assert.rejects(authenticatePrf(), (error) => error.code === "connection_unavailable" && /backup key/.test(error.userMessage));
   } finally {
     globalThis.fetch = originalFetch;
     if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator); else delete globalThis.navigator;

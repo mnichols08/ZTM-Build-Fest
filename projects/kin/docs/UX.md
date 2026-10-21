@@ -873,12 +873,52 @@ Not:
 
 Once a device holds a passkey that can unlock Kin, the lock screen reads
 "Welcome back" with `Unlock with passkey` as the only primary action and
-`Use recovery key` as a secondary control that reveals the recovery form. The
-recovery key is a backup, never the everyday login. Offline, the screen says
-plainly that passkey unlock needs a connection and shows recovery directly.
-First run is a welcome, a "Save your recovery key" step, then create/join
-choices; passkey unlock is offered as soon as the device holds a household
-credential. Security settings state whether passkey unlock is on.
+`Use backup key` as a secondary control that reveals the backup-key form. The
+backup key is a backup, never the everyday login. Offline, the screen says
+plainly that passkey unlock needs a connection and shows the backup-key form
+directly. First run is a welcome, a "Save your backup key for this device"
+step, then create/join choices; passkey unlock is offered as soon as the
+device holds a household credential (§8.1, "Calmer unlock"). Security settings
+state whether passkey unlock is on.
+
+### Calmer unlock until accounts arrive — Adopted (#563)
+
+A tester unlocked with the recovery key every time, and a synced password
+manager offered that key on other devices, where it can't work: each device
+has its own local root and its own key. Until one account works on every
+device (#546), three changes make the passkey the everyday way in and the key
+plainly this device's backup:
+
+- **Backup key for this device.** Every screen calls it the *backup key*
+  (`Save your backup key for this device`, `Use backup key`, `Unlock with
+  backup key`, `Replace backup key`, the `Backup key for this device`
+  settings section and its `Backup key guidance`). Where it is introduced
+  (setup, the unlock field, settings) the copy adds "Each device has its own".
+  Only words changed: wrapper types, manifest and event fields, the stored
+  format, element IDs and code names still say *recovery*.
+- **Passkey unlock as setup's next step (#577).** Once the person has said
+  they saved the key and the device can reach the identity service (it is
+  signed in to a household and online, which enrolment needs), Today shows
+  one card: "Unlock with your face, fingerprint or screen lock next time?"
+  with `Turn on` (the ordinary PRF enrolment) and `Not now`. It never blocks:
+  `Not now` goes on, and a failed enrolment says plainly what happened, points
+  to More → Security and goes on. On a new device setup comes before the
+  household, so the card appears as soon as create or join finishes, in the
+  same session. Nothing is shown where the browser can't use passkeys or the
+  device is offline.
+- **The password-manager entry names the device (#579).** New entries are
+  named "Kin backup key — Chrome on Android (K-7F3A)": the device's automatic
+  name (§8.1, first-run fixes) and the key's label. A nickname is not used,
+  because the name is remembered in this browser's storage and nicknames are
+  encrypted household data. The unlock form asks for the same entry, and a
+  line under the field says "Use the saved entry ending K-7F3A." (both the new
+  and the older format end with the label). Entries saved earlier keep
+  working: when the device has no remembered name for the current label, the
+  form asks for the older "Kin recovery key K-7F3A".
+- **A one-time suggestion (#579).** After an unlock with the backup key while
+  passkey unlock is off and possible, Today suggests "Skip the backup key next
+  time?" with `Turn on passkey unlock` and `Not now`. `Not now` is remembered
+  on this device, so it isn't suggested again.
 
 ### First-run friction fixes — Adopted (v1.0 reality check, #163)
 
@@ -889,7 +929,8 @@ Testers on real phones found three setup snags:
   longer asks them to paste it back. The form carries off-screen
   `username`/`new-password` fields so the browser can offer to save it as a
   password named for the key's label ("Kin recovery key K-7F3A"; one shared
-  name would let a second device's key overwrite the first). The recovery
+  name would let a second device's key overwrite the first; since #563 the
+  name is "Kin backup key — <device> (K-7F3A)", see "Calmer unlock"). The recovery
   unlock form asks for `current-password` under the current key's name, so a
   saved key can autofill; key replacement offers the new key under its own
   label. The copy says not to count on the browser's offer: copying the key

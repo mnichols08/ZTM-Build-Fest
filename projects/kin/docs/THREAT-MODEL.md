@@ -319,12 +319,18 @@ key.
 a new password, so the browser may offer to save it, and the recovery unlock
 form can autofill it. That is the person's choice; it puts the key wherever
 their password manager keeps and syncs passwords, protected by that account.
-Each entry is named for the key's label ("Kin recovery key K-7F3A"), because
-each device has its own key: under one shared name, saving a second device's
-key, or a replacement, would overwrite the first. A replaced key's old entry
-stays until the person deletes it; unlock asks for the current label's entry,
-so autofill doesn't offer the old key. If setup fails and is retried, the
-retry has a new key and label, so an unused entry may be left behind.
+Each entry is named for the device and the key's label ("Kin backup key —
+Chrome on Android (K-7F3A)" since #563; "Kin recovery key K-7F3A" before),
+because each device has its own key: under one shared name, saving a second
+device's key, or a replacement, would overwrite the first, and a synced
+password manager would offer it on devices where it can't work. The device
+name is the automatic one, which the household service already knows, never
+a nickname. The device remembers the entry name (with its label, never the
+key) in its own browser storage so unlock asks for that entry; without it,
+unlock asks for the older name. A replaced key's old entry stays until the
+person deletes it; unlock asks for the current label's entry, so autofill
+doesn't offer the old key. If setup fails and is retried, the retry has a new
+key and label, so an unused entry may be left behind.
 
 ### C6: an export's header is readable without the key
 

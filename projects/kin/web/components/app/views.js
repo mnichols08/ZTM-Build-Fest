@@ -187,7 +187,7 @@ export class ViewBuilder {
       ["notes", "Notes, reference details, and maintenance history."],
       ["areas", "Areas, household mode, and Pulse."],
       ["people", "Members, pairing, trusted devices, and access."],
-      ["privacy", "Lock, passkeys, recovery key, export, and restore."],
+      ["privacy", "Lock, passkeys, backup key, export, and restore."],
       ["appearance", "Your colors and optional background on this device."],
     ]) {
       const entry = SEGMENTS.household.find((candidate) => candidate.id === segment);
