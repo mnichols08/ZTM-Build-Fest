@@ -106,11 +106,13 @@ If an unrelated parent-repository file was modified accidentally, revert that ch
 
 # Current Development Stage
 
-Kin is at **v1.5.0 — One Account and Private Spaces**, released as
-`kin-v1.5.0` on 2026-10-21. It follows v1.4.0 — Fridge, Meals and Household Helpers, v1.3.0 — Member Names and Clearer Setup, v1.2.0 — Household Chat, v1.1.2 — Private Household Branding, v1.1.1 — Member and Notification
+Kin is at **v1.6.0 — Kin for Everyone**, released as
+`kin-v1.6.0` on 2026-10-21. It follows v1.5.0 — One Account and Private Spaces, v1.4.0 — Fridge, Meals and Household Helpers, v1.3.0 — Member Names and Clearer Setup, v1.2.0 — Household Chat, v1.1.2 — Private Household Branding, v1.1.1 — Member and Notification
 Clarity, v1.1.0 — Connected Household Devices, and Kin's first stable release,
 `kin-v1.0.0` (with `kin-v1.0.0-rc.1` on the same commit), released on
 2026-10-17. Create, move or push tags only with the owner's explicit approval.
+
+v1.6.0 adds easy mode, Help on every screen, household features an admin can switch off, reports and feature suggestions to the Kin team (optionally forwarded to GitHub issues) and setting Kin up for someone else (ADR 0021, epic #603), plus the Android app for Google Play, the public privacy policy, the Play listing drafts and the Play release runbook (ADR 0020, epic #527). It adds server schemas 25–27 and synced setting 8 `easy-mode`, and no new event kind and no change to the household history, sync envelope, export or account vault formats.
 
 v1.5.0 adds accounts with an encrypted key vault (ADR 0018: username and password, an optional passkey, a backup code, new-device sign-in and moving an existing household to accounts) and each member's private space (ADR 0019: a private log and relay stream, the journal, Just for me, synced reminders and settings, and a private export). It adds server schemas 21–24, private event kinds from 100 in a member's own log, and no change to the household history, sync envelope or household export formats.
 
@@ -1205,6 +1207,7 @@ kin-v1.2.0
 kin-v1.3.0
 kin-v1.4.0
 kin-v1.5.0
+kin-v1.6.0
 ```
 
 Never use ambiguous repository-wide tags such as `v0.0.1` or `v1.0.0`.

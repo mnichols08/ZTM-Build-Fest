@@ -7,6 +7,18 @@ documentation only.
 
 ## Unreleased
 
+## v1.6.0 — Kin for Everyone
+
+Released 2026-10-21 as `kin-v1.6.0`. This minor release makes Kin easier for
+someone who rarely uses apps (epic #603, ADR 0021): easy mode with bigger
+text and buttons and fewer things on screen, Help on every screen, household
+features an admin can switch off for everyone, reporting a problem or
+suggesting a feature from inside Kin (with optional forwarding to GitHub
+issues), and setting Kin up for someone else with a printed sheet. It also
+prepares Kin for Google Play (epic #527): an Android app, a public privacy
+policy, the listing and Data safety drafts, Play graphics and a release
+runbook.
+
 ### Added
 
 - **Set up Kin for someone** (#612: #613, #614, #615; epic #603,
@@ -62,7 +74,6 @@ documentation only.
   on every page and in Quick add, Show me, Still stuck, and easy mode's
   sizes, words, navigation and Undo line at 1280 px, 320 px and 200%, in
   dark mode, forced colours and reduced motion.
-
 - **Report a problem, suggest something, and see what you've sent** (#630,
   #627, #635; [ADR 0021](docs/decisions/0021-kin-for-everyone.md) §3).
   Anyone can report a problem from Household, the keyboard help, Help, any
@@ -157,6 +168,26 @@ documentation only.
 - `.gitignore`: `/.kin-data/` and `/deploy/.env` had been joined into one
   line, so neither was ignored. Signing keys (`*.jks`, `*.keystore`,
   `keystore.properties`) and Android build output are now ignored too.
+
+### Compatibility
+
+- Server schemas 25–27 (household features, reports and suggestions,
+  prepared invitations) are forward migrations; an earlier server refuses
+  the newer database, so keep a pre-upgrade backup if you might roll back.
+- Household features (the `features` field in `/api/sync/status`), reports
+  (the device's own `kin-feedback-outbox` database, version 1) and prepared
+  invitations (card format 1, carried in the link's fragment) are listed in
+  [V1.0-COMPATIBILITY](docs/V1.0-COMPATIBILITY.md) under v1.6.0. Easy mode
+  is synced setting 8. No household event kind, replay protocol (still 24),
+  sync envelope, household export or account vault format changes.
+- A device on an earlier release ignores household features and shows
+  everything, except that Chat and the Fridge stop working for it while
+  they are switched off, as for "No access". It joins from a prepared
+  invitation like any other, with the name typed by hand, and never sends a
+  report.
+- The Android app is built in CI but not yet published on Google Play; its
+  `versionName` follows `package.json` and its `versionCode` stays 1 until
+  the first upload.
 
 ## v1.5.0 — One Account and Private Spaces
 
