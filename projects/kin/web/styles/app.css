@@ -2674,6 +2674,13 @@ button.show-password { justify-self: start; }
 .setup-sheet-call { font-size: 1.5rem; font-weight: 700; }
 .setup-sheet-ends { color: var(--ink-muted); }
 @media print {
+  /* Only the sheet and the elements around it are laid out; those around it
+     lose their own boxes, so the page is the sheet alone. */
+  html.printing-setup-sheet body *:not(:has(.setup-sheet)):not(.setup-sheet):not(.setup-sheet *) { display: none !important; }
+  html.printing-setup-sheet body *:has(.setup-sheet) {
+    position: static !important; margin: 0 !important; padding: 0 !important; border: 0 !important;
+    background: none !important; box-shadow: none !important; min-height: 0 !important;
+  }
   html.printing-setup-sheet body * { visibility: hidden !important; }
   html.printing-setup-sheet .setup-sheet, html.printing-setup-sheet .setup-sheet * { visibility: visible !important; }
   html.printing-setup-sheet .setup-sheet {
