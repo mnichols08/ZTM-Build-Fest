@@ -1,8 +1,13 @@
 // DurableStore schema: migrations to SERVER_SCHEMA_VERSION and the schema check.
 import { MAX_ACTIVE_MEMBERS } from "../identity-limits.mjs";
 import {
+  ACCOUNT_VAULT_WRAPPED_KEY_BYTES,
   DurableStoreError,
+  MAX_ACCOUNT_VAULT_BYTES,
+  MAX_ACCOUNT_VAULT_WRAPPER_PARAMS_BYTES,
   MAX_ATTACHMENT_BYTES,
+  MIN_ACCOUNT_PASSWORD_ITERATIONS,
+  MIN_ACCOUNT_VAULT_BYTES,
   MAX_CHAT_BLOB_BYTES,
   MIN_CHAT_BLOB_BYTES,
   SERVER_SCHEMA_VERSION,
@@ -792,6 +797,55 @@ export const schemaMethods = {
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;
         throw new DurableStoreError("Kin could not complete the Simple view migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 20) {
+      try {
+        this.transaction(() => {
+          // ADR 0018 (#564): each member's encrypted key vault, the wrappers
+          // that hold its vault key, and the password verifier for the later
+          // password sign-in (#557). All opaque to the service: the vault and
+          // wrappers are ciphertext, the verifier is Argon2id(authKey).
+          // No foreign key to members: like chat_hidden, a row outlives an
+          // authority restore that rewrites the members table.
+          this.db.exec(`
+            CREATE TABLE account_vaults (
+              member_id TEXT PRIMARY KEY CHECK (length(member_id) = 32),
+              household_id TEXT NOT NULL REFERENCES households(id),
+              version INTEGER NOT NULL CHECK (version >= 1),
+              updated_at INTEGER NOT NULL,
+              ciphertext BLOB NOT NULL CHECK (length(ciphertext) BETWEEN ${MIN_ACCOUNT_VAULT_BYTES} AND ${MAX_ACCOUNT_VAULT_BYTES})
+            );
+            CREATE INDEX account_vaults_by_household ON account_vaults(household_id);
+            CREATE TABLE account_vault_wrappers (
+              member_id TEXT NOT NULL REFERENCES account_vaults(member_id) ON DELETE CASCADE,
+              household_id TEXT NOT NULL REFERENCES households(id),
+              wrapper_id TEXT NOT NULL CHECK (length(wrapper_id) = 32),
+              type TEXT NOT NULL CHECK (type IN ('password', 'passkey', 'password-passkey', 'backup-code')),
+              version INTEGER NOT NULL CHECK (version >= 1),
+              params TEXT NOT NULL CHECK (length(params) <= ${MAX_ACCOUNT_VAULT_WRAPPER_PARAMS_BYTES}),
+              wrapped BLOB NOT NULL CHECK (length(wrapped) = ${ACCOUNT_VAULT_WRAPPED_KEY_BYTES}),
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (member_id, wrapper_id)
+            );
+            CREATE INDEX account_vault_wrappers_by_household ON account_vault_wrappers(household_id);
+            CREATE TABLE account_passwords (
+              member_id TEXT PRIMARY KEY CHECK (length(member_id) = 32),
+              household_id TEXT NOT NULL REFERENCES households(id),
+              kdf_salt BLOB NOT NULL CHECK (length(kdf_salt) = 16),
+              kdf_iterations INTEGER NOT NULL CHECK (kdf_iterations >= ${MIN_ACCOUNT_PASSWORD_ITERATIONS}),
+              verifier TEXT NOT NULL CHECK (length(verifier) BETWEEN 1 AND 256),
+              updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX account_passwords_by_household ON account_passwords(household_id);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(21, Date.now());
+          sqlitePragma(this.db, "user_version = 21");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the account vault migration.", { cause: error });
       }
     }
   },

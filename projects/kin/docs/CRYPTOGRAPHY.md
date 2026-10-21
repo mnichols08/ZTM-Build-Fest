@@ -116,7 +116,113 @@ agreement keys are removed and migration verification completes.
 - Existing canonical event bytes are encrypted directly. Historical placeholder identities remain byte-for-byte intact; a separate signed, encrypted identity-binding control record establishes the authenticated importing identity for v8 replay. No semantic JSON event replacement is used.
 - Tests cover roundtrip, wrong keys, metadata substitution, ciphertext/signature/nonce mutation, unsupported/truncated envelopes, nonce variation, sealed-key restore, correct/wrong recipient, expiry, signature tampering, and actual two-trusted-device opaque relay exchange.
 
-Key generation and authenticated encryption use platform Web Crypto. The implementation has no custom cipher, MAC, nonce counter, or password-derived content key. [ADR 0018](decisions/0018-account-key-vault.md) (accepted, not yet implemented) allows a password-derived key, from Web Crypto PBKDF2-SHA-256, to wrap a member's vault key and a device's local root; it never encrypts content directly.
+Key generation and authenticated encryption use platform Web Crypto. The implementation has no custom cipher, MAC, nonce counter, or password-derived content key. [ADR 0018](decisions/0018-account-key-vault.md) (accepted) allows a password-derived key, from Web Crypto PBKDF2-SHA-256, to wrap a member's vault key and a device's local root; it never encrypts content directly. The vault formats, key derivations and service storage below are implemented (#564); password sign-in, the no-cookie sign-in, the backup code and the local password wrapper are later stories.
+
+## Account key vault (ADR 0018)
+
+Implemented in `web/security/account-vault.js` (formats and cryptography),
+`web/security/account-vault-sync.js` (keeping it current) and
+`server/account-vault-service.mjs` (storage and routes). All primitives are
+Web Crypto in the browser and Node's built-in `crypto` on the service.
+Nothing creates a vault yet; the first-run story will.
+
+**Vault key (VK).** 32 random bytes from `crypto.getRandomValues`, made once
+per member on their first device. It never leaves a device unwrapped.
+
+**Vault contents, format 1** (plaintext; exists only inside the sealed vault):
+
+```text
+u8  format (1)   u8 flags (0)
+u16 N, then N entries sorted by (family, epoch), no repeats:
+    u8 family (1 household, 2 chat)  u8 0  u16 epoch (1..128)  32-byte key
+u16 L, then L bytes: certification key, ECDSA P-256 PKCS8 (L = 0: none)
+u16 M, then M bytes: private-storage key (reserved, epic #480; M = 0 or 32)
+```
+
+Integers are big-endian; a decoder refuses unsorted, repeated or trailing
+bytes. The certification key is generated (`generateCertificationKey`) but
+certifying it and signing with it are a later story.
+
+**Sealed vault, format 1** (what the service stores, at most 64 KiB):
+
+```text
+"KVLT"  u8 format (1)  32-byte HKDF salt  12-byte nonce  ciphertext || 16-byte tag
+key  = HKDF-SHA-256(VK, salt, info "kin/vault/v1") -> AES-256-GCM
+AAD  = JSON ["kin/vault/v1", "1", householdId, memberId, "<vault version>"]
+```
+
+Every version is sealed under a fresh salt and nonce, so the AES key is
+single-use. The vault version is the service's version after the
+compare-and-set; binding it means a service can't relabel an old vault as
+the current one, or move a vault to another member or household. (It can
+still serve an older version under its own number: a rollback the device
+detects only against a version it has already seen.)
+
+**Wrapped vault key, wrapper format 1** (61 bytes):
+
+```text
+u8 format (1)  12-byte nonce  AES-256-GCM(KEK, VK) || tag
+AAD = JSON ["kin/vault-wrapper/v1", "1", householdId, memberId,
+            "<type>", "<wrapperId>", "<wrapper version>"]
+```
+
+Types are `password`, `passkey`, `password-passkey` and `backup-code`; the
+32-byte KEK is imported directly as a non-extractable AES-GCM key:
+
+| Wrapper | KEK |
+| --- | --- |
+| password | `passwordKey` (below) |
+| passkey | HKDF-SHA-256(PRF output, empty salt, info `kin/vault-passkey/v1`) |
+| password-passkey | HKDF-SHA-256(PRF output ‖ passwordKey, empty salt, info `kin/vault-2f/v1`); neither secret alone derives it |
+| backup-code | HKDF-SHA-256(32 code bytes, empty salt, info `kin/vault-backup/v1`) |
+
+The PRF output and the backup code are uniformly random 256-bit values, so
+HKDF needs no salt for them.
+
+**Password keys.** One stretch, split by HKDF:
+
+```text
+stretched   = PBKDF2-SHA-256(UTF-8(NFC(password)), memberSalt (16 random bytes),
+                             600,000 iterations, 256 bits)
+authKey     = HKDF-SHA-256(stretched, memberSalt, info "kin/auth/v1")           -> sent at sign-in
+passwordKey = HKDF-SHA-256(stretched, memberSalt, info "kin/vault-password/v1") -> never sent
+```
+
+Why one PBKDF2 run and HKDF rather than two PBKDF2 runs with
+domain-separated salts: a guesser pays the full 600,000 iterations per guess
+either way, but two runs would double the honest device's cost (seconds on a
+phone) without making any guess dearer. HKDF keyed by the stretched value is
+a PRF, so `authKey` reveals nothing about `passwordKey`: the service, which
+receives `authKey`, still can't open a password wrapper. A client refuses
+wrapper parameters below 600,000 iterations, so a service can't get a cheaper
+`authKey` by offering fewer. Iterations follow OWASP's 2023 PBKDF2-SHA-256
+guidance (ADR 0018 D2); Argon2id replaces PBKDF2 once Web Crypto ships it.
+
+**Password verifier (service).** The service stores only
+Argon2id(`authKey`), from Node's `crypto.argon2` (`server/account-password.mjs`):
+Argon2id v1.3, 19 MiB, 2 passes, parallelism 1, a 16-byte random salt and a
+32-byte tag (OWASP's first recommended configuration), kept as a PHC string
+so the parameters can rise later; a check uses the stored parameters within
+fixed bounds and compares in constant time. Nothing writes it yet (#557).
+
+**Keeping it current (#567).** When a device installs a household or chat
+epoch key it didn't hold, and it holds the member's VK, it merges the key
+into the vault by (family, epoch), seals the next version and uploads it
+compare-and-set. On a conflict it downloads, merges and retries once. A
+merge only adds keys; the same epoch with different key bytes is refused.
+Where a device keeps VK between sessions is decided by the story that first
+opens a vault on a device.
+
+**Service storage (server schema 21).** `account_vaults` (member, household,
+version, update time, sealed bytes), `account_vault_wrappers` (wrapper ID,
+type, version, public parameters: PBKDF2 salt and iterations, or the
+passkey's credential ID and PRF salt; and the 61 wrapped bytes) and
+`account_passwords` (PBKDF2 salt and iterations, Argon2id verifier). Routes
+serve only the session's own member on a trusted device; a vault is created
+with its first wrapper and can never lose its last; downloads are limited
+to 10 per member and 30 per address in 15 minutes. A download for a device
+without a cookie (#568) is a stub that refuses. The service never learns
+whether a device's unlock attempt failed; devices count their own.
 
 ## Claims boundary
 

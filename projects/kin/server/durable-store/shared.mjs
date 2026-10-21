@@ -2,7 +2,7 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const SERVER_SCHEMA_VERSION = 20;
+export const SERVER_SCHEMA_VERSION = 21;
 
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
 
@@ -36,6 +36,19 @@ export const MAX_HOUSEHOLD_CHAT_EVENTS = 250_000;
 export const MAX_CHAT_HIDDEN_RECORD_BYTES = 256 * 1024;
 /** A member's sealed read-receipt slot (#121): one small signed envelope. */
 export const MAX_CHAT_RECEIPT_BYTES = 4096;
+
+// Account key vaults (ADR 0018, #564): one sealed vault per member, opaque
+// to the service ("KVLT" format 1, web/security/account-vault.js), and the
+// wrappers that each hold the vault key under one way of opening it.
+export const MIN_ACCOUNT_VAULT_BYTES = 4 + 1 + 32 + 12 + 16 + 8;
+export const MAX_ACCOUNT_VAULT_BYTES = 64 * 1024;
+export const ACCOUNT_VAULT_WRAPPED_KEY_BYTES = 61;
+export const MAX_ACCOUNT_VAULT_WRAPPERS = 8;
+export const MAX_ACCOUNT_VAULT_WRAPPER_PARAMS_BYTES = 2048;
+export const ACCOUNT_VAULT_WRAPPER_TYPES = Object.freeze(["password", "passkey", "password-passkey", "backup-code"]);
+/** The fewest PBKDF2 iterations a password wrapper or verifier may record
+ * (ADR 0018 D2). */
+export const MIN_ACCOUNT_PASSWORD_ITERATIONS = 600_000;
 
 export const MAX_AUDIT_ROWS = 10_000;
 

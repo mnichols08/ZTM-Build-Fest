@@ -45,9 +45,12 @@ export const validationMethods = {
                (SELECT COUNT(*) FROM chat_key_packages WHERE household_id = ?) +
                (SELECT COUNT(*) FROM board_events WHERE household_id = ?) +
                (SELECT COUNT(*) FROM board_device_sequences WHERE household_id = ?) +
-               (SELECT COUNT(*) FROM board_relay_state WHERE household_id = ?) AS count`,
+               (SELECT COUNT(*) FROM board_relay_state WHERE household_id = ?) +
+               (SELECT COUNT(*) FROM account_vaults WHERE household_id = ?) +
+               (SELECT COUNT(*) FROM account_vault_wrappers WHERE household_id = ?) +
+               (SELECT COUNT(*) FROM account_passwords WHERE household_id = ?) AS count`,
           )
-          .get(...new Array(19).fill(householdId)).count;
+          .get(...new Array(22).fill(householdId)).count;
         if (retainedRows !== 0)
           throw new DurableStoreError("Kin deleted-household data is invalid.");
         continue;
@@ -124,6 +127,14 @@ export const validationMethods = {
     }
     if (!this.chatBlobUsageMatches())
       throw new DurableStoreError("Kin chat storage counts are invalid.");
+    // ADR 0018: every vault has a way to open it, and a wrapper never names
+    // a household other than its vault's.
+    if (this.db.prepare(`SELECT
+        (SELECT COUNT(*) FROM account_vaults v WHERE NOT EXISTS
+          (SELECT 1 FROM account_vault_wrappers w WHERE w.member_id = v.member_id)) +
+        (SELECT COUNT(*) FROM account_vault_wrappers w JOIN account_vaults v ON v.member_id = w.member_id
+          WHERE v.household_id <> w.household_id) AS count`).get().count !== 0)
+      throw new DurableStoreError("Kin account vault data is invalid.");
     return true;
   },
 };

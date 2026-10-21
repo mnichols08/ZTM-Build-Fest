@@ -158,6 +158,17 @@ Assets include household plaintext (items, handoffs, Talk topics, Pulse), event 
 
 Trust boundaries include the browser UI ↔ Rust/WASM engine, local browser storage, authorized device ↔ sync service, service ↔ database/logs, and one pairing device ↔ another. The service should relay ciphertext, while household content and content keys remain on authorized clients. A compromised authorized client is inside the confidentiality boundary and can expose what it can access.
 
+## Account key vault (ADR 0018, #564)
+
+| Threat | With the vault |
+| --- | --- |
+| Stolen copy of the service's database | Vault ciphertext and wrappers. With a passkey added: nothing to guess (256-bit PRF). Password-only wrapper (D3): weak passwords can be guessed offline at PBKDF2 cost (600,000 SHA-256 iterations per guess); the Argon2id(authKey) verifier (19 MiB, 2 passes) slows checking the password too. Old database backups keep old vaults and wrappers, including a password-only wrapper removed since. |
+| Malicious or compromised service | Can withhold the vault, refuse updates or serve an older version under its own number (the version is authenticated, so it can't relabel one as newer); a device detects rollback only against a version it has seen. Can't read the vault, move it to another member, or swap a wrapper's type or owner (all authenticated). |
+| Another member, a removed member or a revoked device | Refused by the routes: only the session's own member, on a trusted device, reads or writes their vault. |
+
+The ADR's full table (stolen password, phished passkey account, phishing)
+applies once password and passkey sign-in exist (#557, #568).
+
 ## v0.9.x threat assessment (historical; local lock added above)
 
 | Threat                                            | Protected                                                                                                           | Partially protected                                                                                                        | Not protected                                                                  |

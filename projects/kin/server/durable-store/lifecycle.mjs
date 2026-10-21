@@ -27,6 +27,10 @@ export function purgeHouseholdData(database, householdId) {
     database.prepare("DELETE FROM board_events WHERE household_id = ?").run(householdId);
     database.prepare("DELETE FROM board_device_sequences WHERE household_id = ?").run(householdId);
     database.prepare("DELETE FROM board_relay_state WHERE household_id = ?").run(householdId);
+    // Account vaults (ADR 0018): members' sealed keys and password verifiers.
+    database.prepare("DELETE FROM account_vault_wrappers WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM account_vaults WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM account_passwords WHERE household_id = ?").run(householdId);
   } finally {
     database.exec(`PRAGMA secure_delete = ${secureDelete ? "ON" : "OFF"}`);
   }
@@ -117,6 +121,9 @@ export const lifecycleMethods = {
       ),
       boardEvents: count(
         "SELECT (SELECT COUNT(*) FROM board_events WHERE household_id = ?1) + (SELECT COUNT(*) FROM board_device_sequences WHERE household_id = ?1) + (SELECT COUNT(*) FROM board_relay_state WHERE household_id = ?1) AS count",
+      ),
+      accountVaults: count(
+        "SELECT (SELECT COUNT(*) FROM account_vaults WHERE household_id = ?1) + (SELECT COUNT(*) FROM account_vault_wrappers WHERE household_id = ?1) + (SELECT COUNT(*) FROM account_passwords WHERE household_id = ?1) AS count",
       ),
       chatBlobs: count(
         "SELECT (SELECT COUNT(*) FROM chat_blobs WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_blob_claims WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_blob_usage WHERE household_id = ?1) AS count",
