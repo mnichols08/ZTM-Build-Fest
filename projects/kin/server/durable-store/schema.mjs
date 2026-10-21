@@ -952,6 +952,29 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the private blob migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 24) {
+      try {
+        this.transaction(() => {
+          // ADR 0021 §2 (#624): the household features an admin switched
+          // off, as a bit set (pairing-service/shared.mjs names the bits),
+          // and its revision. Plaintext authorization metadata like the chat
+          // and fridge policies; everything is on by default. The bound
+          // leaves room for the list to grow without a table rebuild.
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN features_off INTEGER NOT NULL DEFAULT 0
+              CHECK (features_off >= 0 AND features_off < 2147483648);
+            ALTER TABLE households ADD COLUMN features_revision INTEGER NOT NULL DEFAULT 0
+              CHECK (features_revision >= 0);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(25, Date.now());
+          sqlitePragma(this.db, "user_version = 25");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the household features migration.", { cause: error });
+      }
+    }
   },
 
   verify() {

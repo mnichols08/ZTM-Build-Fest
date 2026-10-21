@@ -95,8 +95,38 @@ export function boardPolicyOf(household) {
   };
 }
 
+/** Household features an admin can switch off (ADR 0021 §2, #624): each a
+ * stable bit in `households.features_off`. The list grows additively; a bit
+ * is never reused. web/features.js names the same bits for the devices. The
+ * service enforces only Chat and Fridge (their access becomes "none"); the
+ * rest is a layout the devices apply. */
+export const HOUSEHOLD_FEATURE_BITS = Object.freeze({
+  chat: 0, fridge: 1, meals: 2, routines: 3, turns: 4, week: 5, talk: 6,
+  sections: 7, "shopping-mode": 8, maintenance: 9, notes: 10, sitter: 11,
+  journal: 12, mine: 13,
+});
+export const KNOWN_FEATURE_MASK = Object.values(HOUSEHOLD_FEATURE_BITS).reduce((mask, bit) => mask | (2 ** bit), 0);
+
+/** `{ off, revision }`: the switched-off set (known bits only) and its
+ * revision. A household that never changed it has everything on. */
+export function featuresOf(household) {
+  const features = household?.features;
+  const off = Number.isSafeInteger(features?.off) && features.off >= 0 ? features.off & KNOWN_FEATURE_MASK : 0;
+  return {
+    off,
+    revision: Number.isSafeInteger(features?.revision) && features.revision >= 0 ? features.revision : 0,
+  };
+}
+
+export function featureOff(household, name) {
+  const bit = HOUSEHOLD_FEATURE_BITS[name];
+  return bit !== undefined && (featuresOf(household).off & (2 ** bit)) !== 0;
+}
+
 export function boardAccess(member, household, now = Date.now()) {
   if (!canParticipate(member, now)) return "none";
+  // Switched off by an admin (ADR 0021): no access for anyone, Adults too.
+  if (featureOff(household, "fridge")) return "none";
   const kind = normalizeMemberKind(member.kind);
   if (kind === "adult") return "write";
   const policy = boardPolicyOf(household);
@@ -126,6 +156,10 @@ export function privateAccess(member, household, now = Date.now()) {
 
 export function chatAccess(member, household, now = Date.now()) {
   if (!canParticipate(member, now)) return "none";
+  // Switched off by an admin (ADR 0021): every chat route refuses, as for
+  // "No access". The chat key's holders are derived, not stored, so turning
+  // it back on finds them as they were.
+  if (featureOff(household, "chat")) return "none";
   const kind = normalizeMemberKind(member.kind);
   if (kind === "adult") return "write";
   const policy = chatPolicyOf(household);

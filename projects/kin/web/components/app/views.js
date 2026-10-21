@@ -38,7 +38,8 @@ export class ViewBuilder {
     const segmentNav = (pageId, label) => {
       const nav = document.createElement("kin-segment-nav");
       nav.setAttribute("label", label);
-      nav.segments = SEGMENTS[pageId].map((entry) => ({ id: entry.id, label: entry.id === "hub" ? "Overview" : entry.label, hash: routeHash(pageId, entry.id) }));
+      // Segments of switched-off features (#625) aren't offered.
+      nav.segments = this.ctx.features.segmentEntries(pageId);
       return nav;
     };
     this.app.pages = new Map();
@@ -55,11 +56,14 @@ export class ViewBuilder {
     fridgeLink.className = "today-fridge-link";
     fridgeLink.href = routeHash("household", "fridge");
     fridgeLink.textContent = "Draw on the fridge";
+    // Links into a feature leave with it (#625, app/features.js).
+    fridgeLink.dataset.featureRoute = "household/fridge";
     // This week (#416): the next seven days in one list.
     const weekLink = document.createElement("a");
     weekLink.className = "today-week-link";
     weekLink.href = "#week";
     weekLink.textContent = "This week";
+    weekLink.dataset.featureRoute = "week";
     today.querySelector(".page-intro").append(this.app.todayDate, weekLink, fridgeLink);
     this.app.compose.setAttribute("mode", "today");
     this.app.compose.setAttribute("scope", "today");
@@ -69,11 +73,27 @@ export class ViewBuilder {
     this.app.onboarding = document.createElement("section");
     this.app.onboarding.className = "today-section onboarding-card";
     this.app.onboarding.hidden = true;
+    // Tonight's dinner is Meals' (#625).
+    this.app.tonight.dataset.feature = "meals";
+    // The calm one-time note when the household switches something off
+    // (#625, ADR 0021). app/features.js fills and shows it.
+    this.app.featuresNote = document.createElement("section");
+    this.app.featuresNote.className = "today-section features-note";
+    this.app.featuresNote.setAttribute("aria-label", "Changes to Kin");
+    this.app.featuresNote.hidden = true;
+    const featuresNoteText = document.createElement("p");
+    featuresNoteText.className = "features-note-text";
+    const featuresNoteOk = document.createElement("button");
+    featuresNoteOk.type = "button";
+    featuresNoteOk.className = "features-note-ok";
+    featuresNoteOk.textContent = "OK";
+    featuresNoteOk.addEventListener("click", () => this.ctx.features.dismissNote());
+    this.app.featuresNote.append(featuresNoteText, featuresNoteOk);
     // The first week's tips (#617, #622): one calm card at a time.
     this.app.todayTip = document.createElement("section");
     this.app.todayTip.className = "today-section today-tip";
     this.app.todayTip.hidden = true;
-    today.append(this.app.compose, this.app.tonight, this.app.catchUp, this.app.onboarding, this.app.today, this.app.todayTip);
+    today.append(this.app.featuresNote, this.app.compose, this.app.tonight, this.app.catchUp, this.app.onboarding, this.app.today, this.app.todayTip);
 
     // Lists: one list at a time, each with its own quick-add; export lives in
     // the list actions with its warning at the point of use.
@@ -157,6 +177,7 @@ export class ViewBuilder {
     this.app.talksStandalone.id = "talk-standalone";
     this.app.talksStandalone.className = "talk-standalone";
     this.app.talksStandalone.hidden = true;
+    this.app.talksStandalone.dataset.feature = "talk";
     handoffPanel.append(this.app.talksStandalone);
     chatPanel.append(this.app.chat);
     this.ctx.views.placeTalks();
@@ -195,6 +216,7 @@ export class ViewBuilder {
     for (const [segment, description] of HOUSEHOLD_HUB_LINKS) {
       const entry = SEGMENTS.household.find((candidate) => candidate.id === segment);
       const item = document.createElement("li");
+      item.dataset.featureRoute = `household/${segment}`;
       const link = document.createElement("a");
       link.className = "hub-link";
       link.href = routeHash("household", segment);
@@ -234,9 +256,12 @@ export class ViewBuilder {
     personalHeading.className = "hub-personal-heading";
     personalHeading.id = "hub-personal-heading";
     personalHeading.textContent = "Just for you";
+    // The journal is all that's here; it leaves with its feature (#625).
+    personalHeading.dataset.featureRoute = "journal";
     const personalLinks = document.createElement("ul");
     personalLinks.className = "hub-links hub-personal";
     personalLinks.setAttribute("aria-labelledby", personalHeading.id);
+    personalLinks.dataset.featureRoute = "journal";
     {
       const item = document.createElement("li");
       const link = document.createElement("a");
@@ -398,8 +423,16 @@ export class ViewBuilder {
     sitterPage.setAttribute("aria-label", "For the sitter");
     this.app.sitterEditor = document.createElement("kin-sitter-editor");
     sitterPage.append(this.app.sitterEditor);
-    household.append(hub, fridgePage, notesPage, sitterPage, areasPage, peoplePage, privacyPage, appearancePage);
-    this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["sitter", sitterPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
+    // Household features (#626, ADR 0021): a list with switches for admins,
+    // read-only for everyone else.
+    const featuresPage = document.createElement("section");
+    featuresPage.className = "household-subpage features-page";
+    featuresPage.setAttribute("aria-label", "Features");
+    this.app.householdFeatures = document.createElement("kin-household-features");
+    this.app.householdFeatures.controller = this.ctx.features;
+    featuresPage.append(this.app.householdFeatures);
+    household.append(hub, fridgePage, notesPage, sitterPage, areasPage, peoplePage, privacyPage, appearancePage, featuresPage);
+    this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["sitter", sitterPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage], ["features", featuresPage]]));
 
     // For you (#441): the page a Temporary member lands on.
     const foryou = page("foryou", "For you", "What the family left for you.");

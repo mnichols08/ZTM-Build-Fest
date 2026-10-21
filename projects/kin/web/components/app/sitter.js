@@ -77,6 +77,8 @@ export class SitterController {
   /** A Temporary member lands on For you, once per unlock, from Today. */
   landTemporaryMember() {
     if (this.app.householdStatus?.memberKind !== "temporary" || this.app.sitterLanded || this.app.simpleView) return;
+    // The sitter page switched off (#625): Today, as for everyone else.
+    if (!this.ctx.features.isOn("sitter")) return;
     this.app.sitterLanded = true;
     if (this.app.route?.page === "today") this.ctx.navigation.navigate("#foryou");
   }

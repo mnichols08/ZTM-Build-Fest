@@ -157,7 +157,8 @@ class KinQuickAdd extends HTMLElement {
     if (this.isDisabled || this.dialog.open) return;
     this.clearDraft();
     this.defaults = captureDefaults();
-    this.repeat.hidden = this.defaults.classification !== "need";
+    // Repeating tasks are Routines: offered only while Routines is on (#625).
+    this.repeat.hidden = this.defaults.classification !== "need" || this.repeatAllowed === false;
     this.renderRepeat();
     this.opener = opener?.isConnected ? opener : this.trigger;
     this.fallback = typeof fallback === "function" ? fallback : null;

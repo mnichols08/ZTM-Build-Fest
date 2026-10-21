@@ -16,7 +16,7 @@ const ROUTES = [
   "lists/todo", "lists/shopping", "lists/staples", "lists/meals", "lists/mine",
   "routines/all", "routines/checklists", "updates/handoffs", "updates/chat",
   "household/hub", "household/fridge", "household/notes", "household/sitter", "household/areas",
-  "household/people", "household/privacy", "household/appearance",
+  "household/people", "household/privacy", "household/appearance", "household/features",
 ];
 
 export async function easyModeRegressions(client, { until }) {
@@ -119,14 +119,17 @@ export async function easyModeRegressions(client, { until }) {
     const app = document.querySelector("kin-app");
     const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
     const calls = [];
+    // With Kin's own report dialog (#630) the button always shows and opens
+    // it; without it, a stand-in listener answers the probe.
+    const own = typeof app.ctx.report?.open === "function";
     const listener = (event) => { event.preventDefault(); calls.push({ probe: event.detail?.probe === true, route: event.detail?.route ?? null }); };
-    app.addEventListener("kin:report-problem", listener);
+    if (!own) app.addEventListener("kin:report-problem", listener);
     app.pages.get("lists").querySelector(".page-intro .help-button").click();
     await frame();
     const dialog = app.helpPanel.querySelector("dialog");
     const shows = [...dialog.querySelectorAll(".help-show-me")].map((button) => button.dataset.show);
     const report = dialog.querySelector(".help-report");
-    report?.click();
+    if (!own) report?.click();
     await frame();
     app.removeEventListener("kin:report-problem", listener);
     app.pages.get("lists").querySelector(".page-intro .help-button").click();
@@ -135,14 +138,14 @@ export async function easyModeRegressions(client, { until }) {
     complete.click();
     for (let i = 0; i < 5; i++) await frame();
     const target = document.activeElement;
-    const result = { shows: shows.length, report: Boolean(report), calls, closed: !dialog.open,
+    const result = { shows: shows.length, report: Boolean(report), calls, own, closed: !dialog.open,
       focus: target?.classList.contains("complete-control") ?? false, highlighted: target?.classList.contains("help-highlight") ?? false,
       outline: getComputedStyle(target).outlineStyle };
     app.ctx.help.clearHighlight();
     result.cleared = !target.classList.contains("help-highlight");
     return result;
   })()`);
-  assert.deepEqual(showMe, { shows: showMe.shows, report: true, calls: [{ probe: true, route: null }, { probe: false, route: "lists/todo" }], closed: true, focus: true, highlighted: true, outline: "solid", cleared: true },
+  assert.deepEqual(showMe, { shows: showMe.shows, report: true, calls: showMe.own ? [] : [{ probe: true, route: null }, { probe: false, route: "lists/todo" }], own: showMe.own, closed: true, focus: true, highlighted: true, outline: "solid", cleared: true },
     `Show me and Report a problem: ${JSON.stringify(showMe)}`);
   assert.ok(showMe.shows >= 2, "To do's Help shows where to add and where to complete");
 

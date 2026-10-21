@@ -575,6 +575,44 @@ Examples over time:
 
 It is the home for infrequent capabilities.
 
+### Household features — Adopted (#623, ADR 0021)
+
+A household that never uses the fridge or meals shouldn't have to look past
+them. **Household › Features** lists the parts of Kin that can be switched
+off, each with one plain sentence: Chat, Fridge, Meals, Routines, Taking
+turns, This week, Talk later, Store sections, Shopping mode, Maintenance,
+Notes & reference, Sitter page, Journal and Just for me. Today, Lists (To do
+and Shopping), Updates (handoffs) and Household are always on, and the page
+says so.
+
+- **Who:** a household admin turns switches on or off and taps **Save
+  features**; Kin then asks them to confirm it's them (their passkey, or
+  their password if they have no passkey yet). Everyone else sees the same
+  list read-only, each feature marked On or Off, with "Ask a household admin
+  if you'd like something turned on or off." A household that doesn't sync
+  (one person) saves on the device without a prompt.
+- **Off means hidden, never deleted.** A switched-off feature leaves the
+  navigation (Routines leaves the bottom bar), its page's segment links and
+  the Household overview, Today (tonight's dinner, routines, the fridge
+  link, private items), This week's rows, Search results, Quick add's
+  repeat choice, the share sheet, chat message actions (Talk later, Save as
+  a note) and the command palette; Help (#620) asks the same hook. Everything stays in the household's
+  history and is back the moment it's switched on.
+- **Links and shortcuts** into a switched-off feature (a bookmark, a
+  home-screen shortcut, an old link) open Today with one calm line: "This
+  week is turned off in your household, so Kin opened Today."
+- **Members are told once.** When something a member's device was showing
+  disappears, Today shows "Your household turned off Meals. Nothing was
+  deleted; a household admin can turn it back on under Household ›
+  Features." with an OK button. It doesn't come back until something else
+  is switched off. The admin who made the change sees "Features saved."
+  instead.
+- **Simple view** keeps its own short list (Today, Chat, the Fridge); Chat
+  and the Fridge leave it too when switched off.
+- **Easy mode and Help** (#616, #620) ask the same question of every
+  destination (`ctx.features.routeAvailable(route)`, web/features.js), so a
+  new surface hides switched-off features without knowing which they are.
+
 ---
 
 ## 5.2 `0.14.x` transition
@@ -2955,9 +2993,9 @@ section 1; accessibility details in
 - **Still stuck?** **Message a household admin** opens Chat with an admin's
   name ready ("@Sam ") when Chat is on, or Handoffs with the note field
   ready where Chat is off, and says what to do next. **Report a problem**
-  asks for the report dialog (#630) with `kin:report-problem`; it shows only
-  when something in Kin takes reports (a listener calls `preventDefault()`
-  on a probe that has `detail.probe: true`). In Simple view without Chat
+  asks for the report dialog (#630) with `kin:report-problem`; it shows when
+  that dialog is there (or, without it, when a listener answers a probe
+  that has `detail.probe: true` with `preventDefault()`). In Simple view without Chat
   there is no admin button, because Simple view has no Handoffs.
 
 ## First-week tips (#617, #622)

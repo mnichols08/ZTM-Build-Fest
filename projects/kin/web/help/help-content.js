@@ -174,6 +174,12 @@ export const HELP_TOPICS = Object.freeze({
       action("Make the text bigger.", "kin-personal-settings input[type=\"radio\"]"),
       action("Choose your colors.", "kin-appearance button"),
     ], "Only you. A household admin can also set the household's colors for everyone."),
+  "household/features": topic("Features",
+    "Which parts of Kin your household uses. A part that is switched off is hidden for everyone; nothing in it is deleted.",
+    [
+      action("Read what each part does.", ".features-item"),
+      action("A household admin switches parts on or off and saves.", ".features-switch"),
+    ], "Everyone in your household sees the list. Only a household admin can change it."),
   "dialog:quick-add": topic("Quick add",
     "Write something down fast, from any page.",
     [

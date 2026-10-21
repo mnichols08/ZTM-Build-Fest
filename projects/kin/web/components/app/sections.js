@@ -40,7 +40,13 @@ export class SectionsController {
       previous.itemSections.size === value.itemSections.size && [...value.itemSections].every(([id, section]) => previous.itemSections.get(id) === section);
     if (same) return;
     this.app.shoppingSections = value;
-    if (this.app.shoppingMode) this.app.shoppingMode.sections = value;
+    this.publish();
+  }
+
+  /** Hands the sections to shopping mode: none while Store sections is
+   * switched off (#625), so the list shows in one group without pickers. */
+  publish() {
+    if (this.app.shoppingMode) this.app.shoppingMode.sections = this.ctx.features?.isOn("sections") === false ? EMPTY : this.current;
   }
 
   /** Saves the whole ordered list (`[{ sectionId?, name }]`). New sections

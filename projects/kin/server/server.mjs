@@ -1975,6 +1975,39 @@ async function api(request, response, url, context) {
     json(response, 200, result);
     return;
   }
+  // Household features (ADR 0021 §2, #624): the policies' flow, its own
+  // purpose. The change carries the revision it was made from; both steps
+  // check it, so a stale screen fails before the passkey prompt.
+  if (request.method === "POST" && url.pathname === "/api/household/features/options") {
+    const change = service.featuresContext(session);
+    const requested = { off: body?.off, expectedRevision: body?.expectedRevision };
+    service.checkFeatureChange(service.households.get(change.householdId), requested);
+    json(response, 200, issueAuthenticationFlow(
+      { purpose: "set-household-features", off: requested.off, expectedRevision: requested.expectedRevision, memberId: change.memberId, deviceId: change.deviceId },
+      change.credentialIds,
+      context,
+    ));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/household/features/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "set-household-features") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
+    const result = withTransaction(context, () =>
+      service.setFeatures(session, { off: flow.off, expectedRevision: flow.expectedRevision }, auth.member.id),
+    );
+    // Chat and Fridge access may have changed: online members learn it now.
+    if (result.changed) syncService.chatPolicyChanged(auth.household.id);
+    json(response, 200, result);
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/household/chat-policy/options") {
     const change = service.chatPolicyContext(session);
     if (!CHAT_ACCESS.includes(body?.limited) || !CHAT_ACCESS.includes(body?.temporary)) throw badRequest();

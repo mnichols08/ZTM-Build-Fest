@@ -28,6 +28,7 @@ export const HOUSEHOLD_HUB_LINKS = Object.freeze([
   Object.freeze(["people", "Who is in your household, and adding a phone or computer."]),
   Object.freeze(["privacy", "Locking Kin, ways to sign in, and keeping a safe copy of everything."]),
   Object.freeze(["appearance", "Your colors, text size and easy mode."]),
+  Object.freeze(["features", "Which parts of Kin your household uses."]),
 ]);
 export const INLINE_SAVE_FAILED = "Couldn't save. Your text is still here.";
 

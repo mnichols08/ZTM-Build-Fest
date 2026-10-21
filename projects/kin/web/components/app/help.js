@@ -11,11 +11,10 @@
 // - "Still stuck?" offers "Message a household admin" — Chat with an
 //   admin's name ready to send to, or Handoffs where Chat is off — and
 //   "Report a problem", which asks the app with `kin:report-problem`. That
-//   event is the report dialog's (another part of epic #603): a listener
-//   that can take reports calls preventDefault(). Before showing the button
-//   Help asks with a probe (`detail.probe: true`, which a listener answers
-//   with preventDefault() and nothing else); with no listener the button
-//   isn't shown.
+//   event is the report dialog's (#630, app/report.js): when that controller
+//   is there the button shows. Otherwise Help asks with a probe
+//   (`detail.probe: true`, which a listener answers with preventDefault()
+//   and nothing else); with no listener the button isn't shown.
 // - The first week's tips (help/tips.js): one at a time on Today, each put
 //   away for good once dismissed or used, and at most one dealt with per
 //   unlock so they never queue up.
@@ -183,6 +182,8 @@ export class HelpController {
 
   /** Whether something in Kin takes problem reports (see the top). */
   reportAvailable() {
+    // Kin's own report dialog (#630, app/report.js) takes them.
+    if (typeof this.ctx.report?.open === "function") return true;
     const probe = new CustomEvent(REPORT_PROBLEM_EVENT, { bubbles: true, composed: true, cancelable: true, detail: { probe: true } });
     return !this.app.dispatchEvent(probe);
   }

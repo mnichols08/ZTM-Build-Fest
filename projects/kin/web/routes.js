@@ -40,6 +40,8 @@ export const SEGMENTS = Object.freeze({
     Object.freeze({ id: "people", label: "People & devices" }),
     Object.freeze({ id: "privacy", label: "Privacy & recovery" }),
     Object.freeze({ id: "appearance", label: "Identity & appearance" }),
+    // Household features (#626, ADR 0021): what the household switched off.
+    Object.freeze({ id: "features", label: "Features" }),
   ]),
 });
 

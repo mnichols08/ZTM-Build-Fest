@@ -189,6 +189,7 @@ export class ReferenceSection {
       row.append(fields);
       row.append(this.host.makeAttachmentControl("reference-record", record.recordId, record.title));
       const maintenance = document.createElement("section");
+      maintenance.dataset.feature = "maintenance";
       const maintenanceHeading = document.createElement("h4"); maintenanceHeading.textContent = "Maintenance";
       maintenance.append(maintenanceHeading);
       const history = document.createElement("ul");
