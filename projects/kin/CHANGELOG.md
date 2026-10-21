@@ -66,6 +66,21 @@ documentation only.
   store and sync pass on the device. Nothing visible yet: the pass stays off
   until the vault key is kept on the device (#557) and the journal, list and
   reminder stories add the first private records.
+- **My reminders and settings on all my devices** (#520, #521, #522, #523,
+  #524, #525, #526): with private storage on (members with an account), a
+  reminder set on one device goes off at the same instant on each of the
+  member's devices that allows notifications, and dismissing it on one
+  clears it on all of them; a reminder set in another time zone also says
+  the time where it was set. Theme, text size (new: Standard, Large,
+  Larger), Kin's own reduced-motion setting (new), whether reminders show as
+  notifications (new) and the app icon count follow the member, last change
+  winning per setting; **Use different settings on this device** keeps a
+  shared screen such as a kitchen tablet to itself. A device's own
+  reminders move into private storage once, without duplicates. Members set
+  up with a passkey and backup key keep everything on the device as before,
+  with one line offering an account. Private kinds 120, 121 and 130, KPRV
+  sections 12 and 13, made through `kin_private_execute` (no server
+  change).
 - **Home-screen shortcuts, finished** (#471, #472): long-press the installed
   icon for **Add to shopping**, **Add a task**, **This week**, Shopping, Chat
   and Today. The Add shortcuts open Quick add on Shopping or To do with the

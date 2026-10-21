@@ -302,13 +302,47 @@ catch-up summary, household search or household exports.
 |---|---|---|
 | 100 | `PRIVATE_NOTE_SET` | note ID, text length u32 (0 removes it; at most 2,048 bytes), text (line feeds allowed, no other control characters) |
 | 110–118 | "Just for me" | below |
+| 120 | `REMINDER_SET` (#522) | target kind u8 (1 item, 2 routine), target ID, due instant (Unix ms, UTC), the setter's UTC offset in minutes (−720 to 840) and IANA time zone (0–64 ASCII bytes; empty when unknown) |
+| 121 | `REMINDER_CLEARED` (#522) | target kind, reason u8 (1 canceled, 2 done, 3 dismissed), target ID, the instant it clears |
+| 130 | `SETTING_SET` (#525) | key u16 (1–255), value (0–32 bytes of `a-z 0-9 -`; empty unsets the key) |
 
-Kind 100 is a placeholder that proves the log end to end; the journal (#496),
-"Just for me" (#510) and reminders and settings that follow a member (#520)
-add their own kinds and replace it if they need to. Replay
-(`rust/src/private.rs`) never fails on a decoded private event, except that
-every event in one log must have the same author: the latest note for an ID
-in replay order wins, and empty text removes it.
+Kind 100 is a placeholder that proves the log end to end; the journal (#496)
+and "Just for me" (#510) add their own kinds and replace it if they need to.
+Codes 120–129 belong to reminders and 130–139 to settings (#520,
+`rust/src/private_prefs.rs`). Replay (`rust/src/private.rs`) never fails on
+a decoded private event, except that every event in one log must have the
+same author: the latest note for an ID in replay order wins, and empty text
+removes it.
+
+**Reminders and settings that follow a member (#520).** A reminder is keyed
+by the item or routine it is about, so a member has at most one per thing
+and setting it again (on any device) moves it; that keeps the one-time move
+of a device's own reminders into the log free of duplicates. It keeps an
+absolute instant, so every device fires at the same moment whatever its
+zone, and the setter's zone and offset only to say "9:00 where it was set".
+Replay order (logical time, then device ID, then event ID) decides, never a
+device clock:
+
+- `REMINDER_SET` replaces the thing's reminder.
+- `REMINDER_CLEARED` for "canceled" removes it whatever its instant; "done"
+  and "dismissed" remove it only while it is still set for the instant they
+  name, so a dismissal of 9:00 that arrives after someone moved it to 10:00
+  leaves 10:00.
+- `SETTING_SET` is last-writer-wins per key: the latest in replay order
+  wins (by logical time, then device ID), and an empty value unsets the key.
+  Keys 1 `theme-mode` (household, system, light, dark), 2 `theme-color`
+  (household, default, `preset-` or `custom-` and six lowercase hex digits),
+  3 `text-size` (standard, large, larger), 4 `motion` (system, reduce), 5
+  `reminder-alerts` (on, off), 6 `app-badge` (off, messages,
+  messages-and-mine) and 7 `private-on-today` (on, off; reserved: Just for
+  me keeps its Today setting as kind 118, which already follows the member)
+  take only those values; any other key takes any token, so an older engine
+  keeps a later release's settings unchanged.
+
+Commands (`kin_private_execute`) must change something: a reminder set
+exactly as it is, a clear of a thing with no reminder (or a done or dismissed
+for an instant it no longer has), or a setting set to its current value is
+refused with code 4.
 
 ### Just for me (kinds 110–119)
 

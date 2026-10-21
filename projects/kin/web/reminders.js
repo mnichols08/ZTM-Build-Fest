@@ -1,7 +1,10 @@
-// Browser-local, foreground reminders. These are intentionally ephemeral: the
-// browser may suspend timers or terminate the page, so this is not a scheduler.
-// Lock suspends them: timers stop and titles are dropped, keeping only
-// { id, at, vaultId } in memory until the same vault unlocks again.
+// Browser-local, foreground reminder timers. These are intentionally
+// ephemeral: the browser may suspend timers or terminate the page, so this is
+// not a scheduler. Lock suspends them: timers stop and titles are dropped,
+// keeping only { id, at, vaultId } in memory until the same vault unlocks
+// again. With private storage on, the reminders themselves live in the
+// member's private log (#522) and app/private-prefs.js arms these timers from
+// it on every device that allows notifications.
 export class LocalReminders {
   // Browser timer functions must be called with the global as `this`; storing
   // them as instance methods and calling `this.setTimer(...)` would throw
@@ -30,7 +33,8 @@ export class LocalReminders {
   }
 
   // Delivers once at `at`, or on the next task when `at` has already passed.
-  arm({ id, title, at, isCurrent, token = null }) {
+  // `onShown(notification)` hears about the notification once it is shown.
+  arm({ id, title, at, isCurrent, token = null, onShown = null }) {
     this.cancel(id);
     this.suspended.delete(id);
     const entry = { at, timer: null, token };
@@ -39,7 +43,9 @@ export class LocalReminders {
       const remaining = at - this.now();
       if (remaining > 0) { entry.timer = this.setTimer(tick, Math.min(remaining, 2_147_000_000)); return; }
       this.entries.delete(id);
-      try { if (isCurrent()) new this.notification(title, { body: "A household reminder you asked for.", tag: `kin-${id}` }); } catch { /* Permission or browser state may change before delivery. */ }
+      let shown = null;
+      try { if (isCurrent()) shown = new this.notification(title, { body: "A household reminder you asked for.", tag: `kin-${id}` }); } catch { /* Permission or browser state may change before delivery. */ }
+      if (shown && onShown) try { onShown(shown); } catch { /* the reminder was still delivered */ }
     };
     entry.timer = this.setTimer(tick, Math.max(0, Math.min(at - this.now(), 2_147_000_000)));
     this.entries.set(id, entry);

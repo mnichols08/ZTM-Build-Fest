@@ -112,7 +112,8 @@ is not claimed without direct assistive-technology testing.
 - Maintain readable contrast for text, controls, boundaries, and focus states.
 - Support browser zoom and reflow at narrow viewport widths without loss of functionality.
 - Use touch targets large enough for one-handed mobile use; do not make a tiny icon the only way to complete an item.
-- Respect `prefers-reduced-motion`; avoid unnecessary motion.
+- Respect `prefers-reduced-motion`; avoid unnecessary motion. Kin's own **Reduce motion in Kin** (#524) applies the same rules (`data-kin-motion="reduce"` on the root; scripts ask `prefersReducedMotion()` in `web/appearance/display-prefs.js`) for a member whose device doesn't offer the system setting, and follows them to their other devices.
+- Kin's **Text size** (#524: Large 112.5%, Larger 125%) scales the page as browser zoom does, so it reflows at 320 px without sideways scrolling and composes with the browser's zoom.
 - Use ARIA only when native HTML cannot express the needed semantics.
 - Test custom elements and shadow-boundary event behavior with keyboard and assistive technology where practical.
 

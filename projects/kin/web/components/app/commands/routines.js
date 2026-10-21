@@ -27,7 +27,7 @@ export class RoutineCommands {
       this.ctx.session.assertCurrentSession(session);
       committed = true;
       if (["complete-routine-occurrence", "archive-routine"].includes(submitted.type))
-        this.app.localReminders.cancel(`routine:${submitted.routineId}`);
+        void this.ctx.privatePrefs.endReminder(`routine:${submitted.routineId}`, "done").catch(() => {});
       this.ctx.peers.broadcastEventChange();
       this.ctx.render.renderState();
       if (submitted.type === "create-routine")
@@ -120,7 +120,7 @@ export class RoutineCommands {
       }
       step = null;
       this.app.pendingScheduleChange = null;
-      this.app.localReminders.cancel(`routine:${change.routineId}`);
+      void this.ctx.privatePrefs.endReminder(`routine:${change.routineId}`, "canceled").catch(() => {});
       this.app.routines.closeSchedule(change.routineId);
       this.ctx.peers.broadcastEventChange();
       this.ctx.render.renderState();

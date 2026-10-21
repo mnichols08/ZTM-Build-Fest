@@ -357,6 +357,26 @@ check the sequence they started from. The database is created only once the
 device holds a vault key (ADR 0018); it stays on a device that leaves the
 household, sealed under keys that device keeps, like the other logs.
 
+Reminders and personal settings that follow the member (#520) are private
+events in this log (kinds 120, 121 and 130); nothing about them is stored
+anywhere else on the device in a readable form, except what the device
+itself applies:
+
+- The theme a synced setting picks is saved into the device's personal
+  appearance record (`personal_appearance`, encrypted with the household
+  data), so an offline unlock opens with it.
+- Text size (`kin.text-size`: `large` or `larger`), Kin's reduced-motion
+  override (`kin.motion`: `reduce`), whether reminders show as notifications
+  (`kin.reminder-alerts`: `off`) and "Use different settings on this
+  device" (`kin.settings-this-device`: `on`) are localStorage values, as the
+  automatic lock and the app icon count (`kin.app-badge`) already were, so the
+  lock screen shows the chosen size and motion. Defaults are stored as
+  nothing. They say nothing about the household.
+- Reminder timers are still in-memory only (`web/reminders.js`); a lock
+  suspends them as before. The device remembers, in memory, which reminders it
+  armed from the log and which it already showed, so a reminder never goes
+  off twice in one session.
+
 **Private blobs (#502).** Journal photos are kept in their own database per
 member, `kin-private-blobs:<householdId>:<memberId>`, version 1
 (`web/private/private-blobs.js`): `blobs` (`{ ref, ciphertext, storedAt,

@@ -4,7 +4,7 @@ import {
   decodePrivate, encodeCivilDate, encodeJournalPayload, encodePrivateIntent, encodePrivateItemPayload, FIRST_JOURNAL_KIND,
   FIRST_PRIVATE_ITEM_KIND, FIRST_PRIVATE_KIND, isPrivateKind, JOURNAL_EVENT_KINDS, journalTextProblem, MAX_PRIVATE_ITEM_NOTE_BYTES,
   MAX_PRIVATE_ITEM_TEXT_BYTES, normalizeJournalBody, normalizeJournalTitle, PRIVATE_EVENT_KINDS, PRIVATE_ITEM_COMMANDS,
-  PRIVATE_ITEM_EVENT_KINDS, privateCommandKind, PrivateFormatError,
+  PRIVATE_ITEM_EVENT_KINDS, privateCommandKind, PrivateFormatError, PREFS_EVENT_KINDS,
 } from "./kin-private.js";
 
 const encoder = new TextEncoder();
@@ -52,7 +52,7 @@ function kprv({ member = new Uint8Array(16), count = 0, notes = [], extra = [] }
 }
 
 test("an empty private log reads as no member and no notes", () => {
-  assert.deepEqual(decodePrivate(kprv()), { memberId: null, recordCount: 0, notes: [], items: [], onToday: true, journal: [] });
+  assert.deepEqual(decodePrivate(kprv()), { memberId: null, recordCount: 0, notes: [], items: [], onToday: true, reminders: [], settings: {}, journal: [] });
 });
 
 test("notes read in the order Rust wrote them", () => {
@@ -94,6 +94,8 @@ test("private kinds start at 100", () => {
   assert.deepEqual(JOURNAL_EVENT_KINDS, ["JOURNAL_ENTRY_CREATED", "JOURNAL_ENTRY_EDITED", "JOURNAL_ENTRY_DELETED", "JOURNAL_ENTRY_RESTORED"]);
   assert.ok(isPrivateKind("JOURNAL_ENTRY_RESTORED"));
   assert.ok(isPrivateKind("PRIVATE_NOTE_SET"));
+  assert.deepEqual(PREFS_EVENT_KINDS, ["REMINDER_SET", "REMINDER_CLEARED", "SETTING_SET"]);
+  assert.ok(isPrivateKind("PRIVATE_NOTE_SET") && isPrivateKind("SETTING_SET") && isPrivateKind("REMINDER_CLEARED"));
   assert.ok(!isPrivateKind("BOARD_STROKE_ADDED"));
 });
 

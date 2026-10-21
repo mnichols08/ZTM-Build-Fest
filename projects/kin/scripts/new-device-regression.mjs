@@ -112,7 +112,7 @@ async function createHousehold(founder) {
 
 /** Signs in on this fresh browser and answers "Which device is this?" with
  * `choice` ("new", or a device ID this one replaces). */
-async function signInHere(founder, choice) {
+export async function signInHere(founder, choice) {
   const checks = [];
   const check = (value, message) => { if (!value) throw new Error(message); checks.push(message); };
   const wait = async (condition, label, ms = 60_000) => {

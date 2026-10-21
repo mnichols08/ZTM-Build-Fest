@@ -26,6 +26,7 @@ import { ROTATION_COMMANDS, ROTATION_EVENT_KINDS, RotationFormatError, decodeRou
 import { SITTER_COMMANDS, SITTER_EVENT_KINDS, SitterFormatError, decodeSitterPage, encodeSitterIntent } from "./kin-sitter.js";
 import { FIRST_PRIVATE_KIND, MAX_PRIVATE_EVENT_COUNT, PRIVATE_EVENT_KINDS, decodePrivate } from "./kin-private.js";
 import { FIRST_JOURNAL_KIND, FIRST_PRIVATE_ITEM_KIND, JOURNAL_EVENT_KINDS, PRIVATE_ITEM_EVENT_KINDS, PrivateFormatError, encodePrivateIntent } from "./kin-private.js";
+import { encodePrefsIntent, PREFS_COMMANDS, PREFS_KIND_CODES, PrefsFormatError } from "./kin-prefs.js";
 
 export { idToHex, KinEngineError };
 
@@ -428,6 +429,8 @@ export function createEngine(instanceExports) {
     // JOURNAL_COMMANDS, #498)
     // validated against the member's private log: { encodedEvent, metadata }.
     // `identity` names the event (hex IDs, timestamp, logical time).
+    // Reminders and settings (#520, kin-prefs.js PREFS_COMMANDS) take the
+    // same path.
     executePrivateCommand: (command, identity, privateRecords, asOf, civilDate, syncIdentity = null) =>
       executePrivateCommand(exports, privateMirror, command, identity, privateRecords, asOf, civilDate, syncIdentity),
   };
@@ -437,9 +440,9 @@ function executePrivateCommand(exports, privateMirror, command, identity, privat
   if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
   if (privateRecords.length > MAX_PRIVATE_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
   let intent;
-  try { intent = encodePrivateIntent(command, identity); }
+  try { intent = PREFS_COMMANDS.includes(command?.type) ? encodePrefsIntent(command, identity) : encodePrivateIntent(command, identity); }
   catch (error) {
-    if (error instanceof PrivateFormatError) throw new KinEngineError(2, error.message);
+    if (error instanceof PrivateFormatError || error instanceof PrefsFormatError) throw new KinEngineError(2, error.message);
     throw error;
   }
   // u32 intent length, KCMD, then the record-less KINE context.
@@ -1220,6 +1223,8 @@ PRIVATE_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_PRIVATE_KIND + 
 PRIVATE_ITEM_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_PRIVATE_ITEM_KIND + index] = kind; });
 // The journal (#496): kinds 101–104.
 JOURNAL_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_JOURNAL_KIND + index] = kind; });
+// Reminders and settings (#520): kinds 120, 121 and 130.
+for (const [kind, code] of Object.entries(PREFS_KIND_CODES)) EVENT_KINDS[code] = kind;
 
 // The command field that names each event's own entity (packet offset 92).
 // Other ID fields on a command are references to a different entity: a

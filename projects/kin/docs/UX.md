@@ -1445,7 +1445,71 @@ household record.
   Redo. A failure after the copy says so, and trying again copies nothing
   twice.
 
-## 8.14 Your journal (#496)
+## 8.14 Reminders and settings on all my devices (#520)
+
+A member's reminders and personal settings follow them to every device they
+use, in their private storage ([ADR 0019](decisions/0019-member-private-log.md)):
+no other member, admin or the service can read them.
+
+- **Reminders.** "Remind me" on an item or a routine is unchanged: date,
+  time, three shortcuts, a readable preview, **Set reminder**. With private
+  storage on, the group is headed "Reminder" (not "Reminder on this
+  device"), the preview reads "Reminds Tue, Oct 20, 9:00 AM." and the note
+  under it "On your devices that allow notifications, while Kin is open."
+  Setting it says "Reminder set. It goes off on your devices that allow
+  notifications while Kin is open."; where this browser blocks
+  notifications, "Reminder set for your other devices. Notifications are
+  blocked in this browser's settings." It goes off at the same instant on
+  each of the member's devices that allows notifications and is open. A
+  reminder set in another time zone also says the time where it was set:
+  "Reminds Tue, Oct 20, 3:00 PM (9:00 AM in America/New_York, where it was
+  set)." Clicking or closing the notification on one device clears it on
+  all of them (their notifications close on the next sync); **Cancel
+  reminder** cancels it everywhere ("Reminder canceled on all your
+  devices."); completing or archiving the item, finishing or archiving the
+  routine, or changing the item's date or the routine's schedule ends it
+  everywhere, as it already did on one device. A reminder that came due
+  more than ten minutes before a device opened Kin stays quiet there.
+- **Settings that follow you.** Theme (light, dark, system or the
+  household's; the color, unless it comes from this device's own background
+  picture, which stays here), text size, reduced motion, whether reminders
+  show as notifications, and the count on the app icon. Household →
+  Identity & appearance gains **Text, motion and reminders**: Text size
+  (Standard, Large, Larger), **Reduce motion in Kin** (Kin also follows the
+  device's own setting), **Show my reminders as notifications**, and, where
+  private storage is on, **Use different settings on this device** ("For a
+  shared screen such as a kitchen tablet: changes here stay here, and
+  changes on your other devices don't arrive."). Reminders follow the member
+  either way. When two devices change the same setting, the later change
+  wins; different settings never overwrite each other. Simple view is not a
+  personal setting: it stays the household admin's choice for the member
+  ([§8.12](#812-simple-view-341)), so a kitchen tablet keeps its own layout.
+  "Show my dated private things on my Today and This week" is Just for me's
+  own setting ([§8.13](#813-just-for-me-510)), which already follows the
+  member; setting key 7 stays reserved for it.
+- **One line says where they live:** "Your theme, the app icon count and
+  these choices follow you to your other devices, and so do your
+  reminders."; "This device keeps its own settings. Your reminders still
+  follow you."; "Your household has turned off private storage for you, so
+  your reminders and these choices stay on this device."; or, for a member
+  set up the old way (passkey and backup key, no account), "Your reminders
+  and these choices stay on this device. Set up an account to have them on
+  all your devices." Without private storage everything works exactly as
+  before, on this device.
+- **The first device** to open with private storage brings what it has: a
+  reminder set on it before (they lived only in that tab) moves into the
+  member's private storage once, without duplicates, and settings it changed
+  from the defaults become the member's where nothing synced yet. A device
+  opening later takes the member's settings. The member key is made on the
+  first private change; a device that was already open picks it up on its
+  next sync.
+- **Text size** scales the whole page as browser zoom does (Large 112.5%,
+  Larger 125%): lines reflow, nothing scrolls sideways, and it composes with
+  the browser's own zoom up to 200%. Text size and reduced motion are kept
+  on the device unencrypted (they say nothing about the household), so the
+  lock screen opens at the same size.
+
+## 8.15 Your journal (#496)
 
 A private place to write about the household's days, built on each member's
 private storage ([ADR 0019](decisions/0019-member-private-log.md)). Only the

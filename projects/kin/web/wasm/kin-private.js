@@ -4,9 +4,10 @@
 //
 // Kinds 100–199 are reserved for private records: the placeholder
 // PRIVATE_NOTE_SET (100); "Just for me" (#510) owns 110–119 and KPRV section
-// 11 (rust/src/private_items.rs); the journal and reminders/settings stories
-// add theirs, and their own KPRV sections. The journal (#496) owns 101–109
-// and KPRV section 101 (rust/src/journal.rs).
+// 11 (rust/src/private_items.rs); reminders and settings that follow a member
+// (#520) own 120–139 and KPRV sections 12 and 13 (kin-prefs.js); the journal
+// (#496) owns 101–109 and KPRV section 101 (rust/src/journal.rs).
+import { decodeReminders, decodeSettings, PREFS_KIND_CODES, SECTION_REMINDERS, SECTION_SETTINGS } from "./kin-prefs.js";
 
 export const FIRST_PRIVATE_KIND = 100;
 export const LAST_PRIVATE_KIND = 199;
@@ -42,6 +43,8 @@ export const PRIVATE_ITEM_COMMANDS = Object.freeze([
 export const MAX_PRIVATE_ITEMS = 2000;
 export const MAX_PRIVATE_ITEM_TEXT_BYTES = 4096;
 export const MAX_PRIVATE_ITEM_NOTE_BYTES = 2048;
+/** Reminders and settings (#520): kinds 120, 121 and 130 (kin-prefs.js). */
+export const PREFS_EVENT_KINDS = Object.freeze(Object.keys(PREFS_KIND_CODES));
 /** The journal (#496): event kinds from 101, in order (105–109 reserved). */
 export const FIRST_JOURNAL_KIND = 101;
 export const JOURNAL_EVENT_KINDS = Object.freeze([
@@ -81,7 +84,8 @@ export class PrivateFormatError extends Error {
 
 /** Whether a kind name (KMET `kind`) is a private kind. */
 export function isPrivateKind(kind) {
-  return PRIVATE_EVENT_KINDS.includes(kind) || PRIVATE_ITEM_EVENT_KINDS.includes(kind) || JOURNAL_EVENT_KINDS.includes(kind);
+  return PRIVATE_EVENT_KINDS.includes(kind) || PRIVATE_ITEM_EVENT_KINDS.includes(kind) || PREFS_EVENT_KINDS.includes(kind) ||
+    JOURNAL_EVENT_KINDS.includes(kind);
 }
 
 function toHex(bytes) {
@@ -97,9 +101,11 @@ function toHex(bytes) {
  * list (section 11, #510): `[{ id, addedAt, changedAt, date, completed,
  * text, note }]` in ID order, with `date` a civil date (YYYYMMDD) or null;
  * `onToday` is whether dated items show on Today and This week (on until the
- * member turns it off). Sections this release doesn't know are skipped, so a
- * later engine's additions never break an older reader. `journal` is the
- * journal (section 101, #496), newest first as Rust ordered it.
+ * member turns it off). `reminders` (section 12) and `settings` (section 13,
+ * #520) are kin-prefs.js decodeReminders and decodeSettings. `journal` is the
+ * journal (section 101, #496), newest first as Rust ordered it. Sections this
+ * release doesn't know are skipped, so a later engine's additions never break
+ * an older reader.
  */
 export function decodePrivate(bytes) {
   const invalid = () => new PrivateFormatError();
@@ -115,6 +121,8 @@ export function decodePrivate(bytes) {
     notes: [],
     items: [],
     onToday: true,
+    reminders: [],
+    settings: {},
     journal: [],
   };
   const sections = view.getUint16(28, true);
@@ -125,9 +133,14 @@ export function decodePrivate(bytes) {
     const length = view.getUint32(at + 4, true);
     if (code <= previous || view.getUint16(at + 2, true) !== 0 || at + 8 + length > bytes.length) throw invalid();
     previous = code;
-    if (code === SECTION_NOTES) result.notes = decodeNotes(bytes.subarray(at + 8, at + 8 + length));
-    if (code === SECTION_ITEMS) Object.assign(result, decodeItems(bytes.subarray(at + 8, at + 8 + length)));
-    if (code === SECTION_JOURNAL) result.journal = decodeJournal(bytes.subarray(at + 8, at + 8 + length));
+    const body = bytes.subarray(at + 8, at + 8 + length);
+    if (code === SECTION_NOTES) result.notes = decodeNotes(body);
+    if (code === SECTION_ITEMS) Object.assign(result, decodeItems(body));
+    if (code === SECTION_JOURNAL) result.journal = decodeJournal(body);
+    try {
+      if (code === SECTION_REMINDERS) result.reminders = decodeReminders(body);
+      if (code === SECTION_SETTINGS) result.settings = decodeSettings(body);
+    } catch { throw invalid(); }
     at += 8 + length;
   }
   if (at !== bytes.length) throw invalid();

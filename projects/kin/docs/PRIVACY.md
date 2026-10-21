@@ -39,6 +39,20 @@ as are reminders from another vault. Logout, leaving or deletion of the
 household, and restoring an export discard reminders entirely. Reload and tab
 close also discard them.
 
+With private storage on (#520), a reminder is a private record in the
+member's own private log instead: sealed under their member key, relayed only
+to their own devices, and readable by none of the household's other members,
+its admins or the service. It names the item or routine by ID, its due
+instant, and the setter's UTC offset and IANA time zone at that instant (so
+another device can say "9:00 where it was set"); never the item's text. Each
+device that allows notifications arms it from the log with the title read
+from the household records while unlocked, exactly as above; dismissing it
+on one device records that it was dismissed, which clears it on the others.
+The time zone is a coarse location; it stays inside the member's private
+storage. Personal settings that follow the member (theme, text size, reduced
+motion, reminder alerts, the app icon count) are private records the same
+way.
+
 Same-origin tabs may exchange the fixed `events-changed` notification over `BroadcastChannel` after a committed write. The notification contains no household or event content; each tab reloads the event log from IndexedDB and reconstructs its own view locally.
 
 Since You Last Looked stores only a local event cursor and local timestamp in the existing `local_context` singleton. A cursor means that this installation explicitly advanced through a boundary; it does not identify a person or assert that a named member read anything. Viewing or marking the summary does not write a household event. The additional `view-state-changed` BroadcastChannel message is a fixed, content-free marker; it carries no cursor, IDs, count, text, actor, or device.
@@ -222,7 +236,12 @@ that only stops the service relaying it, and nobody gains access to what is
 already on the child's devices. Temporary members have none. Removing a
 member deletes their private stream on the service; deleting the household
 deletes every member's. Copies on the member's own devices stay, as for
-household data. Household exports never include private logs.
+household data. Household exports never include private logs. Reminders and
+settings that follow a member (#520) make the member key on the member's
+first private change: a reminder, or a setting changed from Kin's default
+(a device that already has some brings them the first time it opens with
+private storage). From then on the service learns that the member uses
+private storage.
 
 **Just for me (#510).** Private to-dos, notes on them and the member's
 "show on my Today" setting are private-log records (kinds 110–118): sealed

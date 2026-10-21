@@ -32,6 +32,7 @@ import { MealsController } from "./meals.js";
 import { SimpleController } from "./simple.js";
 import { ShareController } from "./share.js";
 import { BadgeController } from "./badge.js";
+import { PrivatePrefsController } from "./private-prefs.js";
 import { WeekController } from "./week.js";
 import { SitterController } from "./sitter.js";
 import { JournalController } from "./journal.js";
@@ -83,6 +84,7 @@ export function createAppContext(app) {
   ctx.chatShare = new ChatShareController(ctx);
   ctx.share = new ShareController(ctx);
   ctx.badge = new BadgeController(ctx);
+  ctx.privatePrefs = new PrivatePrefsController(ctx);
   ctx.week = new WeekController(ctx);
   ctx.sitter = new SitterController(ctx);
   // The member's journal (#496): private, never household state.
@@ -266,7 +268,16 @@ export function initializeAppState(app) {
     app.onOpenChatMessage = (event) => app.ctx.navigation.handleOpenChatMessage(event.detail);
     app.onPlaybookIntent = (event) => app.ctx.routines.handlePlaybookIntent(event);
     app.onLocalReminder = (event) => app.ctx.records.handleLocalReminder(event.detail);
-    app.onCancelLocalReminder = (event) => { app.localReminders.cancel(event.detail.id); app.ctx.records.renderReminders(); app.ctx.status.setStatus("Reminder canceled on this device."); };
+    app.onCancelLocalReminder = (event) => {
+      const synced = app.ctx.privatePrefs.available;
+      void app.ctx.privatePrefs.endReminder(event.detail.id, "canceled").catch(() => {}).then(() => app.ctx.records.renderReminders());
+      app.ctx.records.renderReminders();
+      app.ctx.status.setStatus(synced ? "Reminder canceled on all your devices." : "Reminder canceled on this device.");
+    };
+    // Text size, motion and reminder alerts (#524), and "Use different
+    // settings on this device".
+    app.onPersonalSetting = (event) => { void app.ctx.privatePrefs.setDisplaySetting(event.detail.name, event.detail.value); };
+    app.onSettingsThisDevice = (event) => { event.detail.kept = app.ctx.privatePrefs.setDeviceOnly(event.detail.on); };
     app.onModeChange = () => app.ctx.records.saveMode(app.modeSelect.value);
     app.pulseTimer = null;
     app.catchUpCursor = null;
@@ -383,7 +394,10 @@ export function initializeAppState(app) {
     app.onPeerMessage = (event) => app.ctx.peers.handlePeerMessage(event);
     // Count on the app icon (#476): <kin-app-badge> asks; the answer says
     // whether the choice could be kept on this device.
-    app.onAppBadgeChoice = (event) => { event.detail.kept = app.ctx.badge.setChoice(event.detail.value); };
+    app.onAppBadgeChoice = (event) => {
+      event.detail.kept = app.ctx.badge.setChoice(event.detail.value);
+      void app.ctx.privatePrefs.settingsChanged(["app-badge"]);
+    };
     // Logout and leaving the household end the session for good; a plain
     // lock request only suspends it.
     app.onLockRequest = (event) => app.ctx.session.lockHousehold(true, { endSession: event?.detail?.endSession === true });

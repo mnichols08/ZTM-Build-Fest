@@ -68,7 +68,7 @@ export class BulkCommands {
           await this.ctx.append.appendCommand({ type: spec.command, itemId });
           const record = this.app.state.items.find((item) => item.itemId === itemId);
           succeeded.push({ itemId, to: spec.to, changedAt: record?.lastChangedAt ?? null });
-          if (action === "complete") this.app.localReminders.cancel(`item:${itemId}`);
+          if (action === "complete") void this.ctx.privatePrefs.endReminder(`item:${itemId}`, "done").catch(() => {});
         } catch (error) {
           // Changes committed before a lock stay committed; nothing from the
           // old session may touch the new interface.

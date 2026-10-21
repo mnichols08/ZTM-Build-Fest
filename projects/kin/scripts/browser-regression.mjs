@@ -57,6 +57,7 @@ import { incrementalRenderPeerRegressions } from "./incremental-render-regressio
 import { firstRunRegressions } from "./first-run-regression.mjs";
 import { newDeviceRegressions } from "./new-device-regression.mjs";
 import { justForMeRegressions } from "./just-for-me-regression.mjs";
+import { syncedPrefsRegressions } from "./synced-prefs-regression.mjs";
 import { journalRegressions } from "./journal-regression.mjs";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -2988,6 +2989,9 @@ try {
   // Just for me (#510) needs private storage, which opens after a password
   // sign-up (#557): like the first run, it runs its own service and context.
   if (REGRESSION_PART !== "1") console.log(await justForMeRegressions({ endpoint, browserClient }));
+  // Reminders and settings that follow a member across two of their devices
+  // (#520), on the real service the same way.
+  if (REGRESSION_PART !== "1") console.log(await syncedPrefsRegressions({ endpoint, browserClient }));
   // The journal (#496) through the same real password flow, on its own
   // origin: private storage opens with the vault key sign-up keeps.
   if (REGRESSION_PART !== "1") console.log(await journalRegressions({ endpoint, browserClient }));
