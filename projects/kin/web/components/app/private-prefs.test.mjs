@@ -253,6 +253,24 @@ test("settings follow the member unless this device uses its own", async (t) => 
   assert.equal(s.controller.scope, "synced");
 });
 
+test("the first device to open makes the member key, so private storage is on from the start", async (t) => {
+  const s = setup();
+  t.after(s.restore);
+  const log = fakeLog();
+  log.active = false;
+  log.reason = "no_member_key";
+  let enabled = 0;
+  log.enable = async () => { enabled += 1; log.active = true; log.reason = "ready"; log.notify(); return "ready"; };
+  s.controller.attach(log, s.session);
+  await s.settle();
+  assert.equal(enabled, 1);
+  assert.equal(s.controller.scope, "synced");
+  // A log that already has its key isn't asked again.
+  s.controller.attach(log, s.session);
+  await s.settle();
+  assert.equal(enabled, 1);
+});
+
 test("with no private storage, everything stays on this device and says so", async (t) => {
   const s = setup();
   t.after(s.restore);
