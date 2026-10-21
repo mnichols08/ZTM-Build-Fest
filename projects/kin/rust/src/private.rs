@@ -8,12 +8,20 @@
 //! other log refuses them. An engine instance holds the private log of the
 //! one member who is unlocked on this device.
 //!
-//! Kinds 100–199 are reserved for private records. The journal (#496), the
-//! "Just for me" list (#510) and reminders and settings that follow a member
-//! (#520) add their own kinds here and their own sections to KPRV. Until
-//! then the log has one placeholder kind, `PRIVATE_NOTE_SET` (100): a short
-//! private note by ID, enough to prove the log end to end. It is unreleased
-//! and the first of those stories may replace it.
+//! Kinds 100–199 are reserved for private records, in a share per story:
+//!
+//! | Kinds | Story | Module |
+//! |---|---|---|
+//! | 100 | the placeholder `PRIVATE_NOTE_SET` (#489) | here |
+//! | 101–109 | the journal (#496) | journal.rs |
+//! | 110–119 | "Just for me" (#510) | to come |
+//! | 120–139 | reminders and settings that follow a member (#520) | to come |
+//!
+//! Kind 100 stays reserved and decodable: it proved the log end to end
+//! before the journal, and no surface writes it (`execute` refuses it). Each
+//! story adds its own KPRV section, numbered after the first kind of its
+//! share (the journal's is section 101), so stories built side by side never
+//! pick the same section code.
 //!
 //! Replay rules (replay never fails on a decoded private event, beyond the
 //! checks every log makes):
@@ -23,11 +31,22 @@
 //!   access control.
 //! - A note set to text replaces the note; set to empty text it is removed.
 //!   The latest event in replay order wins.
+//! - Journal events replay as journal.rs describes.
+//!
+//! New private events come from `execute` (`kin_private_execute`): a KCMD
+//! intent whose text is the event's exact payload, checked against the
+//! replayed private log (its member, the order, the story's own rules), as
+//! the fridge's commands are checked against the board log.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::error::KinError;
-use crate::event::{ActorId, DeviceId, EventEnvelope, EventKind, PrivateRecordId};
+use crate::event::{
+    valid_timestamp, ActorId, DeviceId, EventEnvelope, EventId, EventKind, HouseholdId,
+    PrivateRecordId,
+};
+use crate::history::{History, Log};
+use crate::journal::{JournalState, FIRST_JOURNAL_KIND};
 use crate::wire::{read_id, read_u32, MAX_PROTOCOL_BYTES};
 
 /// The first and last kind codes reserved for private records.
@@ -39,8 +58,10 @@ pub const PRIVATE_NOTE_SET: u16 = 100;
 pub const MAX_PRIVATE_EVENT_COUNT: usize = 50_000;
 /// Largest private note, in UTF-8 bytes.
 pub const MAX_PRIVATE_NOTE_BYTES: usize = 2_048;
-/// KPRV sections (`encode_private`).
+/// KPRV sections (`encode_private`): the notes, then each story's own,
+/// numbered after the first kind of its share.
 pub const SECTION_NOTES: u16 = 1;
+pub const SECTION_JOURNAL: u16 = FIRST_JOURNAL_KIND;
 
 /// Whether a kind code is reserved for the private log. Every code in the
 /// range belongs to the private log, known or not, so a household log never
@@ -65,6 +86,7 @@ pub fn encode_payload(kind: &EventKind) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(text.as_bytes());
             Ok(payload)
         }
+        EventKind::Journal(event) => crate::journal::encode_payload(event),
         _ => Err(KinError::InvalidEvent),
     }
 }
@@ -72,6 +94,9 @@ pub fn encode_payload(kind: &EventKind) -> Result<Vec<u8>, KinError> {
 /// Decodes a private payload strictly. A code in the private range that this
 /// engine does not know is unsupported (a later release added it).
 pub fn decode_payload(code: u16, payload: &[u8]) -> Result<EventKind, KinError> {
+    if crate::journal::is_journal_code(code) {
+        return crate::journal::decode_payload(code, payload).map(EventKind::Journal);
+    }
     match code {
         PRIVATE_NOTE_SET => {
             if payload.len() < 20 {
@@ -120,6 +145,7 @@ pub struct PrivateNote {
 pub struct PrivateState {
     member: Option<ActorId>,
     notes: BTreeMap<PrivateRecordId, PrivateNote>,
+    journal: JournalState,
 }
 
 impl PrivateState {
@@ -135,6 +161,11 @@ impl PrivateState {
 
     pub fn note(&self, id: &PrivateRecordId) -> Option<&PrivateNote> {
         self.notes.get(id)
+    }
+
+    /// The member's journal (journal.rs).
+    pub fn journal(&self) -> &JournalState {
+        &self.journal
     }
 }
 
@@ -164,6 +195,10 @@ pub fn apply(state: &mut Arc<PrivateState>, event: &EventEnvelope) -> Result<(),
             }
             Ok(())
         }
+        EventKind::Journal(journal) => {
+            state.journal.apply(event, journal);
+            Ok(())
+        }
         _ => Err(KinError::InvalidEvent),
     }
 }
@@ -181,6 +216,8 @@ pub fn apply(state: &mut Arc<PrivateState>, event: &EventEnvelope) -> Result<(),
 /// Section 1, notes (the placeholder kind): note count u32, then each note
 /// in ascending ID order: ID [16], logical time u64, device ID [16], text
 /// length u32, text.
+///
+/// Section 101, the journal: journal.rs `encode_section`.
 pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u8>, KinError> {
     let mut notes = Vec::new();
     notes.extend_from_slice(&(state.notes.len() as u32).to_le_bytes());
@@ -191,7 +228,13 @@ pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u
         notes.extend_from_slice(&(note.text.len() as u32).to_le_bytes());
         notes.extend_from_slice(note.text.as_bytes());
     }
-    let size = 32 + 8 + notes.len();
+    let journal = crate::journal::encode_section(&state.journal);
+    let sections: [(u16, &[u8]); 2] = [(SECTION_NOTES, &notes), (SECTION_JOURNAL, &journal)];
+    let size = 32
+        + sections
+            .iter()
+            .map(|(_, bytes)| 8 + bytes.len())
+            .sum::<usize>();
     if size > MAX_PROTOCOL_BYTES {
         return Err(KinError::SizeLimit);
     }
@@ -204,11 +247,128 @@ pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u
     out.extend_from_slice(&[0; 2]);
     out.extend_from_slice(&state.member.map_or([0; 16], |member| member.0));
     out.extend_from_slice(&record_count.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&(sections.len() as u16).to_le_bytes());
     out.extend_from_slice(&[0; 2]);
-    out.extend_from_slice(&SECTION_NOTES.to_le_bytes());
-    out.extend_from_slice(&[0; 2]);
-    out.extend_from_slice(&(notes.len() as u32).to_le_bytes());
-    out.extend_from_slice(&notes);
+    for (code, bytes) in sections {
+        out.extend_from_slice(&code.to_le_bytes());
+        out.extend_from_slice(&[0; 2]);
+        out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        out.extend_from_slice(bytes);
+    }
+    Ok(out)
+}
+
+/// The most text a private KCMD may carry (a journal entry with ten photos
+/// is about 21.6 KB).
+pub const MAX_PRIVATE_COMMAND_TEXT: usize = 64 * 1024;
+
+/// A KCMD for a private event (ABI.md): the 128-byte header (event ID,
+/// household, member, device, timestamp, logical time; the entity ID, date,
+/// option and expiry fields zero) and the event's exact payload as its text.
+fn decode_private_command(bytes: &[u8]) -> Result<EventEnvelope, KinError> {
+    if bytes.len() < 128 || bytes.len() > 128 + MAX_PRIVATE_COMMAND_TEXT || &bytes[..4] != b"KCMD" {
+        return Err(KinError::MalformedProtocol);
+    }
+    if bytes[4..6] != 1u16.to_le_bytes() {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if bytes[6..8] != [0; 2] || bytes[10..12] != [0; 2] || bytes[92..124] != [0; 32] {
+        return Err(KinError::MalformedProtocol);
+    }
+    let code = u16::from_le_bytes([bytes[8], bytes[9]]);
+    if bytes.len() != 128 + read_u32(bytes, 124)? as usize {
+        return Err(KinError::MalformedProtocol);
+    }
+    // Only a story's own kinds are written; the placeholder note never is.
+    if !is_private_code(code) || code == PRIVATE_NOTE_SET {
+        return Err(KinError::UnsupportedVersion);
+    }
+    let kind = decode_payload(code, &bytes[128..])?;
+    let mut time = [0u8; 8];
+    time.copy_from_slice(&bytes[76..84]);
+    let timestamp = i64::from_le_bytes(time);
+    time.copy_from_slice(&bytes[84..92]);
+    let logical_time = u64::from_le_bytes(time);
+    Ok(EventEnvelope {
+        event_id: EventId(read_id(bytes, 12)?),
+        household_id: HouseholdId(read_id(bytes, 28)?),
+        actor_id: ActorId(read_id(bytes, 44)?),
+        device_id: DeviceId(read_id(bytes, 60)?),
+        timestamp,
+        logical_time,
+        event_version: 1,
+        kind,
+        canonical_bytes: Vec::new(),
+    })
+}
+
+/// Whether a new private event may be written over the member's replayed
+/// records: its author is the log's member, and its story's rules allow it.
+fn check_command(state: &PrivateState, event: &EventEnvelope) -> Result<(), KinError> {
+    if state.member.is_some_and(|member| member != event.actor_id) {
+        return Err(KinError::InvalidEvent);
+    }
+    match &event.kind {
+        EventKind::Journal(journal) => state.journal.check_command(journal),
+        _ => Err(KinError::InvalidEvent),
+    }
+}
+
+/// A private command against the private log (`kin_private_execute`): u32
+/// intent length, the KCMD intent, then the record-less KINE context.
+/// Publishes KCMT: the canonical event and its KMET metadata, with an empty
+/// projection. The log is not changed; the host appends the event once it is
+/// sealed and stored.
+pub fn execute(bytes: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    if bytes.len() > MAX_PROTOCOL_BYTES {
+        return Err(KinError::SizeLimit);
+    }
+    let length = read_u32(bytes, 0)? as usize;
+    let end = 4usize
+        .checked_add(length)
+        .ok_or(KinError::MalformedProtocol)?;
+    let event = decode_private_command(bytes.get(4..end).ok_or(KinError::MalformedProtocol)?)?;
+    let context =
+        crate::request::decode_context(bytes.get(end..).ok_or(KinError::MalformedProtocol)?)?;
+    if history.log() != Log::Private
+        || history.len() >= history.limit()
+        || [
+            event.event_id.0,
+            event.household_id.0,
+            event.actor_id.0,
+            event.device_id.0,
+        ]
+        .contains(&[0; 16])
+        || !valid_timestamp(event.timestamp)
+        || event.logical_time == 0
+        || event.logical_time > crate::state::MAX_LOGICAL_TIME
+        || context
+            .target_household_id
+            .is_some_and(|household| household != event.household_id)
+    {
+        return Err(KinError::InvalidEvent);
+    }
+    let empty = history.is_empty();
+    let replay = history.replay(&context)?;
+    // Strictly after every event held, in the same household, never reusing
+    // an event ID.
+    if !empty
+        && (replay.household_id() != Some(event.household_id)
+            || replay.last_logical_time() >= event.logical_time
+            || replay.contains_event(event.event_id))
+    {
+        return Err(KinError::InvalidEvent);
+    }
+    check_command(replay.private(), &event)?;
+    let canonical = crate::codec::encode_event(&event)?;
+    let metadata = crate::codec::encode_metadata(&canonical)?;
+    let mut out = Vec::with_capacity(20 + canonical.len() + metadata.len());
+    out.extend_from_slice(b"KCMT");
+    out.extend_from_slice(&[1, 0, 0, 0]);
+    out.extend_from_slice(&(canonical.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&canonical);
+    out.extend_from_slice(&metadata);
     Ok(out)
 }

@@ -130,7 +130,8 @@ fn private_payloads_decode_strictly() {
     assert!(bad(&note_payload(1, b"")).is_ok());
     // A private kind this engine doesn't know yet is unsupported, not
     // mistaken for something else.
-    for code in [101, 150, LAST_PRIVATE_KIND] {
+    // (101–104 are the journal's, journal_tests.rs.)
+    for code in [110, 150, LAST_PRIVATE_KIND] {
         assert!(is_private_code(code));
         assert_eq!(
             decode_event(&record_at(code, 1, 1, SAM, &note_payload(1, b"x"))).map(|_| ()),
@@ -280,11 +281,14 @@ fn kprv_lays_out_the_member_count_and_note_section() {
     assert_eq!(&bytes[4..8], &[1, 0, 0, 0]);
     assert_eq!(&bytes[8..24], &[0; 16], "no member while empty");
     assert_eq!(u32_at(&bytes, 24), 0);
-    assert_eq!(&bytes[28..32], &[1, 0, 0, 0], "one section, reserved zero");
+    assert_eq!(&bytes[28..32], &[2, 0, 0, 0], "two sections, reserved zero");
     assert_eq!(&bytes[32..36], &[1, 0, 0, 0], "section 1, reserved zero");
     assert_eq!(u32_at(&bytes, 36), 4);
     assert_eq!(u32_at(&bytes, 40), 0);
-    assert_eq!(bytes.len(), 44);
+    // Then the journal section (101), empty: journal_tests.rs.
+    assert_eq!(&bytes[44..48], &[101, 0, 0, 0]);
+    assert_eq!(&bytes[48..56], &[4, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(bytes.len(), 56);
 
     let mut log = History::private();
     log.append(&batch(&[note(1, 2, b"two"), note(2, 1, b"one")]))
@@ -293,7 +297,11 @@ fn kprv_lays_out_the_member_count_and_note_section() {
     assert_eq!(&bytes[8..24], &SAM);
     assert_eq!(u32_at(&bytes, 24), 2);
     let section = u32_at(&bytes, 36) as usize;
-    assert_eq!(bytes.len(), 40 + section);
+    assert_eq!(
+        bytes.len(),
+        40 + section + 12,
+        "the empty journal section follows"
+    );
     assert_eq!(u32_at(&bytes, 40), 2);
     // Ascending ID order: note 1 first.
     let first = 44;
@@ -304,5 +312,5 @@ fn kprv_lays_out_the_member_count_and_note_section() {
     assert_eq!(&bytes[first + 44..first + 47], b"one");
     let second = first + 47;
     assert_eq!(&bytes[second..second + 16], &[2; 16]);
-    assert_eq!(&bytes[second + 44..], b"two");
+    assert_eq!(&bytes[second + 44..second + 47], b"two");
 }

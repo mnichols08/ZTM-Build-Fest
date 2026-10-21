@@ -474,6 +474,9 @@ pub enum EventKind {
         note_id: PrivateRecordId,
         text: String,
     },
+    /// A member's journal (#496, journal.rs), in their private log: entry
+    /// created, edited, deleted or restored (kinds 101–104).
+    Journal(crate::journal::JournalEvent),
 }
 
 impl EventKind {
@@ -496,7 +499,10 @@ impl EventKind {
     /// Whether this is a private event (#489, ADR 0019), which only a
     /// member's private log holds.
     pub const fn is_private(&self) -> bool {
-        matches!(self, EventKind::PrivateNoteSet { .. })
+        matches!(
+            self,
+            EventKind::PrivateNoteSet { .. } | EventKind::Journal(_)
+        )
     }
 
     /// Whether this is a fridge event (#317), which only the board log holds.

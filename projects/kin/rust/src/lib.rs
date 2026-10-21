@@ -11,6 +11,7 @@ pub mod error;
 pub mod event;
 pub mod event_decode;
 pub mod history;
+pub mod journal;
 pub mod meals;
 pub mod private;
 pub mod qr;
@@ -77,6 +78,8 @@ mod chat_tests;
 
 #[cfg(test)]
 mod board_tests;
+#[cfg(test)]
+mod journal_tests;
 #[cfg(test)]
 mod meals_tests;
 #[cfg(test)]
