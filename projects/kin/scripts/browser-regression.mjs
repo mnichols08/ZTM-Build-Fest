@@ -181,7 +181,7 @@ async function connect(url) {
     if (timeline.length > 60) timeline.shift();
   };
   const loader = (loaderId) => {
-    if (!loaders.has(loaderId)) loaders.set(loaderId, { scripts: 0, done: 0, failed: 0, at: Date.now() });
+    if (!loaders.has(loaderId)) loaders.set(loaderId, { scripts: 0, done: 0, fromWorker: 0, failed: 0, at: Date.now() });
     if (loaders.size > 6) loaders.delete(loaders.keys().next().value);
     return loaders.get(loaderId);
   };
@@ -209,12 +209,15 @@ async function connect(url) {
       case "Network.loadingFailed": {
         const request = inFlight.get(params.requestId);
         if (request?.type === "Script") loader(request.loaderId).failed += 1;
-        mark(`failed ${params.type ?? request?.type} L${tag(request?.loaderId)} ${params.errorText}${params.canceled ? " canceled" : ""}${params.blockedReason ? ` blocked:${params.blockedReason}` : ""} ${short(request?.url)} by ${request?.initiator ?? "?"}`);
+        mark(`failed ${params.type ?? request?.type} L${tag(request?.loaderId)} ${params.errorText}${params.canceled ? " canceled" : ""}${params.blockedReason ? ` blocked:${params.blockedReason}` : ""} ${short(request?.url)} by ${request?.initiator ?? "?"} after ${request ? Date.now() - request.at : "?"} ms, response ${request?.status ?? "none"}${request?.sw ? " from worker" : ""}`);
         break;
       }
       case "Network.loadingFinished": {
         const request = inFlight.get(params.requestId);
-        if (request?.type === "Script") loader(request.loaderId).done += 1;
+        if (request?.type === "Script") {
+          loader(request.loaderId).done += 1;
+          if (request.sw) loader(request.loaderId).fromWorker += 1;
+        }
         break;
       }
     }
@@ -317,7 +320,7 @@ async function connect(url) {
     // annotation line, with script counts per document load (#594).
     loadTrace() {
       const now = Date.now();
-      const lines = [`scripts per load: ${[...loaders].map(([id, counts]) => `L${tag(id)} ${counts.scripts} sent/${counts.done} done/${counts.failed} failed, ${now - counts.at} ms ago`).join("; ")}`];
+      const lines = [`scripts per load: ${[...loaders].map(([id, counts]) => `L${tag(id)} ${counts.scripts} sent/${counts.done} done (${counts.fromWorker} by the worker)/${counts.failed} failed, ${now - counts.at} ms ago`).join("; ")}`];
       let line = "";
       for (const { at, text } of timeline) {
         const entry = `-${now - at}ms ${text}`;
