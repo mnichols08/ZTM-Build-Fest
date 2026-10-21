@@ -202,7 +202,31 @@ export class ViewBuilder {
       item.append(link);
       hubLinks.append(item);
     }
-    hub.append(this.app.householdGlance, hubLinks);
+    // Just for you (#497, ADR 0019): private pages, apart from the
+    // household's. The journal is a page of its own, not a destination.
+    const personalHeading = document.createElement("h2");
+    personalHeading.className = "hub-personal-heading";
+    personalHeading.id = "hub-personal-heading";
+    personalHeading.textContent = "Just for you";
+    const personalLinks = document.createElement("ul");
+    personalLinks.className = "hub-links hub-personal";
+    personalLinks.setAttribute("aria-labelledby", personalHeading.id);
+    {
+      const item = document.createElement("li");
+      const link = document.createElement("a");
+      link.className = "hub-link journal-hub-link";
+      link.href = "#journal";
+      const name = document.createElement("span");
+      name.className = "hub-link-name";
+      name.textContent = "Journal";
+      const text = document.createElement("span");
+      text.className = "hub-link-text";
+      text.textContent = "Your own dated entries and photos. Only you can see them.";
+      link.append(name, text);
+      item.append(link);
+      personalLinks.append(item);
+    }
+    hub.append(this.app.householdGlance, hubLinks, personalHeading, personalLinks);
     const hubTools = document.createElement("div");
     hubTools.className = "hub-tools";
     this.app.installButton = document.createElement("button");
@@ -344,7 +368,11 @@ export class ViewBuilder {
     const foryou = page("foryou", "For you", "What the family left for you.");
     this.app.sitterView = document.createElement("kin-sitter-page");
     foryou.append(this.app.sitterView);
-    for (const section of [today, week, foryou, lists, search, routines, updates, household]) {
+    // A member's journal (#497): private, reached from Household.
+    const journal = page("journal", "Journal", "Your own record of your days, on your own devices.");
+    this.app.journal = document.createElement("kin-journal");
+    journal.append(this.app.journal);
+    for (const section of [today, week, foryou, lists, search, routines, updates, household, journal]) {
       this.app.pages.set(section.id, section);
       main.append(section);
     }
@@ -354,6 +382,7 @@ export class ViewBuilder {
     this.app.detailPanel.setAttribute("aria-label", "Item details");
     this.app.detailPanel.hidden = true;
     main.append(this.app.detailPanel);
+    this.ctx.journal?.render();
     this.ctx.navigation.showPageFromLocation();
   }
 

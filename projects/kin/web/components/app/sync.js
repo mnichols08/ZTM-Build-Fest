@@ -106,6 +106,13 @@ export class SyncController {
         try { return await this.app.household?.syncKeyStore?.accountVaultKey(identity.householdId) ?? null; }
         catch { return null; }
       },
+      // The member's private log (#492): the journal (#496) reads and
+      // writes through it once this device holds the member's vault key.
+      onPrivateLog: (log) => {
+        if (log && !(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
+        if (!log && this.ctx.journal?.log && this.ctx.journal.log !== coordinator.privateLog) return;
+        void this.ctx.journal?.setLog(log);
+      },
       // Simple view (#343, ADR 0013): the layout this member's admin chose.
       onSimpleView: (on, options) => {
         if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;

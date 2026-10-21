@@ -34,6 +34,7 @@ import { ShareController } from "./share.js";
 import { BadgeController } from "./badge.js";
 import { WeekController } from "./week.js";
 import { SitterController } from "./sitter.js";
+import { JournalController } from "./journal.js";
 import { RotationsController } from "./rotations.js";
 import { ImportController } from "./import.js";
 import { SectionsController } from "./sections.js";
@@ -83,6 +84,8 @@ export function createAppContext(app) {
   ctx.badge = new BadgeController(ctx);
   ctx.week = new WeekController(ctx);
   ctx.sitter = new SitterController(ctx);
+  // The member's journal (#496): private, never household state.
+  ctx.journal = new JournalController(ctx);
   ctx.rotations = new RotationsController(ctx);
   ctx.importList = new ImportController(ctx);
   ctx.sections = new SectionsController(ctx);

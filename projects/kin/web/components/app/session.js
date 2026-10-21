@@ -252,6 +252,7 @@ export class SessionController {
     this.ctx.status.clearAlert();
     clearLegacyDrafts();
     this.ctx.simple?.reset();
+    this.ctx.journal?.reset();
     this.app.quickAdd?.reset();
     this.app.chatShare?.reset();
     if (this.app.main) {

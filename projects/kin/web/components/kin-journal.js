@@ -58,7 +58,7 @@ class KinJournal extends HTMLElement {
     this.unavailable.className = "journal-unavailable";
     this.unavailableText = document.createElement("p");
     this.accountLink = document.createElement("a");
-    this.accountLink.href = "#household/privacy";
+    this.accountLink.href = "#household/people";
     this.accountLink.className = "journal-account-link";
     this.accountLink.textContent = "Set up your account";
     this.unavailable.append(this.unavailableText, this.accountLink);
