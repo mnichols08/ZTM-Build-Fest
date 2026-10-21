@@ -182,15 +182,23 @@ async function showScreen({ hash }, isReady, anchorOf) {
   for (const details of document.querySelectorAll("details.list-actions")) details.open = false;
   document.activeElement?.blur?.();
   scrollTo(0, 0);
+  for (const scroller of document.querySelectorAll(".chat-scroll")) scroller.scrollTop = scroller.scrollHeight;
+  // Let the page finish what navigating started (it may move focus or the
+  // scroll position) before placing the view.
+  await new Promise((r) => setTimeout(r, 300));
   // When the screen's main content (Today's list, Shopping's first row)
   // starts below the top quarter, as behind a composer on a phone, scroll it
-  // up to there, keeping a little of what is above it for context.
-  const anchor = anchorOf(app);
-  const top = anchor?.getBoundingClientRect().top ?? 0;
-  if (top > innerHeight * 0.25) scrollBy(0, top - innerHeight * 0.25);
-  const scrolled = `[anchor ${anchor ? Math.round(top) : "none"}, scrolled ${Math.round(scrollY)}] `;
-  for (const scroller of document.querySelectorAll(".chat-scroll")) scroller.scrollTop = scroller.scrollHeight;
-  await new Promise((r) => setTimeout(() => setTimeout(r, 0), 0));
+  // up to there, keeping a little of what is above it for context. Checked
+  // again after a moment, in case the page moved it back.
+  let anchor = null, top = 0;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    anchor = anchorOf(app);
+    top = anchor?.getBoundingClientRect().top ?? 0;
+    if (top <= innerHeight * 0.3) break;
+    scrollBy(0, top - innerHeight * 0.25);
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  const scrolled = `[anchor ${anchor ? Math.round(anchor.getBoundingClientRect().top) : "none"}, scrolled ${Math.round(scrollY)}] `;
   if (app.security?.phase !== "unlocked") throw new Error(`Kin is ${app.security?.phase} on ${hash}`);
   // What the picture shows, in words, for the log: the text on screen.
   const seen = [];
@@ -199,7 +207,7 @@ async function showScreen({ hash }, isReady, anchorOf) {
     const text = node.textContent.trim();
     const rect = node.parentElement?.getBoundingClientRect();
     if (!text || !rect || !rect.width || rect.bottom <= 0 || rect.top >= innerHeight || rect.right <= 0 || rect.left >= innerWidth) continue;
-    if (node.parentElement.closest("[hidden], .visually-hidden, .skip-link")) continue;
+    if (node.parentElement.closest("[hidden], .visually-hidden, .skip-link, details:not([open]) > :not(summary)")) continue;
     if (getComputedStyle(node.parentElement).visibility === "hidden") continue;
     seen.push(text.replace(/\s+/g, " ").slice(0, 60));
   }
