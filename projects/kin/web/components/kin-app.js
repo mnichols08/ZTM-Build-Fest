@@ -29,6 +29,7 @@ import "./kin-pulse.js";
 import "./kin-catch-up.js";
 import "./kin-household.js";
 import "./kin-notifications.js";
+import "./kin-app-badge.js";
 import "./kin-security.js";
 import "./kin-appearance.js";
 import "./kin-household-defaults.js";
@@ -83,7 +84,7 @@ const ELEMENT_EVENTS = [
   ["kin:set-pulse", "onSetPulse"], ["kin:clear-pulse", "onClearPulse"],
   ["kin:caught-up", "onCaughtUp"], ["kin:sync-enabled", "onSyncEnabled"],
   ["kin:sync-now", "onSyncNow"], ["kin:sync-stop", "onSyncStop"],
-  ["kin:lock", "onLockRequest"], ["kin:appearance-preview", "onAppearancePreview"],
+  ["kin:lock", "onLockRequest"], ["kin:app-badge-choice", "onAppBadgeChoice"], ["kin:appearance-preview", "onAppearancePreview"],
   ["kin:save-appearance", "onSaveAppearance"], ["kin:use-household-appearance", "onUseHouseholdAppearance"],
   ["kin:inherit-appearance-property", "onInheritAppearanceProperty"], ["kin:household-defaults-preview", "onHouseholdDefaultsPreview"],
   ["kin:household-defaults-cancel", "onHouseholdDefaultsCancel"], ["kin:save-household-defaults", "onSaveHouseholdDefaults"],

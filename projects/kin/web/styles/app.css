@@ -1465,6 +1465,13 @@ kin-notifications .notification-checks dd { margin: 0; overflow-wrap: anywhere; 
 kin-notifications .notification-test-guide { margin-top: 4px; }
 kin-notifications .notification-test-guide > summary { min-height: var(--tap); display: flex; align-items: center; color: var(--accent); font-weight: 700; cursor: pointer; }
 kin-notifications .notification-test-guide p { margin: 8px 0; }
+/* Count on the app icon (#476), right under Notifications. */
+kin-app-badge { display: grid; gap: 10px; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+kin-app-badge h2 { margin: 0; font-size: 18px; font-weight: 650; }
+kin-app-badge fieldset { display: grid; gap: 4px; margin: 0; padding: 0; border: 0; min-width: 0; }
+kin-app-badge legend { padding: 0; margin-bottom: 4px; font-weight: 650; }
+kin-app-badge fieldset label { display: flex; align-items: center; gap: 10px; min-height: var(--tap); }
+kin-app-badge input[type="radio"] { width: 20px; height: 20px; flex: none; accent-color: var(--accent); }
 kin-notifications .notification-test-guide ol { margin: 8px 0; padding-left: 24px; }
 kin-notifications .notification-test-guide li + li { margin-top: 6px; }
 kin-notifications label { display: grid; gap: 6px; font-weight: 650; }

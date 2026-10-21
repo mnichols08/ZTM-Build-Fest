@@ -1908,6 +1908,8 @@ function serve(response, pathname) {
     ".wasm": "application/wasm",
     ".webmanifest": "application/manifest+json",
     ".svg": "image/svg+xml",
+    // Kin's app and shortcut icons (web/icons, #473).
+    ".png": "image/png",
     // The chat emoji table (#113).
     ".json": "application/json; charset=utf-8",
   };
