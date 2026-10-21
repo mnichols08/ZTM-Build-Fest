@@ -278,16 +278,22 @@ export async function easyModeRegressions(client, { until }) {
     const row = [...app.needs.querySelectorAll("kin-item")].find((node) => node.record?.itemId === ${JSON.stringify(itemId)});
     row.querySelector(".complete-control").click(); return true; })()`);
   await until(() => page(`(() => { const app = document.querySelector("kin-app"); return !app.busy && !app.ctx.undo.toast.hidden; })()`), { attempts: 300 });
-  const undoLine = await page(`(() => {
+  const undoLine = await page(`(async () => {
     const app = document.querySelector("kin-app");
     const toast = app.ctx.undo.toast;
-    const box = toast.getBoundingClientRect();
     const action = toast.querySelector(".undo-toast-action");
+    const box = action.getBoundingClientRect();
+    // How much of Undo is on screen, as the browser itself sees it.
+    const ratio = await new Promise((resolve) => {
+      const observer = new IntersectionObserver((entries) => { observer.disconnect(); resolve(entries[0].intersectionRatio); });
+      observer.observe(action);
+    });
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
     const dismiss = getComputedStyle(toast.querySelector(".undo-toast-dismiss"), "::after").content;
-    return { text: toast.querySelector(".undo-toast-text").textContent, action: action.textContent, height: Math.round(action.getBoundingClientRect().height),
-      inView: box.bottom <= innerHeight && box.top >= 0, dismiss };
+    return { text: toast.querySelector(".undo-toast-text").textContent, action: action.textContent, height: Math.round(box.height),
+      ratio: Math.round(ratio * 100) / 100, onTop: action.contains(hit), box: [Math.round(box.top), Math.round(box.bottom), innerHeight].join("/"), dismiss };
   })()`);
-  assert.ok(undoLine.text.length > 0 && undoLine.action === "Undo" && undoLine.height >= 56 && undoLine.inView, `the Undo line: ${JSON.stringify(undoLine)}`);
+  assert.ok(undoLine.text.length > 0 && undoLine.action === "Undo" && undoLine.height >= 56 && undoLine.ratio >= 0.99 && undoLine.onTop, `the Undo line: ${JSON.stringify(undoLine)}`);
   assert.match(undoLine.dismiss, /Dismiss/, "Dismiss has its word");
   await page(`document.querySelector("kin-app").ctx.undo.toast.querySelector(".undo-toast-action").click()`);
   await until(() => page(`(() => { const app = document.querySelector("kin-app"); return !app.busy && app.state.items.find((item) => item.itemId === ${JSON.stringify(itemId)})?.status === "active"; })()`), { attempts: 300 });
