@@ -125,6 +125,17 @@ class KinSecurity extends HTMLElement {
     clearLegacyDrafts();
     this.render();
     this.heading.focus();
+    // A lock that an unlock path's removal caused (a passkey removed from
+    // this device) can land before this panel saw the new manifest: read it
+    // again, so the lock screen never offers a way in that's gone.
+    const shown = this.manifest;
+    void EventStore.securityStatus().then((manifest) => {
+      if (this.phase !== "locked" || this.busy || this.manifest !== shown || !manifest) return;
+      if ((manifest.configRevision ?? 0) === (shown?.configRevision ?? 0) && manifest.vaultId === shown?.vaultId) return;
+      this.manifest = manifest;
+      this.render();
+      this.heading.focus();
+    }, () => {});
   }
 
   run(action) { return this.operations.run(action); }

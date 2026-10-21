@@ -353,7 +353,8 @@ async function signInAgainAndHarden(member, h) {
   h.security().querySelector('[data-account-flow="remove-passkey"]').requestSubmit();
   // Taking an unlock path away locks Kin, as removing any unlock path does.
   await h.wait(() => !app.store && h.security().phase === "locked" && !h.security().busy, "locked after the passkey went", 60_000);
-  check(Boolean(h.security().querySelector("#password-unlock")) && !h.button("Unlock with passkey"), "the lock screen asks for the password; the passkey is gone");
+  await h.wait(() => h.security().querySelector("#password-unlock") && !h.button("Unlock with passkey"), "the lock screen without the passkey", 10_000);
+  check(true, "the lock screen asks for the password; the passkey is gone");
   await h.unlockWithPassword(member.password);
   await h.today();
   check(h.types() === "password", "this passkey-only device now unlocks with the password");
