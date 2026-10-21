@@ -165,6 +165,9 @@ async function connect(url) {
   let id = 0;
   const pending = new Map();
   const eventListeners = new Map();
+  // Requests the page has started and not finished, so a stalled load can
+  // say what it waits for (#469).
+  const inFlight = new Map();
   socket.onmessage = ({ data }) => {
     const message = JSON.parse(data);
     if (message.method)
@@ -182,6 +185,13 @@ async function connect(url) {
         problems.push(entry);
     } else if (message.method === "Network.requestWillBeSent") {
       requests.push(message.params.request.url);
+      inFlight.set(message.params.requestId, { url: message.params.request.url, type: message.params.type ?? null, at: Date.now() });
+    }
+    if (message.method === "Network.responseReceived") {
+      const request = inFlight.get(message.params.requestId);
+      if (request) Object.assign(request, { status: message.params.response.status, sw: Boolean(message.params.response.fromServiceWorker) });
+    } else if (message.method === "Network.loadingFinished" || message.method === "Network.loadingFailed") {
+      inFlight.delete(message.params.requestId);
     }
   };
   const client = {
@@ -232,6 +242,12 @@ async function connect(url) {
         const timer = setTimeout(() => { stop(); reject(new Error(`Timed out waiting for ${method}`)); }, timeoutMs);
         const stop = this.on(method, (params) => { clearTimeout(timer); stop(); resolve(params); });
       });
+    },
+    // The oldest unfinished requests, for diagnostics.
+    unfinished(limit = 8) {
+      const now = Date.now();
+      return [...inFlight.values()].sort((a, b) => a.at - b.at).slice(0, limit)
+        .map(({ url, type, status, sw, at }) => ({ path: url.replace(/^https?:\/\/[^/]+/, "").slice(0, 120), type, status, sw, ageMs: now - at }));
     },
     close: () => socket.close(),
   };
@@ -1237,7 +1253,7 @@ try {
       await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.security?.heading)'), { attempts: 600 });
     } catch (error) {
       const state = await tabFacts(client);
-      error.message += ` — tab state ${JSON.stringify(state)}; recent problems ${JSON.stringify(problems.slice(-5)).slice(0, 2000)}`;
+      error.message += ` — tab state ${JSON.stringify(state)}; unfinished requests ${JSON.stringify(client.unfinished())}; recent problems ${JSON.stringify(problems.slice(-5)).slice(0, 2000)}`;
       throw error;
     }
     const locked = await client.evaluate('document.querySelector("kin-app").security.phase !== "unlocked"');
@@ -1658,12 +1674,17 @@ try {
     const resume = await first.evaluate(`({ navigation: performance.getEntriesByType("navigation")[0]?.type ?? null,
       ticket: Boolean(sessionStorage.getItem("kin.reload-resume")), armed: Boolean(document.querySelector("kin-app")?.reloadResume?.armed),
       preference: localStorage.getItem("kin.reload-resume-enabled") })`).catch((reason) => ({ unreadable: String(reason?.message ?? reason) }));
-    error.message += ` — tab state ${JSON.stringify(await tabFacts(first))}; resume ${JSON.stringify(resume)}`;
+    error.message += ` — tab state ${JSON.stringify(await tabFacts(first))}; resume ${JSON.stringify(resume)}; unfinished requests ${JSON.stringify(first.unfinished())}; recent problems ${JSON.stringify(problems.slice(-3)).slice(0, 800)}`;
     throw error;
   }
   // Home-screen shortcuts and the app icon count (#471): each shortcut loads
   // Kin locked, then lands after unlock; it ends unlocked on Today.
-  console.log(await shortcutsBadgeRegressions(first, { origin, until, ready, recovery: recoverySecret }));
+  try {
+    console.log(await shortcutsBadgeRegressions(first, { origin, until, ready, recovery: recoverySecret }));
+  } catch (error) {
+    error.message += ` — tab state ${JSON.stringify(await tabFacts(first))}; unfinished requests ${JSON.stringify(first.unfinished())}`;
+    throw error;
+  }
   if (heavy) console.log(await fridgeRegressions(first, until));
   console.log(await simpleRegressions(first, { until, ready }));
   await first.evaluate(
