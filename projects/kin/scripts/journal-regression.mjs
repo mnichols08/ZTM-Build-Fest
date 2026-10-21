@@ -44,7 +44,9 @@ async function writeInJournal() {
     for (let i = 0, step = 25; i < ms / step; i++) { if (await condition()) return; await new Promise((r) => setTimeout(r, step)); }
     throw new Error(`Wait timed out: ${label}; journal=${app.ctx.journal?.status()} reason=${app.ctx.journal?.journal?.reason} page=${app.journal?.textContent?.slice(0, 300)}`);
   };
-  const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  // Timers, not animation frames: this page is a background target in its
+  // own browser context, where frames may be throttled or paused.
+  const frame = () => new Promise((r) => setTimeout(() => setTimeout(r, 0), 0));
   const page = app.journal;
   const pad = (n) => String(n).padStart(2, "0");
   const now = new Date();
@@ -70,7 +72,7 @@ async function writeInJournal() {
   check(page.querySelector(".journal-only-you")?.textContent === "Only you can see this.", "the page says only you can see it");
   check(/only your own devices can read it/.test(page.empty.textContent), "the empty journal explains its privacy in one sentence");
   check(fits(), `the journal fits ${innerWidth} px without sideways scrolling`);
-  check(app.querySelectorAll('input[type="file"]').length === 1, "the journal keeps no file input of its own");
+  check(!app.journal.querySelector('input[type="file"]'), "the journal keeps no file input of its own (one is made only while the picker is open)");
 
   // Write: today by default; the draft is kept when the editor closes.
   page.newButton.click();

@@ -579,7 +579,7 @@ class KinJournal extends HTMLElement {
       this.announce(result.changed === false ? "Nothing changed." : "Saved to your journal.");
       const id = result.entryId ?? draft.entryId;
       // The list may redraw when the log notifies: focus after it settles.
-      requestAnimationFrame(() => { if (!this.focusEntry(id)) this.newButton.focus(); });
+      setTimeout(() => { if (!this.focusEntry(id)) this.newButton.focus(); }, 0);
     } finally {
       this.busy = false;
       this.saveButton.disabled = false;
@@ -642,7 +642,7 @@ class KinJournal extends HTMLElement {
           const restored = await this.services.restore(entry.id);
           if (!restored.ok) { this.announce(restored.message); return; }
           this.announce("Entry put back.");
-          requestAnimationFrame(() => this.focusEntry(entry.id));
+          setTimeout(() => this.focusEntry(entry.id), 0);
         },
         // Once Undo has passed, its photos are let go.
         settle: () => { if (entry.photos.length) this.services.discard(photoRefs(entry.photos)); },

@@ -184,10 +184,10 @@ export class JournalController {
     let photos = [];
     let message = null;
     if (files.length) ({ photos, message } = await this.addPhotos(files));
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       this.app.journal?.openEditor(null, null, { prefill: { body: text, photos } });
       if (message && this.app.journal?.message) this.app.journal.message.textContent = message;
-    });
+    }, 0);
     return { ok: true };
   }
 
