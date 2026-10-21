@@ -625,6 +625,43 @@ every epoch, since all of them are the member's own.
   out. The member key comes from the account vault
   ([CRYPTOGRAPHY](CRYPTOGRAPHY.md#member-key-and-private-envelopes-adr-0019)).
 
+### Private blobs (#502)
+
+A member's journal photos and thumbnails are sealed on the device
+(`web/private/private-blobs.js`): each under a fresh random AES-256-GCM key,
+format 1 (version byte, 12-byte nonce, ciphertext and tag) with additional
+data binding the format, the household and the member. The key travels only
+inside the journal record that names the photo, which is sealed under the
+member key, so only the member's own devices can open it. The blob's
+reference is the SHA-256 of its sealed bytes.
+
+- **Routes.** `PUT /api/private/blobs/<ref>` (the sealed bytes, checked
+  against the reference; authorized before the body is read),
+  `GET /api/private/blobs/<ref>` (404 `private_blob_missing` when not held)
+  and `POST /api/private/blobs/retire` (`{ refs }`, at most 64; ones not held
+  are skipped). `GET /api/private/status` adds `blobs`, `blobBytes`,
+  `blobLimit` and `blobByteLimit`. No route names a member: each request
+  reaches the session's own member's blobs, so another member's device, an
+  admin's included, finds nothing. The same rules as the stream decide who
+  may: never Temporary members, Limited ones only while the household allows
+  it, never a revoked device.
+- **Limits.** 29 bytes to 4 MiB + 4 KiB a blob (the household attachment
+  bound), 2,000 blobs and 256 MiB per member (`private_storage_full`, 409),
+  60 uploads a minute and 128 MiB per ten minutes per device
+  (`private_rate_limited`, 429); an upload already held costs nothing.
+- **The device side.** A sealed blob is kept locally as pending and uploaded
+  on the next private pass, before that pass pushes events. A device opening
+  an entry fetches what it lacks, checks it against its reference and keeps
+  it. Deleting a photo (removed from an entry, or its entry deleted, once
+  Undo has passed) drops the local copy and queues the reference; the next
+  pass deletes it on the service. There are no tombstones: only the member's
+  own devices name their blobs. A device drops cached copies the journal no
+  longer names (never a pending one).
+- **Storage and purge.** Server schema 24 adds `private_blobs` keyed by
+  member, with the member's household (`durable-store/private-blobs.mjs`).
+  Removing a member purges their blobs with their stream; household deletion
+  purges every member's. Freed pages are zeroed.
+
 ## Chat relay (v1.1, #111)
 
 Chat events are canonical events in the same signed, encrypted envelopes as

@@ -218,6 +218,8 @@ browser library but no member has a passkey wrapper yet.
 | A revoked device of the member | Loses its session, so it reaches nothing. It keeps what it already had, including member-key epochs it held. The member's remaining devices start a new epoch once they see the revocation, and new private envelopes use it; an envelope claiming that device under a later epoch is refused. |
 | Lost every device | Not a loss: signing in on a new device (ADR 0018) opens the vault, which holds every member-key epoch, and the private stream is pulled again. |
 | Timing and volume | The service and anyone watching it can see when and how much a member writes privately. Live hints go only to that member's own devices, so other members' devices don't learn it. |
+| Another member fetches a journal photo (#502) | Can't: private blobs are stored per member and no route names one, so their request reaches only their own blobs (404). The bytes are sealed under a per-photo key that lives only inside the member's private record. |
+| A deleted journal photo lingers | The device deletes it on the service once Undo has passed, on the next private pass. If Kin locks before that, the sealed blob stays on the service (counted in the member's quota) until the member is removed or the household deleted; its key remains only in the member's private log. |
 
 ## v0.9.x threat assessment (historical; local lock added above)
 

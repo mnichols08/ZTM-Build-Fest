@@ -499,6 +499,9 @@ pub enum EventKind {
         key: u16,
         value: String,
     },
+    /// A member's journal (#496, journal.rs), in their private log: entry
+    /// created, edited, deleted or restored (kinds 101–104).
+    Journal(crate::journal::JournalEvent),
 }
 
 impl EventKind {
@@ -528,6 +531,7 @@ impl EventKind {
                 | EventKind::ReminderSet { .. }
                 | EventKind::ReminderCleared { .. }
                 | EventKind::SettingSet { .. }
+                | EventKind::Journal(_)
         )
     }
 

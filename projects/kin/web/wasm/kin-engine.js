@@ -25,7 +25,7 @@ import { SECTION_COMMANDS, SECTION_EVENT_KINDS, SectionFormatError, decodeShoppi
 import { ROTATION_COMMANDS, ROTATION_EVENT_KINDS, RotationFormatError, decodeRoutineRotations, encodeRotationIntent } from "./kin-rotations.js";
 import { SITTER_COMMANDS, SITTER_EVENT_KINDS, SitterFormatError, decodeSitterPage, encodeSitterIntent } from "./kin-sitter.js";
 import { FIRST_PRIVATE_KIND, MAX_PRIVATE_EVENT_COUNT, PRIVATE_EVENT_KINDS, decodePrivate } from "./kin-private.js";
-import { FIRST_PRIVATE_ITEM_KIND, PRIVATE_ITEM_EVENT_KINDS, PrivateFormatError, encodePrivateIntent } from "./kin-private.js";
+import { FIRST_JOURNAL_KIND, FIRST_PRIVATE_ITEM_KIND, JOURNAL_EVENT_KINDS, PRIVATE_ITEM_EVENT_KINDS, PrivateFormatError, encodePrivateIntent } from "./kin-private.js";
 import { encodePrefsIntent, PREFS_COMMANDS, PREFS_KIND_CODES, PrefsFormatError } from "./kin-prefs.js";
 
 export { idToHex, KinEngineError };
@@ -425,7 +425,8 @@ export function createEngine(instanceExports) {
     // records). Returns { memberId, recordCount, notes } (kin-private.js).
     privateState: (privateRecords, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodePrivate(privateStateBytes(exports, privateMirror, privateRecords, asOf, civilDate, syncIdentity))),
-    // A private command (kin-private.js PRIVATE_ITEM_COMMANDS, #511)
+    // A private command (kin-private.js PRIVATE_ITEM_COMMANDS, #511;
+    // JOURNAL_COMMANDS, #498)
     // validated against the member's private log: { encodedEvent, metadata }.
     // `identity` names the event (hex IDs, timestamp, logical time).
     // Reminders and settings (#520, kin-prefs.js PREFS_COMMANDS) take the
@@ -1220,6 +1221,8 @@ const EVENT_KINDS = [
 PRIVATE_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_PRIVATE_KIND + index] = kind; });
 // "Just for me" (#510): kinds 110–118.
 PRIVATE_ITEM_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_PRIVATE_ITEM_KIND + index] = kind; });
+// The journal (#496): kinds 101–104.
+JOURNAL_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_JOURNAL_KIND + index] = kind; });
 // Reminders and settings (#520): kinds 120, 121 and 130.
 for (const [kind, code] of Object.entries(PREFS_KIND_CODES)) EVENT_KINDS[code] = kind;
 

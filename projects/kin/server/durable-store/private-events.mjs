@@ -9,6 +9,7 @@
 // rewrites the members table, and member removal purges them explicitly.
 import { canonicalEventEnvelope, isEventEnvelopeValid } from "../sync-contract.mjs";
 import { DurableConflictError, DurableStoreError, isId } from "./shared.mjs";
+import { purgePrivateBlobs } from "./private-blobs.mjs";
 
 /** The relay cursor format (sync-service.mjs encodeCursor). */
 function encodeCursor(sequence) {
@@ -17,8 +18,10 @@ function encodeCursor(sequence) {
   return bytes.toString("base64url");
 }
 
-/** Deletes one member's private stream inside the caller's transaction. */
+/** Deletes one member's private stream, and their private blobs (#502),
+ * inside the caller's transaction. */
 export function purgePrivateStream(database, memberId) {
+  purgePrivateBlobs(database, memberId);
   database.prepare("DELETE FROM private_events WHERE member_id = ?").run(memberId);
   database.prepare("DELETE FROM private_device_sequences WHERE member_id = ?").run(memberId);
   database.prepare("DELETE FROM private_relay_state WHERE member_id = ?").run(memberId);

@@ -30,6 +30,7 @@ import { chatBlobMethods } from "./durable-store/chat-blobs.mjs";
 import { chatEventMethods } from "./durable-store/chat-events.mjs";
 import { boardEventMethods } from "./durable-store/board-events.mjs";
 import { privateEventMethods } from "./durable-store/private-events.mjs";
+import { privateBlobMethods } from "./durable-store/private-blobs.mjs";
 import { chatHiddenMethods } from "./durable-store/chat-hidden.mjs";
 import { chatKeyMethods } from "./durable-store/chat-keys.mjs";
 import { chatReceiptMethods } from "./durable-store/chat-receipts.mjs";
@@ -75,6 +76,10 @@ export {
   MAX_CHAT_RECEIPT_BYTES,
   MAX_MEMBER_CHAT_CLAIMS,
   MAX_MEMBER_PRIVATE_EVENTS,
+  MAX_MEMBER_PRIVATE_BLOB_BYTES,
+  MAX_MEMBER_PRIVATE_BLOBS,
+  MAX_PRIVATE_BLOB_BYTES,
+  MIN_PRIVATE_BLOB_BYTES,
   MAX_ACCOUNT_VAULT_BYTES,
   MAX_ACCOUNT_VAULT_WRAPPERS,
   MIN_ACCOUNT_VAULT_BYTES,
@@ -467,4 +472,4 @@ export class DurableStore {
   }
 }
 
-addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, chatBlobMethods, chatEventMethods, boardEventMethods, privateEventMethods, chatHiddenMethods, chatKeyMethods, chatReceiptMethods, accountVaultMethods, lifecycleMethods, authorityMethods, envelopeMethods);
+addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, chatBlobMethods, chatEventMethods, boardEventMethods, privateEventMethods, privateBlobMethods, chatHiddenMethods, chatKeyMethods, chatReceiptMethods, accountVaultMethods, lifecycleMethods, authorityMethods, envelopeMethods);

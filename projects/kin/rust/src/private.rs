@@ -20,6 +20,10 @@
 //! a member (#520) own KPRV sections 12 and 13 (private_prefs.rs). New
 //! private events are made by `kin_private_execute` (private_command.rs).
 //!
+//! The journal (#496) owns kinds 101–109 and KPRV section 101 (journal.rs).
+//! The placeholder kind 100 stays reserved and decodable; no surface writes
+//! it.
+//!
 //! Replay rules (replay never fails on a decoded private event, beyond the
 //! checks every log makes):
 //! - Every event in one private log has the same author: the log's member.
@@ -28,6 +32,7 @@
 //!   access control.
 //! - A note set to text replaces the note; set to empty text it is removed.
 //!   The latest event in replay order wins.
+//! - Journal events replay as journal.rs describes.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -46,6 +51,8 @@ pub const MAX_PRIVATE_EVENT_COUNT: usize = 50_000;
 pub const MAX_PRIVATE_NOTE_BYTES: usize = 2_048;
 /// KPRV sections (`encode_private`).
 pub const SECTION_NOTES: u16 = 1;
+/// The journal's KPRV section (#496, journal.rs).
+pub const SECTION_JOURNAL: u16 = crate::journal::FIRST_JOURNAL_KIND;
 
 /// Whether a kind code is reserved for the private log. Every code in the
 /// range belongs to the private log, known or not, so a household log never
@@ -74,6 +81,7 @@ pub fn encode_payload(kind: &EventKind) -> Result<Vec<u8>, KinError> {
         kind @ (EventKind::ReminderSet { .. }
         | EventKind::ReminderCleared { .. }
         | EventKind::SettingSet { .. }) => crate::private_prefs::encode_payload(kind),
+        EventKind::Journal(event) => crate::journal::encode_payload(event),
         _ => Err(KinError::InvalidEvent),
     }
 }
@@ -81,6 +89,9 @@ pub fn encode_payload(kind: &EventKind) -> Result<Vec<u8>, KinError> {
 /// Decodes a private payload strictly. A code in the private range that this
 /// engine does not know is unsupported (a later release added it).
 pub fn decode_payload(code: u16, payload: &[u8]) -> Result<EventKind, KinError> {
+    if crate::journal::is_journal_code(code) {
+        return crate::journal::decode_payload(code, payload).map(EventKind::Journal);
+    }
     match code {
         PRIVATE_NOTE_SET => {
             if payload.len() < 20 {
@@ -140,6 +151,8 @@ pub struct PrivateState {
     items: crate::private_items::PrivateItems,
     /// Reminders and settings (#520, private_prefs.rs).
     prefs: Arc<crate::private_prefs::PrefsState>,
+    /// The journal (#496, journal.rs).
+    journal: crate::journal::JournalState,
 }
 
 impl PrivateState {
@@ -167,6 +180,11 @@ impl PrivateState {
         &self.prefs
     }
 
+    /// The member's journal (#496).
+    pub fn journal(&self) -> &crate::journal::JournalState {
+        &self.journal
+    }
+
     /// Whether a new private event may be written (`kin_private_execute`):
     /// each part of the projection judges its own kinds. The placeholder
     /// note has no rule beyond its payload's.
@@ -179,6 +197,7 @@ impl PrivateState {
             | EventKind::SettingSet { .. } => {
                 crate::private_prefs::check_command(&self.prefs, kind)
             }
+            EventKind::Journal(event) => self.journal.check_command(event),
             _ => Err(KinError::InvalidEvent),
         }
     }
@@ -217,6 +236,10 @@ pub fn apply(state: &mut Arc<PrivateState>, event: &EventEnvelope) -> Result<(),
         EventKind::ReminderSet { .. }
         | EventKind::ReminderCleared { .. }
         | EventKind::SettingSet { .. } => crate::private_prefs::apply(&mut state.prefs, event),
+        EventKind::Journal(journal) => {
+            state.journal.apply(event, journal);
+            Ok(())
+        }
         _ => Err(KinError::InvalidEvent),
     }
 }
@@ -240,6 +263,9 @@ pub fn apply(state: &mut Arc<PrivateState>, event: &EventEnvelope) -> Result<(),
 ///
 /// Section 12, reminders, and section 13, settings (#520, private_prefs.rs
 /// `encode_reminders` and `encode_settings`), each once there is one.
+///
+/// Section 101, the journal (#496, journal.rs `encode_section`), once the
+/// member has written an entry.
 pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u8>, KinError> {
     let mut notes = Vec::new();
     notes.extend_from_slice(&(state.notes.len() as u32).to_le_bytes());
@@ -267,6 +293,12 @@ pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u
         sections.push((
             crate::private_prefs::SECTION_SETTINGS,
             crate::private_prefs::encode_settings(&state.prefs),
+        ));
+    }
+    if !state.journal.is_empty() {
+        sections.push((
+            SECTION_JOURNAL,
+            crate::journal::encode_section(&state.journal),
         ));
     }
     let size = sections

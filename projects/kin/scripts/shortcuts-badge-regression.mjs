@@ -18,6 +18,10 @@ import { readFile } from "node:fs/promises";
 const LANDINGS = Object.freeze({
   "/#kin-action=add-shopping": { hash: "#lists/shopping", page: "lists", destination: "Adds to Shopping." },
   "/#kin-action=quick-add": { hash: "#lists/todo", page: "lists", destination: "Adds to To do." },
+  // New journal entry (#509): the Journal page, whose editor opens once
+  // private storage is open on the device (journal-regression.mjs drives
+  // that with a password account; this suite's household has none).
+  "/#kin-action=new-journal-entry": { hash: "#journal", page: "journal" },
   "/#week": { hash: "#week", page: "week" },
   "/#lists/shopping": { hash: "#lists/shopping", page: "lists" },
   "/#updates/chat": { hash: "#updates/chat", page: "updates" },

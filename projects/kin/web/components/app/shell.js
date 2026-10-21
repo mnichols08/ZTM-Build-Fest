@@ -196,7 +196,7 @@ export class ShellBuilder {
     updateNow.textContent = "Update now";
     updateNow.addEventListener("click", () => {
       const focusedEditor = document.activeElement?.matches?.("input, textarea, select, [contenteditable='true']");
-      const hasDraft = this.app.compose?.input?.value.trim() || this.app.routines?.hasDraft || this.app.detail?.hasDraft || this.app.notes?.editor?.title.trim() || this.app.notes?.editor?.body.trim() ||
+      const hasDraft = this.app.compose?.input?.value.trim() || this.app.journal?.draft || this.app.routines?.hasDraft || this.app.detail?.hasDraft || this.app.notes?.editor?.title.trim() || this.app.notes?.editor?.body.trim() ||
         [this.app.needs, this.app.shopping, this.app.staples].some((list) => list.composer?.input?.value.trim());
       if (this.app.busy || focusedEditor || hasDraft) {
         this.ctx.status.setStatus("Finish or save your current edit before updating Kin.");

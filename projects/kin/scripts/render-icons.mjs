@@ -166,6 +166,18 @@ export const GLYPHS = Object.freeze({
   shopping: bag(96),
   // A speech bubble.
   chat: union(roundRect(38, 46, 116, 80, 24), polygon([[62, 116], [56, 152], [100, 120]])),
+  // "New journal entry" (#509): a notebook (a spine and two ruled lines cut
+  // from its cover) with the round "+" badge, set apart by tile colour.
+  "new-journal-entry": union(
+    subtract(
+      roundRect(42, 36, 92, 120, 14),
+      capsule(60, 48, 60, 144, 4),
+      capsule(76, 70, 116, 70, 5),
+      capsule(76, 92, 106, 92, 5),
+      circle(136, 138, 34),
+    ),
+    subtract(circle(136, 138, 25), plus(136, 138, 13, 5)),
+  ),
   // A sun.
   today: union(
     circle(96, 96, 26),

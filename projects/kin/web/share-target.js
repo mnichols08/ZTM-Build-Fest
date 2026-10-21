@@ -78,7 +78,8 @@ export async function fetchShared(id, { worker = globalThis.navigator?.serviceWo
  * is kept so shortcuts on existing installs still work). Shortcuts that only
  * open a page (`#week`, `#lists/shopping`, …) are ordinary routes, which a
  * lock leaves in the address until unlock. */
-export const LAUNCH_ACTIONS = Object.freeze(["quick-add", "add-shopping"]);
+// "new-journal-entry" (#509) opens the member's journal editor.
+export const LAUNCH_ACTIONS = Object.freeze(["quick-add", "add-shopping", "new-journal-entry"]);
 export function takeLaunchAction(where = globalThis.location, past = globalThis.history) {
   const hash = String(where?.hash ?? "").replace(/^#/, "").toLowerCase();
   if (!hash.startsWith("kin-action=")) return "";
@@ -94,6 +95,7 @@ export function takeLaunchAction(where = globalThis.location, past = globalThis.
 export function shortcutLanding(action, { simpleView = false } = {}) {
   if (!LAUNCH_ACTIONS.includes(action)) return null;
   if (simpleView) return { hash: "#today", quickAdd: false };
+  if (action === "new-journal-entry") return { hash: "#journal", quickAdd: false, journal: true };
   return { hash: action === "add-shopping" ? "#lists/shopping" : "#lists/todo", quickAdd: true };
 }
 

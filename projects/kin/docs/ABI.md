@@ -148,6 +148,7 @@ against the private log only (code 4: a full log, a logical time not after
 the log's latest, a known event ID, a household other than the log's or the
 context's target, an author other than the log's member, or the kind's own
 rules, such as `PrivateItems::check_command` for 110–118 and
+`JournalState::check_command` for the journal's 101–104, and
 `private_prefs::check_command` for reminders and settings, 120–139, #520,
 which refuse a change that changes nothing) and publishes KCMT
 with an empty projection; the log is not changed until the host appends the
@@ -292,7 +293,11 @@ N  payload
 | 68 | ROUTINE_ROTATION_SET (#429) | routine ID [16] (non-zero), member count u8 (0, or 2–12), current index u8 (below the count; 0 when the count is 0), reserved u16, then each member ID [16] (non-zero, no repeats): 20 + 16 × count bytes. An empty list ends the rotation |
 | 69 | ROUTINE_TURN_SET (#429) | routine ID [16] (non-zero), member ID [16] (non-zero): 32 bytes |
 | 70 | SITTER_PAGE_SET (#442) | entry count u16 (0–30), reserved u16, then each entry: kind u8 (1 note, 2 reference record, 3 routine), 3 reserved, record ID [16] (non-zero; no entry twice); then the intro (u16 length + UTF-8; trimmed, 0–500 bytes, no controls but newline) |
-| 100 | PRIVATE_NOTE_SET (#489, private log) | note ID [16] (non-zero), text length u32 (0 removes the note; at most 2,048 bytes), UTF-8 text (no control characters except line feed). A placeholder until the journal and list stories add their kinds; codes of 101–199 not defined here are reserved for private records and fail with code 3 |
+| 100 | PRIVATE_NOTE_SET (#489, private log) | note ID [16] (non-zero), text length u32 (0 removes the note; at most 2,048 bytes), UTF-8 text (no control characters except line feed). Reserved: still decoded; no surface writes it. Kinds without a definition in 100–199 fail with code 3 |
+| 101 | JOURNAL_ENTRY_CREATED (#498, private log) | entry ID [16] (non-zero), civil date u32 (YYYYMMDD, a real date), title length u16 (≤ 200), photo count u8 (≤ 10), reserved u8, body length u32 (≤ 20,000), title (UTF-8, no controls, trimmed), body (UTF-8, no controls but line feed, trimmed), then each photo (136 bytes): type u8 (1 JPEG, 2 PNG, 3 WebP), reserved [3], sealed size u32 (29 to 4 MiB + 4 KiB), blob reference [32], key [32], thumbnail reference [32], thumbnail key [32] (all non-zero; no reference twice in an entry). Title, body or a photo is required |
+| 102 | JOURNAL_ENTRY_EDITED (#498, private log) | as 101: the whole new content |
+| 103 | JOURNAL_ENTRY_DELETED (#498, private log) | entry ID [16] (non-zero): 16 bytes |
+| 104 | JOURNAL_ENTRY_RESTORED (#498, private log) | entry ID [16] (non-zero): 16 bytes |
 | 120 | REMINDER_SET (#522, private log) | target kind u8 (1 item, 2 routine), 3 reserved, target ID [16] (non-zero), due instant i64 (Unix ms), UTC offset i16 (minutes, −720 to 840), zone length u8 (0–64), reserved u8, zone (ASCII letters, digits and `/ _ + -`): 32 + length bytes |
 | 121 | REMINDER_CLEARED (#522, private log) | target kind u8, reason u8 (1 canceled, 2 done, 3 dismissed), 2 reserved, target ID [16], instant i64: 28 bytes |
 | 130 | SETTING_SET (#525, private log) | key u16 (1–255), value length u8 (0–32), reserved u8, value (`a-z 0-9 -`; keys 1–7 take only their listed values): 4 + length bytes. 122–129 and 131–139 are reserved for reminders and settings |
@@ -551,9 +556,14 @@ tuned for printed codes under heavy blur.
   length u8, reserved u8, logical time u64, device ID [16] (of the event
   that set it), zone. Section 13 (settings, #525): count u32, then each in
   ascending key order: key u16, value length u8, reserved u8, logical time
-  u64, device ID [16], value (present once one is set). The journal adds
-  its own section code. `web/wasm/kin-private.js` decodes it (sections 12 and 13
-  through `web/wasm/kin-prefs.js`).
+  u64, device ID [16], value (present once one is set).
+  Section 101 (the journal, #498), present once the member
+  has written an entry: entry count u32, then each live entry newest first (date descending, then
+  later-created first, then ID): ID [16], created logical time u64, updated
+  logical time u64, device ID [16] (of the latest change), date u32, title
+  length u16, photo count u8, reserved u8, body length u32, title, body, then
+  the photos as in kind 101. `web/wasm/kin-private.js` decodes them all
+  (sections 12 and 13 through `web/wasm/kin-prefs.js`).
 - **KBRD v1** (the fridge, `kin_board_state`, #317, [ADR 0011](decisions/0011-family-fridge.md)):
   `"KBRD"`, version 1, reserved u16, visible stroke count u32, visible magnet
   count u32, open-clear flag u8 + 3 reserved, open clear ID (16 bytes, zero

@@ -81,6 +81,7 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ReminderSet { .. } => crate::private_prefs::REMINDER_SET,
         EventKind::ReminderCleared { .. } => crate::private_prefs::REMINDER_CLEARED,
         EventKind::SettingSet { .. } => crate::private_prefs::SETTING_SET,
+        EventKind::Journal(event) => event.code(),
     }
 }
 
@@ -498,7 +499,8 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
         | EventKind::PrivateItem(_)
         | EventKind::ReminderSet { .. }
         | EventKind::ReminderCleared { .. }
-        | EventKind::SettingSet { .. }) => {
+        | EventKind::SettingSet { .. }
+        | EventKind::Journal(_)) => {
             payload = crate::private::encode_payload(kind)?;
         }
     }
