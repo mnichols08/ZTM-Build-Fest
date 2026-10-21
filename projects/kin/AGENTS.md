@@ -106,11 +106,13 @@ If an unrelated parent-repository file was modified accidentally, revert that ch
 
 # Current Development Stage
 
-Kin is at **v1.3.0 — Member Names and Clearer Setup**, released as
-`kin-v1.3.0` on 2026-10-19. It follows v1.2.0 — Household Chat, v1.1.2 — Private Household Branding, v1.1.1 — Member and Notification
+Kin is at **v1.4.0 — Fridge, Meals and Household Helpers**, released as
+`kin-v1.4.0` on 2026-10-20. It follows v1.3.0 — Member Names and Clearer Setup, v1.2.0 — Household Chat, v1.1.2 — Private Household Branding, v1.1.1 — Member and Notification
 Clarity, v1.1.0 — Connected Household Devices, and Kin's first stable release,
 `kin-v1.0.0` (with `kin-v1.0.0-rc.1` on the same commit), released on
 2026-10-17. Create, move or push tags only with the owner's explicit approval.
+
+v1.4.0 adds the family fridge (ADR 0011, its own board log and relay stream), Meals (ADR 0012), Simple view (ADR 0013), Talk later (ADR 0014), undo and redo, and the household helpers: share into Kin, shopping mode and store sections (ADR 0015), list import, This week, the sitter page (ADR 0017) and taking turns on routines (ADR 0016). Its new event kinds 52–70 are additive (replay protocol still 24); it adds server schemas 18–20 and key database version 6, and no change to the v1.0 formats.
 
 v1.3.0 adds members' own preferred display names (event kind 51, additive; replay protocol still 24), explicit invite-another-person versus add-my-device paths, and the first #261 onboarding and feedback slices. It changes no v1.0 format and no server schema.
 
@@ -1199,6 +1201,7 @@ kin-v1.1.1
 kin-v1.1.2
 kin-v1.2.0
 kin-v1.3.0
+kin-v1.4.0
 ```
 
 Never use ambiguous repository-wide tags such as `v0.0.1` or `v1.0.0`.

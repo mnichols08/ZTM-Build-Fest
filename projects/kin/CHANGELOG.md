@@ -7,6 +7,17 @@ documentation only.
 
 ## Unreleased
 
+## v1.5.0 — One Account and Private Spaces
+
+Released 2026-10-21 as `kin-v1.5.0`. This minor release gives each member one
+account across their devices (ADR 0018) and private space of their own
+(ADR 0019): a username and password at first run, an optional passkey and a
+backup code, signing in on a new device without another one present, moving
+an existing household to accounts, a personal journal, a Just for me list,
+and reminders and settings that follow the member. It also finishes the
+home-screen shortcuts and app-icon count, calms the unlock wording, links a
+Google Play app and recovers a start-up cut short on Edge.
+
 ### Added
 
 - **App link for a Google Play app** (#532): the service serves
@@ -44,17 +55,6 @@ documentation only.
   A device whose passkey no longer works offers `Start over on this
   browser`, which clears Kin from that browser after a clear warning and
   opens Sign in, instead of asking you to clear site data.
-
-### Security
-
-- The one-wrapper vault routes (`PUT`/`DELETE /api/account/vault/wrappers/<id>`)
-  now need your current password or a fresh passkey, like every other change
-  to how your account opens.
-- A password changed on another device: at its next unlock with a
-  connection, a device asks for the new password before opening, and
-  switches to it. Offline, the old password still opens that device until it
-  is online (THREAT-MODEL).
-
 - **Add a passkey: it signs you in alone, or require password and passkey**
   (#560, #561, #562, [ADR 0018](docs/decisions/0018-account-key-vault.md)
   D3/D4): once you've added something, Today calmly offers a passkey (and
@@ -173,6 +173,71 @@ documentation only.
   verifier helper, and re-sealing a member's vault when a device installs a
   new epoch key. Nothing visible yet: no vault is created until the first-run
   story.
+
+### Changed
+
+- **Kin loads itself again if its start was cut short** (#594): on Edge for
+  Windows a page load sometimes had its module requests cancelled by the
+  browser part way, which left a blank page with only "Skip to content". A
+  small start-up guard (`web/boot-guard.js`) now notices and loads the page
+  again, at most twice in a row, then offers Try again. A load that wasn't a
+  refresh stays locked: the guard's reload never resumes it (#351).
+- **Calmer unlock until accounts arrive** (#563): screens call the recovery
+  key the **backup key for this device** ("Each device has its own"; stored
+  format unchanged, #578); right after setup, once the device is in a
+  household and online, Today asks "Unlock with your face, fingerprint or
+  screen lock next time?" with Turn on and Not now (#577); new
+  password-manager entries are named for the device ("Kin backup key — Chrome
+  on Android (K-7F3A)"), the unlock form asks for that entry and names it
+  under the field, older "Kin recovery key" entries still match, and after a
+  backup-key unlock a one-time suggestion offers passkey unlock (#579).
+- **The unread chat count on the app icon is now opt-in** (#476): it used to
+  appear wherever the browser supported it; now it shows only after a member
+  chooses it under Notifications. The "Quick add" shortcut is now "Add a
+  task" and opens To do (its address is unchanged, so existing installs keep
+  working). A household's published install identity no longer puts its own
+  icon on every shortcut; each keeps Kin's shortcut icon.
+
+### Security
+
+- The one-wrapper vault routes (`PUT`/`DELETE /api/account/vault/wrappers/<id>`)
+  now need your current password or a fresh passkey, like every other change
+  to how your account opens.
+- A password changed on another device: at its next unlock with a
+  connection, a device asks for the new password before opening, and
+  switches to it. Offline, the old password still opens that device until it
+  is online (THREAT-MODEL).
+
+### Compatibility
+
+- Server schemas 21–24 (account vaults, the private relay and its policy,
+  usernames, private blobs) are forward migrations; an earlier server refuses
+  the newer database, so keep a pre-upgrade backup if you might roll back.
+  Once a member has endorsed their certification key, don't roll the server
+  back.
+- Adds a member's private log (kinds 100–199, of which 100–104, 110–118, 120,
+  121 and 130 are used; replay protocol still 24), the KPRV result and
+  `kin_private_*` exports, account vault contents format 2, device
+  authorization certificate version 2, a `password` wrapper in the local
+  security manifest, and the member's private export KPEX 1. Each is listed
+  in [V1.0-COMPATIBILITY](docs/V1.0-COMPATIBILITY.md) under v1.5.0; the
+  household history, sync envelope and household export formats are
+  unchanged.
+- A device set up with a password must not be downgraded below v1.5.0. A
+  device on an earlier release pauses sync when it meets a version 2 device
+  certificate until it updates; households where nobody signs in on a new
+  device are unaffected.
+
+## v1.4.0 — Fridge, Meals and Household Helpers
+
+Released 2026-10-20 as `kin-v1.4.0`. This minor release adds the family fridge,
+Meals, Simple view for children, Talk later in Chat, undo and redo, and a set of
+everyday household helpers: share into Kin, shopping mode with store sections,
+bringing a list into Kin, This week, the sitter page and taking turns on
+routines.
+
+### Added
+
 - **Taking turns on routines** (#428, [ADR 0016](docs/decisions/0016-routine-rotations.md)):
   people take turns at a routine in an order you choose; the turn passes when
   it's done, with Skip to next and Give this turn to…, and Today shows whose
@@ -270,29 +335,23 @@ documentation only.
 
 ### Changed
 
-- **Kin loads itself again if its start was cut short** (#594): on Edge for
-  Windows a page load sometimes had its module requests cancelled by the
-  browser part way, which left a blank page with only "Skip to content". A
-  small start-up guard (`web/boot-guard.js`) now notices and loads the page
-  again, at most twice in a row, then offers Try again. A load that wasn't a
-  refresh stays locked: the guard's reload never resumes it (#351).
 - The page no longer triggers the browser's pull-to-refresh where the browser
   allows turning it off (#353).
-- **Calmer unlock until accounts arrive** (#563): screens call the recovery
-  key the **backup key for this device** ("Each device has its own"; stored
-  format unchanged, #578); right after setup, once the device is in a
-  household and online, Today asks "Unlock with your face, fingerprint or
-  screen lock next time?" with Turn on and Not now (#577); new
-  password-manager entries are named for the device ("Kin backup key — Chrome
-  on Android (K-7F3A)"), the unlock form asks for that entry and names it
-  under the field, older "Kin recovery key" entries still match, and after a
-  backup-key unlock a one-time suggestion offers passkey unlock (#579).
-- **The unread chat count on the app icon is now opt-in** (#476): it used to
-  appear wherever the browser supported it; now it shows only after a member
-  chooses it under Notifications. The "Quick add" shortcut is now "Add a
-  task" and opens To do (its address is unchanged, so existing installs keep
-  working). A household's published install identity no longer puts its own
-  icon on every shortcut; each keeps Kin's shortcut icon.
+
+### Compatibility
+
+- Adds household event kinds 59–64 and 66–70 (Meals, item pictures, store
+  sections, taking turns, the sitter page), chat event kind 65 (Talk later),
+  and the fridge's own board log with kinds 52–58, all schema 1 with replay
+  protocol still 24. Each is listed in
+  [V1.0-COMPATIBILITY](docs/V1.0-COMPATIBILITY.md) under v1.4.0; v1.0–v1.3
+  formats are unchanged.
+- Server schemas 18–20 (fridge relay, fridge access policy, Simple view) are
+  forward migrations; an earlier server refuses the newer database, so keep a
+  pre-upgrade backup if you might roll back. The key database goes to version 6.
+- A device on an earlier release that receives one of the new household kinds
+  pauses sync with "update Kin" and keeps its data until it updates. An export
+  that includes the fridge can't be imported by an earlier release.
 
 ## v1.3.0 — Member Names and Clearer Setup
 

@@ -1,8 +1,8 @@
 # Release Process
 
-**Status:** Current release: v1.3.0 — Member Names and Clearer Setup,
-released 2026-10-19 as `kin-v1.3.0`. The release before it was v1.2.0 —
-Household Chat (`kin-v1.2.0`). Neither is production certification or an
+**Status:** Current release: v1.4.0 — Fridge, Meals and Household Helpers,
+released 2026-10-20 as `kin-v1.4.0`. The release before it was v1.3.0 —
+Member Names and Clearer Setup (`kin-v1.3.0`). Neither is production certification or an
 independent audit.
 
 Before any v1.x release, check it against the
@@ -37,6 +37,8 @@ push notifications, a sandboxed Node service, and QR pairing/phone-approved
 computer sign-in. It preserves the v1.0 formats and reads v1.0 data under the
 [compatibility commitment](V1.0-COMPATIBILITY.md); server schemas 10 and 11
 are forward migrations, so keep a pre-upgrade backup if rollback matters.
+
+v1.4.0 adds the family fridge (its own board log and relay stream), Meals, Simple view for Limited members, item pictures, Talk later in Chat, undo and redo, share into Kin, shopping mode with store sections, list import, This week, the sitter page and taking turns on routines. The new kinds are additive (replay protocol still 24) and server schemas 18–20 are forward migrations, so keep a pre-upgrade backup if rollback matters; an older device that receives a new household kind pauses sync until it updates.
 
 v1.3.0 adds members' own preferred display names (an additive household event, kind 51) with friendly device labels, makes inviting another person explicitly different from adding your own device, and ships the first #261 onboarding and feedback slices. It changes no v1.0 format and no server schema; an older device that receives a name pauses sync until it updates.
 
