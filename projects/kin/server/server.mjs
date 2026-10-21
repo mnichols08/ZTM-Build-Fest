@@ -41,6 +41,8 @@ import {
 import { isInsideRoot, webRoot } from "./path-safety.mjs";
 import { clientKey, parseTrustedProxies } from "./client-key.mjs";
 import { LiveService } from "./live/live-service.mjs";
+import { FeedbackService, MAX_FEEDBACK_REQUEST_BYTES } from "./feedback-service.mjs";
+import { GitHubIssues, parseGitHubConfig } from "./feedback-github.mjs";
 
 const FLOW_TTL_MS = 2 * 60_000;
 const MAX_ACTIVE_FLOWS = 512;
@@ -119,6 +121,8 @@ export function createKinServer(options = {}) {
   service.onMemberRemoved = (_householdId, memberId) => {
     privateRelayService.forgetMember(memberId);
     privateBlobService.forgetMember(memberId);
+    // Their problem reports and suggestions too (ADR 0021 §3).
+    syncService.feedbackService?.forgetMember(memberId);
   };
   // Members' encrypted key vaults (ADR 0018, #564).
   const accountVaultService = options.accountVaultService ?? new AccountVaultService({ store, now: options.now ?? (() => Date.now()) });
@@ -133,6 +137,19 @@ export function createKinServer(options = {}) {
       maxChallenges: options.maxChallenges,
       maxAnonymousChallenges: options.maxAnonymousChallenges,
     });
+  // Problem reports and suggestions (ADR 0021 §3, #636), forwarded to
+  // GitHub issues when the operator configures a repository and token (#637).
+  const githubConfig = options.feedbackGithub === false ? null : parseGitHubConfig({
+    repo: options.feedbackGithub?.repo ?? process.env.KIN_FEEDBACK_GITHUB_REPO,
+    token: options.feedbackGithub?.token ?? process.env.KIN_FEEDBACK_GITHUB_TOKEN,
+    api: options.feedbackGithub?.api ?? process.env.KIN_FEEDBACK_GITHUB_API,
+  });
+  const feedbackService = options.feedbackService ?? new FeedbackService({
+    store,
+    github: githubConfig ? new GitHubIssues(githubConfig, { fetch: options.feedbackGithub?.fetch }) : null,
+    now: options.now ?? (() => Date.now()),
+  });
+  syncService.feedbackService = feedbackService;
   const maxFlows = options.maxFlows ?? MAX_ACTIVE_FLOWS;
   const context = {
     service,
@@ -144,6 +161,7 @@ export function createKinServer(options = {}) {
     privateRelayService,
     privateBlobService,
     accountVaultService,
+    feedbackService,
     store,
     webauthn,
     flows: new Map(),
@@ -284,7 +302,8 @@ export function createKinServer(options = {}) {
   };
   const lifecycleTimer = setInterval(pruneExpiredDeletions, 60_000);
   lifecycleTimer.unref?.();
-  server.on("close", () => clearInterval(lifecycleTimer));
+  feedbackService.start();
+  server.on("close", () => { clearInterval(lifecycleTimer); feedbackService.stop(); });
   server.on("upgrade", (request, socket, head) => {
     try {
       liveService.handleUpgrade(request, socket, head);
@@ -309,6 +328,7 @@ export function createKinServer(options = {}) {
     privateRelayService,
     privateBlobService,
     accountVaultService,
+    feedbackService,
     liveService,
     webauthn,
     store,
@@ -383,10 +403,10 @@ if (
       JSON.stringify({
         event: "startup_failed",
         outcome:
-          error.code === "durable_lock_exists" || error.code === "permission_model_required"
+          error.code === "durable_lock_exists" || error.code === "permission_model_required" || error.code === "feedback_github_invalid"
             ? error.code
             : "configuration_or_storage",
-        ...(["durable_lock_exists", "trusted_proxies_invalid", "household_policy_invalid", "permission_model_required"].includes(error.code) ? { message: error.message } : {}),
+        ...(["durable_lock_exists", "trusted_proxies_invalid", "household_policy_invalid", "permission_model_required", "feedback_github_invalid"].includes(error.code) ? { message: error.message } : {}),
         ...(error.code === "ERR_ACCESS_DENIED" || error.cause?.code === "ERR_ACCESS_DENIED" ? { message: "Node's permission model denied access to a path the service needs. Start Kin with server/start.mjs, which allows the app and data directories." } : {}),
       }),
     );
@@ -452,6 +472,16 @@ async function api(request, response, url, context) {
     privateUploadAuth = syncService.authorize(cookies(request).kin_session);
     context.privateBlobService.assertCanUse(privateUploadAuth);
   }
+  // A report (ADR 0021 §3) is checked against its sender's limits before
+  // its body (up to a 1 MiB screenshot) is read.
+  const feedbackPost = request.method === "POST" && (url.pathname === "/api/feedback" || url.pathname === "/api/feedback/anonymous");
+  let feedbackAuth = null;
+  if (feedbackPost) {
+    if (url.pathname === "/api/feedback") {
+      feedbackAuth = service.authorize(cookies(request).kin_session);
+      context.feedbackService.assertSignedAllowed(context.clientKey(request));
+    } else context.feedbackService.assertAnonymousAllowed(context.clientKey(request));
+  }
   const binaryUpload = (request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname)) ||
     chatUploadAuth !== null || privateUploadAuth !== null ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
@@ -471,6 +501,8 @@ async function api(request, response, url, context) {
     ? await readJsonBody(request, response, MAX_CHAT_RECEIPT_BYTES + 1024)
     : request.method === "PUT" && url.pathname.startsWith("/api/account/vault")
     ? await readJsonBody(request, response, MAX_ACCOUNT_VAULT_BODY_BYTES)
+    : feedbackPost
+    ? await readJsonBody(request, response, MAX_FEEDBACK_REQUEST_BYTES)
     : ["POST", "PUT", "DELETE"].includes(request.method)
     ? await readJsonBody(request, response, MAX_JSON_BODY_BYTES)
     : {};
@@ -515,6 +547,20 @@ async function api(request, response, url, context) {
     return;
   }
 
+  // Problem reports and suggestions (ADR 0021 §3, #636).
+  if (feedbackPost) {
+    const result = context.feedbackService.submit({ auth: feedbackAuth, body, clientKey: context.clientKey(request) });
+    json(response, result.duplicate ? 200 : 201, { reference: result.reference, status: result.status });
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/feedback/channel") {
+    json(response, 200, await context.feedbackService.channel());
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/feedback/mine") {
+    json(response, 200, context.feedbackService.mine(service.authorize(session)));
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/api/status") {
     let identity = null;
     let claim = null;

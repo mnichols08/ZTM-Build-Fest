@@ -1,6 +1,7 @@
 // DurableStore household lifecycle: deletion requests, cancellation,
 // finalization and purge.
 import { DurableConflictError, DurableStoreError, isId, isTimestamp } from "./shared.mjs";
+import { purgeHouseholdFeedback } from "./feedback.mjs";
 
 export function purgeHouseholdData(database, householdId) {
   database.prepare("UPDATE households SET owner_member_id = NULL WHERE id = ?").run(householdId);
@@ -40,6 +41,8 @@ export function purgeHouseholdData(database, householdId) {
   } finally {
     database.exec(`PRAGMA secure_delete = ${secureDelete ? "ON" : "OFF"}`);
   }
+  // Problem reports and suggestions its members sent (ADR 0021 §3).
+  purgeHouseholdFeedback(database, householdId);
   database
     .prepare("DELETE FROM provisioning_grants WHERE household_id = ?")
     .run(householdId);
@@ -136,6 +139,9 @@ export const lifecycleMethods = {
       ),
       chatBlobs: count(
         "SELECT (SELECT COUNT(*) FROM chat_blobs WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_blob_claims WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_blob_usage WHERE household_id = ?1) AS count",
+      ),
+      feedback: count(
+        "SELECT COUNT(*) AS count FROM feedback WHERE household_id = ?",
       ),
       events: count(
         "SELECT COUNT(*) AS count FROM sync_events WHERE household_id = ?",
