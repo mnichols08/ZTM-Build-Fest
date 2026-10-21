@@ -16,6 +16,7 @@ import {
   passkeySuggestionDismissed,
 } from "../../security/backup-key-entry.js";
 import { accountState } from "../../security/account-security.js";
+import { recordDiagnostic } from "../../diagnostics/ring-buffer.js";
 
 export class StatusController {
   constructor(ctx) {
@@ -61,6 +62,7 @@ export class StatusController {
     this.app.alert.textContent = "";
     this.app.alert.hidden = true;
     this.app.retryButton.hidden = true;
+    if (this.app.reportButton) this.app.reportButton.hidden = true;
     this.app.retryAction = null;
     this.app.retryIntent = null;
     this.app.suspendedRetry = null;
@@ -72,6 +74,10 @@ export class StatusController {
     this.app.retryAction = retryAction;
     this.app.retryIntent = retryIntent;
     this.app.retryButton.hidden = typeof retryAction !== "function";
+    // Every error message offers a report (ADR 0021 §3); the buffer notes
+    // that one was shown, never its words.
+    if (this.app.reportButton) this.app.reportButton.hidden = false;
+    recordDiagnostic("alert_shown");
   }
   showUpdateNotice() {
     if (this.app.updateNotice) this.app.updateNotice.hidden = false;

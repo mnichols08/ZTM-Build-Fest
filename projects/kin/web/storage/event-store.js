@@ -1,6 +1,8 @@
 import {
   idToHex, idFromHex, randomId, eventMetadata, eventMetadataBatch,
 } from "../wasm/kin-engine.js";
+import { recordDiagnostic } from "../diagnostics/ring-buffer.js";
+import { errorName } from "../diagnostics/global.js";
 import {
   encryptedDatabase, snapshotStores, protectRows, valuesEqual, compareStoreRows,
 } from "./encrypted-idb.js";
@@ -2468,6 +2470,7 @@ function storageError(cause) {
       ? "Kin couldn't save because local browser storage is full. Free some space, then try again. Your saved information was not deleted."
       : "Kin could not safely access local household storage. Your saved information was not intentionally deleted.";
   const error = new EventStoreError(message, cause);
+  recordDiagnostic("storage_failed", { store: "events", name: errorName(cause) });
   return error;
 }
 

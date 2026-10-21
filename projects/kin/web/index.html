@@ -5,10 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#684033" />
     <meta name="kin-version" content="1.5.0" />
-    <!-- blob: covers only same-session object URLs for decrypted attachment previews. -->
+    <!-- blob: covers only same-session object URLs for decrypted attachment previews; data: lets a
+         report's screenshot draw Kin's own page as an SVG image where a blob: one can't be read back. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' blob:; media-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
     />
     <title>Kin</title>
     <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />

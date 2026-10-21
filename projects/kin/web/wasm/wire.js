@@ -1,5 +1,6 @@
 // Protocol-24 wire constants and helpers shared by the engine bridge and the
 // projection decoder. Wire validation only; Rust owns every domain rule.
+import { recordDiagnostic } from "../diagnostics/ring-buffer.js";
 
 export const PROTOCOL_VERSION = 24;
 export const MAX_TIMESTAMP = 8_640_000_000_000_000;
@@ -43,6 +44,8 @@ export class KinEngineError extends Error {
     super(message);
     this.name = "KinEngineError";
     this.code = code;
+    // The engine's numeric category only (#631).
+    recordDiagnostic("engine_error", { code: typeof code === "number" ? code : undefined });
   }
 }
 

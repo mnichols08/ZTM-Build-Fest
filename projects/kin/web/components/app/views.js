@@ -298,6 +298,22 @@ export class ViewBuilder {
     searchLink.href = "#search";
     searchLink.textContent = "Search household";
     hubTools.append(searchLink, this.app.installButton);
+    // Telling the Kin team (ADR 0021 §3): a problem from anyone, and what
+    // this member has sent with its status.
+    const reportTools = document.createElement("div");
+    reportTools.className = "hub-report-tools";
+    const reportProblem = document.createElement("button");
+    reportProblem.type = "button";
+    reportProblem.className = "secondary hub-report-problem";
+    reportProblem.textContent = "Report a problem";
+    reportProblem.addEventListener("click", () => this.ctx.report.open("problem", { opener: reportProblem }));
+    const sentLink = document.createElement("button");
+    sentLink.type = "button";
+    sentLink.className = "secondary hub-feedback-sent";
+    sentLink.textContent = "What I've sent";
+    sentLink.addEventListener("click", () => this.ctx.report.open("sent", { opener: sentLink }));
+    reportTools.append(reportProblem, sentLink);
+    hubTools.append(reportTools);
     // iPhone and iPad browsers have no install prompt; show the steps instead.
     const iosInstall = installHelp(currentPlatform());
     if (iosInstall) {
@@ -415,6 +431,29 @@ export class ViewBuilder {
     // Text size, motion and reminder alerts, and where they live (#524).
     this.app.personalSettings = document.createElement("kin-personal-settings");
     this.app.personalSettings.update(this.ctx.privatePrefs.settingsView());
+    // Suggest something (#628, ADR 0021 §3): household admins only, shown
+    // once the household settings say so, under Household › Features.
+    this.app.suggestSection = document.createElement("section");
+    this.app.suggestSection.className = "today-section suggest-section";
+    this.app.suggestSection.setAttribute("aria-labelledby", "suggest-heading");
+    this.app.suggestSection.hidden = !this.app.householdAdmin;
+    const suggestHeading = document.createElement("h2");
+    suggestHeading.id = "suggest-heading";
+    suggestHeading.textContent = "Ideas for Kin";
+    const suggestHint = document.createElement("p");
+    suggestHint.className = "section-hint";
+    suggestHint.textContent = "As a household admin, you can suggest something you'd like Kin to do. The Kin team sees it, and you can follow what happens in What I've sent.";
+    const suggestButton = document.createElement("button");
+    suggestButton.type = "button";
+    suggestButton.className = "suggest-button";
+    suggestButton.textContent = "Suggest something";
+    suggestButton.addEventListener("click", () => this.ctx.report.open("suggestion", { opener: suggestButton }));
+    const suggestSent = document.createElement("button");
+    suggestSent.type = "button";
+    suggestSent.className = "secondary";
+    suggestSent.textContent = "What I've sent";
+    suggestSent.addEventListener("click", () => this.ctx.report.open("sent", { opener: suggestSent }));
+    this.app.suggestSection.append(suggestHeading, suggestHint, suggestButton, suggestSent);
     appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance, this.app.personalSettings);
 
     // For the sitter (#441, ADR 0017).
@@ -430,7 +469,7 @@ export class ViewBuilder {
     featuresPage.setAttribute("aria-label", "Features");
     this.app.householdFeatures = document.createElement("kin-household-features");
     this.app.householdFeatures.controller = this.ctx.features;
-    featuresPage.append(this.app.householdFeatures);
+    featuresPage.append(this.app.householdFeatures, this.app.suggestSection);
     household.append(hub, fridgePage, notesPage, sitterPage, areasPage, peoplePage, privacyPage, appearancePage, featuresPage);
     this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["sitter", sitterPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage], ["features", featuresPage]]));
 
@@ -455,6 +494,12 @@ export class ViewBuilder {
     this.ctx.journal?.render();
     this.ctx.navigation.showPageFromLocation();
     this.ctx.easy?.updateNavigation();
+  }
+
+  /** Shows "Suggest something" to a household admin only. */
+  showSuggest(admin) {
+    this.app.householdAdmin = admin;
+    if (this.app.suggestSection) this.app.suggestSection.hidden = !admin;
   }
 
   /** Where the older Talk topics show: in Chat's To talk about list, or,

@@ -87,9 +87,27 @@ export class SecurityViews {
     // A new device starts with the first run (#557); the passkey and
     // backup-key setup stays one tap away.
     // Signing in on a new device (#568) is one choice on that first screen.
-    if (!this.host.manifest)
-      return this.host.legacySetup ? this.renderWelcome() : this.host.signingIn ? this.ctx.signIn.render() : this.ctx.firstRun.render();
-    this.renderLocked();
+    if (!this.host.manifest) {
+      if (this.host.legacySetup) this.renderWelcome();
+      else if (this.host.signingIn) this.ctx.signIn.render();
+      else this.ctx.firstRun.render();
+    } else this.renderLocked();
+    this.renderReportLink();
+  }
+
+  /** "Report a problem" without signing in (ADR 0021 §3): on the lock
+   * screen and through setup, where a person may be stuck. The app opens
+   * the report; it goes without a member link. */
+  renderReportLink() {
+    const row = document.createElement("p");
+    row.className = "security-report";
+    const report = document.createElement("button");
+    report.type = "button";
+    report.className = "link-button security-report-button";
+    report.textContent = "Report a problem";
+    report.addEventListener("click", () => report.dispatchEvent(new CustomEvent("kin:report-problem", { bubbles: true, composed: true })));
+    row.append(report);
+    this.host.append(row);
   }
 
   renderWelcome() {

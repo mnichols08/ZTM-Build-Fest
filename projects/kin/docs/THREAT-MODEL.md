@@ -429,6 +429,11 @@ content. Kin renders household text with text APIs, never as HTML.
 
 **Planned.** Send the full policy as a header and add Trusted Types.
 
+`img-src` allows `data:` images (beside `'self'` and `blob:`) so a report's
+screenshot (ADR 0021 §3) can draw Kin's own page as an SVG image in browsers
+that won't read a `blob:` one back. Images can't run script, and
+`connect-src` still stops a data image from reaching any other origin.
+
 ### C5: the recovery key can linger in memory and on the clipboard
 
 **What it is.** JavaScript can't wipe a string, so the recovery key text
@@ -781,6 +786,29 @@ modified client could write a `SITTER_PAGE_SET` event and other devices would
 accept it, as for attachment removal above. The page can only point at
 records already in the household, so the worst case is a rearranged or
 emptied page that an Adult sets again.
+
+### Reports to the Kin team are readable by the operator (ADR 0021 §3)
+
+A problem report's typed text and picture, and a suggestion's text, are
+plaintext on the service: its operator (and anyone with the database or a
+backup) can read them. When forwarding is on, the typed text and the
+diagnostics are also readable by whoever can read the issue tracker, which
+is everyone for a public repository; the preview warns, and the operator
+guide recommends a private one. Pictures never leave the service. A picture
+shows whatever was on screen, household content included; it is off by
+default, shown before sending, croppable and warned about, but Kin can't
+tell what in it is private. The diagnostics are limited by construction (a
+fixed table and a code registry the service re-checks), not by review.
+
+An unsent report waits unencrypted in the device's `kin-feedback-outbox`
+until it is sent or removed, so someone with the unlocked browser profile
+can read it. Reports sent without signing in are rate-limited by address
+only (2 an hour, 5 a day, 60 an hour across the service); behind a proxy
+without `KIN_TRUSTED_PROXIES` every client shares those limits. A signed-in
+member can make the service store up to 5 reports with 1 MiB pictures an
+hour; the service caps stored reports at 20,000 and pictures at 1 GiB. The
+GitHub token, if configured, can write that repository's issues; scope it
+to Issues on one repository.
 
 ### v1.0 was not tested across every browser and device
 

@@ -1,6 +1,8 @@
 // Rendering the projection into the views.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { routeHash, SEGMENTS } from "../../routes.js";
+import { recordDiagnostic } from "../../diagnostics/ring-buffer.js";
+import { errorName } from "../../diagnostics/global.js";
 import { formatCivilDate } from "../../today-view.js";
 import { DESTINATION_DESCRIPTIONS } from "./constants.js";
 import { searchableHousehold } from "../../features.js";
@@ -47,9 +49,16 @@ export class RenderController {
     const renderToken = (this.app.quietRenderToken ?? 0) + 1;
     this.app.quietRenderToken = renderToken;
     this.app.setAttribute("data-quiet-render", "");
+    const started = performance.now();
     try {
       this.renderStateContents();
+    } catch (error) {
+      recordDiagnostic("render_failed", { component: "workspace", name: errorName(error) });
+      throw error;
     } finally {
+      // A slow whole-workspace render is worth knowing about (#631).
+      const ms = performance.now() - started;
+      if (ms > 250) recordDiagnostic("render_slow", { component: "workspace", ms });
       const clearQuietRender = () => {
         if (this.app.quietRenderToken === renderToken) this.app.removeAttribute("data-quiet-render");
       };

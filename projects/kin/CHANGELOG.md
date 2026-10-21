@@ -36,6 +36,27 @@ documentation only.
   sizes, words, navigation and Undo line at 1280 px, 320 px and 200%, in
   dark mode, forced colours and reduced motion.
 
+- **Report a problem, suggest something, and see what you've sent** (#630,
+  #627, #635; [ADR 0021](docs/decisions/0021-kin-for-everyone.md) §3).
+  Anyone can report a problem from Household, the keyboard help, Help, any
+  error message or the lock screen: optional typed text, the device's
+  diagnostics (each shown and removable) and, only if turned on, a cropped
+  picture of Kin's screen drawn by Kin itself. A preview shows exactly what
+  goes and where; nothing is sent without Send; offline reports wait in an
+  outbox; each gets a reference number. Household admins can suggest
+  features (Household › Features). What I've sent shows
+  each one's status. A local diagnostic ring buffer (the last 50 codes,
+  numbers only, in memory) is recorded at sync, engine, storage, render,
+  route and unexpected-error sites. The service stores reports in **server
+  schema 26** (`feedback`, `feedback_screenshots`) with routes `POST
+  /api/feedback`, `POST /api/feedback/anonymous`, `GET /api/feedback/mine`
+  and `GET /api/feedback/channel`, per-member and per-address limits,
+  180-day retention and purge with member removal and household deletion;
+  admin commands `feedback-list`, `-show`, `-set-status`, `-forward` and
+  `-purge`; and optional forwarding to GitHub issues
+  (`KIN_FEEDBACK_GITHUB_REPO`, `KIN_FEEDBACK_GITHUB_TOKEN`) with status
+  following the issue. DEBUGGING's planned "export diagnostics" is replaced
+  by this.
 - **An Android app for Google Play** (epic #527; #529, #530, #535, #536,
   #537): `android/` holds a Trusted Web Activity that opens
   `https://kin.journeytocode.io` full-screen, with sharing into Kin (text,

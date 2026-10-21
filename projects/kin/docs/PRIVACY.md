@@ -340,6 +340,33 @@ applies: a member who may not read chat has no chat to export, and restoring an
 export does not give a device chat access it has not been given
 ([PORTABILITY](PORTABILITY.md#household-chat-in-an-archive-v11-136)).
 
+## Reports and suggestions to the Kin team (ADR 0021 §3)
+
+- **Only on Send.** A report or suggestion leaves the device only after the
+  person presses Send on a preview that shows everything in it and where it
+  goes. There is no automatic crash reporting, no telemetry, and diagnostics
+  are never collected until a report is opened.
+- **What it holds:** the person's typed text; diagnostics from a fixed table
+  (version, browser, system, screen size, text size, installed or tab, the
+  page as a route name, easy mode and Simple view, sync state and last sync
+  time, storage use, online state) and up to 50 recent error codes from the
+  in-memory diagnostic ring buffer, which accepts only codes from a fixed
+  list and numbers; and, only when chosen, a cropped picture of Kin's own
+  screen. Each diagnostic can be removed in the preview. No household text,
+  names, usernames or IDs are in the diagnostics; the service re-checks
+  them against the same table.
+- **Where it goes:** to the Kin service, which stores it in plaintext for
+  its operator, linked to the member (for rate limits and their status) or,
+  from the lock screen and setup, to nobody. If the operator forwards
+  reports, the title, typed text, diagnostics and reference become a GitHub
+  issue with no household or member ID, username or picture; in a public
+  repository anyone can read the typed text, and the preview says so.
+- **How long:** 180 days, sooner on member removal or household deletion
+  ([RETENTION](RETENTION.md)).
+- **On the device:** an unsent report waits in `kin-feedback-outbox`, an
+  IndexedDB database outside the encrypted household stores (a report can
+  be written when no household key is open), until it is sent or removed.
+
 ## Claims boundary
 
 Kin implements client-side encrypted event sync, but it has not received independent security review or production operational hardening. Do not call the service zero-knowledge, anonymous, or robustly recoverable; do not imply cryptography protects a compromised unlocked browser/runtime.
