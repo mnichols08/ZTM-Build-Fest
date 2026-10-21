@@ -52,7 +52,7 @@ export const DEVICES = Object.freeze([
 
 export const SCREENS = Object.freeze([
   { name: "today", hash: "#today", ready: "!app.pages.get('today').hidden", anchor: "app.today" },
-  { name: "shopping", hash: "#lists/shopping", ready: "!app.pages.get('lists').hidden && app.shopping.textContent.includes('Bananas')", anchor: "app.shopping" },
+  { name: "shopping", hash: "#lists/shopping", ready: "!app.pages.get('lists').hidden && app.shopping.textContent.includes('Bananas')", anchor: "app.shopping.querySelector('[data-item-id]')" },
   { name: "week", hash: "#week", ready: "!app.pages.get('week').hidden && app.week.querySelectorAll('.week-day').length === 7" },
   { name: "chat", hash: "#updates/chat", ready: "!app.pages.get('updates').hidden && app.chat.querySelectorAll('.chat-text').length >= 4" },
   { name: "journal", hash: "#journal", ready: "!app.pages.get('journal').hidden && app.journal.querySelectorAll('.journal-entry').length >= 2" },
@@ -176,10 +176,12 @@ async function showScreen({ hash }, isReady, anchorOf) {
   for (const details of document.querySelectorAll("details.list-actions")) details.open = false;
   document.activeElement?.blur?.();
   scrollTo(0, 0);
-  // When the screen's main content starts below the top quarter (Today's
-  // composer comes first on a phone), scroll it up under the header.
+  // When the screen's main content (Today's list, Shopping's first row)
+  // starts below the top quarter, as behind a composer on a phone, scroll it
+  // up to there, keeping a little of what is above it for context.
   const anchor = anchorOf(app);
-  if (anchor && anchor.getBoundingClientRect().top > innerHeight * 0.25) anchor.scrollIntoView({ block: "start" });
+  const top = anchor?.getBoundingClientRect().top ?? 0;
+  if (top > innerHeight * 0.25) scrollBy(0, top - innerHeight * 0.25);
   for (const scroller of document.querySelectorAll(".chat-scroll")) scroller.scrollTop = scroller.scrollHeight;
   await new Promise((r) => setTimeout(() => setTimeout(r, 0), 0));
   if (app.security?.phase !== "unlocked") throw new Error(`Kin is ${app.security?.phase} on ${hash}`);
