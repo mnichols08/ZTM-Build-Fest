@@ -14,7 +14,8 @@ import { androidIconSpecs, decodePng, DENSITIES, rasterize } from "./render-icon
 const root = fileURLToPath(new URL("..", import.meta.url));
 const android = join(root, "android");
 const res = join(android, "app", "src", "main", "res");
-const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
+// As LF: a Windows checkout may give any text file CRLF endings.
+const read = (...parts) => readFileSync(join(root, ...parts), "utf8").replace(/\r\n/g, "\n");
 const webManifest = JSON.parse(read("web", "manifest.webmanifest"));
 const expected = loadExpected(root);
 
