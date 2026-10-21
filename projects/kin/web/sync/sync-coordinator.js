@@ -22,6 +22,7 @@ import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
 import { decryptHouseholdSettings, encryptHouseholdSettings } from "../appearance/household.js";
 import { openBrowserChatRoom } from "../chat/chat-room.js";
 import { openBrowserBoardRoom } from "../board/board-room.js";
+import { openBrowserPrivateLog } from "../private/private-log.js";
 
 export function activeResponsibilityMemberIds(devices, now = Date.now()) {
   return [...new Set(devices
@@ -165,6 +166,9 @@ const HOUSEHOLD_PASS_RESERVE = 30;
 // Requests a fridge pass may make at most (#317): status, 3 push batches and
 // 5 pulls.
 const BOARD_PASS_REQUESTS = 10;
+// Requests a private pass may make at most (#492): two vault reads and a
+// write (a member-key rotation), status, 3 push batches and 5 pulls.
+const PRIVATE_PASS_REQUESTS = 13;
 // Sync errors that mean this session can't hold a live channel.
 const ACCESS_ERRORS = new Set(["authentication_required", "device_not_trusted", "membership_removed"]);
 // Errors a chat pass leaves to the household sync's own handling: the
@@ -178,7 +182,7 @@ function browserLiveChannel(options) {
 }
 
 export class SyncCoordinator {
-  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {}, onSimpleView = () => {} }) {
+  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {}, onSimpleView = () => {}, privateLog = openBrowserPrivateLog, onPrivateLog = () => {}, vaultKey = async () => null }) {
     this.store = store;
     this.engine = engine;
     this.identity = identity;
@@ -220,6 +224,16 @@ export class SyncCoordinator {
     this.board = null;
     this.boardOpening = null;
     this.onBoardRoom = onBoardRoom;
+    // The member's private log (#492, ADR 0019), opened like the fridge and
+    // synced after it, active only once the member key is on this device.
+    // `vaultKey()` gives the member key ring this device's vault key: the
+    // integration point with #557 (web/private/member-key.js); until that is
+    // wired it resolves null and the private pass does nothing.
+    this.openPrivateLog = privateLog;
+    this.privateLog = null;
+    this.privateOpening = null;
+    this.onPrivateLog = onPrivateLog;
+    this.vaultKey = vaultKey;
     // Simple view (#343, ADR 0013): this member's layout as last reported.
     this.onSimpleView = onSimpleView;
     this.simpleView = null;
@@ -252,6 +266,7 @@ export class SyncCoordinator {
     // device show, and can be written, while offline.
     void this.openChat().catch(() => {});
     void this.openBoard().catch(() => {});
+    void this.openPrivate().catch(() => {});
     await this.syncNow();
     if (this.stopped) return;
     if (!this.terminal) {
@@ -667,6 +682,7 @@ export class SyncCoordinator {
       this.catchUp = null;
       chatMore = (await this.syncChat(context)).hasMore;
       chatMore = (await this.syncBoard(context)).hasMore || chatMore;
+      chatMore = (await this.syncPrivate(context)).hasMore || chatMore;
     } else if (!lastPageAdvanced) {
       this.catchUp = null;
     }
@@ -821,6 +837,56 @@ export class SyncCoordinator {
     } catch (error) {
       if (CHAT_PASS_STOPS.has(error.code)) throw error;
       room?.reportSync(error);
+      return { hasMore: false };
+    }
+  }
+
+  /** Opens the member's private log once (#492); null where its storage
+   * isn't available. A failure leaves it closed for the next pass to retry. */
+  async openPrivate() {
+    if (this.privateLog || !this.openPrivateLog || this.stopped) return this.privateLog;
+    // Without a vault key on this device there is no member key to get:
+    // nothing is opened or created (a later pass looks again).
+    if (!this.privateOpening) {
+      const probe = await this.vaultKey();
+      if (!probe) return null;
+      probe.fill(0);
+      if (this.privateLog || this.stopped) return this.privateLog;
+    }
+    this.privateOpening ??= Promise.resolve().then(() => this.openPrivateLog({
+      identity: this.identity,
+      deviceKeys: this.deviceKeys,
+      engine: this.engine,
+      request: (path, options) => this.request(path, options),
+      vaultKey: () => this.vaultKey(),
+      onLocalChange: () => this.hinted(),
+    })).then((log) => {
+      if (this.stopped) { log?.close(); return null; }
+      if (!log) this.openPrivateLog = null;
+      this.privateLog = log;
+      if (log) {
+        try { this.onPrivateLog(log); } catch { /* the view's trouble isn't sync's */ }
+      }
+      return log;
+    }).finally(() => { this.privateOpening = null; });
+    return this.privateOpening;
+  }
+
+  /** One private pass after the fridge pass. It does nothing until the
+   * member key is on this device. Its trouble pauses private storage, not
+   * household sync, unless the session or household itself is gone. */
+  async syncPrivate({ status, devices }) {
+    let log = null;
+    try {
+      log = await this.openPrivate();
+      if (!log || this.stopped) return { hasMore: false };
+      if (this.requestBudgetDelay(PRIVATE_PASS_REQUESTS + HOUSEHOLD_PASS_RESERVE) > 0) return { hasMore: false };
+      const result = await log.sync({ status, devices, deviceKeys: this.deviceKeys });
+      log.reportSync(null);
+      return result;
+    } catch (error) {
+      if (CHAT_PASS_STOPS.has(error.code)) throw error;
+      log?.reportSync(error);
       return { hasMore: false };
     }
   }
@@ -1541,6 +1607,11 @@ export class SyncCoordinator {
       try { this.onBoardRoom(null); } catch { /* the view's trouble isn't sync's */ }
     }
     this.board = null;
+    if (this.privateLog) {
+      this.privateLog.close();
+      try { this.onPrivateLog(null); } catch { /* the view's trouble isn't sync's */ }
+    }
+    this.privateLog = null;
     this.keyStore?.close();
     this.keyStore = null;
     this.deviceKeys = null;
