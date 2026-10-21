@@ -54,6 +54,9 @@ const PAGE_TITLES = Object.freeze({
   week: "This week",
   // For you (#441): a Temporary member's landing page; it marks Today.
   foryou: "For you",
+  // A member's journal (#497): reached from Household (the More place), not
+  // a sixth destination; it marks Household.
+  journal: "Journal",
 });
 
 // Legacy destinations and tabs from earlier releases.
@@ -134,7 +137,7 @@ export function resolveRoute({ hash = "", pathname = "/" } = {}) {
     : null;
   const canonical = segments ? `${page}/${segment}` : page;
   // Search is reachable from every page; it marks no primary destination.
-  const destination = page === "search" ? null : page === "week" || page === "foryou" ? "today" : page;
+  const destination = page === "search" ? null : page === "week" || page === "foryou" ? "today" : page === "journal" ? "household" : page;
   return { page, segment, canonical, destination, title: PAGE_TITLES[page], hash: segments ? routeHash(page, segment) : `#${page}`, ...(topics ? { topics: true } : {}) };
 }
 

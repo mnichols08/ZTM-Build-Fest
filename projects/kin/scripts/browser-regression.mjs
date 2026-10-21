@@ -59,6 +59,7 @@ import { newDeviceRegressions } from "./new-device-regression.mjs";
 import { accountSecurityRegressions } from "./account-security-regression.mjs";
 import { justForMeRegressions } from "./just-for-me-regression.mjs";
 import { syncedPrefsRegressions } from "./synced-prefs-regression.mjs";
+import { journalRegressions } from "./journal-regression.mjs";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -2995,6 +2996,9 @@ try {
   // Reminders and settings that follow a member across two of their devices
   // (#520), on the real service the same way.
   if (REGRESSION_PART !== "1") console.log(await syncedPrefsRegressions({ endpoint, browserClient }));
+  // The journal (#496) through the same real password flow, on its own
+  // origin: private storage opens with the vault key sign-up keeps.
+  if (REGRESSION_PART !== "1") console.log(await journalRegressions({ endpoint, browserClient }));
 } catch (error) {
   // Before the browser closes: what each page showed (#328).
   await captureFailure("browser regression");

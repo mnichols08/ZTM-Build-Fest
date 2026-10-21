@@ -130,7 +130,8 @@ fn private_payloads_decode_strictly() {
     assert!(bad(&note_payload(1, b"")).is_ok());
     // A private kind this engine doesn't know yet is unsupported, not
     // mistaken for something else.
-    for code in [101, 150, LAST_PRIVATE_KIND] {
+    // (101–104 are the journal's, journal_tests.rs; 110–118 "Just for me".)
+    for code in [105, 150, LAST_PRIVATE_KIND] {
         assert!(is_private_code(code));
         assert_eq!(
             decode_event(&record_at(code, 1, 1, SAM, &note_payload(1, b"x"))).map(|_| ()),

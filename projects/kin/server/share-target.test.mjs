@@ -19,7 +19,7 @@ test("the manifest offers sharing into Kin and the shortcuts", async (t) => {
   assert.deepEqual({ action: manifest.share_target.action, method: manifest.share_target.method, enctype: manifest.share_target.enctype },
     { action: "/share", method: "POST", enctype: "multipart/form-data" });
   assert.deepEqual(manifest.shortcuts.map((shortcut) => shortcut.url),
-    ["/#kin-action=add-shopping", "/#kin-action=quick-add", "/#week", "/#lists/shopping", "/#updates/chat", "/#today"]);
+    ["/#kin-action=add-shopping", "/#kin-action=quick-add", "/#kin-action=new-journal-entry", "/#week", "/#lists/shopping", "/#updates/chat", "/#today"]);
   // Android ignores SVG-only shortcut icons (#473): each has PNGs, served as PNG.
   for (const shortcut of manifest.shortcuts) {
     const icon = shortcut.icons.find((entry) => entry.sizes === "96x96");

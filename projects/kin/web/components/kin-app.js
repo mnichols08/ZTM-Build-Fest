@@ -9,6 +9,7 @@ import "./kin-shopping-mode.js";
 import "./kin-week.js";
 import "./kin-just-for-me.js";
 import "./kin-sitter-editor.js";
+import "./kin-journal.js";
 import "./kin-import.js";
 import "./kin-command-palette.js";
 import "./kin-item.js";

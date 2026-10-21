@@ -63,6 +63,7 @@ export class EncryptedSyncService {
     this.chatRelayService?.forgetHousehold(householdId);
     this.boardRelayService?.forgetHousehold(householdId);
     this.privateRelayService?.forgetHousehold(householdId);
+    this.privateBlobService?.forgetHousehold(householdId);
     this.liveService?.revalidate(householdId);
   }
 
