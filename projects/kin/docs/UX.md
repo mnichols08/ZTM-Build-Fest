@@ -2371,6 +2371,43 @@ or similar calm context is sufficient.
 
 Kin does not need behavioral analytics to validate the product.
 
+## Telling the Kin team (ADR 0021 §3, #630, #627)
+
+**Report a problem** is one tap from Household (beside Search), the keyboard
+help, Help (which fires `kin:report-problem`), every error message (a
+"Report a problem" button beside it), after an error nothing handled (one
+calm status line with the same button, at most once a minute), and the lock
+screen and setup, where a person may be stuck and can't sign in.
+
+1. **Write** (optional): "What happened" and "What you expected". A
+   checkbox, off by default, adds a picture of this screen; turning it on
+   shows the picture at once with a warning that it can show private things,
+   and four "Trim from…" sliders crop it (5% steps, keyboard operable).
+2. **Check what will be sent**: where it goes in one sentence (to the Kin
+   team; and, when the operator forwards reports, that a copy without the
+   picture goes to the project's issue tracker, "which anyone on the
+   internet can read" unless it is private), what was typed, each device
+   detail as a row with its own Remove button (focus moves to the next
+   row's Remove, and the removal is announced), the recent error codes
+   behind "Show them", and the picture with "Remove the picture". "Put back
+   removed details" undoes removals.
+3. **Send**. "Sent" with the reference number (`KR-XXXX-XXXX-XXXX`), or,
+   offline, "Saved to send": the report waits on the device and goes when
+   Kin can reach the service. Nothing is ever sent without Send.
+
+**Suggest something** (household admins) is in Household › Features,
+under "Ideas for Kin": what they'd like (needed) and why it would help, a preview with only the
+Kin version, Send, and a `KS-` reference.
+
+**What I've sent** (Household, and after sending) lists what is still
+waiting on this device, with "Send now" and "Remove", and what the member
+sent with its status: Received, Planned, Done or Won't do. Reports sent
+without signing in aren't listed.
+
+The dialog is a native modal (a bottom sheet under 480 px) with a focused
+heading, labelled fields, 48 px targets and no sideways scrolling at 320 px.
+Locking closes it and drops the draft and the picture.
+
 ## Test with real people
 
 Prefer paired household testing.

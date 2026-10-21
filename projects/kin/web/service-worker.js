@@ -46,6 +46,9 @@ const SHELL = [
   ...["account", "archive", "first-run", "private-export", "protection", "sign-in", "unlock", "views"].map((name) => `/components/security/${name}.js`),
   ...["focus", "sections", "selection"].map((name) => `/components/today/${name}.js`),
   "/components/item-detail/sections.js", "/components/notes/notes.js", "/components/notes/references.js",
+  // Reports and suggestions to the Kin team (ADR 0021 §3).
+  "/components/kin-report.js", "/components/app/report.js", "/diagnostics/registry.js", "/diagnostics/ring-buffer.js", "/diagnostics/global.js",
+  "/feedback/format.js", "/feedback/collect.js", "/feedback/channel.js", "/feedback/outbox.js", "/feedback/screenshot.js",
 ];
 const ALLOWED = new Set(SHELL);
 

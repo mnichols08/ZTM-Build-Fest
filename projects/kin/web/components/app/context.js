@@ -61,6 +61,7 @@ import { StatusController } from "./status.js";
 import { SyncController } from "./sync.js";
 import { UndoController } from "./undo.js";
 import { ViewBuilder } from "./views.js";
+import { ReportController } from "./report.js";
 import { LocalReminders } from "../../reminders.js";
 import { EventStore } from "../../storage/event-store.js";
 import { readAutoLockPreference } from "./constants.js";
@@ -106,6 +107,8 @@ export function createAppContext(app) {
   ctx.render = new RenderController(ctx);
   ctx.shell = new ShellBuilder(ctx);
   ctx.views = new ViewBuilder(ctx);
+  // Reports and suggestions to the Kin team (ADR 0021 §3).
+  ctx.report = new ReportController(ctx);
   return ctx;
 }
 
@@ -181,6 +184,16 @@ export function initializeAppState(app) {
     app.onTogglePrivateItem = (event) => void app.ctx.privateItems.toggle(event.detail ?? {});
     app.onMakeItemPrivate = (event) => void app.ctx.privateItems.makePrivate(event.detail?.itemId);
     app.syncState = null;
+    // When this device last finished a sync pass, for a report's diagnostics.
+    app.lastSyncAt = null;
+    // Whether the member is a household admin, from the household settings.
+    app.householdAdmin = false;
+    // Report a problem, Suggest something, What I've sent (ADR 0021 §3):
+    // asked for by any element or the window (Help fires kin:report-problem).
+    const opener = (event) => (event.target instanceof HTMLElement ? event.target : null);
+    app.onReportProblem = (event) => void app.ctx.report.open("problem", { opener: opener(event) });
+    app.onSuggestFeature = (event) => void app.ctx.report.open("suggestion", { opener: opener(event) });
+    app.onFeedbackSent = (event) => void app.ctx.report.open("sent", { opener: opener(event) });
     // Follows the browser's own offline/online events, like the state notice.
     app.offline = typeof navigator !== "undefined" && navigator.onLine === false;
     app.onOffline = () => {
@@ -195,6 +208,8 @@ export function initializeAppState(app) {
       app.offline = false;
       app.stateNotice.hidden = true;
       app.ctx.sync.updateSyncChip();
+      // Reports waiting in the outbox go out (#632), locked or not.
+      void app.ctx.report.flush();
       if (!app.vault || app.vault.locked || !app.store) return;
       const session = app.ctx.session.captureSession();
       const wasBound = Boolean(app.syncCoordinator || app.hasLocalSyncBinding);

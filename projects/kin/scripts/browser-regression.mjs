@@ -62,6 +62,7 @@ import { justForMeRegressions } from "./just-for-me-regression.mjs";
 import { syncedPrefsRegressions } from "./synced-prefs-regression.mjs";
 import { journalRegressions } from "./journal-regression.mjs";
 import { accountMigrationRegressions } from "./account-migration-regression.mjs";
+import { reportProblemRegressions } from "./report-problem-regression.mjs";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -3156,6 +3157,11 @@ try {
   // member's own private export, start over, remove passkey and a password
   // changed elsewhere, with a virtual authenticator on its own service.
   if (REGRESSION_PART !== "1") console.log(await accountMigrationRegressions({ endpoint, browserClient }));
+  // Reports and suggestions to the Kin team (#634, ADR 0021 §3): a report
+  // with a detail removed, with a cropped picture, from the outbox after
+  // being offline, and from the lock screen; an admin's suggestion; and What
+  // I've sent with a status the operator set. On its own service too.
+  if (REGRESSION_PART !== "1") console.log(await reportProblemRegressions({ endpoint, browserClient }));
 } catch (error) {
   // The whole failure as an annotation, so an attempt that a passing retry
   // hides can still be read in CI (#594).

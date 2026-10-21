@@ -174,6 +174,8 @@ export class AppearanceController {
       if (refreshGeneration !== this.householdDefaultsRefreshGeneration) return;
       if (result.value && (this.app.householdSettings?.revision ?? -1) <= result.value.revision) this.app.householdSettings = result.value;
       const draftPreserved = this.app.householdDefaults.initialize({ ...result, value: this.app.householdSettings });
+      // Suggest something (ADR 0021 §3) is for household admins.
+      if (!result.offline) this.ctx.views.showSuggest(result.admin === true);
       // A demotion removes the section; a later promotion loads it again.
       if (result.admin) void this.refreshInstallIdentity({ onlyFirst: true });
       else this.installIdentitySession = null;

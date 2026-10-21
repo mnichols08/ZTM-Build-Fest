@@ -13,6 +13,7 @@ import {
   SERVER_SCHEMA_VERSION,
   sqlitePragma,
 } from "./shared.mjs";
+import { FEEDBACK_TABLES_SQL } from "./feedback.mjs";
 
 export const schemaMethods = {
   migrate(migrationFault) {
@@ -973,6 +974,24 @@ export const schemaMethods = {
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;
         throw new DurableStoreError("Kin could not complete the household features migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 25) {
+      try {
+        this.transaction(() => {
+          // ADR 0021 §3 (#636): problem reports and feature suggestions sent
+          // from the app, and their optional screenshots
+          // (durable-store/feedback.mjs). Plaintext the person chose to send,
+          // kept 180 days; no foreign keys, so a row outlives an authority
+          // restore (household deletion and member removal purge it).
+          this.db.exec(FEEDBACK_TABLES_SQL);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(26, Date.now());
+          sqlitePragma(this.db, "user_version = 26");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the feedback migration.", { cause: error });
       }
     }
   },

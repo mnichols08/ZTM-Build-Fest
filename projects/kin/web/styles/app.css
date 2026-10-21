@@ -518,6 +518,68 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
   .command-dialog { padding: 14px 14px 16px; }
   .shortcut-row { grid-template-columns: minmax(0, 1fr); }
 }
+.shortcut-help-report { margin: 14px 0 0; }
+
+/* Report a problem, Suggest something, What I've sent (ADR 0021 §3): one
+   native modal dialog, a bottom sheet on a phone. Every control keeps the
+   48 px target; text wraps rather than scrolling sideways. */
+.report-dialog { width: min(94vw, 600px); max-width: calc(100vw - 16px); max-height: min(92dvh, 900px); margin: auto; padding: 18px 20px 20px; overflow: auto; border: 1px solid var(--line-strong); border-radius: var(--r-card); background: var(--surface); color: var(--ink); box-shadow: 0 18px 60px rgba(0, 0, 0, .28); }
+.report-dialog::backdrop { background: rgba(10, 16, 12, .52); }
+.report-dialog[open] { animation: sheet-arrive .18s cubic-bezier(.2,.75,.25,1) both; }
+.report-dialog-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.report-dialog-bar h2 { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.report-close { flex: none; }
+.report-lead { margin: 0 0 12px; }
+.report-field { display: grid; gap: 4px; margin: 0 0 14px; font-weight: 640; }
+.report-field textarea { width: 100%; min-width: 0; min-height: calc(var(--tap) * 2); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font-weight: 400; resize: vertical; }
+.report-shot, .report-crop { margin: 0 0 14px; padding: 10px 12px 12px; border: 1px solid var(--line); border-radius: var(--r-row); min-width: 0; }
+.report-shot legend, .report-crop legend { padding: 0 4px; font-weight: 640; }
+.report-check { display: flex; align-items: center; gap: 10px; min-height: var(--tap); }
+.report-check input { inline-size: 24px; block-size: 24px; margin: 0; flex: none; }
+.report-warning { margin: 8px 0; padding: 8px 12px; border-left: 4px solid var(--warm); border-radius: 6px; background: var(--warm-soft); color: var(--ink); }
+.report-shot-preview { margin: 8px 0; }
+.report-shot-preview img, .report-shot-thumb { display: block; max-width: 100%; max-height: 50vh; height: auto; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-secondary); }
+.report-shot-preview figcaption { margin-top: 4px; color: var(--ink-muted); font-size: 14px; }
+.report-trim { display: grid; gap: 2px; margin: 0 0 8px; }
+.report-trim input { width: 100%; min-height: var(--tap); }
+.report-subheading { margin: 18px 0 6px; font-size: 1.05rem; }
+.report-destination { margin: 0 0 8px; padding: 10px 12px; border-radius: var(--r-row); background: var(--surface-secondary); }
+.report-typed { margin: 0; }
+.report-typed dt { font-weight: 640; }
+.report-typed dd { margin: 0 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-details { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.report-details > li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; padding: 4px 0; border-top: 1px solid var(--line); }
+.report-detail-label { color: var(--ink-muted); overflow-wrap: anywhere; }
+.report-detail-value { overflow-wrap: anywhere; }
+.report-details details { grid-column: 1 / -1; }
+.report-details summary { min-height: var(--tap); display: flex; align-items: center; cursor: pointer; }
+.report-recent { margin: 0; padding-left: 1.2em; font-family: ui-monospace, monospace; font-size: 13px; overflow-wrap: anywhere; }
+.report-actions { margin-top: 18px; }
+.report-alert:empty, .report-status:empty { display: none; }
+.report-reference-number { font-family: ui-monospace, monospace; letter-spacing: .04em; overflow-wrap: anywhere; }
+.report-sent-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.report-sent-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.report-sent-kind { grid-column: 1 / -1; color: var(--ink-muted); font-size: 14px; }
+.report-sent-title { font-weight: 640; overflow-wrap: anywhere; }
+.report-sent-status { padding: 2px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--ink); font-size: 14px; font-weight: 640; }
+.report-sent-status[data-status="done"] { outline: 1px solid var(--accent); }
+.report-sent-detail { grid-column: 1 / -1; color: var(--ink-muted); font-size: 14px; overflow-wrap: anywhere; }
+.report-sent-row > button { justify-self: start; }
+.report-button { margin-inline-start: 8px; }
+.hub-report-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.security-report { margin: 18px 0 0; }
+.link-button { min-height: var(--tap); padding-inline: 4px; border: 0; background: none; color: var(--accent); text-decoration: underline; cursor: pointer; }
+.link-button:hover { text-decoration-thickness: 2px; }
+.suggest-section .suggest-button { margin-inline-end: 8px; }
+@media (max-width: 480px) {
+  .report-dialog { margin: auto 0 0; width: 100%; max-width: 100%; border-radius: 16px 16px 0 0; padding: 14px 14px 18px; }
+  .report-details > li { grid-template-columns: minmax(0, 1fr) auto; }
+  .report-detail-value { grid-column: 1; }
+  .report-details > li > .report-remove { grid-row: 1 / span 2; grid-column: 2; }
+}
+@media (forced-colors: active) {
+  .report-dialog, .report-shot, .report-crop, .report-warning { border: 1px solid CanvasText; }
+}
 
 /* ---------- Sections, cards, lists, rows ---------- */
 .today-section, .household-panel, .security-panel {

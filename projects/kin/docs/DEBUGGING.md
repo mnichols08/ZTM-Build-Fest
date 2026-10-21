@@ -58,4 +58,35 @@ If the panel cannot load subscription state, check the connection and retry ther
 
 The original push design and its service, subscription, recipient, service-worker, and client contracts are tracked in [#85](https://github.com/mnichols08/ZTM-Build-Fest/issues/85), [#86](https://github.com/mnichols08/ZTM-Build-Fest/issues/86), [#87](https://github.com/mnichols08/ZTM-Build-Fest/issues/87), [#88](https://github.com/mnichols08/ZTM-Build-Fest/issues/88), [#89](https://github.com/mnichols08/ZTM-Build-Fest/issues/89), and [#90](https://github.com/mnichols08/ZTM-Build-Fest/issues/90).
 
-A local “export diagnostics” feature, if considered, requires a preview/redaction policy and user consent. Diagnostics must not become hidden analytics or activity surveillance.
+## Reports from the app (ADR 0021 §3)
+
+The planned "export diagnostics" is replaced by **Report a problem**
+([ADR 0021](decisions/0021-kin-for-everyone.md) §3, #630). Diagnostics never
+leave a device except in a report the person previewed and sent; they never
+become analytics.
+
+- **The diagnostic ring buffer** (`web/diagnostics/ring-buffer.js`) holds the
+  last 50 entries in the page's memory only (no localStorage,
+  sessionStorage or IndexedDB; a reload or closed tab empties it). Its writer
+  takes a code from the fixed registry in `web/diagnostics/registry.js` and
+  fields that are numbers or values from a fixed list; anything else becomes
+  `other` or is dropped. It records: `sync_failed` and `sync_room_failed`
+  (an error code from a fixed list and an HTTP status), `sync_slow`,
+  `engine_load_failed`, `engine_error` (the engine's numeric category),
+  `storage_failed`, `render_failed`, `render_slow`, `route_failed`,
+  `unexpected_error` (error or rejection, and the error's constructor name,
+  never its message or stack), `alert_shown`, `unlocked` (timing),
+  `went_offline`, `went_online` and `feedback_send_failed`. Add a code to the
+  registry before recording it; the table only grows.
+- **What a report carries** is the table in `web/feedback/format.js`:
+  version and build, browser and version, system and device type, screen and
+  window size, pixel ratio, text size, installed or tab, the page and section
+  as route names, easy mode and Simple view, signed in, sync state and last
+  sync time, storage use, the service worker's release, online state, and
+  the ring buffer. The person sees each in the preview and can remove any.
+  The service applies the same table again and drops anything else.
+- **Reading reports** is for the operator: `node server/admin.mjs
+  feedback-list`, `feedback-show <reference>` (with `--screenshot <file>` to
+  save a picture), `feedback-set-status`, `feedback-forward` and
+  `feedback-purge`; see the README's [reports section](../README.md#reports-and-suggestions-from-the-app). A person quotes their
+  reference number (`KR-…` for a report, `KS-…` for a suggestion).
