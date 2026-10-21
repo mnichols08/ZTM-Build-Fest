@@ -104,7 +104,9 @@ async function sendChat({ text, expected }) {
   const wait = async (condition, label, ms = 120_000) => {
     for (let i = 0, step = 50; i < ms / step; i++) {
       if (await condition()) return;
-      if (i % 20 === 0) void app.syncCoordinator?.syncNow();
+      // Sparingly: a pass is many requests, and Kin limits each device to
+      // a budget per minute. The live channel brings most messages at once.
+      if (i % 160 === 159) void app.syncCoordinator?.syncNow();
       await new Promise((r) => setTimeout(r, step));
     }
     throw new Error(`Chat wait timed out: ${label}; room=${Boolean(app.chat?.room)} access=${app.chatAccess}`);
@@ -160,7 +162,7 @@ async function showScreen({ hash }, isReady, anchorOf) {
   for (let i = 0; i < 2400; i++) {
     if (!app.busy && !app.refreshing && !app.pendingRefresh && isReady(app) && synced()) break;
     if (i === 2399) throw new Error(`${hash} didn't settle; sync=${document.querySelector("kin-sync-status")?.state}`);
-    if (i % 80 === 40) void app.syncCoordinator?.syncNow();
+    if (i % 320 === 160) void app.syncCoordinator?.syncNow();
     await new Promise((r) => setTimeout(r, 25));
   }
   // One-time cards (a passkey suggestion, a catch-up summary) and toasts are
