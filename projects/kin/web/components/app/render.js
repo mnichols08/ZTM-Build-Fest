@@ -1,8 +1,13 @@
 // Rendering the projection into the views.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { routeHash, SEGMENTS } from "../../routes.js";
+import { recordDiagnostic } from "../../diagnostics/ring-buffer.js";
+import { errorName } from "../../diagnostics/global.js";
 import { formatCivilDate } from "../../today-view.js";
 import { DESTINATION_DESCRIPTIONS } from "./constants.js";
+import { searchableHousehold } from "../../features.js";
+
+const NO_ROUTINES = Object.freeze([]);
 
 export class RenderController {
   constructor(ctx) {
@@ -13,15 +18,17 @@ export class RenderController {
   /** The Updates segments: handoffs waiting, and Chat's unread count (#133),
    * which comes from the chat view and never leaves this device. */
   renderUpdatesNav(waiting = (this.app.state?.handoffs ?? []).filter((record) => record.status === "unacknowledged").length) {
-    // The page's plain description names Chat only while this member has it.
+    // The page's plain description names Chat only while this member has it
+    // and the household has it on (#625).
+    const chat = this.app.chatAccess !== "none" && this.ctx.features.isOn("chat");
     if (this.app.updatesLead)
-      this.app.updatesLead.textContent = this.app.chatAccess === "none"
+      this.app.updatesLead.textContent = !chat
         ? DESTINATION_DESCRIPTIONS.updatesWithoutChat
         : DESTINATION_DESCRIPTIONS.updates;
     const updatesNav = this.app.segmentNavs?.get("updates");
     if (!updatesNav) return;
     const unread = this.app.chatUnread ?? { count: 0, mentions: 0, capped: false };
-    updatesNav.segments = SEGMENTS.updates.filter((entry) => !(entry.id === "chat" && this.app.chatAccess === "none")).map((entry) => {
+    updatesNav.segments = SEGMENTS.updates.filter((entry) => !(entry.id === "chat" && !chat)).map((entry) => {
       const base = { id: entry.id, label: entry.label, hash: routeHash("updates", entry.id) };
       if (entry.id === "chat") {
         // An "@" marks unread messages that mention this member (#130).
@@ -42,9 +49,16 @@ export class RenderController {
     const renderToken = (this.app.quietRenderToken ?? 0) + 1;
     this.app.quietRenderToken = renderToken;
     this.app.setAttribute("data-quiet-render", "");
+    const started = performance.now();
     try {
       this.renderStateContents();
+    } catch (error) {
+      recordDiagnostic("render_failed", { component: "workspace", name: errorName(error) });
+      throw error;
     } finally {
+      // A slow whole-workspace render is worth knowing about (#631).
+      const ms = performance.now() - started;
+      if (ms > 250) recordDiagnostic("render_slow", { component: "workspace", ms });
       const clearQuietRender = () => {
         if (this.app.quietRenderToken === renderToken) this.app.removeAttribute("data-quiet-render");
       };
@@ -102,7 +116,8 @@ export class RenderController {
       pins: this.app.state.pins ?? [],
       attachments: this.app.attachmentRows,
       selected,
-      routines: this.app.state.routines ?? [],
+      // Routines switched off (#625) leave Today; their history stays.
+      routines: this.ctx.features.isOn("routines") ? this.app.state.routines ?? [] : NO_ROUTINES,
       handoffs: this.app.state.handoffs ?? [],
       mode,
       emojis: this.app.itemEmojis ?? null,
@@ -122,7 +137,8 @@ export class RenderController {
     this.app.talks.talks = this.app.state.talks;
     // The Chat toolbar's To talk about count includes older open topics.
     this.app.chat.legacyOpenCount = this.app.state.talks.filter((record) => record.status === "open").length;
-    this.app.search.household = {
+    // Search leaves out what switched-off features hold (#625).
+    this.app.search.household = searchableHousehold({
       items: this.app.state.items,
       handoffs: this.app.state.handoffs,
       talks: this.app.state.talks,
@@ -130,7 +146,7 @@ export class RenderController {
       referenceRecords: this.app.state.referenceRecords ?? [],
       maintenanceEvents: this.app.state.maintenanceEvents ?? [],
       areas: this.app.state.areas ?? [],
-    };
+    }, this.ctx.features.off);
     this.app.pulse.pulse = this.app.state.pulses.find(
       (pulse) => pulse.actorId === this.app.store?.actorId,
     );

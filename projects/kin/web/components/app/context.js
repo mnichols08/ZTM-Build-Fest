@@ -34,6 +34,8 @@ import { ShareController } from "./share.js";
 import { BadgeController } from "./badge.js";
 import { PrivatePrefsController } from "./private-prefs.js";
 import { WeekController } from "./week.js";
+import { EasyController } from "./easy.js";
+import { HelpController } from "./help.js";
 import { SitterController } from "./sitter.js";
 import { JournalController } from "./journal.js";
 import { RotationsController } from "./rotations.js";
@@ -49,6 +51,7 @@ import { DetailController } from "./detail.js";
 import { FirstRunController } from "./first-run.js";
 import { ItemCommands } from "./commands/items.js";
 import { NavigationController } from "./navigation.js";
+import { FeaturesController } from "./features.js";
 import { PeerChannel } from "./peer-channel.js";
 import { RecordCommands } from "./commands/records.js";
 import { RefreshController } from "./refresh.js";
@@ -60,6 +63,7 @@ import { StatusController } from "./status.js";
 import { SyncController } from "./sync.js";
 import { UndoController } from "./undo.js";
 import { ViewBuilder } from "./views.js";
+import { ReportController } from "./report.js";
 import { LocalReminders } from "../../reminders.js";
 import { EventStore } from "../../storage/event-store.js";
 import { readAutoLockPreference } from "./constants.js";
@@ -85,6 +89,9 @@ export function createAppContext(app) {
   ctx.share = new ShareController(ctx);
   ctx.badge = new BadgeController(ctx);
   ctx.privatePrefs = new PrivatePrefsController(ctx);
+  // Easy mode and Help on every screen (#616, #620, ADR 0021).
+  ctx.easy = new EasyController(ctx);
+  ctx.help = new HelpController(ctx);
   ctx.week = new WeekController(ctx);
   ctx.sitter = new SitterController(ctx);
   // The member's journal (#496): private, never household state.
@@ -94,6 +101,8 @@ export function createAppContext(app) {
   ctx.sections = new SectionsController(ctx);
   // Just for me (#510): the member's private list.
   ctx.privateItems = new PrivateItemsController(ctx);
+  // Household features (#625, ADR 0021): what this household switched off.
+  ctx.features = new FeaturesController(ctx);
   ctx.navigation = new NavigationController(ctx);
   ctx.detail = new DetailController(ctx);
   ctx.appearance = new AppearanceController(ctx);
@@ -103,6 +112,8 @@ export function createAppContext(app) {
   ctx.render = new RenderController(ctx);
   ctx.shell = new ShellBuilder(ctx);
   ctx.views = new ViewBuilder(ctx);
+  // Reports and suggestions to the Kin team (ADR 0021 §3).
+  ctx.report = new ReportController(ctx);
   return ctx;
 }
 
@@ -155,7 +166,9 @@ export function initializeAppState(app) {
     app.pendingScheduleChange = null;
     app.householdStatus = null;
     app.passkeyPromptDismissed = false;
-    app.onHouseholdStatus = (event) => { app.householdStatus = event.detail; app.ctx.sitter.landTemporaryMember(); app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
+    app.onHouseholdStatus = (event) => { app.householdStatus = event.detail;
+      // Household features (#625) ride along with the household's status.
+      if (event.detail?.features) app.ctx.features.receive(event.detail.features, { householdId: event.detail.householdId ?? null }); app.ctx.sitter.landTemporaryMember(); app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
     app.onSecurityChanged = () => app.ctx.status.renderOnboarding();
     app.autoLockMinutes = readAutoLockPreference();
     app.autoLockTimer = null;
@@ -176,6 +189,16 @@ export function initializeAppState(app) {
     app.onTogglePrivateItem = (event) => void app.ctx.privateItems.toggle(event.detail ?? {});
     app.onMakeItemPrivate = (event) => void app.ctx.privateItems.makePrivate(event.detail?.itemId);
     app.syncState = null;
+    // When this device last finished a sync pass, for a report's diagnostics.
+    app.lastSyncAt = null;
+    // Whether the member is a household admin, from the household settings.
+    app.householdAdmin = false;
+    // Report a problem, Suggest something, What I've sent (ADR 0021 §3):
+    // asked for by any element or the window (Help fires kin:report-problem).
+    const opener = (event) => (event.target instanceof HTMLElement ? event.target : null);
+    app.onReportProblem = (event) => void app.ctx.report.open("problem", { opener: opener(event) });
+    app.onSuggestFeature = (event) => void app.ctx.report.open("suggestion", { opener: opener(event) });
+    app.onFeedbackSent = (event) => void app.ctx.report.open("sent", { opener: opener(event) });
     // Follows the browser's own offline/online events, like the state notice.
     app.offline = typeof navigator !== "undefined" && navigator.onLine === false;
     app.onOffline = () => {
@@ -190,6 +213,8 @@ export function initializeAppState(app) {
       app.offline = false;
       app.stateNotice.hidden = true;
       app.ctx.sync.updateSyncChip();
+      // Reports waiting in the outbox go out (#632), locked or not.
+      void app.ctx.report.flush();
       if (!app.vault || app.vault.locked || !app.store) return;
       const session = app.ctx.session.captureSession();
       const wasBound = Boolean(app.syncCoordinator || app.hasLocalSyncBinding);
@@ -244,7 +269,7 @@ export function initializeAppState(app) {
       event.detail?.done?.(outcome);
     };
     app.onStartShopping = (event) => {
-      if (!app.simpleView && app.state) app.shoppingMode?.open({ opener: event.detail?.opener ?? null });
+      if (!app.simpleView && app.state && app.ctx.features.isOn("shopping-mode")) app.shoppingMode?.open({ opener: event.detail?.opener ?? null });
     };
     app.onRoutineIntent = (event) => app.ctx.routines.saveRoutine({ ...event.detail, type: event.type.slice(4) });
     app.onChangeRoutineSchedule = (event) => app.ctx.routines.changeRoutineSchedule(event.detail);
@@ -278,6 +303,8 @@ export function initializeAppState(app) {
     // settings on this device".
     app.onPersonalSetting = (event) => { void app.ctx.privatePrefs.setDisplaySetting(event.detail.name, event.detail.value); };
     app.onSettingsThisDevice = (event) => { event.detail.kept = app.ctx.privatePrefs.setDeviceOnly(event.detail.on); };
+    // Help on every screen (#621): a page's or a dialog's Help button.
+    app.onOpenHelp = (event) => app.ctx.help.open(event.detail ?? {});
     app.onModeChange = () => app.ctx.records.saveMode(app.modeSelect.value);
     app.pulseTimer = null;
     app.catchUpCursor = null;

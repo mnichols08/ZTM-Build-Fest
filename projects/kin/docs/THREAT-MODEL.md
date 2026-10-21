@@ -177,7 +177,7 @@ the new-device rows are below.
 | Stolen password, no device | Since #568, **enough to sign in as that member on a new device while they have no passkey in their vault** (ADR 0018 D3, the owner's accepted trade-off): see "New-device sign-in" below. Joining as a new member still needs an invitation code and the inviter's approval. |
 | Stolen password and an unlocked or stolen trusted device | The password unlocks that device's local copy offline and signs it in. Same as a stolen backup key today, except a password can be guessed: at a full PBKDF2 (600,000 iterations) per guess against the device, and the strength floor (10 characters, not one of ~200 very common passwords, not the username) only stops the first guesses. |
 | Online guessing against the service | From a trusted device's cookie, or (#568) from any browser through the new-device sign-in; failures are limited to 10 per 15 minutes per member, per device and per address, and past that even the right password waits. One message and the same Argon2id work for every failure, so neither says whether a username exists. |
-| A **fresh password** instead of a fresh passkey | Weaker than a passkey until one is added. For a member with no passkey, admin-only and trust actions (approving a device or a member, signing in a computer, revoking a device, removing a member, household admins, Simple view, chat and fridge access, deleting the household or cancelling that) accept a password re-entry. Anyone who has the member's password *and* one of their trusted devices (or an open session on one) can do those things; with a passkey, they'd also need the passkey's device or account. A member who has a passkey always confirms with it, and an `authKey` is no substitute. |
+| A **fresh password** instead of a fresh passkey | Weaker than a passkey until one is added. For a member with no passkey, admin-only and trust actions (approving a device or a member, signing in a computer, revoking a device, removing a member, household admins, Simple view, chat and fridge access, household features, deleting the household or cancelling that) accept a password re-entry. Anyone who has the member's password *and* one of their trusted devices (or an open session on one) can do those things; with a passkey, they'd also need the passkey's device or account. A member who has a passkey always confirms with it, and an `authKey` is no substitute. |
 | Usernames can be listed | Whether a username is free is answered at sign-up, as on every sign-up page, limited to 30 checks per client address in 15 minutes. A claim waiting for approval holds its username. |
 | Forgotten password, one device, no other way in | With a backup code (#571): sign in with it (on a new device, or on this one after "Start over on this browser") and choose a new password. Without one, the household can't be opened on that device (RECOVERY, "Members who signed up with a password"); the first run says so in one line and Today offers the backup code after the first week. |
 | Password changed on one device, another device still has the old one | **Online:** at the other device's next unlock it asks the service for the account's current password parameters; when they differ from its wrapper's, it doesn't open the household until the **new** password signs in, then re-wraps its local root under it (#560 follow-up; the old password, or the new one typed first, opens the root once to do that). **The remaining offline window:** while that device has no connection (or the service doesn't answer), its local wrapper still opens with the old password, since only the device itself can re-wrap it; someone who knows the old password and holds that device offline can open its local copy, as before the change. A device that never comes online keeps that window. Changing the password doesn't revoke a device: to shut a lost device out, revoke or replace it. |
@@ -337,6 +337,20 @@ Limits: while waiting, the shared content is plaintext in the browser's
 memory (as it is in the sharing app); any page of Kin's origin that guesses
 or learns the id could take it first, so the id is random and taken once.
 
+## The Google Play app (ADR 0020, #527)
+
+The Play app is a Trusted Web Activity: it opens
+`https://kin.journeytocode.io` in the browser and contains no Kin code.
+
+| What it adds | What that means |
+| --- | --- |
+| Google's `androidbrowserhelper` (with `androidx.browser`) in the Android app | Third-party code runs in the **app**, not in Kin: it launches the browser, hands over shared content and shows delegated notifications. It never sees household data except what the user shares into Kin, which it passes to the browser as the share sheet would, and the content-free push notifications Kin already sends (see "Push notifications reveal timing"). The app has no INTERNET permission and stores only which browser it verified and the splash image it hands over. Kin's web runtime, engine and server don't include it. |
+| Storage shared with the browser | Kin's data, device keys, service worker and passkeys are the browser profile's for the origin, exactly as for the installed web app: the Play app and a Chrome tab on `kin.journeytocode.io` are the same Kin, with the same lock. Anyone who can use that Chrome profile can reach the same locked Kin either way. Clearing the site's data in Chrome clears it in the app; uninstalling the app doesn't. |
+| A second way in through Android intents | Links to the origin and Kin's shortcuts open the app; other apps can share text, links, images and PDFs into it. Shared content follows the web share target's path ("Sharing into Kin" above): nothing reaches household data until the member chooses a destination after unlock. |
+| Asset Links | `/.well-known/assetlinks.json` names the package and its signing certificates' fingerprints (public values). A wrong or missing entry shows a URL bar; it can't let another app open Kin full-screen. |
+| Signing | Google holds the app signing key (Play App Signing). The owner's upload key, kept offline and never in the repository or CI, can only submit builds to Play, and Play support can replace it if lost or leaked (ANDROID "Lost upload key"). |
+| Falling back | Without a TWA-capable browser the app opens a Custom Tab, with a URL bar, in the user's browser, never a WebView with its own storage. |
+
 ## Security principles
 
 - Assume household text and imported/persisted bytes are untrusted.
@@ -414,6 +428,11 @@ browser reads its meta tag, for example a misconfigured proxy that injects
 content. Kin renders household text with text APIs, never as HTML.
 
 **Planned.** Send the full policy as a header and add Trusted Types.
+
+`img-src` allows `data:` images (beside `'self'` and `blob:`) so a report's
+screenshot (ADR 0021 §3) can draw Kin's own page as an SVG image in browsers
+that won't read a `blob:` one back. Images can't run script, and
+`connect-src` still stops a data image from reaching any other origin.
 
 ### C5: the recovery key can linger in memory and on the clipboard
 
@@ -731,6 +750,27 @@ keeps Simple view; turning it off reaches that device only when it next
 connects. A device belongs to one member, so a tablet registered to an Adult
 shows the Adult's Kin; a child needs their own device.
 
+### Household features are a layout, except Chat and Fridge (#623)
+
+A household admin can switch features off for everyone
+([ADR 0021](decisions/0021-kin-for-everyone.md) §2). The service records the
+set (`households.features_off`), and only a household admin with a fresh
+passkey (or password, for an admin without one; see above) can change it;
+a change names the revision it was made from, so a stale screen can't
+overwrite another admin's choice. The service enforces **Chat and Fridge**:
+while either is off, its routes refuse every member, admins included, as
+for "No access", and nothing new reaches the chat or the fridge. Everything
+else is a **layout, not a lock**, as for Simple view: household events are
+end-to-end encrypted, so the service can't tell a meal or a routine from
+any other change, and every device still holds the household key and the
+whole history. A member's device with other software, or one that hasn't
+heard of the change yet (offline, or a Kin from before this addition), still
+shows and writes Meals, Routines, notes and the rest, and other devices
+accept those events; they stay in the history and show again when the
+feature is switched on. The device keeps the last set it heard of, so an
+offline unlock hides the same things; a household that doesn't sync keeps
+its set on its one device. Switching a feature off never deletes data.
+
 ### The sitter page is a layout, not a lock (#442)
 
 The sitter page ([ADR 0017](decisions/0017-sitter-page.md)) chooses what a
@@ -746,6 +786,95 @@ modified client could write a `SITTER_PAGE_SET` event and other devices would
 accept it, as for attachment removal above. The page can only point at
 records already in the household, so the worst case is a rearranged or
 emptied page that an Adult sets again.
+
+### Prepared invitations: a printed sheet is an invitation (#613, ADR 0021 §4)
+
+"Set up Kin for someone" lets a household admin prepare an invitation for one
+person and print it as a one-page sheet. Security review of what changes
+against an ordinary invitation:
+
+- **What the service holds.** A row in `prepared_invitations` (server schema
+  27): the household, the inviting member and device and that device's key
+  fingerprint, the member kind (and a Temporary member's end), whether the
+  person starts in easy mode, the times, the code's verifier, and the
+  **card**. The card (the person's name, the helper's name and an optional
+  note) is sealed on the admin's device with AES-GCM under a fresh random
+  128-bit key that only the link's fragment carries
+  (`/pair#code=…&k=…`); Kin never sends the key, and browsers never send a
+  fragment, so the service, its operator and a stolen database copy can't
+  read the names. Easy mode and the member kind are readable, as for any
+  invitation's kind.
+- **The code's verifier.** Ordinary codes are verified with an HMAC keyed by
+  a per-process secret, which is why a restart ends them. A prepared code must
+  survive a restart, so its verifier is a domain-separated SHA-256 of the
+  8-character code (about 40 bits). Someone holding a copy of the database can
+  recover a still-open code by brute force. What that code gets them is what
+  the sheet gets anyone: a **claim**, never membership; see the next point.
+  The row is deleted as soon as the code stops working (approved, cancelled,
+  expired, the household deleted), so old backups hold only codes that have
+  ended, unless the backup was taken while one was open.
+- **Lifetime and guessing.** A prepared code lasts 1 to 7 days instead of 10
+  minutes, so it is open to online guessing for longer. Guessing is limited
+  as for every code (12 failures a minute per client), the answer to a wrong
+  code is the same generic one, at most three prepared invitations wait per
+  household, and each is single-use: the first claim holds it, and approval
+  spends it.
+- **Approval stays the gate.** A claim joins nothing and reveals nothing of
+  the household until the inviter approves it with a fresh passkey (or
+  password), after comparing the joining device's fingerprint, exactly as for
+  any invitation; the joining device then compares the inviter's fingerprint
+  before it finishes. A sheet that is lost, photographed or intercepted in
+  the post lets its finder *ask* to join; the helper sees a request they
+  weren't expecting (or a device name that isn't Rose's) and a fingerprint
+  that doesn't match Rose's screen, and cancels. If the finder claims first,
+  Rose's own attempt says the invitation was already used, and the helper
+  cancels and makes a new one: an annoyance, not a way in. The sheet says
+  "Keep it private: anyone with it can ask to join".
+- **A day to say yes.** A prepared invitation's claim waits up to 24 hours
+  for approval (an ordinary claim: 15 minutes), because the helper may not be
+  at hand. Like every claim it is process-local: a restart while she waits
+  ends the claim and the code works again until it expires.
+- **In person.** The safest way is side by side: Rose's screen shows her
+  device's code, the helper's screen shows the same one ("The codes match on
+  both screens"), and after approval Rose's screen asks "Do these match?"
+  against the code on the helper's screen. Remotely, they compare by phone,
+  which is only as good as knowing it's really Rose on the line.
+- **No unattended pre-approval (deferred).** A pre-approval made before the
+  sheet is posted can't be bound to the joining device's key, because that
+  key doesn't exist until Rose opens the link; bound only to the code, it
+  would turn the paper into a bearer credential that admits whoever holds it
+  and gives them the household's keys. The only binding that keeps today's
+  guarantee is a comparison of the claim's fingerprint on both devices,
+  which is the in-person path above. Pre-approval is therefore not offered.
+- **What stays in memory.** The admin's device keeps the code, the card's key
+  and the names only in the open page, to print the sheet again; they are
+  never stored, so after Kin closes or locks the sheet can't be reprinted
+  (cancel and make a new one). The joining device turns easy mode on from
+  the invitation before the password is set (a presentation setting, kept
+  in `kin.easy-mode` like text size).
+
+### Reports to the Kin team are readable by the operator (ADR 0021 §3)
+
+A problem report's typed text and picture, and a suggestion's text, are
+plaintext on the service: its operator (and anyone with the database or a
+backup) can read them. When forwarding is on, the typed text and the
+diagnostics are also readable by whoever can read the issue tracker, which
+is everyone for a public repository; the preview warns, and the operator
+guide recommends a private one. Pictures never leave the service. A picture
+shows whatever was on screen, household content included; it is off by
+default, shown before sending, croppable and warned about, but Kin can't
+tell what in it is private. The diagnostics are limited by construction (a
+fixed table and a code registry the service re-checks), not by review.
+
+An unsent report waits unencrypted in the device's `kin-feedback-outbox`
+until it is sent or removed, so someone with the unlocked browser profile
+can read it. Reports sent without signing in are rate-limited by address
+only (2 an hour, 5 a day, 60 an hour across the service); behind a proxy
+without `KIN_TRUSTED_PROXIES` every client shares those limits. A signed-in
+member can make the service store up to 5 reports with 1 MiB pictures an
+hour; the service caps stored reports at 20,000 and pictures at 1 GiB. The
+GitHub token, if configured, can write that repository's issues; scope it
+to Issues on one repository.
 
 ### v1.0 was not tested across every browser and device
 

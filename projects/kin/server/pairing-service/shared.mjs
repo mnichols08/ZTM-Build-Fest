@@ -18,6 +18,35 @@ export const SESSION_TTL_MS = 12 * 60 * 60_000;
 
 export const TERMINAL_PAIRING_RETENTION_MS = 24 * 60 * 60_000;
 
+/** Prepared invitations (#613, "Set up Kin for someone"): an invitation an
+ * admin makes for one person, which can be printed and posted. It lasts 1 to
+ * 7 days (still single-use), survives a restart (server schema 27), and once
+ * claimed waits up to a day for the inviter's approval. At most three wait
+ * per household at a time. */
+export const PREPARED_INVITATION_MAX_DAYS = 7;
+export const PREPARED_DAY_MS = 24 * 60 * 60_000;
+export const PREPARED_CLAIM_TTL_MS = 24 * 60 * 60_000;
+export const MAX_PREPARED_INVITATIONS = 3;
+/** The sealed card (the person's name, the helper's name and a note,
+ * encrypted on the admin's device under a key that stays in the link's
+ * fragment): base64url, at most this many characters. */
+export const MAX_PREPARED_CARD_CHARS = 2048;
+const PREPARED_CARD = /^[A-Za-z0-9_-]{40,2048}$/;
+
+export function validPreparedCard(card) {
+  return card === null || (typeof card === "string" && PREPARED_CARD.test(card));
+}
+
+/** The verifier kept for a prepared invitation's code. Unlike the process
+ * secret behind ordinary codes (which a restart replaces), it must still
+ * match after a restart, so it is a plain domain-separated SHA-256: the
+ * stored value proves nothing to anyone who doesn't hold the code, and a
+ * stolen database copy that is brute-forced still meets the inviter's
+ * approval (THREAT-MODEL, "Prepared invitations"). */
+export function preparedVerifier(code) {
+  return createHash("sha256").update(`kin-prepared-invitation-v1|${normalizeCode(code)}`).digest("hex");
+}
+
 export const PAIRING_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 
 export class PairingError extends Error {
@@ -95,8 +124,38 @@ export function boardPolicyOf(household) {
   };
 }
 
+/** Household features an admin can switch off (ADR 0021 §2, #624): each a
+ * stable bit in `households.features_off`. The list grows additively; a bit
+ * is never reused. web/features.js names the same bits for the devices. The
+ * service enforces only Chat and Fridge (their access becomes "none"); the
+ * rest is a layout the devices apply. */
+export const HOUSEHOLD_FEATURE_BITS = Object.freeze({
+  chat: 0, fridge: 1, meals: 2, routines: 3, turns: 4, week: 5, talk: 6,
+  sections: 7, "shopping-mode": 8, maintenance: 9, notes: 10, sitter: 11,
+  journal: 12, mine: 13,
+});
+export const KNOWN_FEATURE_MASK = Object.values(HOUSEHOLD_FEATURE_BITS).reduce((mask, bit) => mask | (2 ** bit), 0);
+
+/** `{ off, revision }`: the switched-off set (known bits only) and its
+ * revision. A household that never changed it has everything on. */
+export function featuresOf(household) {
+  const features = household?.features;
+  const off = Number.isSafeInteger(features?.off) && features.off >= 0 ? features.off & KNOWN_FEATURE_MASK : 0;
+  return {
+    off,
+    revision: Number.isSafeInteger(features?.revision) && features.revision >= 0 ? features.revision : 0,
+  };
+}
+
+export function featureOff(household, name) {
+  const bit = HOUSEHOLD_FEATURE_BITS[name];
+  return bit !== undefined && (featuresOf(household).off & (2 ** bit)) !== 0;
+}
+
 export function boardAccess(member, household, now = Date.now()) {
   if (!canParticipate(member, now)) return "none";
+  // Switched off by an admin (ADR 0021): no access for anyone, Adults too.
+  if (featureOff(household, "fridge")) return "none";
   const kind = normalizeMemberKind(member.kind);
   if (kind === "adult") return "write";
   const policy = boardPolicyOf(household);
@@ -126,6 +185,10 @@ export function privateAccess(member, household, now = Date.now()) {
 
 export function chatAccess(member, household, now = Date.now()) {
   if (!canParticipate(member, now)) return "none";
+  // Switched off by an admin (ADR 0021): every chat route refuses, as for
+  // "No access". The chat key's holders are derived, not stored, so turning
+  // it back on finds them as they were.
+  if (featureOff(household, "chat")) return "none";
   const kind = normalizeMemberKind(member.kind);
   if (kind === "adult") return "write";
   const policy = chatPolicyOf(household);

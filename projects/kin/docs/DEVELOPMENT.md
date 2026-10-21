@@ -167,6 +167,12 @@ shortcut's glyph to `GLYPHS` in the script, its icons to the manifest and the
 service worker's shell list, and its landing to
 `scripts/shortcuts-badge-regression.mjs`.
 
+The Google Play feature graphic, `play/feature-graphic.png` (1024 × 500,
+no alpha, #540), is drawn from the same geometry by
+`scripts/render-play-graphics.mjs` (same `--check`; tested by
+`scripts/render-play-graphics.test.mjs`). Play Store screenshots come from
+`scripts/play-screenshots.mjs`; see [PLAY-LISTING](PLAY-LISTING.md#screenshots).
+
 ## Development data
 
 Use synthetic household text only. Never copy private family messages, health details, credentials, or real household history into test fixtures, screenshots, bug reports, or logs. Local test data can be removed through the browser's site-data controls for the local origin. No database-wide clear command is provided; use isolated temporary databases for tests and the in-app deletion flow for real household data.

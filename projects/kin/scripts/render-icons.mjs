@@ -3,7 +3,8 @@
 // CRC-32 table). Android ignores SVG-only shortcut icons, and the Play Store
 // wrapper needs PNG app icons, so the PNGs are generated here and committed.
 //
-//   node scripts/render-icons.mjs          writes web/icons/*.png
+//   node scripts/render-icons.mjs          writes web/icons/*.png and the
+//                                          Android app's res/ PNGs
 //   node scripts/render-icons.mjs --check  fails if a committed PNG's pixels
 //                                          differ from what this renders
 //
@@ -56,27 +57,38 @@ function chunk(type, data) {
 
 const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-/** An 8-bit RGBA PNG (colour type 6, no interlace) of `rgba`, which holds
- * width × height × 4 bytes, rows top to bottom. Each row uses filter 0. */
-export function encodePng(width, height, rgba) {
-  if (rgba.length !== width * height * 4) throw new RangeError("encodePng: pixel buffer has the wrong size.");
+/** An 8-bit PNG of `pixels`, which holds width × height × `channels` bytes,
+ * rows top to bottom: RGBA (colour type 6) by default, or RGB (colour type 2)
+ * with `channels: 3`, for Google Play's graphics, which may not have an alpha
+ * channel (#540). No interlace; each row uses filter 0. */
+export function encodePng(width, height, pixels, { channels = 4 } = {}) {
+  if (channels !== 3 && channels !== 4) throw new RangeError("encodePng: channels must be 3 (RGB) or 4 (RGBA).");
+  if (pixels.length !== width * height * channels) throw new RangeError("encodePng: pixel buffer has the wrong size.");
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width, 0);
   header.writeUInt32BE(height, 4);
   header[8] = 8; // bit depth
-  header[9] = 6; // RGBA
+  header[9] = channels === 4 ? 6 : 2; // RGBA or RGB
   // compression, filter and interlace methods stay 0.
-  const stride = width * 4;
+  const stride = width * channels;
   const raw = Buffer.alloc((stride + 1) * height);
-  for (let y = 0; y < height; y++) Buffer.from(rgba.buffer, rgba.byteOffset + y * stride, stride).copy(raw, y * (stride + 1) + 1);
+  for (let y = 0; y < height; y++) Buffer.from(pixels.buffer, pixels.byteOffset + y * stride, stride).copy(raw, y * (stride + 1) + 1);
   return Buffer.concat([SIGNATURE, chunk("IHDR", header), chunk("IDAT", deflateSync(raw, { level: 9 })), chunk("IEND", Buffer.alloc(0))]);
 }
 
-/** Reads back a PNG this encoder wrote (8-bit RGBA, filter 0 on every row):
- * `{ width, height, rgba }`. Used by --check and the tests. */
+const paeth = (left, up, upLeft) => {
+  const estimate = left + up - upLeft;
+  const toLeft = Math.abs(estimate - left), toUp = Math.abs(estimate - up), toUpLeft = Math.abs(estimate - upLeft);
+  return toLeft <= toUp && toLeft <= toUpLeft ? left : toUp <= toUpLeft ? up : upLeft;
+};
+
+/** Reads an 8-bit RGB or RGBA, non-interlaced PNG, with any of the five row
+ * filters (so a browser's screenshot reads too): `{ width, height, channels,
+ * pixels }`, plus `rgba` (the same bytes) when it has an alpha channel. Used
+ * by --check, the tests and scripts/play-screenshots.mjs. */
 export function decodePng(bytes) {
   if (!SIGNATURE.equals(bytes.subarray(0, 8))) throw new Error("not a PNG");
-  let offset = 8, width = 0, height = 0;
+  let offset = 8, width = 0, height = 0, channels = 0;
   const data = [];
   while (offset < bytes.length) {
     const length = bytes.readUInt32BE(offset);
@@ -86,18 +98,29 @@ export function decodePng(bytes) {
     if (type === "IHDR") {
       width = body.readUInt32BE(0);
       height = body.readUInt32BE(4);
-      if (body[8] !== 8 || body[9] !== 6 || body[12] !== 0) throw new Error("only 8-bit RGBA, non-interlaced PNGs are read");
+      if (body[8] !== 8 || (body[9] !== 6 && body[9] !== 2) || body[12] !== 0) throw new Error("only 8-bit RGB or RGBA, non-interlaced PNGs are read");
+      channels = body[9] === 6 ? 4 : 3;
     } else if (type === "IDAT") data.push(body);
     offset += 12 + length;
   }
   const raw = inflateSync(Buffer.concat(data));
-  const stride = width * 4;
-  const rgba = new Uint8Array(stride * height);
+  const stride = width * channels;
+  if (raw.length !== (stride + 1) * height) throw new Error("PNG image data has the wrong size");
+  const pixels = new Uint8Array(stride * height);
   for (let y = 0; y < height; y++) {
-    if (raw[y * (stride + 1)] !== 0) throw new Error("only filter 0 is read");
-    rgba.set(raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)), y * stride);
+    const filter = raw[y * (stride + 1)];
+    const source = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    const row = y * stride;
+    for (let x = 0; x < stride; x++) {
+      const left = x >= channels ? pixels[row + x - channels] : 0;
+      const up = y > 0 ? pixels[row - stride + x] : 0;
+      const upLeft = y > 0 && x >= channels ? pixels[row - stride + x - channels] : 0;
+      const predicted = filter === 0 ? 0 : filter === 1 ? left : filter === 2 ? up : filter === 3 ? (left + up) >> 1 : filter === 4 ? paeth(left, up, upLeft) : -1;
+      if (predicted < 0) throw new Error(`unknown PNG filter ${filter}`);
+      pixels[row + x] = (source[x] + predicted) & 0xff;
+    }
   }
-  return { width, height, rgba };
+  return channels === 4 ? { width, height, channels, pixels, rgba: pixels } : { width, height, channels, pixels };
 }
 
 // ---- Shapes (192-unit design space) ---------------------------------------
@@ -241,23 +264,59 @@ export function iconSpecs() {
   return specs;
 }
 
-const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
+// ---- Android (Google Play wrapper, #535, #536) ----------------------------
+//
+// The Android app (android/, ADR 0020) needs the same pictures at Android's
+// five screen densities. Sizes are in dp at mdpi and scale by these factors.
+export const DENSITIES = Object.freeze({ mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, xxxhdpi: 4 });
+const WHITE = [0xff, 0xff, 0xff];
+
+/** Every Android resource PNG (relative to android/app/src/main/res/) and
+ * how to draw it. */
+export function androidIconSpecs() {
+  const specs = [];
+  const at = (folder, name, dp, layers) => {
+    for (const [density, factor] of Object.entries(DENSITIES))
+      specs.push({ file: `${folder}-${density}/${name}.png`, size: Math.round(dp * factor), layers });
+  };
+  // Launchers before Android 8 show this square-ish tile as it is (48 dp).
+  at("mipmap", "ic_launcher", 48, [{ shape: TILE, color: BROWN }, { shape: K, color: CREAM }]);
+  // Android 8+ adaptive icon (mipmap-anydpi-v26/ic_launcher.xml): a 108 dp
+  // layer that the launcher masks, exactly the geometry of the maskable web
+  // icon (the K at 80 %, inside the 66 dp safe circle) on a brown background
+  // colour. The same layer is the Android 13+ themed (monochrome) icon.
+  at("mipmap", "ic_launcher_foreground", 108, [{ shape: scaled(K, 0.8), color: CREAM }]);
+  // The splash the app shows while Chrome starts (centred, not scaled).
+  at("drawable", "splash", 128, [{ shape: TILE, color: BROWN }, { shape: K, color: CREAM }]);
+  // Notification small icon: Android uses only its alpha, so a white K that
+  // fills the 24 dp square.
+  at("drawable", "ic_notification_icon", 24, [{ shape: scaled(K, 1.45), color: WHITE }]);
+  // Shortcut icons (48 dp), the same tiles as the web shortcut PNGs.
+  for (const [name, glyph] of Object.entries(GLYPHS))
+    at("drawable", `shortcut_${name.replaceAll("-", "_")}`, 48, [{ shape: TILE, color: BROWN }, { shape: glyph, color: CREAM }]);
+  return specs;
+}
+
+const projectRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const webRoot = join(projectRoot, "web");
+const androidRes = join(projectRoot, "android", "app", "src", "main", "res");
 
 function main(argv) {
   const check = argv.includes("--check");
   const drifted = [];
-  for (const { file, size, layers } of iconSpecs()) {
+  const sets = [["web", webRoot, iconSpecs()], ["android/app/src/main/res", androidRes, androidIconSpecs()]];
+  for (const [label, root, specs] of sets) for (const { file, size, layers } of specs) {
     const rgba = rasterize(size, layers);
-    const path = join(webRoot, file);
+    const path = join(root, file);
     if (check) {
       let committed = null;
       try { committed = decodePng(readFileSync(path)); } catch { /* missing or unreadable: drift */ }
-      if (!committed || committed.width !== size || committed.height !== size || !Buffer.from(committed.rgba).equals(Buffer.from(rgba))) drifted.push(file);
+      if (!committed || committed.width !== size || committed.height !== size || !Buffer.from(committed.rgba).equals(Buffer.from(rgba))) drifted.push(`${label}/${file}`);
       continue;
     }
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, encodePng(size, size, rgba));
-    console.log(`wrote web/${file}`);
+    console.log(`wrote ${label}/${file}`);
   }
   if (drifted.length) {
     console.error(`These icons differ from scripts/render-icons.mjs; run it and commit the result:\n  ${drifted.join("\n  ")}`);

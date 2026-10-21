@@ -40,6 +40,8 @@ export const SEGMENTS = Object.freeze({
     Object.freeze({ id: "people", label: "People & devices" }),
     Object.freeze({ id: "privacy", label: "Privacy & recovery" }),
     Object.freeze({ id: "appearance", label: "Identity & appearance" }),
+    // Household features (#626, ADR 0021): what the household switched off.
+    Object.freeze({ id: "features", label: "Features" }),
   ]),
 });
 
@@ -58,6 +60,10 @@ const PAGE_TITLES = Object.freeze({
   // a sixth destination; it marks Household.
   journal: "Journal",
 });
+
+/** Every page a route can name (primary destinations and the pages reached
+ * from them). Help (#621) has a topic for each page and segment. */
+export const ROUTE_PAGES = Object.freeze(Object.keys(PAGE_TITLES));
 
 // Legacy destinations and tabs from earlier releases.
 const ALIASES = Object.freeze({

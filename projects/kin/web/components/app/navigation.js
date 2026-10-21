@@ -1,8 +1,11 @@
 // Routes, keyboard shortcuts and search-result navigation.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { projectionContext } from "../../browser-time.js";
+import { recordDiagnostic } from "../../diagnostics/ring-buffer.js";
+import { errorName } from "../../diagnostics/global.js";
 import { listSegmentForClassification, resolveRoute, ROUTE_CHANGE_EVENT, routeHash } from "../../routes.js";
 import { isTypingContext, shortcutForKey } from "../../keyboard-commands.js";
+import { unavailableLine } from "../../features.js";
 
 export class NavigationController {
   constructor(ctx) {
@@ -23,8 +26,30 @@ export class NavigationController {
     this.ctx.navigation.showPageFromLocation();
   }
   showPageFromLocation() {
+    // A failure here is noted in the diagnostic ring buffer (#631), as the
+    // page's route name and the error's kind only.
+    try { return this.showRoute(); } catch (error) {
+      recordDiagnostic("route_failed", { page: this.app.route?.page, name: errorName(error) });
+      throw error;
+    }
+  }
+  showRoute() {
     if (!this.app.pages || !this.app.navLinks) return;
     let route = this.routeFor({ hash: location.hash, pathname: location.pathname });
+    // A switched-off feature (#625, ADR 0021): its routes, links and
+    // shortcuts open Today with a calm line. Simple view has its own list.
+    if (!this.app.simpleView && !this.ctx.features.routeAvailable(route)) {
+      const blocked = this.ctx.features.blocking(route);
+      route = resolveRoute({ hash: "#today" });
+      history.replaceState(null, "", route.hash);
+      this.ctx.status.setStatus(unavailableLine(blocked));
+    }
+    // Old Talk links with Talk later off open Chat without its list.
+    if (route.topics && !this.ctx.features.isOn("talk")) {
+      route = { ...route };
+      delete route.topics;
+      this.pendingTopics = false;
+    }
     // Without chat access (#123) Chat isn't there: its links, and the old
     // Talk tab's, go to Handoffs, where the older topics then live (#312).
     if (route.page === "updates" && route.segment === "chat" && this.app.chatAccess === "none" && !this.app.simpleView) {
@@ -54,6 +79,10 @@ export class NavigationController {
       if (pageId !== route.page) continue;
       for (const [segment, panel] of panels) panel.hidden = segment !== route.segment;
     }
+    // Easy mode remembers the place and trims the navigation; Help puts
+    // away a highlight left on another page and shows Today's tip (#617, #622).
+    this.ctx.easy?.routeShown(route);
+    this.ctx.help?.routeShown(route);
     if (route.page === "routines") this.app.routines.view = route.segment;
     if (route.page === "week") void this.ctx.week?.refresh();
     void this.ctx.sitter?.refresh();

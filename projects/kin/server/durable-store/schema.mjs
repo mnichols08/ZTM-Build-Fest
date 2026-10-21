@@ -13,6 +13,8 @@ import {
   SERVER_SCHEMA_VERSION,
   sqlitePragma,
 } from "./shared.mjs";
+import { FEEDBACK_TABLES_SQL } from "./feedback.mjs";
+import { PREPARED_INVITATIONS_SQL } from "./prepared-invitations.mjs";
 
 export const schemaMethods = {
   migrate(migrationFault) {
@@ -950,6 +952,64 @@ export const schemaMethods = {
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;
         throw new DurableStoreError("Kin could not complete the private blob migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 24) {
+      try {
+        this.transaction(() => {
+          // ADR 0021 §2 (#624): the household features an admin switched
+          // off, as a bit set (pairing-service/shared.mjs names the bits),
+          // and its revision. Plaintext authorization metadata like the chat
+          // and fridge policies; everything is on by default. The bound
+          // leaves room for the list to grow without a table rebuild.
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN features_off INTEGER NOT NULL DEFAULT 0
+              CHECK (features_off >= 0 AND features_off < 2147483648);
+            ALTER TABLE households ADD COLUMN features_revision INTEGER NOT NULL DEFAULT 0
+              CHECK (features_revision >= 0);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(25, Date.now());
+          sqlitePragma(this.db, "user_version = 25");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the household features migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 25) {
+      try {
+        this.transaction(() => {
+          // ADR 0021 §3 (#636): problem reports and feature suggestions sent
+          // from the app, and their optional screenshots
+          // (durable-store/feedback.mjs). Plaintext the person chose to send,
+          // kept 180 days; no foreign keys, so a row outlives an authority
+          // restore (household deletion and member removal purge it).
+          this.db.exec(FEEDBACK_TABLES_SQL);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(26, Date.now());
+          sqlitePragma(this.db, "user_version = 26");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the feedback migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 26) {
+      try {
+        this.transaction(() => {
+          // #613 "Set up Kin for someone": prepared invitations, the one kind
+          // of pairing kept across a restart (durable-store/
+          // prepared-invitations.mjs). A code verifier, never the code; the
+          // person's details only as a card sealed on the admin's device.
+          this.db.exec(PREPARED_INVITATIONS_SQL);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(27, Date.now());
+          sqlitePragma(this.db, "user_version = 27");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the prepared invitation migration.", { cause: error });
       }
     }
   },

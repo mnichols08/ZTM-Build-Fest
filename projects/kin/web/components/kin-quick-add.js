@@ -1,6 +1,7 @@
 import { CLASSIFICATION_LABELS, TOO_LONG } from "./kin-compose.js";
 import { projectionContext } from "../browser-time.js";
 import { REPEAT_HINTS, REPEAT_OPTIONS, isCadence, repeatLabel } from "../recurrence.js";
+import { helpButton } from "./shared/help-button.js";
 
 const MAX_ITEM_TEXT_BYTES = 4096;
 const textEncoder = new TextEncoder();
@@ -99,7 +100,11 @@ class KinQuickAdd extends HTMLElement {
     this.addButton.textContent = "Add";
     actions.append(this.cancelButton, this.addButton);
     this.form.append(this.label, this.input, this.destination, this.repeat, this.error, actions);
-    this.dialog.append(heading, hint, this.form);
+    // Help for Quick add (#621), beside its heading.
+    const top = document.createElement("div");
+    top.className = "dialog-top";
+    top.append(heading, helpButton("dialog:quick-add"));
+    this.dialog.append(top, hint, this.form);
     this.append(this.trigger, this.dialog);
 
     this.trigger.addEventListener("click", () => this.open());
@@ -152,7 +157,8 @@ class KinQuickAdd extends HTMLElement {
     if (this.isDisabled || this.dialog.open) return;
     this.clearDraft();
     this.defaults = captureDefaults();
-    this.repeat.hidden = this.defaults.classification !== "need";
+    // Repeating tasks are Routines: offered only while Routines is on (#625).
+    this.repeat.hidden = this.defaults.classification !== "need" || this.repeatAllowed === false;
     this.renderRepeat();
     this.opener = opener?.isConnected ? opener : this.trigger;
     this.fallback = typeof fallback === "function" ? fallback : null;

@@ -173,6 +173,7 @@ class KinToday extends HTMLElement {
       const start = document.createElement("button");
       start.type = "button";
       start.className = "start-shopping primary-action";
+      start.dataset.feature = "shopping-mode";
       start.textContent = "Start shopping";
       start.disabled = this.isDisabled;
       start.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:start-shopping", { bubbles: true, composed: true, detail: { opener: start } })));

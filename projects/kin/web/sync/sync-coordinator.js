@@ -1,4 +1,5 @@
 import { decodeEventPage, encodeEnvelopeBatch, ENVELOPE_CONTENT_TYPE } from "./envelope-wire.js";
+import { recordDiagnostic } from "../diagnostics/ring-buffer.js";
 import {
   createHouseholdEpochKey,
   createProvisionedHouseholdEpoch,
@@ -183,7 +184,7 @@ function browserLiveChannel(options) {
 }
 
 export class SyncCoordinator {
-  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {}, onSimpleView = () => {}, privateLog = openBrowserPrivateLog, onPrivateLog = () => {}, vaultKey = async () => null }) {
+  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {}, onSimpleView = () => {}, onFeatures = () => {}, privateLog = openBrowserPrivateLog, onPrivateLog = () => {}, vaultKey = async () => null }) {
     this.store = store;
     this.engine = engine;
     this.identity = identity;
@@ -237,6 +238,8 @@ export class SyncCoordinator {
     this.vaultKey = vaultKey;
     // Simple view (#343, ADR 0013): this member's layout as last reported.
     this.onSimpleView = onSimpleView;
+    // Household features (ADR 0021): the switched-off set, from each status.
+    this.onFeatures = onFeatures;
     this.simpleView = null;
   }
 
@@ -385,6 +388,8 @@ export class SyncCoordinator {
       .catch(async (error) => {
         if (this.stopped) return;
         this.lastSyncOk = false;
+        // Codes and an HTTP status only (#631).
+        recordDiagnostic("sync_failed", { reason: error.code ?? (error.name === "TimeoutError" ? "timeout" : undefined), status: error.status });
         // Chat syncs after a full household pass, so a failed pass pauses
         // chat too: tell the chat room why (offline, say).
         if (!["sync_rate_limited", "sync_client_rate_budget"].includes(error.code)) this.chat?.reportSync(error);
@@ -464,6 +469,7 @@ export class SyncCoordinator {
       .finally(() => {
         this.running = null;
         this.lastSyncEndedAt = this.now();
+        if (this.lastSyncEndedAt - this.lastSyncStartedAt > 10_000) recordDiagnostic("sync_slow", { ms: this.lastSyncEndedAt - this.lastSyncStartedAt });
         this.updatePollInterval();
         if (this.syncAgain) {
           this.syncAgain = false;
@@ -501,6 +507,7 @@ export class SyncCoordinator {
     if (this.stopped) return;
     let status = await this.request("/api/sync/status");
     await this.noteSimpleView(status);
+    this.noteFeatures(status);
     if (!status.enabled) {
       this.onState({ state: "disabled", message: "Device sync is off." });
       return { disabled: true, hasMore: false };
@@ -780,6 +787,7 @@ export class SyncCoordinator {
       return result;
     } catch (error) {
       if (CHAT_PASS_STOPS.has(error.code)) throw error;
+      recordDiagnostic("sync_room_failed", { room: "chat", reason: error.code, status: error.status });
       room?.reportSync(error);
       return { hasMore: false };
     }
@@ -798,6 +806,13 @@ export class SyncCoordinator {
     } catch { /* the next pass tries again */ this.simpleView = null; cached = false; }
     if (this.stopped) return;
     try { this.onSimpleView(on, { cached }); } catch { /* the view's trouble isn't sync's */ }
+  }
+
+  /** Hands the household's switched-off features (ADR 0021) to the app,
+   * which keeps them on the device and ignores a repeat. */
+  noteFeatures(status) {
+    if (!status?.features || this.stopped) return;
+    try { this.onFeatures?.(status.features); } catch { /* the view's trouble isn't sync's */ }
   }
 
   /** Opens the fridge once (#317); null where its storage isn't available.
@@ -837,6 +852,7 @@ export class SyncCoordinator {
       return result;
     } catch (error) {
       if (CHAT_PASS_STOPS.has(error.code)) throw error;
+      recordDiagnostic("sync_room_failed", { room: "board", reason: error.code, status: error.status });
       room?.reportSync(error);
       return { hasMore: false };
     }
@@ -887,6 +903,7 @@ export class SyncCoordinator {
       return result;
     } catch (error) {
       if (CHAT_PASS_STOPS.has(error.code)) throw error;
+      recordDiagnostic("sync_room_failed", { room: "private", reason: error.code, status: error.status });
       log?.reportSync(error);
       return { hasMore: false };
     }

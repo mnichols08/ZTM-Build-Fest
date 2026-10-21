@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEVICE_ONLY_KEY, MOTION_KEY, REMINDER_ALERTS_KEY, TEXT_SIZE_KEY, applyDisplayPrefs, applyStoredDisplayPrefs,
+  DEVICE_ONLY_KEY, DISPLAY_SETTING_KEYS, EASY_MODE_KEY, MOTION_KEY, REMINDER_ALERTS_KEY, TEXT_SIZE_KEY, applyDisplayPrefs, applyStoredDisplayPrefs,
   prefersReducedMotion, readDisplayPref, writeDisplayPref,
 } from "./display-prefs.js";
 
@@ -47,4 +47,20 @@ test("text size and motion go on the document root, and Kin's own motion setting
   assert.equal(prefersReducedMotion(view(true, false)), true);
   assert.equal(prefersReducedMotion(view(false, true)), true);
   assert.equal(prefersReducedMotion(view(false, false)), false);
+});
+
+test("easy mode (#617) is kept like the others, goes on the root, and Simple view wins", () => {
+  const storage = memoryStorage();
+  assert.equal(readDisplayPref(EASY_MODE_KEY, storage), "off");
+  assert.equal(DISPLAY_SETTING_KEYS["easy-mode"], EASY_MODE_KEY, "it follows the member as setting easy-mode");
+  assert.equal(writeDisplayPref(EASY_MODE_KEY, "on", storage), true);
+  const root = { dataset: {} };
+  applyStoredDisplayPrefs(storage, root);
+  assert.deepEqual(root.dataset, { kinEasy: "on" });
+  applyDisplayPrefs({ textSize: "large", motion: "system", easyMode: "off" }, root);
+  assert.deepEqual(root.dataset, { kinTextSize: "large" });
+  const simple = { dataset: { kinSimple: "on" } };
+  applyDisplayPrefs({ easyMode: "on" }, simple);
+  assert.deepEqual(simple.dataset, { kinSimple: "on" }, "Simple view is the stricter layout");
+  assert.throws(() => writeDisplayPref(EASY_MODE_KEY, "yes", storage), RangeError);
 });

@@ -1,5 +1,6 @@
-// "Text, motion and reminders" (#524), under Personal appearance: text
-// size, a reduced-motion override, whether reminders alert, and — where the
+// "Text, motion and reminders" (#524), under Personal appearance: easy mode
+// (#617, ADR 0021), text size, a reduced-motion override, whether reminders
+// alert, and — where the
 // member's private storage is on — "Use different settings on this device"
 // for a shared screen such as a kitchen tablet. One line says where these
 // live: on all the member's devices, on this one only, or (no account yet)
@@ -7,6 +8,7 @@
 // choice (app/private-prefs.js) through kin:personal-setting and
 // kin:settings-this-device; update(view) shows the current values.
 import { TEXT_SIZES } from "../appearance/display-prefs.js";
+import { EASY_MODE_COPY } from "../easy/easy-mode.js";
 
 let instances = 0;
 
@@ -50,6 +52,11 @@ class KinPersonalSettings extends HTMLElement {
       this.sizeInputs.set(value, input);
     }
 
+    // Easy mode (#617): first, so someone who finds the page hard sees it first.
+    this.easy = this.checkbox(`${id}-easy`, EASY_MODE_COPY.label, EASY_MODE_COPY.hint,
+      (on) => this.choose("easy-mode", on ? "on" : "off", on ? EASY_MODE_COPY.on : EASY_MODE_COPY.off));
+    this.easy.wrapper.classList.add("easy-mode-setting");
+
     this.motion = this.checkbox(`${id}-motion`, "Reduce motion in Kin",
       "Kin also follows your device's own reduced-motion setting.",
       (on) => this.choose("motion", on ? "reduce" : "system", on ? "Kin keeps motion to a minimum." : "Kin follows your device's motion setting."));
@@ -68,7 +75,7 @@ class KinPersonalSettings extends HTMLElement {
     this.feedback = document.createElement("p");
     this.feedback.className = "appearance-feedback";
     this.feedback.setAttribute("role", "status");
-    this.append(heading, this.scopeLine, sizes, this.motion.wrapper, this.alerts.wrapper, this.deviceOnly.wrapper, this.feedback);
+    this.append(heading, this.scopeLine, this.easy.wrapper, sizes, this.motion.wrapper, this.alerts.wrapper, this.deviceOnly.wrapper, this.feedback);
   }
 
   checkbox(id, label, hint, onChange) {
@@ -101,6 +108,7 @@ class KinPersonalSettings extends HTMLElement {
     if (!this.firstElementChild) return;
     this.scopeLine.textContent = SCOPE_LINES[view.scope] ?? SCOPE_LINES.device;
     for (const [value, input] of this.sizeInputs) input.checked = value === view.textSize;
+    this.easy.input.checked = view.easyMode === "on";
     this.motion.input.checked = view.motion === "reduce";
     this.alerts.input.checked = view.reminderAlerts !== "off";
     // Only where there is something to keep apart from.

@@ -150,6 +150,13 @@ address bar. Set `KIN_ANDROID_PACKAGE` to the app's package name and
 key and an upload key). With neither set the file answers 404; setting only
 one, or a malformed value, stops startup with an explanation.
 
+The Android app itself is in `android/` ([ADR 0020](docs/decisions/0020-google-play-twa.md)):
+it opens `https://kin.journeytocode.io` and is built with Gradle, Google's
+`androidbrowserhelper` library being the one documented dependency exception,
+kept out of Kin's web runtime. [ANDROID](docs/ANDROID.md) covers building,
+versioning, signing (Play App Signing with an upload key), the asset-links
+setup and the phone checklist.
+
 ### Limiting new households
 
 Creating a household needs no account, so Kin limits it the same way: each
@@ -174,6 +181,57 @@ with an explanation.
 KIN_ORIGIN=https://kin.example.org KIN_TRUSTED_PROXIES=127.0.0.1,::1 KIN_ALLOW_NEW_HOUSEHOLDS=false node server/start.mjs
 ```
 
+### Reports and suggestions from the app
+
+People can report a problem from inside Kin (anyone, also from the lock
+screen without signing in), and household admins can suggest a feature
+([ADR 0021](docs/decisions/0021-kin-for-everyone.md) §3). Nothing is sent
+until the person presses Send on a preview that shows every detail (each
+removable) and where it goes. Reports arrive on this service, in server
+schema 26's `feedback` and `feedback_screenshots` tables: the typed text and
+the diagnostics the person kept (a version, browser, screen size, route
+name, sync state, recent error codes; never household text, names,
+usernames or IDs), plus a cropped picture of Kin's screen of at most 1 MiB
+only if they chose one. A signed-in report is linked to its member, so they
+can follow its status in What I've sent; one from the lock screen is linked
+to nobody. Limits: 5 reports and 3 suggestions per member per hour, 20 per
+address per day; without signing in 2 per address per hour and 5 per day.
+Everything is purged after 180 days, with the member on removal and with
+the household on its deletion.
+
+Read them with the admin command, which is safe while the service runs:
+
+```text
+node server/admin.mjs feedback-list [--kind problem|suggestion] [--status received|planned|done|wont-do] [--limit n]
+node server/admin.mjs feedback-show <reference> [--screenshot <new-file>]
+node server/admin.mjs feedback-set-status <reference> received|planned|done|wont-do
+node server/admin.mjs feedback-forward <reference>
+node server/admin.mjs feedback-purge [<reference> --confirm-reference <reference>]
+```
+
+The status you set shows in the sender's What I've sent. `feedback-purge`
+without a reference removes everything past 180 days now.
+
+**Forwarding to GitHub issues** is optional. Set both
+`KIN_FEEDBACK_GITHUB_REPO=owner/name` and `KIN_FEEDBACK_GITHUB_TOKEN` (a
+fine-grained token for that one repository with Issues read and write only),
+or neither; one without the other stops startup. `KIN_FEEDBACK_GITHUB_API`
+may name a GitHub Enterprise API over https. Each report then becomes an
+issue with its title, typed text, diagnostics and reference, labelled
+`from-app` and `bug` or `enhancement`; never household or member IDs,
+usernames or the picture, which stays on the service. **Use a private
+repository**: the typed text is whatever the person wrote, and in a public
+repository anyone can read it. The service asks GitHub whether the
+repository is private and the preview says so ("anyone on the internet can
+read" when public or unknown). Forwarding runs in the background, retries
+with backoff (1 minute doubling to 6 hours, giving up after 8 attempts or a
+refusal such as a bad token; `feedback-forward` tries again) and is
+idempotent by reference: after a lost answer it looks for the issue before
+opening another. Every 15 minutes the status follows the issue: closed as
+completed is Done, closed as not planned is Won't do, open with the label
+`planned` is Planned. A status set with the command holds until the issue
+changes. The token goes only to that API and is never logged.
+
 The service persists household identity, authorization metadata, opaque relay
 events and synchronization state. Sessions and in-flight WebAuthn/pairing
 ceremonies expire on restart, so members sign in again with a trusted device
@@ -194,6 +252,19 @@ full operational and privacy boundaries.
 First setup generates a recovery secret that must be confirmed and stored separately. Losing all unlock paths loses access; losing the browser profile also requires an encrypted backup. Drafts are memory-only and disappear on lock/reload. A refresh of the same tab keeps Kin unlocked (a device setting; [ADR 0010](docs/decisions/0010-reload-resume.md)); closing the tab, Lock and automatic lock still lock it. Encrypted archives restore exact history into an empty installation for local use; they do not recreate server identity or device trust. The static application shell supports offline recovery unlock after its first successful cache installation.
 
 Sync is off until an authenticated adult enables it. The v0.11 implementation candidate persists identity, relay ciphertext, cursors and provisioning state in SQLite; sessions, incomplete pairing and passkey flows remain process-local and expire on restart. Device-token verifiers persist, but raw tokens and private keys do not. A new/replacement adult cannot receive pre-join epochs. Existing adults can pair another device after comparing fingerprints. Encryption does not protect a compromised unlocked runtime, origin, privileged extension or OS. This prototype has not received an independent security audit.
+
+## Privacy policy
+
+Kin's public, plain-language privacy policy is [`web/privacy.html`](web/privacy.html),
+served at `/privacy.html` (for the hosted service,
+<https://kin.journeytocode.io/privacy.html>) and linked from Household ›
+Privacy & recovery. It is the policy URL for the Google Play listing; keep it
+accurate to [PRIVACY](docs/PRIVACY.md), the [threat model](docs/THREAT-MODEL.md)
+and [RETENTION](docs/RETENTION.md). A self-hosted server serves the same page,
+which names the hosted service: an operator should publish their own.
+The Play listing and Data safety answers are in
+[PLAY-LISTING](docs/PLAY-LISTING.md); releasing to Play is in
+[PLAY-RELEASE](docs/PLAY-RELEASE.md).
 
 ## AI usage
 
@@ -248,6 +319,8 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [Development workflow](docs/DEVELOPMENT.md)
 - [Code style](docs/CODE-STYLE.md)
 - [Release process](docs/RELEASES.md)
+- [Android app for Google Play](docs/ANDROID.md) and [its decision record](docs/decisions/0020-google-play-twa.md)
+- [Google Play listing and Data safety](docs/PLAY-LISTING.md) and [releasing on Google Play](docs/PLAY-RELEASE.md)
 - [Debugging and diagnostics](docs/DEBUGGING.md)
 - [Implementation preflight](docs/PREFLIGHT.md)
 - [Requirement traceability](docs/TRACEABILITY.md)

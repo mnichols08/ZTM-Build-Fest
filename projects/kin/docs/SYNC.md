@@ -1143,6 +1143,40 @@ devices of members allowed to read are given.
   an updated Adult device rotates. The key epoch count is capped at 128, as the
   household key's is; there is no recovery path past it.
 
+## Household features (#624, ADR 0021)
+
+A household admin can switch features off for everyone
+([ADR 0021](decisions/0021-kin-for-everyone.md) §2; the page is in
+[UX](UX.md#household-features--adopted-623-adr-0021)).
+
+- **Stored on the service**, in plaintext like the access policies:
+  `households.features_off` (server schema 25), a bit set where bit 0 is
+  Chat, 1 Fridge, 2 Meals, 3 Routines, 4 Taking turns, 5 This week, 6 Talk
+  later, 7 Store sections, 8 Shopping mode, 9 Maintenance, 10 Notes &
+  reference, 11 Sitter page, 12 Journal, 13 Just for me (0 = everything on),
+  and `features_revision`. `server/pairing-service/shared.mjs` and
+  `web/features.js` name the same bits; the list only grows and a bit is
+  never reused.
+- **Changed** with `POST /api/household/features/options` then `/finish`,
+  body `{ off, expectedRevision }`: a household admin only (403
+  `household_admin_required`), with a fresh passkey or, for an admin without
+  one, a password re-entry. Unknown bits are refused (`features_invalid`,
+  400); a revision that isn't the household's current one is refused
+  (`features_stale`, 409) at both steps. The answer is `{ off, revision,
+  changed }`. Each change is audited as `household_features_changed` with the
+  set and revision, and online devices are told to look now (the live
+  channel revalidates chat signals and hints a sync).
+- **Delivered** to every member in `GET /api/sync/status` as `features: {
+  off, revision, admin }`. Devices keep the last set in localStorage
+  `kin.household-features` and ignore an answer older than the revision they
+  kept.
+- **Enforced** for Chat and Fridge only: while either is off, `chat.access`
+  and `board.access` are `none` for every member and their routes refuse as
+  for "No access" (`chat_unavailable`, `board_unavailable`). The chat key's
+  holders are derived, not stored, so switching Chat back on finds them as
+  they were. Everything else is a layout on the devices
+  ([THREAT-MODEL](THREAT-MODEL.md#household-features-are-a-layout-except-chat-and-fridge-623)).
+
 ## Privacy boundary
 
 Ciphertext payloads conceal content only to the extent that key management and client integrity hold. The relay can still observe routing IDs, ciphertext lengths, timing, delivery patterns, and possibly IP/log metadata. Document retention and access controls for these fields. Do not claim perfect anonymity, complete metadata privacy, or protection from a compromised authorized client.

@@ -293,6 +293,18 @@ nothing is indexed on the service, nothing reaches household search, Today,
 chat, catch-up or exports, and nothing is ever a notification. The draft
 stays in the unlocked page only.
 
+**Household features (#623, ADR 0021).** When a household admin switches
+parts of Kin off (Household › Features), the service learns **which features
+the household switched off**, when, and which admin did it (its audit log),
+and tells every member's device the set with its revision. It learns nothing
+about how the household uses the features that stay on, and nothing about
+what is inside the ones switched off: that data stays end-to-end encrypted in
+the household's history, untouched. Each device keeps the last set it heard
+of in browser storage (`kin.household-features`, with the household's ID), so
+an offline unlock hides the same things; it names features, never content,
+and "Start over on this browser" removes it. A household that doesn't sync
+keeps its choice on its one device and the service never learns it.
+
 The planning design for these boundaries is documented in [Identity](IDENTITY.md), [Pairing](PAIRING.md), [Synchronization](SYNC.md), [Cryptography](CRYPTOGRAPHY.md), and the [Threat Model](THREAT-MODEL.md). These documents specify intended properties and open decisions; they do not establish implemented security guarantees.
 
 ## Data lifecycle
@@ -327,6 +339,33 @@ can read the chat as of that moment. The admin's chat policy (#123) still
 applies: a member who may not read chat has no chat to export, and restoring an
 export does not give a device chat access it has not been given
 ([PORTABILITY](PORTABILITY.md#household-chat-in-an-archive-v11-136)).
+
+## Reports and suggestions to the Kin team (ADR 0021 §3)
+
+- **Only on Send.** A report or suggestion leaves the device only after the
+  person presses Send on a preview that shows everything in it and where it
+  goes. There is no automatic crash reporting, no telemetry, and diagnostics
+  are never collected until a report is opened.
+- **What it holds:** the person's typed text; diagnostics from a fixed table
+  (version, browser, system, screen size, text size, installed or tab, the
+  page as a route name, easy mode and Simple view, sync state and last sync
+  time, storage use, online state) and up to 50 recent error codes from the
+  in-memory diagnostic ring buffer, which accepts only codes from a fixed
+  list and numbers; and, only when chosen, a cropped picture of Kin's own
+  screen. Each diagnostic can be removed in the preview. No household text,
+  names, usernames or IDs are in the diagnostics; the service re-checks
+  them against the same table.
+- **Where it goes:** to the Kin service, which stores it in plaintext for
+  its operator, linked to the member (for rate limits and their status) or,
+  from the lock screen and setup, to nobody. If the operator forwards
+  reports, the title, typed text, diagnostics and reference become a GitHub
+  issue with no household or member ID, username or picture; in a public
+  repository anyone can read the typed text, and the preview says so.
+- **How long:** 180 days, sooner on member removal or household deletion
+  ([RETENTION](RETENTION.md)).
+- **On the device:** an unsent report waits in `kin-feedback-outbox`, an
+  IndexedDB database outside the encrypted household stores (a report can
+  be written when no household key is open), until it is sent or removed.
 
 ## Claims boundary
 

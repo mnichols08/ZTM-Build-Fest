@@ -35,12 +35,16 @@ import "./kin-app-badge.js";
 import "./kin-security.js";
 import "./kin-appearance.js";
 import "./kin-personal-settings.js";
+import "./kin-help.js";
 import "./kin-household-defaults.js";
+import "./kin-report.js";
+import "./kin-household-features.js";
 import { createAppContext, initializeAppState } from "./app/context.js";
 import { captureInvitationCode } from "../pairing-link.js";
 import { takeSignInLink } from "../device-link.js";
 import { captureLaunchAction, captureShare } from "../share-target.js";
 import { applyStoredDisplayPrefs } from "../appearance/display-prefs.js";
+import { installGlobalDiagnostics } from "../diagnostics/global.js";
 
 // An invitation link (/pair#code=…) hands over its code before any route is
 // resolved, and the address bar drops it at once (#97). A computer's sign-in
@@ -55,6 +59,9 @@ captureLaunchAction();
 // Text size and motion (#524) apply before anything shows, the lock screen
 // included: they are this device's, kept unencrypted (display-prefs.js).
 applyStoredDisplayPrefs();
+// The local diagnostic ring buffer (#631) notes errors nothing handled, as
+// codes only; after one, Kin offers "Report a problem" (#632).
+installGlobalDiagnostics(window, { onUnexpected: () => document.querySelector("kin-app")?.ctx.report.offer() });
 
 // The application root. It owns lifecycle, event wiring and the state the
 // controllers in ./app/ share; each behavior lives in one of those controllers.
@@ -93,7 +100,7 @@ const ELEMENT_EVENTS = [
   ["kin:caught-up", "onCaughtUp"], ["kin:sync-enabled", "onSyncEnabled"],
   ["kin:sync-now", "onSyncNow"], ["kin:sync-stop", "onSyncStop"],
   ["kin:lock", "onLockRequest"], ["kin:app-badge-choice", "onAppBadgeChoice"],
-  ["kin:personal-setting", "onPersonalSetting"], ["kin:settings-this-device", "onSettingsThisDevice"], ["kin:appearance-preview", "onAppearancePreview"],
+  ["kin:personal-setting", "onPersonalSetting"], ["kin:settings-this-device", "onSettingsThisDevice"], ["kin:open-help", "onOpenHelp"], ["kin:appearance-preview", "onAppearancePreview"],
   ["kin:save-appearance", "onSaveAppearance"], ["kin:use-household-appearance", "onUseHouseholdAppearance"],
   ["kin:inherit-appearance-property", "onInheritAppearanceProperty"], ["kin:household-defaults-preview", "onHouseholdDefaultsPreview"],
   ["kin:household-defaults-cancel", "onHouseholdDefaultsCancel"], ["kin:save-household-defaults", "onSaveHouseholdDefaults"],
@@ -117,6 +124,7 @@ const WINDOW_EVENTS = [
   ["offline", "onOffline"], ["online", "onOnline"],
   ["pagehide", "onPageHide"], ["pageshow", "onPageShow"], ["resize", "onLayoutChange"],
   ["focus", "onWindowFocus"],
+  ["kin:report-problem", "onReportProblem"], ["kin:suggest-feature", "onSuggestFeature"], ["kin:feedback-sent", "onFeedbackSent"],
 ];
 
 class KinApp extends HTMLElement {

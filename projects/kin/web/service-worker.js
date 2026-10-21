@@ -11,6 +11,8 @@ const SHELL = [
   // Not the manifest or /install-icon/*: they depend on the household that
   // published an install identity (#78), so they always come from the network.
   "/", "/index.html", "/styles/app.css", "/icon.svg",
+  // The public privacy policy (#541), readable offline from the app.
+  "/privacy.html",
   // Kin's own PNG app and shortcut icons (#473); scripts/render-icons.mjs.
   ...["icon-192", "icon-512", "icon-maskable-512"].map((name) => `/icons/${name}.png`),
   ...["add-shopping", "add-task", "new-journal-entry", "week", "shopping", "chat", "today"].flatMap((name) => [96, 192].map((size) => `/icons/shortcut-${name}-${size}.png`)),
@@ -25,7 +27,11 @@ const SHELL = [
   "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js", "/security/archive-stream.js", "/security/key-label.js", "/security/backup-key-entry.js", "/security/reload-resume.js", "/security/account-vault.js", "/security/account-vault-sync.js", "/security/account-credentials.js", "/security/account-setup.js", "/security/device-certification.js", "/security/new-device.js",
   "/security/backup-code.js", "/security/account-wrappers.js", "/security/account-passkey.js", "/security/account-security.js",
   "/security/account-migration.js", "/security/start-over.js", "/private/private-export.js",
+  // Set up Kin for someone (#613, #615).
+  "/security/prepared-card.js", "/components/household/prepared.js",
   "/private/member-key.js", "/private/private-envelope.js", "/private/private-log-store.js", "/private/private-log.js", "/private/synced-prefs.js", "/private/private-blobs.js", "/private/journal.js", "/private/journal-view.js",
+  // Household features (#625, ADR 0021).
+  "/features.js", "/features-cache.js", "/components/app/features.js", "/components/kin-household-features.js",
   // Just for me (#510).
   "/private-items.js", "/components/kin-just-for-me.js", "/components/app/private-items.js", "/components/shared/private-marker.js",
   "/appearance/palette.js", "/appearance/display-prefs.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js", "/appearance/install-icons.js",
@@ -35,6 +41,9 @@ const SHELL = [
   "/chat/chat-mentions.js",
   "/chat/chat-polls.js",
   "/chat/chat-search-ranges.js",
+  // Easy mode and Help on every screen (#616, #620).
+  "/easy/easy-mode.js", "/help/glossary.js", "/help/help-content.js", "/help/tips.js",
+  "/components/kin-help.js", "/components/app/easy.js", "/components/app/help.js", "/components/shared/help-button.js",
   ...["app", "appearance", "household-defaults", "install-identity", "notifications", "app-badge", "personal-settings", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "qr", "qr-scanner", "chat", "chat-search", "chat-settings", "chat-policy", "chat-share", "share-sheet", "shopping-mode", "sitter-editor", "sitter-page", "rotation", "import", "week", "chat-poll", "chat-voice", "emoji-picker", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility", "bulk-bar", "playbook-editor", "routine-schedule"].map((name) => `/components/kin-${name}.js`),
   "/components/app/appearance.js", "/components/app/attachments.js", "/components/app/journal.js", "/components/kin-journal.js", "/components/app/chat-share.js", "/components/app/commands/append.js", "/components/app/commands/bulk.js", "/components/app/commands/conversations.js", "/components/app/commands/items.js", "/components/app/commands/records.js", "/components/app/commands/routines.js", "/components/app/constants.js", "/components/app/context.js", "/components/app/detail.js", "/components/app/feedback.js", "/components/app/first-run.js", "/components/app/meals.js", "/components/app/simple.js", "/components/app/share.js", "/components/app/badge.js", "/components/app/private-prefs.js", "/components/app/sections.js", "/components/app/import.js", "/components/app/week.js", "/components/app/sitter.js", "/components/app/rotations.js", "/components/app/navigation.js", "/components/app/peer-channel.js", "/components/app/refresh.js", "/components/app/render.js", "/components/app/session.js", "/components/app/shell.js", "/components/app/status.js", "/components/app/sync.js", "/components/app/undo.js", "/components/app/views.js",
   ...["assignee-label", "dom", "focus", "icons", "operation", "props", "session-guard"].map((name) => `/components/shared/${name}.js`),
@@ -42,6 +51,9 @@ const SHELL = [
   ...["account", "archive", "first-run", "private-export", "protection", "sign-in", "unlock", "views"].map((name) => `/components/security/${name}.js`),
   ...["focus", "sections", "selection"].map((name) => `/components/today/${name}.js`),
   "/components/item-detail/sections.js", "/components/notes/notes.js", "/components/notes/references.js",
+  // Reports and suggestions to the Kin team (ADR 0021 §3).
+  "/components/kin-report.js", "/components/app/report.js", "/diagnostics/registry.js", "/diagnostics/ring-buffer.js", "/diagnostics/global.js",
+  "/feedback/format.js", "/feedback/collect.js", "/feedback/channel.js", "/feedback/outbox.js", "/feedback/screenshot.js",
 ];
 const ALLOWED = new Set(SHELL);
 

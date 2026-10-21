@@ -76,7 +76,8 @@ export const authorityMethods = {
              deletion_requested_at = NULL, deletion_finalize_at = NULL,
              deleted_at = NULL, chat_limited = ?, chat_temporary = ?, chat_policy_revision = ?,
              board_limited = ?, board_temporary = ?, board_policy_revision = ?,
-             private_limited = ?, private_policy_revision = ? WHERE id = ?`,
+             private_limited = ?, private_policy_revision = ?,
+             features_off = ?, features_revision = ? WHERE id = ?`,
           )
           // The chat access policy (#123) is authority like household_admin:
           // a restore keeps the current one, never the older backup's.
@@ -86,7 +87,8 @@ export const authorityMethods = {
             snapshot.household.chat_policy_revision ?? 0,
             snapshot.household.board_limited ?? "write", snapshot.household.board_temporary ?? "write",
             snapshot.household.board_policy_revision ?? 0,
-            snapshot.household.private_limited ?? 1, snapshot.household.private_policy_revision ?? 0, snapshot.householdId,
+            snapshot.household.private_limited ?? 1, snapshot.household.private_policy_revision ?? 0,
+            snapshot.household.features_off ?? 0, snapshot.household.features_revision ?? 0, snapshot.householdId,
           );
         const insertMember = this.db.prepare(
           `INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status, household_admin, simple_view, username)

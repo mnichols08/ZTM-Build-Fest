@@ -293,11 +293,15 @@ test("device revocation refreshes the trusted-device list after the passkey oper
   const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
   const revoke = descendants(component.children).find((child) => child.textContent === "Revoke Kitchen tablet");
   await revoke.listeners.click();
+  // An admin's People & devices also lists the invitations they set up for
+  // someone (#613); a failed list just leaves that section out.
   assert.deepEqual(calls, [
     "/api/devices",
+    "/api/pairings/prepared",
     "/api/devices/other/revocation/options",
     "/api/devices/revocation/finish",
     "/api/devices",
+    "/api/pairings/prepared",
   ]);
   const labels = descendants(component.children).map((child) => child.textContent);
   const row = descendants(component.children).find((child) => child.dataset?.deviceId === "other");

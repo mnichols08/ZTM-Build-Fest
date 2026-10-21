@@ -22,6 +22,9 @@ import { shoppingRegressions } from "./shopping-regression.mjs";
 import { mealsRegressions } from "./meals-regression.mjs";
 import { mealsAcceptanceRegressions } from "./meals-acceptance-regression.mjs";
 import { simpleRegressions } from "./simple-regression.mjs";
+import { easyModeRegressions } from "./easy-mode-regression.mjs";
+import { easySweepRegressions } from "./easy-sweep-regression.mjs";
+import { setupForSomeoneRegressions } from "./setup-for-someone-regression.mjs";
 import { planningDateRegressions } from "./planning-date-regression.mjs";
 import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
 import { fridgeRegressions } from "./fridge-regression.mjs";
@@ -39,6 +42,7 @@ import { shoppingModeRegressions } from "./shopping-mode-regression.mjs";
 import { weekRegressions } from "./week-regression.mjs";
 import { importRegressions } from "./import-regression.mjs";
 import { sitterRegressions } from "./sitter-regression.mjs";
+import { householdFeaturesRegressions } from "./household-features-regression.mjs";
 import { rotationsRegressions } from "./rotations-regression.mjs";
 import { storeSectionsRegressions } from "./store-sections-regression.mjs";
 import { recurringTaskRegressions } from "./recurring-tasks-regression.mjs";
@@ -61,6 +65,7 @@ import { justForMeRegressions } from "./just-for-me-regression.mjs";
 import { syncedPrefsRegressions } from "./synced-prefs-regression.mjs";
 import { journalRegressions } from "./journal-regression.mjs";
 import { accountMigrationRegressions } from "./account-migration-regression.mjs";
+import { reportProblemRegressions } from "./report-problem-regression.mjs";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -1548,6 +1553,9 @@ try {
   console.log(await first.evaluate(`(${rotationsRegressions.toString()})()`));
   console.log(await first.evaluate(`(${importRegressions.toString()})()`));
   console.log(await first.evaluate(`(${storeSectionsRegressions.toString()})()`));
+  // Household features (#623–#626): off, hidden everywhere, on again.
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${householdFeaturesRegressions.toString()})()`));
   await visit(first, "today");
   await setViewport(first, { width: 320, height: 640, deviceScaleFactor: 2, mobile: true });
   try {
@@ -1790,6 +1798,11 @@ try {
     throw error;
   }
   if (heavy) console.log(await fridgeRegressions(first, until));
+  // Easy mode and Help on every screen (#616, #620), before Simple view
+  // reloads into the full layout.
+  if (heavy) console.log(await easyModeRegressions(first, { until }));
+  // The easy-mode sweep (#639): every page in easy mode at 320px and desktop.
+  if (heavy) console.log(await easySweepRegressions(first, { until }));
   console.log(await simpleRegressions(first, { until, ready }));
   await first.evaluate(
     'sessionStorage.setItem("kin.test.expectedState", JSON.stringify(document.querySelector("kin-app").state))',
@@ -3152,6 +3165,16 @@ try {
   // member's own private export, start over, remove passkey and a password
   // changed elsewhere, with a virtual authenticator on its own service.
   if (REGRESSION_PART !== "1") console.log(await accountMigrationRegressions({ endpoint, browserClient }));
+  // Reports and suggestions to the Kin team (#634, ADR 0021 §3): a report
+  // with a detail removed, with a cropped picture, from the outbox after
+  // being offline, and from the lock screen; an admin's suggestion; and What
+  // I've sent with a status the operator set. On its own service too.
+  if (REGRESSION_PART !== "1") console.log(await reportProblemRegressions({ endpoint, browserClient }));
+  // Set up Kin for someone (#612–#615): an admin prepares an invitation for
+  // Rose with easy mode and prints its sheet; Rose opens the link in a fresh
+  // browser, sets a password, the admin approves, and she lands on Today in
+  // easy mode with her name. On its own service too.
+  if (REGRESSION_PART !== "1") console.log(await setupForSomeoneRegressions({ endpoint, browserClient }));
 } catch (error) {
   // The whole failure as an annotation, so an attempt that a passing retry
   // hides can still be read in CI (#594).

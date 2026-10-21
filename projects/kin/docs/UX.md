@@ -575,6 +575,44 @@ Examples over time:
 
 It is the home for infrequent capabilities.
 
+### Household features — Adopted (#623, ADR 0021)
+
+A household that never uses the fridge or meals shouldn't have to look past
+them. **Household › Features** lists the parts of Kin that can be switched
+off, each with one plain sentence: Chat, Fridge, Meals, Routines, Taking
+turns, This week, Talk later, Store sections, Shopping mode, Maintenance,
+Notes & reference, Sitter page, Journal and Just for me. Today, Lists (To do
+and Shopping), Updates (handoffs) and Household are always on, and the page
+says so.
+
+- **Who:** a household admin turns switches on or off and taps **Save
+  features**; Kin then asks them to confirm it's them (their passkey, or
+  their password if they have no passkey yet). Everyone else sees the same
+  list read-only, each feature marked On or Off, with "Ask a household admin
+  if you'd like something turned on or off." A household that doesn't sync
+  (one person) saves on the device without a prompt.
+- **Off means hidden, never deleted.** A switched-off feature leaves the
+  navigation (Routines leaves the bottom bar), its page's segment links and
+  the Household overview, Today (tonight's dinner, routines, the fridge
+  link, private items), This week's rows, Search results, Quick add's
+  repeat choice, the share sheet, chat message actions (Talk later, Save as
+  a note) and the command palette; Help (#620) asks the same hook. Everything stays in the household's
+  history and is back the moment it's switched on.
+- **Links and shortcuts** into a switched-off feature (a bookmark, a
+  home-screen shortcut, an old link) open Today with one calm line: "This
+  week is turned off in your household, so Kin opened Today."
+- **Members are told once.** When something a member's device was showing
+  disappears, Today shows "Your household turned off Meals. Nothing was
+  deleted; a household admin can turn it back on under Household ›
+  Features." with an OK button. It doesn't come back until something else
+  is switched off. The admin who made the change sees "Features saved."
+  instead.
+- **Simple view** keeps its own short list (Today, Chat, the Fridge); Chat
+  and the Fridge leave it too when switched off.
+- **Easy mode and Help** (#616, #620) ask the same question of every
+  destination (`ctx.features.routeAvailable(route)`, web/features.js), so a
+  new surface hides switched-off features without knowing which they are.
+
 ---
 
 ## 5.2 `0.14.x` transition
@@ -1638,7 +1676,8 @@ no other member, admin or the service can read them.
 - **Settings that follow you.** Theme (light, dark, system or the
   household's; the color, unless it comes from this device's own background
   picture, which stays here), text size, reduced motion, whether reminders
-  show as notifications, and the count on the app icon. Household →
+  show as notifications, the count on the app icon, and easy mode (§41,
+  setting 8). Household →
   Identity & appearance gains **Text, motion and reminders**: Text size
   (Standard, Large, Larger), **Reduce motion in Kin** (Kin also follows the
   device's own setting), **Show my reminders as notifications**, and, where
@@ -2333,6 +2372,43 @@ or similar calm context is sufficient.
 
 Kin does not need behavioral analytics to validate the product.
 
+## Telling the Kin team (ADR 0021 §3, #630, #627)
+
+**Report a problem** is one tap from Household (beside Search), the keyboard
+help, Help (which fires `kin:report-problem`), every error message (a
+"Report a problem" button beside it), after an error nothing handled (one
+calm status line with the same button, at most once a minute), and the lock
+screen and setup, where a person may be stuck and can't sign in.
+
+1. **Write** (optional): "What happened" and "What you expected". A
+   checkbox, off by default, adds a picture of this screen; turning it on
+   shows the picture at once with a warning that it can show private things,
+   and four "Trim from…" sliders crop it (5% steps, keyboard operable).
+2. **Check what will be sent**: where it goes in one sentence (to the Kin
+   team; and, when the operator forwards reports, that a copy without the
+   picture goes to the project's issue tracker, "which anyone on the
+   internet can read" unless it is private), what was typed, each device
+   detail as a row with its own Remove button (focus moves to the next
+   row's Remove, and the removal is announced), the recent error codes
+   behind "Show them", and the picture with "Remove the picture". "Put back
+   removed details" undoes removals.
+3. **Send**. "Sent" with the reference number (`KR-XXXX-XXXX-XXXX`), or,
+   offline, "Saved to send": the report waits on the device and goes when
+   Kin can reach the service. Nothing is ever sent without Send.
+
+**Suggest something** (household admins) is in Household › Features,
+under "Ideas for Kin": what they'd like (needed) and why it would help, a preview with only the
+Kin version, Send, and a `KS-` reference.
+
+**What I've sent** (Household, and after sending) lists what is still
+waiting on this device, with "Send now" and "Remove", and what the member
+sent with its status: Received, Planned, Done or Won't do. Reports sent
+without signing in aren't listed.
+
+The dialog is a native modal (a bottom sheet under 480 px) with a focused
+heading, labelled fields, 48 px targets and no sideways scrolling at 320 px.
+Locking closes it and drops the draft and the picture.
+
 ## Test with real people
 
 Prefer paired household testing.
@@ -2876,3 +2952,185 @@ tried them.
   clears the icon at once.
 - **Not a nag.** Off by default, no prompt to turn it on, and no counting
   of anyone else's things (PRODUCT-BOUNDARIES).
+
+# 41. Easy mode and Help on every screen (#616, #620)
+
+For someone who rarely uses apps: bigger, clearer and calmer, with a short
+explanation on every screen ([ADR 0021](decisions/0021-kin-for-everyone.md)
+section 1; accessibility details in
+[ACCESSIBILITY](ACCESSIBILITY.md#easy-mode-and-help-on-every-screen-616-620-adr-0021)).
+
+## Easy mode (#617)
+
+- **Where.** Household → Identity & appearance → Text, motion and reminders
+  starts with **Easy mode: bigger text and buttons, fewer things on screen**
+  ("Every button gets a word, and after each change a line at the bottom
+  lets you undo it. Places you haven't used for two weeks are tucked away;
+  the Household page still lists everything."). Choosing says "Easy mode is
+  on." It is not a lock: the person turns it off the same way.
+- **Offered once.** In this browser's first week, Today shows one calm card,
+  after the day's list: "Would bigger text help?" with **Turn on easy mode**
+  and **No thanks**. Either puts it away for good (§ First-week tips below).
+- **Follows the member.** It is setting 8 `easy-mode` (on, off) of the
+  synced settings (§8.14): on every device of a member with private storage,
+  last change wins, and "Use different settings on this device" keeps a
+  shared tablet its own. Without private storage it stays on the device.
+  Like text size it is kept on the device unencrypted (`kin.easy-mode`), so
+  the lock screen opens the same way. A family member who sets Kin up for
+  someone (#612, § 42) turns it on for them from the invitation.
+- **What changes.** The whole page scales by 125% (with Large 137.5%,
+  Larger 150%): base text 20 px, buttons, tabs and navigation links at
+  least 56 px, more space between things. The tick on a row says
+  **Complete** (or **Reopen**); on phones Search and Lock show their words
+  and the header scrolls away instead of staying on top; the Undo line is
+  larger and its close button says **Dismiss**; the focus ring is thicker
+  and darker. Rows keep **Complete** and **Details**; **Add photo** moves to
+  Details. Everyday actions (add, complete, undo) are never in a menu, and
+  nothing needs a swipe or a long press.
+- **Confirmation with Undo.** After each change the existing undo line
+  (§ undo) says what happened, with **Undo**, until the next action or until
+  dismissed; it never times out.
+- **Fewer places.** The navigation keeps Today, Lists, Updates and
+  Household; Lists keeps To do and Shopping; Updates keeps Handoffs and
+  Chat; Household keeps its overview. Anything else the person opened in
+  the last two weeks stays, and so does the page on screen. Nothing is
+  removed: the Household overview links every Household page and, in easy
+  mode, Routines; Search finds everything. Only route names are remembered
+  for this (`kin.easy-recent`, on the device). Household features an admin
+  switches off (ADR 0021 section 2) stay out, as in the regular layout.
+- **Simple view wins.** When an admin has turned Simple view on for a
+  member, easy mode doesn't apply; the setting comes back if Simple view
+  goes.
+- **Plain words (#618).** The page lines and the Household overview use
+  plain words ("Things to do, your shopping list, and staples: things you
+  buy again and again."; "Locking Kin, ways to sign in, and keeping a safe
+  copy of everything."). Kin's own words — sync, archive, passkey, backup
+  key, household, admin, handoff, routine, staple and others — each have
+  one plain sentence in the glossary (`web/help/glossary.js`); Help lists
+  the ones its screen uses under **Words on this page**: its fixed words
+  and, since #639, the words the page shows at that moment (outside the
+  household's own records). A unit test fails if a screen's fixed words use
+  a listed term that its Help doesn't explain, or if the tips or the setting
+  use one at all; the easy-mode sweep (§ 42) checks every page as shown.
+- **Every control is big enough.** In easy mode every button, menu, field
+  and disclosure is at least the tap size (60 px after the zoom), whatever a
+  component sets in the regular layout.
+
+## Help on every screen (#621, #622)
+
+- **Where.** A **Help** button (a question mark and the word) beside every
+  page's heading — Simple view's pages too — and in Quick add, item details
+  and Shopping mode. It looks the same in the regular layout and in easy
+  mode.
+- **The panel.** "Help: To do", then what the screen is for in a sentence or
+  two, **What you can do** (two or three steps), **Who sees it** ("Everyone
+  in your household."; "Only you. Nobody else in your household can see
+  it."), **Words on this page**, and **Still stuck?**, then **Close**. The
+  topic follows the page and tab on screen; each route and tab in
+  `web/routes.js` has one (a unit test checks), and so do the three
+  dialogs.
+- **Show me** beside a step, when its control is on screen, closes Help and
+  points at the control: it scrolls there, opens a closed section around it,
+  outlines it for a few seconds and puts the focus on it.
+- **Still stuck?** **Message a household admin** opens Chat with an admin's
+  name ready ("@Sam ") when Chat is on, or Handoffs with the note field
+  ready where Chat is off, and says what to do next. **Report a problem**
+  asks for the report dialog (#630) with `kin:report-problem`; it shows when
+  that dialog is there (or, without it, when a listener answers a probe
+  that has `detail.probe: true` with `preventDefault()`). In Simple view without Chat
+  there is no admin button, because Simple view has no Handoffs.
+
+## First-week tips (#617, #622)
+
+During the first seven days after this browser first opened Kin unlocked,
+Today shows at most one tip, after the day's list: first the easy mode
+offer (unless easy mode is already on), then "Help is on every page — Not
+sure what something does? Press Help at the top of any page for a short
+explanation." with **Show me** (it points at the Help button) and **Got
+it**. A tip that was dismissed or used never comes back, and only one is
+dealt with per unlock, so they never queue up. None in Simple view. Kept on
+the device: when Kin was first opened (`kin.first-seen`) and the tips done
+(`kin.tips-done`), nothing about the household.
+
+# 42. Set up Kin for someone (#612–#615)
+
+A family member gets Kin ready for someone who rarely uses apps — a
+grandmother, say — so all she does is open it and choose a password
+([ADR 0021](decisions/0021-kin-for-everyone.md) §4; security in
+[PAIRING](PAIRING.md#set-up-kin-for-someone-612615) and
+[THREAT-MODEL](THREAT-MODEL.md#prepared-invitations-a-printed-sheet-is-an-invitation-613-adr-0021-4)).
+
+## The helper's side (#613, #614)
+
+- **Where.** Household → People & devices, for household admins: **Set up
+  Kin for someone** ("prepare it with their name and easy mode, and print a
+  sheet that shows them how to open it. They only choose a password.").
+- **The form.** **Their name** ("Kin greets them by it, and your household
+  sees it."); **Who they are**: A grown-up in the household, A child or
+  teenager, A babysitter, carer or guest, for a while (then **Their access
+  ends**); **Start in easy mode** (ticked); **Your name** (filled in: "Shown
+  to them as the person to call if they get stuck."); **A note for them
+  (optional)**; **The invitation works for** 1 day, 3 days or 7 days ("Long
+  enough to post the sheet. It works once."); **Make the invitation**.
+  Problems are said on their field in plain words.
+- **Ready.** "Rose's invitation is ready — Give Rose the setup sheet, or send
+  the link. It works once, until Tuesday 28 October." with the QR code, the
+  code, **Print the setup sheet**, **Share the link** and **Cancel this
+  invitation**.
+- **The sheet** ("How to open Kin", one page, large type): "For Rose, from
+  Mikey", a large QR code, three numbered steps — (1) open the camera, point
+  it at the square code and tap the link; (2) Kin says hello and asks for a
+  password: write it down and keep it safe; (3) wait for Mikey to say yes,
+  then Kin opens — the link for someone without a camera, the address and
+  code to type, Mikey's note, **If you get stuck, call Mikey.** and "This
+  sheet works once, until …. Keep it private: anyone with it can ask to
+  join." **Print** prints only the sheet (print stylesheet); **Back**
+  returns to the invitation.
+- **Later.** People & devices lists **Invitations you set up** ("For Rose,
+  until …" → **Open**; "Rose is asking to join" → **Check and say yes**).
+  Kin doesn't keep the code, so once Kin has closed or locked the sheet
+  can't be printed again: cancel and set it up again.
+- **Saying yes.** "Rose is joining — Safari on iPhone is waiting for you to
+  say yes." "If you're with Rose, look at both screens: their screen shows a
+  code. Say yes only if it matches this one." (or call and ask her to read
+  it). Tick **The codes match on both screens**, then **Yes, let Rose in**
+  with your passkey or password. Then: "Rose is in — One last step on
+  Rose's screen: it asks whether its code matches this one. Show them, or
+  read it to them." with your code, and **Done**.
+
+## Her side (#615)
+
+1. **Hello.** Opening the link or scanning the QR code shows one screen,
+   already in easy mode: "**Hi Rose — your family set this up for you**",
+   "Mikey made Kin ready for you. Kin is where your family keeps lists,
+   plans and messages. All you need to do is choose a password.", Mikey's
+   note, **Continue**, and "If you get stuck, call Mikey."
+2. **Password.** "Choose a password": her username, chosen from her name
+   (`rose.4821`, which she can change), and a password with **Show
+   password** (a toggle), "Use at least 10 characters. A few unrelated words
+   works well. Write it down and keep it somewhere safe.", the strength floor
+   (#557) and the one-line trade-off, **Continue** and **Back**.
+3. **Waiting.** "Almost there, Rose — Waiting for Mikey to say yes." with
+   her device's code: "Mikey will check that the code below matches the one
+   on their screen. If you're not together, they may call and ask you to
+   read it." "You can leave this screen open. Kin goes on by itself once
+   they say yes."
+4. **Do these match?** "Mikey said yes — Last step: does this code match
+   the one on Mikey's screen?" with Mikey's code, **Yes, they match — open
+   Kin** and **No, they're different** ("Don't go on. Call Mikey and tell
+   them the codes are different.").
+5. **Today** in easy mode, with Help beside the heading; her name is set and
+   easy mode is in her synced settings.
+
+Every screen, and the card shown if sending the request fails, ends with
+"If you get stuck, call Mikey." A code typed by hand (without the link)
+opens the usual join screen, which asks for her name; easy mode still turns
+on.
+
+## The easy-mode sweep (#639)
+
+A browser regression (`scripts/easy-sweep-regression.mjs`) walks every page
+and tab in easy mode at 320 px and on a desktop, with Fridge, Meals and
+Journal switched off, and fails on: a page without Help, a control under
+56 px, a glossary word on screen that Help doesn't explain, a switched-off
+feature still shown or linked, or sideways scrolling.

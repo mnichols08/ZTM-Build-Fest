@@ -92,10 +92,13 @@ export function takeLaunchAction(where = globalThis.location, past = globalThis.
  * add opens there, its destination following the page (To do or Shopping).
  * Simple view has no Quick add (#345), so it lands on Today instead. Unknown
  * actions land nowhere (null). */
-export function shortcutLanding(action, { simpleView = false } = {}) {
+export function shortcutLanding(action, { simpleView = false, available = () => true } = {}) {
   if (!LAUNCH_ACTIONS.includes(action)) return null;
   if (simpleView) return { hash: "#today", quickAdd: false };
-  if (action === "new-journal-entry") return { hash: "#journal", quickAdd: false, journal: true };
+  // A household that switched the journal off (#625, ADR 0021): Today, and
+  // `unavailable` names the route for the calm line.
+  if (action === "new-journal-entry")
+    return available("journal") ? { hash: "#journal", quickAdd: false, journal: true } : { hash: "#today", quickAdd: false, unavailable: "journal" };
   return { hash: action === "add-shopping" ? "#lists/shopping" : "#lists/todo", quickAdd: true };
 }
 

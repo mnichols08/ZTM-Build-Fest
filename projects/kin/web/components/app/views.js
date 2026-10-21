@@ -1,7 +1,7 @@
 // Building the destination pages and their components.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { routeHash, SEGMENTS } from "../../routes.js";
-import { DESTINATION_DESCRIPTIONS } from "./constants.js";
+import { DESTINATION_DESCRIPTIONS, HOUSEHOLD_HUB_LINKS } from "./constants.js";
 import { currentPlatform, installHelp } from "../../platform.js";
 import { installHelpCard } from "../shared/dom.js";
 
@@ -24,7 +24,8 @@ export class ViewBuilder {
       heading.id = `${id}-title`;
       heading.tabIndex = -1;
       heading.textContent = title;
-      intro.append(heading);
+      // Help on every page (#621), beside the heading.
+      intro.append(heading, this.ctx.help.button());
       if (description) {
         const supporting = document.createElement("p");
         supporting.className = "page-lead";
@@ -37,7 +38,8 @@ export class ViewBuilder {
     const segmentNav = (pageId, label) => {
       const nav = document.createElement("kin-segment-nav");
       nav.setAttribute("label", label);
-      nav.segments = SEGMENTS[pageId].map((entry) => ({ id: entry.id, label: entry.id === "hub" ? "Overview" : entry.label, hash: routeHash(pageId, entry.id) }));
+      // Segments of switched-off features (#625) aren't offered.
+      nav.segments = this.ctx.features.segmentEntries(pageId);
       return nav;
     };
     this.app.pages = new Map();
@@ -54,11 +56,14 @@ export class ViewBuilder {
     fridgeLink.className = "today-fridge-link";
     fridgeLink.href = routeHash("household", "fridge");
     fridgeLink.textContent = "Draw on the fridge";
+    // Links into a feature leave with it (#625, app/features.js).
+    fridgeLink.dataset.featureRoute = "household/fridge";
     // This week (#416): the next seven days in one list.
     const weekLink = document.createElement("a");
     weekLink.className = "today-week-link";
     weekLink.href = "#week";
     weekLink.textContent = "This week";
+    weekLink.dataset.featureRoute = "week";
     today.querySelector(".page-intro").append(this.app.todayDate, weekLink, fridgeLink);
     this.app.compose.setAttribute("mode", "today");
     this.app.compose.setAttribute("scope", "today");
@@ -68,7 +73,27 @@ export class ViewBuilder {
     this.app.onboarding = document.createElement("section");
     this.app.onboarding.className = "today-section onboarding-card";
     this.app.onboarding.hidden = true;
-    today.append(this.app.compose, this.app.tonight, this.app.catchUp, this.app.onboarding, this.app.today);
+    // Tonight's dinner is Meals' (#625).
+    this.app.tonight.dataset.feature = "meals";
+    // The calm one-time note when the household switches something off
+    // (#625, ADR 0021). app/features.js fills and shows it.
+    this.app.featuresNote = document.createElement("section");
+    this.app.featuresNote.className = "today-section features-note";
+    this.app.featuresNote.setAttribute("aria-label", "Changes to Kin");
+    this.app.featuresNote.hidden = true;
+    const featuresNoteText = document.createElement("p");
+    featuresNoteText.className = "features-note-text";
+    const featuresNoteOk = document.createElement("button");
+    featuresNoteOk.type = "button";
+    featuresNoteOk.className = "features-note-ok";
+    featuresNoteOk.textContent = "OK";
+    featuresNoteOk.addEventListener("click", () => this.ctx.features.dismissNote());
+    this.app.featuresNote.append(featuresNoteText, featuresNoteOk);
+    // The first week's tips (#617, #622): one calm card at a time.
+    this.app.todayTip = document.createElement("section");
+    this.app.todayTip.className = "today-section today-tip";
+    this.app.todayTip.hidden = true;
+    today.append(this.app.featuresNote, this.app.compose, this.app.tonight, this.app.catchUp, this.app.onboarding, this.app.today, this.app.todayTip);
 
     // Lists: one list at a time, each with its own quick-add; export lives in
     // the list actions with its warning at the point of use.
@@ -152,6 +177,7 @@ export class ViewBuilder {
     this.app.talksStandalone.id = "talk-standalone";
     this.app.talksStandalone.className = "talk-standalone";
     this.app.talksStandalone.hidden = true;
+    this.app.talksStandalone.dataset.feature = "talk";
     handoffPanel.append(this.app.talksStandalone);
     chatPanel.append(this.app.chat);
     this.ctx.views.placeTalks();
@@ -187,16 +213,10 @@ export class ViewBuilder {
     this.app.householdGlance.className = "household-glance";
     const hubLinks = document.createElement("ul");
     hubLinks.className = "hub-links";
-    for (const [segment, description] of [
-      ["fridge", "A shared board to draw on together."],
-      ["notes", "Notes, reference details, and maintenance history."],
-      ["areas", "Areas, household mode, and Pulse."],
-      ["people", "Members, pairing, trusted devices, and access."],
-      ["privacy", "Lock, passkeys, backup key, export, and restore."],
-      ["appearance", "Your colors and optional background on this device."],
-    ]) {
+    for (const [segment, description] of HOUSEHOLD_HUB_LINKS) {
       const entry = SEGMENTS.household.find((candidate) => candidate.id === segment);
       const item = document.createElement("li");
+      item.dataset.featureRoute = `household/${segment}`;
       const link = document.createElement("a");
       link.className = "hub-link";
       link.href = routeHash("household", segment);
@@ -210,15 +230,38 @@ export class ViewBuilder {
       item.append(link);
       hubLinks.append(item);
     }
+    // Easy mode tucks Routines away from the navigation until it is used
+    // (#617); it stays one tap away here.
+    {
+      const item = document.createElement("li");
+      item.className = "easy-only";
+      // Hidden with Routines when an admin switches it off (ADR 0021 §2).
+      item.dataset.feature = "routines";
+      const link = document.createElement("a");
+      link.className = "hub-link";
+      link.href = routeHash("routines");
+      const name = document.createElement("span");
+      name.className = "hub-link-name";
+      name.textContent = "Routines";
+      const text = document.createElement("span");
+      text.className = "hub-link-text";
+      text.textContent = DESTINATION_DESCRIPTIONS.routines;
+      link.append(name, text);
+      item.append(link);
+      hubLinks.append(item);
+    }
     // Just for you (#497, ADR 0019): private pages, apart from the
     // household's. The journal is a page of its own, not a destination.
     const personalHeading = document.createElement("h2");
     personalHeading.className = "hub-personal-heading";
     personalHeading.id = "hub-personal-heading";
     personalHeading.textContent = "Just for you";
+    // The journal is all that's here; it leaves with its feature (#625).
+    personalHeading.dataset.featureRoute = "journal";
     const personalLinks = document.createElement("ul");
     personalLinks.className = "hub-links hub-personal";
     personalLinks.setAttribute("aria-labelledby", personalHeading.id);
+    personalLinks.dataset.featureRoute = "journal";
     {
       const item = document.createElement("li");
       const link = document.createElement("a");
@@ -255,6 +298,22 @@ export class ViewBuilder {
     searchLink.href = "#search";
     searchLink.textContent = "Search household";
     hubTools.append(searchLink, this.app.installButton);
+    // Telling the Kin team (ADR 0021 §3): a problem from anyone, and what
+    // this member has sent with its status.
+    const reportTools = document.createElement("div");
+    reportTools.className = "hub-report-tools";
+    const reportProblem = document.createElement("button");
+    reportProblem.type = "button";
+    reportProblem.className = "secondary hub-report-problem";
+    reportProblem.textContent = "Report a problem";
+    reportProblem.addEventListener("click", () => this.ctx.report.open("problem", { opener: reportProblem }));
+    const sentLink = document.createElement("button");
+    sentLink.type = "button";
+    sentLink.className = "secondary hub-feedback-sent";
+    sentLink.textContent = "What I've sent";
+    sentLink.addEventListener("click", () => this.ctx.report.open("sent", { opener: sentLink }));
+    reportTools.append(reportProblem, sentLink);
+    hubTools.append(reportTools);
     // iPhone and iPad browsers have no install prompt; show the steps instead.
     const iosInstall = installHelp(currentPlatform());
     if (iosInstall) {
@@ -347,7 +406,15 @@ export class ViewBuilder {
     const privacyLead = document.createElement("p");
     privacyLead.className = "section-hint";
     privacyLead.textContent = "Your household is encrypted on this device. Lock Kin whenever you step away; closing the tab always locks it.";
-    privacyPage.append(privacyLead);
+    // The public privacy policy (#541), in a new tab so this one stays
+    // unlocked; the service worker keeps it for offline reading.
+    const policy = document.createElement("p");
+    policy.className = "section-hint privacy-policy-link";
+    const policyLink = Object.assign(document.createElement("a"), {
+      href: "/privacy.html", target: "_blank", rel: "noopener", textContent: "Read Kin's privacy policy",
+    });
+    policy.append(policyLink, " — what stays on your devices, what Kin's service stores and sees, and how to delete it.");
+    privacyPage.append(privacyLead, policy);
     this.app.privacyPage = privacyPage;
     // Kept for callers that still address the former More security block.
     this.app.moreSecurity = privacyPage;
@@ -364,6 +431,29 @@ export class ViewBuilder {
     // Text size, motion and reminder alerts, and where they live (#524).
     this.app.personalSettings = document.createElement("kin-personal-settings");
     this.app.personalSettings.update(this.ctx.privatePrefs.settingsView());
+    // Suggest something (#628, ADR 0021 §3): household admins only, shown
+    // once the household settings say so, under Household › Features.
+    this.app.suggestSection = document.createElement("section");
+    this.app.suggestSection.className = "today-section suggest-section";
+    this.app.suggestSection.setAttribute("aria-labelledby", "suggest-heading");
+    this.app.suggestSection.hidden = !this.app.householdAdmin;
+    const suggestHeading = document.createElement("h2");
+    suggestHeading.id = "suggest-heading";
+    suggestHeading.textContent = "Ideas for Kin";
+    const suggestHint = document.createElement("p");
+    suggestHint.className = "section-hint";
+    suggestHint.textContent = "As a household admin, you can suggest something you'd like Kin to do. The Kin team sees it, and you can follow what happens in What I've sent.";
+    const suggestButton = document.createElement("button");
+    suggestButton.type = "button";
+    suggestButton.className = "suggest-button";
+    suggestButton.textContent = "Suggest something";
+    suggestButton.addEventListener("click", () => this.ctx.report.open("suggestion", { opener: suggestButton }));
+    const suggestSent = document.createElement("button");
+    suggestSent.type = "button";
+    suggestSent.className = "secondary";
+    suggestSent.textContent = "What I've sent";
+    suggestSent.addEventListener("click", () => this.ctx.report.open("sent", { opener: suggestSent }));
+    this.app.suggestSection.append(suggestHeading, suggestHint, suggestButton, suggestSent);
     appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance, this.app.personalSettings);
 
     // For the sitter (#441, ADR 0017).
@@ -372,8 +462,16 @@ export class ViewBuilder {
     sitterPage.setAttribute("aria-label", "For the sitter");
     this.app.sitterEditor = document.createElement("kin-sitter-editor");
     sitterPage.append(this.app.sitterEditor);
-    household.append(hub, fridgePage, notesPage, sitterPage, areasPage, peoplePage, privacyPage, appearancePage);
-    this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["sitter", sitterPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
+    // Household features (#626, ADR 0021): a list with switches for admins,
+    // read-only for everyone else.
+    const featuresPage = document.createElement("section");
+    featuresPage.className = "household-subpage features-page";
+    featuresPage.setAttribute("aria-label", "Features");
+    this.app.householdFeatures = document.createElement("kin-household-features");
+    this.app.householdFeatures.controller = this.ctx.features;
+    featuresPage.append(this.app.householdFeatures, this.app.suggestSection);
+    household.append(hub, fridgePage, notesPage, sitterPage, areasPage, peoplePage, privacyPage, appearancePage, featuresPage);
+    this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["sitter", sitterPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage], ["features", featuresPage]]));
 
     // For you (#441): the page a Temporary member lands on.
     const foryou = page("foryou", "For you", "What the family left for you.");
@@ -395,6 +493,13 @@ export class ViewBuilder {
     main.append(this.app.detailPanel);
     this.ctx.journal?.render();
     this.ctx.navigation.showPageFromLocation();
+    this.ctx.easy?.updateNavigation();
+  }
+
+  /** Shows "Suggest something" to a household admin only. */
+  showSuggest(admin) {
+    this.app.householdAdmin = admin;
+    if (this.app.suggestSection) this.app.suggestSection.hidden = !admin;
   }
 
   /** Where the older Talk topics show: in Chat's To talk about list, or,

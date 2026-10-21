@@ -84,7 +84,20 @@ class KinCommandPalette extends HTMLElement {
       row.append(keys, action);
       shortcuts.append(row);
     }
-    this.help.append(helpHint, shortcuts);
+    // Something not working? (ADR 0021 §3) The app opens the report once
+    // this dialog has closed.
+    const report = document.createElement("p");
+    report.className = "shortcut-help-report";
+    const reportButton = document.createElement("button");
+    reportButton.type = "button";
+    reportButton.textContent = "Report a problem";
+    reportButton.addEventListener("click", () => {
+      this.opener = null;
+      this.help.close();
+      this.dispatchEvent(new CustomEvent("kin:report-problem", { bubbles: true, composed: true }));
+    });
+    report.append(reportButton);
+    this.help.append(helpHint, shortcuts, report);
     this.append(this.palette, this.help);
 
     this.input.addEventListener("input", () => this.render());
@@ -215,7 +228,8 @@ class KinCommandPalette extends HTMLElement {
   }
 
   render() {
-    this.matches = filterCommands(this.input.value, COMMANDS);
+    // `commands` leaves out switched-off features' commands (#625).
+    this.matches = filterCommands(this.input.value, this.commands ?? COMMANDS);
     const options = this.matches.map((command, index) => {
       const option = document.createElement("li");
       option.id = `command-option-${command.id}`;

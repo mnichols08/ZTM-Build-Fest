@@ -38,6 +38,8 @@ test("a dismissal and a setting encode as the 101 and 102 payloads", () => {
   // A key by number (one a later release names) and an unset.
   assert.deepEqual([...encodePrefsPayload({ type: "set-setting", key: 42, value: "" }).bytes], [42, 0, 0, 0]);
   assert.equal(SETTING_KEYS["private-on-today"], 7, "reserved for the Just for me list");
+  assert.equal(SETTING_KEYS["easy-mode"], 8, "easy mode (#617)");
+  assert.deepEqual([...encodePrefsPayload({ type: "set-setting", key: "easy-mode", value: "on" }).bytes], [8, 0, 2, 0, ...encoder.encode("on")]);
 });
 
 test("intents are refused before they reach the engine when malformed", () => {

@@ -1,6 +1,6 @@
 # Pairing and Device Enrollment
 
-**Status:** Current as of v1.5.0, including invitations by QR code (#97) and phone-approved computer sign-in (#98) below. Manual adult and same-member device pairing use one-time codes, passkey claim/approval/activation, locally generated device keys and compared fingerprints. A queued signed device-key successor completes before pairing/provisioning proceeds. Private transport material is available only while the local household is unlocked. Pairing codes, claims and ceremony flows remain process-local and are cancelled by restart; identity and trusted-device authority are durable. Household deletion discards household pairing/claim flows immediately and invalidates devices at finalization. Local encrypted archive restore does not restore device trust.
+**Status:** Current as of v1.5.0, including invitations by QR code (#97) and phone-approved computer sign-in (#98) below. Manual adult and same-member device pairing use one-time codes, passkey claim/approval/activation, locally generated device keys and compared fingerprints. A queued signed device-key successor completes before pairing/provisioning proceeds. Private transport material is available only while the local household is unlocked. Pairing codes, claims and ceremony flows remain process-local and are cancelled by restart, except prepared invitations (#613, below), whose codes survive it; identity and trusted-device authority are durable. Household deletion discards household pairing/claim flows immediately and invalidates devices at finalization. Local encrypted archive restore does not restore device trust.
 
 ## Distinct operations
 
@@ -137,6 +137,66 @@ Joining person creates a passkey; fingerprints compared; Adult approves
   stale code.
 - The typed code, Copy and Share stay beside the QR code, so a person who
   can't scan has the whole path.
+
+## Set up Kin for someone (#612–#615)
+
+A household admin can prepare an invitation for one person and hand it over
+as a printed sheet or a link ([ADR 0021](decisions/0021-kin-for-everyone.md)
+§4). It is a new-member invitation with the same gates; the differences:
+
+```text
+Admin: People & devices → Set up Kin for someone
+   (their name, who they are, easy mode, the helper's name, a note, 1–7 days)
+        |
+        v
+Admin's device seals the card (names, note) under a fresh key;
+service keeps a prepared invitation (schema 27) with the card
+        |
+        v
+QR code / link  /pair#code=F7KM-Q2DX&k=<card key>   +  "How to open Kin" sheet
+        |
+        v
+Her device: "Hi Rose — your family set this up for you" → password
+   (easy mode already on) → claim with a password
+        |
+        v
+"Waiting for Mikey to say yes" — her device shows its code
+        |
+        v
+Mikey compares that code with his screen and approves with a fresh
+passkey or password (in person: side by side)
+        |
+        v
+Her device: "Mikey said yes. Does this code match the one on his screen?"
+   → Yes → Today in easy mode
+```
+
+- **Lifetime.** 1, 3 or 7 days (the service accepts 1 to 7), single-use, at
+  most three waiting per household. Unlike every other pairing it survives a
+  restart: the service keeps it in `prepared_invitations` and deletes the row
+  once the code stops working. A claim is still process-local; a restart while
+  she waits ends the claim and the code works again.
+- **Its claim waits a day** for approval (an ordinary claim: 15 minutes), so
+  the helper can answer later. The helper finds it under People & devices →
+  "Invitations you set up" ("Rose is asking to join" → "Check and say yes").
+- **Other invitations.** Making an ordinary invitation, adding a device,
+  replacing one or recovery still end the household's other pending
+  pairings, but never a prepared invitation, and a prepared invitation ends
+  none of them.
+- **The link** carries the card's key as `k` beside `code` in the fragment
+  (`web/pairing-link.js`), taken out of the address as the app loads. Kin's
+  own scanner reads only the code from it. Typing the code works without the
+  key: the join screen asks for the name, and the invitation's easy mode
+  still applies.
+- **What the service says to a code's holder.** `POST /api/account/invitation`
+  answers a prepared code with `prepared: { memberKind, easyMode, card,
+  expiresAt }`. The card opens only with the link's key
+  (`web/security/prepared-card.js`).
+- **Approval** is unchanged: the inviter approves with a fresh confirmation
+  after comparing the joining device's fingerprint, the inviter's device
+  signs its certificate, and the joining device compares the inviter's
+  fingerprint before it finishes. **There is no unattended pre-approval**:
+  see THREAT-MODEL, "Prepared invitations".
 
 ## Sign in on a computer with your phone (v1.1, #98)
 

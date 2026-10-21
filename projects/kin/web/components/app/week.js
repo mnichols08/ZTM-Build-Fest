@@ -1,6 +1,8 @@
 // This week (#416): reads the week from Rust while the page is showing and
 // hands it to <kin-week>. State stays on the element (`this.app`);
 // app/context.js explains the controllers.
+import { filterWeekDays } from "../../features.js";
+
 export class WeekController {
   constructor(ctx) {
     this.ctx = ctx;
@@ -20,7 +22,8 @@ export class WeekController {
         const today = this.ctx.navigation.currentCivilDate();
         const days = await session.store.week(today);
         if (!this.ctx.session.isCurrentSession(session) || !this.app.week) return;
-        this.app.week.update({ days, today, state: this.app.state, context: this.ctx.detail.responsibilityContext(), privateItems: this.ctx.privateItems.todayItems() });
+        // Rows of switched-off features leave the week (#625).
+        this.app.week.update({ days: filterWeekDays(days, this.ctx.features.off), today, state: this.app.state, context: this.ctx.detail.responsibilityContext(), privateItems: this.ctx.privateItems.todayItems() });
       } catch {
         // The page keeps what it showed; the next render tries again.
       } finally {

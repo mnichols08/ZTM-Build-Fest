@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  captureInvitationCode, cleanCode, consumeInvitationCode, invitationCode, invitationLink, takeInvitationCode,
+  captureInvitationCode, cleanCode, consumeInvitationCode, consumeInvitationKey, invitationCode, invitationKey, invitationLink, takeInvitationCode,
 } from "./pairing-link.js";
 
 const address = (href) => {
@@ -67,4 +67,24 @@ test("a captured code is handed to the join screen once", () => {
   assert.equal(consumeInvitationCode(), "", "not twice");
   captureInvitationCode(address("https://kin.test/today"), past);
   assert.equal(consumeInvitationCode(), "", "nothing captured elsewhere");
+});
+
+test("a prepared invitation's link carries its card key beside the code, in the fragment (#613)", () => {
+  const key = "AbCdEfGhIjKlMnOpQrStUv";
+  const link = invitationLink("https://kin.test", "F7KM-Q2DX", key);
+  assert.equal(link, `https://kin.test/pair#code=F7KM-Q2DX&k=${key}`);
+  assert.equal(new URL(link).search, "", "the key never reaches the server either");
+  assert.equal(invitationCode(link), "F7KM-Q2DX", "scanning it in Kin still finds the code");
+  assert.equal(invitationKey(address(link)), key);
+  assert.equal(invitationKey(address("https://kin.test/pair#code=F7KM-Q2DX&k=short")), "", "only a well-formed key");
+  assert.equal(invitationKey(address(`https://kin.test/today#code=F7KM-Q2DX&k=${key}`)), "", "only on /pair");
+  const past = recorder();
+  assert.equal(captureInvitationCode(address(link), past), "F7KM-Q2DX");
+  assert.deepEqual(past.calls, ["/pair"], "the address bar loses the key with the code");
+  assert.equal(consumeInvitationKey(), key);
+  assert.equal(consumeInvitationKey(), "", "once");
+  consumeInvitationCode();
+  captureInvitationCode(address("https://kin.test/pair#code=F7KM-Q2DX"), recorder());
+  assert.equal(consumeInvitationKey(), "", "an ordinary link has none");
+  consumeInvitationCode();
 });

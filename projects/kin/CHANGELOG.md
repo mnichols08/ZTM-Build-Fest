@@ -7,6 +7,157 @@ documentation only.
 
 ## Unreleased
 
+### Added
+
+- **Set up Kin for someone** (#612: #613, #614, #615; epic #603,
+  [ADR 0021](docs/decisions/0021-kin-for-everyone.md) §4). A household admin
+  prepares Kin for one person from People & devices: their name, who they
+  are (Adult, Limited or Temporary), easy mode (on by default), the helper's
+  name and a note. Kin makes a QR code, a link and a one-page "How to open
+  Kin" sheet in large type (the QR code, the link and code, three plain
+  steps, "If you get stuck, call Mikey" and when it ends) with a print
+  stylesheet. Opening it: "Hi Rose — your family set this up for you" in
+  easy mode, a password with Show password and a username chosen from her
+  name, the wait for approval naming the helper, "Do these match?", then
+  Today in easy mode with her name set and easy mode in her synced settings.
+  The inviter still approves after comparing fingerprints (side by side in
+  person, or by phone); there is no unattended pre-approval (THREAT-MODEL).
+  The names travel only in a card sealed on the admin's device under a key
+  carried in the link's fragment. **Server schema 27** adds
+  `prepared_invitations` (forward migration from 26): a prepared invitation
+  lasts 1 to 7 days, survives a restart, is single-use, and its claim waits a
+  day for approval; at most three wait per household. Routes `POST` and
+  `GET /api/pairings/prepared`; `POST /api/account/invitation` answers a
+  prepared code with `prepared`. UX §42, PAIRING, IDENTITY.
+- **Easy-mode sweep** (#639, story #638): Help's "Words on this page" now
+  also covers the words a page shows at that moment, and in easy mode every
+  button, menu, field and disclosure gets the tap size. Browser regressions
+  `scripts/easy-sweep-regression.mjs` (every page in easy mode at 320 px and
+  desktop: Help, 56 px controls, no unexplained word, switched-off features
+  absent) and `scripts/setup-for-someone-regression.mjs` (the whole set-up
+  flow in two browsers).
+- **Easy mode** (#616: #617, #618, #619; epic #603,
+  [ADR 0021](docs/decisions/0021-kin-for-everyone.md)): bigger text and
+  buttons, fewer things on screen. Turned on in Household → Identity &
+  appearance, or from a one-time offer on Today in the first week. It
+  follows the member as synced setting 8 `easy-mode` (on this device only
+  without private storage). The page scales by 125% (20 px base text,
+  targets of at least 56 px), the tick and the header's icons show their
+  words, focus is thicker, rows keep one clear action, the Undo line is
+  larger, and the navigation keeps Today, Lists (To do, Shopping), Updates
+  and Household plus whatever the person used in the last two weeks.
+  Simple view wins when both are on. A plain-language pass of the page
+  lines and the Household overview, and a glossary (`web/help/glossary.js`)
+  that Help uses, with a test that flags Kin's own words on a screen unless
+  its Help explains them. UX §41.
+- **Help on every screen** (#620: #621, #622): a Help button beside every
+  page's heading and in Quick add, item details and Shopping mode. It says
+  what the screen is for, two or three things to do (with **Show me**, which
+  points at the control), who sees it and the harder words it uses, and
+  **Still stuck?**: message a household admin (Chat, or Handoffs where Chat
+  is off) or report a problem (shown when the report dialog listens for
+  `kin:report-problem`). A first-week tip on Today points at it. Every route
+  and tab has its Help (a unit test checks).
+- **Browser regression** `scripts/easy-mode-regression.mjs`: the tips, Help
+  on every page and in Quick add, Show me, Still stuck, and easy mode's
+  sizes, words, navigation and Undo line at 1280 px, 320 px and 200%, in
+  dark mode, forced colours and reduced motion.
+
+- **Report a problem, suggest something, and see what you've sent** (#630,
+  #627, #635; [ADR 0021](docs/decisions/0021-kin-for-everyone.md) §3).
+  Anyone can report a problem from Household, the keyboard help, Help, any
+  error message or the lock screen: optional typed text, the device's
+  diagnostics (each shown and removable) and, only if turned on, a cropped
+  picture of Kin's screen drawn by Kin itself. A preview shows exactly what
+  goes and where; nothing is sent without Send; offline reports wait in an
+  outbox; each gets a reference number. Household admins can suggest
+  features (Household › Features). What I've sent shows
+  each one's status. A local diagnostic ring buffer (the last 50 codes,
+  numbers only, in memory) is recorded at sync, engine, storage, render,
+  route and unexpected-error sites. The service stores reports in **server
+  schema 26** (`feedback`, `feedback_screenshots`) with routes `POST
+  /api/feedback`, `POST /api/feedback/anonymous`, `GET /api/feedback/mine`
+  and `GET /api/feedback/channel`, per-member and per-address limits,
+  180-day retention and purge with member removal and household deletion;
+  admin commands `feedback-list`, `-show`, `-set-status`, `-forward` and
+  `-purge`; and optional forwarding to GitHub issues
+  (`KIN_FEEDBACK_GITHUB_REPO`, `KIN_FEEDBACK_GITHUB_TOKEN`) with status
+  following the issue. DEBUGGING's planned "export diagnostics" is replaced
+  by this.
+- **An Android app for Google Play** (epic #527; #529, #530, #535, #536,
+  #537): `android/` holds a Trusted Web Activity that opens
+  `https://kin.journeytocode.io` full-screen, with sharing into Kin (text,
+  links, images and PDFs), the first four home-screen shortcuts, Kin's
+  notifications delegated to the app (asking for Android 13's permission),
+  Kin's splash and adaptive icon, and a Custom Tab when no browser supports
+  TWAs. Package `kin.app`, set in one place; target API 36. Names, colours,
+  share target and shortcuts come from the web manifest, the version name
+  from `package.json`, and the pictures from `scripts/render-icons.mjs`.
+  [ADR 0020](docs/decisions/0020-google-play-twa.md) records the origin, the
+  package name, Play App Signing and the dependency exception (Google's
+  `androidbrowserhelper` and the Gradle build, scoped to `android/`; Kin's web
+  runtime stays dependency-free). [ANDROID](docs/ANDROID.md) covers building,
+  versioning, the upload key and its recovery, the asset-links setup, and the
+  owner's phone checklist.
+- **CI builds the Android app**: a new `android` job builds an unsigned debug
+  APK and App Bundle, checks the APK against the web manifest
+  (`scripts/check-android-app.mjs`) and keeps both as an artifact. Signed
+  release builds stay manual.
+- **A public privacy policy** (#541, epic #527): `web/privacy.html`, served
+  at `/privacy.html`, says in plain words what stays on your devices, what
+  Kin's service stores and sees (your username, a check value for your
+  password, membership, device keys, timing, counts and sizes, IP addresses
+  for rate limits, push addresses if notifications are on), what Kin never
+  does (ads, selling, analytics, reading content, AI), how to delete your
+  account or household and how long things are kept. It opens offline and
+  is linked from Household › Privacy & recovery and the README. Its contact
+  address, `privacy@journeytocode.io`, is a placeholder to confirm.
+- **Google Play listing and Data safety drafts** (#540, #541):
+  [PLAY-LISTING](docs/PLAY-LISTING.md) has the name, descriptions, category,
+  contacts, each Data safety answer with its reason and the open questions
+  for the owner, a content rating draft and the target-audience (Families
+  policy) choice.
+- **Play graphics** (#540): `scripts/render-play-graphics.mjs` draws the
+  1024 × 500 feature graphic, `play/feature-graphic.png`, from the icon
+  geometry (with `--check`); `scripts/play-screenshots.mjs` captures Today,
+  Shopping, This week, Chat and the journal of a made-up household at phone
+  and 7- and 10-inch tablet sizes. The Kin verification workflow runs it
+  only on **Run workflow** (`play-screenshots` job) and uploads
+  `kin-play-screenshots`. The PNG reader in `scripts/render-icons.mjs` now
+  reads every row filter and the encoder writes RGB as well as RGBA.
+- **A Play release runbook** (#545): [PLAY-RELEASE](docs/PLAY-RELEASE.md)
+  covers the one-time setup (developer account, app creation, Play App
+  Signing, asset-links fingerprints, app content, listing), the 14-day
+  closed test with 12+ testers, production submission, when a change needs a
+  Play release rather than a web deploy, version codes, staged rollout and
+  rollback. Linked from [RELEASES](docs/RELEASES.md).
+- **Household features** (#623, #624, #625, #626, epic #603,
+  [ADR 0021](docs/decisions/0021-kin-for-everyone.md) §2): **Household ›
+  Features** lists Chat, Fridge, Meals, Routines, Taking turns, This week,
+  Talk later, Store sections, Shopping mode, Maintenance, Notes & reference,
+  Sitter page, Journal and Just for me, each with a plain sentence. A
+  household admin switches them off for everyone and saves with a fresh
+  passkey or password; other members see the list read-only with "Ask a
+  household admin". Off means hidden, never deleted: the feature leaves the
+  navigation, segment links, Today, This week, Search, Quick add's repeat,
+  the share sheet, chat actions, shortcuts and the command palette on every
+  member's device, its routes open Today with a calm line, and members see a
+  one-time note on Today. The service keeps the set (server schema 25,
+  `households.features_off` and `features_revision`), changes it through
+  `POST /api/household/features/options` and `/finish` (unknown bits and
+  stale revisions refused), delivers it as `features` in `/api/sync/status`,
+  and refuses the Chat and Fridge routes while they are off. Devices keep
+  the last set (`kin.household-features`); a household that doesn't sync
+  keeps its own. `ctx.features.routeAvailable(route)` is the one question
+  other surfaces (easy mode, Help) ask. Browser regression
+  `scripts/household-features-regression.mjs`.
+
+### Fixed
+
+- `.gitignore`: `/.kin-data/` and `/deploy/.env` had been joined into one
+  line, so neither was ignored. Signing keys (`*.jks`, `*.keystore`,
+  `keystore.properties`) and Android build output are now ignored too.
+
 ## v1.5.0 — One Account and Private Spaces
 
 Released 2026-10-21 as `kin-v1.5.0`. This minor release gives each member one

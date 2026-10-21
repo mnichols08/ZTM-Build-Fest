@@ -26,6 +26,8 @@ export class FirstRunController {
     const app = this.app;
     const session = this.ctx.session.captureSession();
     app.firstRun = { pending, state: "working", error: null };
+    // Easy mode may have been turned on during the first run (#615).
+    this.ctx.easy?.apply();
     this.ctx.status.renderOnboarding();
     try {
       const household = await this.household(session);
@@ -43,7 +45,9 @@ export class FirstRunController {
         this.ctx.navigation.navigate("#today");
       } else {
         // The keys stay with the household panel until the approved claim
-        // is finished (it wipes them then).
+        // is finished (it wipes them then). Set up by someone else (#615):
+        // the panel's waiting screen names them and the helper.
+        household.preparedWelcome = pending.prepared ?? null;
         await household.account.joinHousehold(pending.signUp, pending.code);
         app.pendingProfile = { displayName: pending.displayName, householdName: "" };
         this.ctx.navigation.navigate("#household/people");

@@ -71,7 +71,9 @@ export class SimpleController {
    * page couldn't work anyway, so it isn't offered. */
   access() {
     const open = (room) => Boolean(room) && room.access !== "none";
-    return { chat: open(this.app.chat?.room), fridge: open(this.app.fridge?.room) };
+    // A household that switched Chat or the Fridge off (#625) has neither.
+    const on = (id) => this.ctx.features?.isOn(id) !== false;
+    return { chat: on("chat") && open(this.app.chat?.room), fridge: on("fridge") && open(this.app.fridge?.room) };
   }
 
   /** Mounts the Simple view workspace: Today's cards, Chat, the Fridge. */
@@ -79,6 +81,9 @@ export class SimpleController {
     if (this.on || !this.app.main) return;
     this.app.simpleView = true;
     document.documentElement.dataset.kinSimple = "on";
+    // Simple view wins over easy mode (ADR 0021): the stricter layout.
+    delete document.documentElement.dataset.kinEasy;
+    this.app.removeAttribute("data-easy");
     // Off in Simple view: Quick add, Search, the palette and shortcuts
     // (navigation.js), bulk selection and item details (detail.js).
     this.app.quickAdd.hidden = true;
@@ -112,7 +117,8 @@ export class SimpleController {
       heading.id = `${id}-title`;
       heading.tabIndex = -1;
       heading.textContent = title;
-      section.append(heading, ...children);
+      // Help on every screen (#621), Simple view's included.
+      section.append(heading, this.ctx.help.button(), ...children);
       return section;
     };
     this.app.simpleToday = document.createElement("kin-simple");
@@ -208,7 +214,7 @@ export class SimpleController {
     this.app.simpleToday.cards = buildCards(things, { state: this.app.state, emojis, rows: this.app.attachmentRows, doneThisSession: this.doneThisSession });
     const today = this.ctx.meals?.today?.();
     const dinner = today ? this.app.mealsState?.dinners.find((entry) => entry.date === today) ?? null : null;
-    this.app.simpleToday.tonight = tonightLine(dinner, this.ctx.meals?.people?.() ?? {});
+    this.app.simpleToday.tonight = this.ctx.features?.isOn("meals") === false ? null : tonightLine(dinner, this.ctx.meals?.people?.() ?? {});
     this.updateAccess();
   }
 
