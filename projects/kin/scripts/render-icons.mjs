@@ -3,7 +3,8 @@
 // CRC-32 table). Android ignores SVG-only shortcut icons, and the Play Store
 // wrapper needs PNG app icons, so the PNGs are generated here and committed.
 //
-//   node scripts/render-icons.mjs          writes web/icons/*.png
+//   node scripts/render-icons.mjs          writes web/icons/*.png and the
+//                                          Android app's res/ PNGs
 //   node scripts/render-icons.mjs --check  fails if a committed PNG's pixels
 //                                          differ from what this renders
 //
@@ -263,23 +264,59 @@ export function iconSpecs() {
   return specs;
 }
 
-const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
+// ---- Android (Google Play wrapper, #535, #536) ----------------------------
+//
+// The Android app (android/, ADR 0020) needs the same pictures at Android's
+// five screen densities. Sizes are in dp at mdpi and scale by these factors.
+export const DENSITIES = Object.freeze({ mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, xxxhdpi: 4 });
+const WHITE = [0xff, 0xff, 0xff];
+
+/** Every Android resource PNG (relative to android/app/src/main/res/) and
+ * how to draw it. */
+export function androidIconSpecs() {
+  const specs = [];
+  const at = (folder, name, dp, layers) => {
+    for (const [density, factor] of Object.entries(DENSITIES))
+      specs.push({ file: `${folder}-${density}/${name}.png`, size: Math.round(dp * factor), layers });
+  };
+  // Launchers before Android 8 show this square-ish tile as it is (48 dp).
+  at("mipmap", "ic_launcher", 48, [{ shape: TILE, color: BROWN }, { shape: K, color: CREAM }]);
+  // Android 8+ adaptive icon (mipmap-anydpi-v26/ic_launcher.xml): a 108 dp
+  // layer that the launcher masks, exactly the geometry of the maskable web
+  // icon (the K at 80 %, inside the 66 dp safe circle) on a brown background
+  // colour. The same layer is the Android 13+ themed (monochrome) icon.
+  at("mipmap", "ic_launcher_foreground", 108, [{ shape: scaled(K, 0.8), color: CREAM }]);
+  // The splash the app shows while Chrome starts (centred, not scaled).
+  at("drawable", "splash", 128, [{ shape: TILE, color: BROWN }, { shape: K, color: CREAM }]);
+  // Notification small icon: Android uses only its alpha, so a white K that
+  // fills the 24 dp square.
+  at("drawable", "ic_notification_icon", 24, [{ shape: scaled(K, 1.45), color: WHITE }]);
+  // Shortcut icons (48 dp), the same tiles as the web shortcut PNGs.
+  for (const [name, glyph] of Object.entries(GLYPHS))
+    at("drawable", `shortcut_${name.replaceAll("-", "_")}`, 48, [{ shape: TILE, color: BROWN }, { shape: glyph, color: CREAM }]);
+  return specs;
+}
+
+const projectRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const webRoot = join(projectRoot, "web");
+const androidRes = join(projectRoot, "android", "app", "src", "main", "res");
 
 function main(argv) {
   const check = argv.includes("--check");
   const drifted = [];
-  for (const { file, size, layers } of iconSpecs()) {
+  const sets = [["web", webRoot, iconSpecs()], ["android/app/src/main/res", androidRes, androidIconSpecs()]];
+  for (const [label, root, specs] of sets) for (const { file, size, layers } of specs) {
     const rgba = rasterize(size, layers);
-    const path = join(webRoot, file);
+    const path = join(root, file);
     if (check) {
       let committed = null;
       try { committed = decodePng(readFileSync(path)); } catch { /* missing or unreadable: drift */ }
-      if (!committed || committed.width !== size || committed.height !== size || !Buffer.from(committed.rgba).equals(Buffer.from(rgba))) drifted.push(file);
+      if (!committed || committed.width !== size || committed.height !== size || !Buffer.from(committed.rgba).equals(Buffer.from(rgba))) drifted.push(`${label}/${file}`);
       continue;
     }
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, encodePng(size, size, rgba));
-    console.log(`wrote web/${file}`);
+    console.log(`wrote ${label}/${file}`);
   }
   if (drifted.length) {
     console.error(`These icons differ from scripts/render-icons.mjs; run it and commit the result:\n  ${drifted.join("\n  ")}`);

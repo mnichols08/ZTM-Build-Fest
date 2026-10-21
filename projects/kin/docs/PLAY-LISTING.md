@@ -270,7 +270,7 @@ Whichever is chosen, keep the listing's text and graphics adult-oriented.
 | --- | --- |
 | Ads | **No, my app does not contain ads.** |
 | App access | **All functionality is available without special access**, with instructions: "Open the app, choose *Start a new household*, enter any name, household name, username and a password of 10+ characters. Inviting a second member needs a second device or browser; this is optional." (Or provide a demo account if Play asks for one: **PLACEHOLDER**.) |
-| Advertising ID | **No** (the app doesn't declare `AD_ID`; check the Android manifest after the wrapper build, docs/ANDROID.md). |
+| Advertising ID | **No**. `android/app/src/main/AndroidManifest.xml` declares only `POST_NOTIFICATIONS` (no `AD_ID`); check the merged manifest of the release build too, since a library could add one ([ANDROID](ANDROID.md)). |
 | Government app, financial features, health | No. |
 | News app | No. |
 | Data safety | As above. |

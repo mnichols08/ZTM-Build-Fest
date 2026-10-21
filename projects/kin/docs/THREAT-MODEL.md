@@ -337,6 +337,20 @@ Limits: while waiting, the shared content is plaintext in the browser's
 memory (as it is in the sharing app); any page of Kin's origin that guesses
 or learns the id could take it first, so the id is random and taken once.
 
+## The Google Play app (ADR 0020, #527)
+
+The Play app is a Trusted Web Activity: it opens
+`https://kin.journeytocode.io` in the browser and contains no Kin code.
+
+| What it adds | What that means |
+| --- | --- |
+| Google's `androidbrowserhelper` (with `androidx.browser`) in the Android app | Third-party code runs in the **app**, not in Kin: it launches the browser, hands over shared content and shows delegated notifications. It never sees household data except what the user shares into Kin, which it passes to the browser as the share sheet would, and the content-free push notifications Kin already sends (see "Push notifications reveal timing"). The app has no INTERNET permission and stores only which browser it verified and the splash image it hands over. Kin's web runtime, engine and server don't include it. |
+| Storage shared with the browser | Kin's data, device keys, service worker and passkeys are the browser profile's for the origin, exactly as for the installed web app: the Play app and a Chrome tab on `kin.journeytocode.io` are the same Kin, with the same lock. Anyone who can use that Chrome profile can reach the same locked Kin either way. Clearing the site's data in Chrome clears it in the app; uninstalling the app doesn't. |
+| A second way in through Android intents | Links to the origin and Kin's shortcuts open the app; other apps can share text, links, images and PDFs into it. Shared content follows the web share target's path ("Sharing into Kin" above): nothing reaches household data until the member chooses a destination after unlock. |
+| Asset Links | `/.well-known/assetlinks.json` names the package and its signing certificates' fingerprints (public values). A wrong or missing entry shows a URL bar; it can't let another app open Kin full-screen. |
+| Signing | Google holds the app signing key (Play App Signing). The owner's upload key, kept offline and never in the repository or CI, can only submit builds to Play, and Play support can replace it if lost or leaked (ANDROID "Lost upload key"). |
+| Falling back | Without a TWA-capable browser the app opens a Custom Tab, with a URL bar, in the user's browser, never a WebView with its own storage. |
+
 ## Security principles
 
 - Assume household text and imported/persisted bytes are untrusted.

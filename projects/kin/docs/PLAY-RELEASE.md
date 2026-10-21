@@ -13,7 +13,7 @@ Decisions this runbook assumes (owner, #527):
 | Production origin | `https://kin.journeytocode.io` (one origin per Play app; self-hosted households keep using the web app) |
 | Package name | `kin.app` (permanent once the app is created; see PLAY-LISTING "Uncertainties" 6) |
 | Play App Signing | **On**: Google holds the app signing key; the owner keeps only an upload key |
-| Android wrapper | Trusted Web Activity built per [ANDROID](ANDROID.md) (#534) |
+| Android wrapper | Trusted Web Activity in `android/`, built per [ANDROID](ANDROID.md); decisions in [ADR 0020](decisions/0020-google-play-twa.md) |
 
 How Play fits Kin's own release process ([RELEASES](RELEASES.md)): a Kin
 release (`kin-vX.Y.Z`) deploys the web app and server; the Play app opens that
@@ -58,34 +58,27 @@ Do these in order. Record the date of each in the tracking issue.
 - [ ] Build the first signed bundle per [ANDROID](ANDROID.md) with package
   `kin.app`, and upload it to an internal or closed track (§2). The package
   name is fixed by the first upload and can never change.
+- [ ] **Upload key**: create it and keep it safe exactly as
+  [ANDROID](ANDROID.md#signing) "Signing" steps 1–3 say (outside the
+  repository and CI, password in a password manager, offline backup).
 - [ ] **Play App Signing**: accept Google-managed signing when the first
-  bundle is uploaded. Keep the **upload key** keystore and its passwords
-  outside the repository (a password manager plus an offline backup); never
-  commit it, and never put it in CI secrets unless a later decision says so.
-  Losing it is recoverable (Play Console can reset an upload key); leaking it
-  means asking Google to reset it at once.
+  bundle is uploaded (ANDROID "Signing" step 4). A lost or leaked upload key
+  is recoverable through an upload key reset (ANDROID "Lost upload key, or
+  it leaked").
 
 ### 1.4 Link the app and the site (asset links)
 
 Android shows Kin without an address bar only when the site vouches for the
 app ([README](../README.md) "Linking a Google Play app", `server/asset-links.mjs`).
 
-- [ ] Play Console → **Test and release → Setup → App signing** (App
-  integrity): copy the **App signing key certificate** SHA-256 and the
-  **Upload key certificate** SHA-256.
-- [ ] On the production server set, then restart:
-
-  ```sh
-  KIN_ANDROID_PACKAGE=kin.app
-  KIN_ANDROID_CERT_SHA256=<app signing SHA-256>,<upload key SHA-256>
-  ```
-
-  Both fingerprints: Play installs are signed with the app signing key; a
-  bundle you install yourself for testing is signed with the upload key. A
-  half or malformed setting stops the server with an explanation.
-- [ ] Check `https://kin.journeytocode.io/.well-known/assetlinks.json` returns
-  both fingerprints with `"package_name": "kin.app"`, and Play Console →
-  **Grow → Deep links** (or Google's Statement List tester) reports it valid.
+- [ ] Copy the two SHA-256 fingerprints (app signing key and upload key) as
+  [ANDROID](ANDROID.md#5-the-two-fingerprints) "The two fingerprints"
+  describes.
+- [ ] On the production server set `KIN_ANDROID_PACKAGE=kin.app` and
+  `KIN_ANDROID_CERT_SHA256=<app signing SHA-256>,<upload SHA-256>`, restart,
+  and check `/.well-known/assetlinks.json` and Google's statement tester
+  (ANDROID "Link the site"). A half or malformed setting stops the server
+  with an explanation; a wrong fingerprint only brings back the address bar.
 - [ ] Install from the test track on a phone with Chrome: no address bar. If
   the bar shows, the fingerprint or package is wrong, or Chrome cached an old
   answer: fix, then clear Chrome's data for the app or reinstall.
@@ -178,18 +171,20 @@ are opted in, so recruit more.
 | Change | What ships |
 | --- | --- |
 | Anything in `web/` or `server/` (features, fixes, styles, the service worker, the privacy policy) | **Web only**: deploy the Kin release as usual. The Play app picks it up the next time it opens Kin. |
-| The web manifest's name, icons, colours, shortcuts or share target | Web, **and** a Play release: the wrapper copies these at build time (ANDROID), so Android users keep the old ones until the bundle is rebuilt. |
-| The wrapper itself: Android target API (Play requires a recent one each year), androidx.browser or Bubblewrap updates, notification delegation, splash screen, start URL, fallback behaviour | **Play release**. |
+| The web manifest's name, colours, shortcuts or share target, or the icon geometry in `scripts/render-icons.mjs` | Web, **and** a Play release: the wrapper copies these at build time (ANDROID), so Android users keep the old ones until the bundle is rebuilt. |
+| The wrapper itself: anything in `android/`, the yearly target-API update Play requires, the androidbrowserhelper version, notification delegation, splash screen, fallback behaviour | **Play release** (ANDROID "Versioning"). |
 | Package name or production origin | Not a release: a new app. Avoid. |
 | Signing (upload key) | Play Console's upload key reset; no new app. |
 | What the service collects or keeps | Web release **plus** updated privacy policy, PLAY-LISTING, and Data safety form in Play Console **before** the change ships. |
 
 ### Shipping a Play release
 
-- [ ] Bump the Android **version code** (an integer that must increase with
-  every upload, independent of Kin's semver) and set the version name to the
-  Kin version it ships with, as ANDROID describes.
-- [ ] Build the signed bundle with the upload key; run Kin verification.
+- [ ] Add one to `kinVersionCode` in `android/gradle.properties` (a counter
+  that must increase with every upload, never reused, independent of Kin's
+  semver), in the same commit as the change it ships; the version name comes
+  from `package.json` ([ANDROID](ANDROID.md#versioning) "Versioning").
+- [ ] Build the signed bundle (`gradle bundleRelease`, ANDROID "Signing"
+  step 3); Kin verification's `android` job must be green on that commit.
 - [ ] Upload to **closed testing** first; install it on a phone; check no
   address bar, shortcuts, sharing in, notifications and passkey sign-in.
 - [ ] Promote to **Production** with a staged rollout (20% → 50% → 100%),

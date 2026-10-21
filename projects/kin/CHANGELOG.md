@@ -9,6 +9,25 @@ documentation only.
 
 ### Added
 
+- **An Android app for Google Play** (epic #527; #529, #530, #535, #536,
+  #537): `android/` holds a Trusted Web Activity that opens
+  `https://kin.journeytocode.io` full-screen, with sharing into Kin (text,
+  links, images and PDFs), the first four home-screen shortcuts, Kin's
+  notifications delegated to the app (asking for Android 13's permission),
+  Kin's splash and adaptive icon, and a Custom Tab when no browser supports
+  TWAs. Package `kin.app`, set in one place; target API 36. Names, colours,
+  share target and shortcuts come from the web manifest, the version name
+  from `package.json`, and the pictures from `scripts/render-icons.mjs`.
+  [ADR 0020](docs/decisions/0020-google-play-twa.md) records the origin, the
+  package name, Play App Signing and the dependency exception (Google's
+  `androidbrowserhelper` and the Gradle build, scoped to `android/`; Kin's web
+  runtime stays dependency-free). [ANDROID](docs/ANDROID.md) covers building,
+  versioning, the upload key and its recovery, the asset-links setup, and the
+  owner's phone checklist.
+- **CI builds the Android app**: a new `android` job builds an unsigned debug
+  APK and App Bundle, checks the APK against the web manifest
+  (`scripts/check-android-app.mjs`) and keeps both as an artifact. Signed
+  release builds stay manual.
 - **A public privacy policy** (#541, epic #527): `web/privacy.html`, served
   at `/privacy.html`, says in plain words what stays on your devices, what
   Kin's service stores and sees (your username, a check value for your
@@ -37,6 +56,12 @@ documentation only.
   closed test with 12+ testers, production submission, when a change needs a
   Play release rather than a web deploy, version codes, staged rollout and
   rollback. Linked from [RELEASES](docs/RELEASES.md).
+
+### Fixed
+
+- `.gitignore`: `/.kin-data/` and `/deploy/.env` had been joined into one
+  line, so neither was ignored. Signing keys (`*.jks`, `*.keystore`,
+  `keystore.properties`) and Android build output are now ignored too.
 
 ## v1.5.0 — One Account and Private Spaces
 
