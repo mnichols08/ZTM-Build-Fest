@@ -64,7 +64,8 @@ export class HouseholdViews {
       return this.ctx.lifecycle.renderDeletionPending();
     if (this.host.householdLifecycle?.state === "deleted")
       return this.ctx.lifecycle.renderDeleted();
-    if (!window.PublicKeyCredential)
+    // A device set up with a password (#558) doesn't need passkeys here.
+    if (!window.PublicKeyCredential && !this.ctx.account?.wrapper())
       return this.host.message(
         "Passkeys are unavailable in this browser. Use a current browser with a configured screen lock.",
         true,
@@ -114,7 +115,43 @@ export class HouseholdViews {
     this.host.append(choices);
     const note = this.host.text("Used Kin on this device before?");
     note.className = "household-choice-hint";
+    // A device set up with a password (#558) signs in with it.
+    const wrapper = this.ctx.account?.wrapper();
+    if (wrapper) return this.renderPasswordSignIn(wrapper);
     this.host.button("Sign in with my passkey", () => this.host.login(), "secondary");
+  }
+
+  /** Signing this device in again with the password: a session can end
+   * while Kin stays unlocked (#558). */
+  renderPasswordSignIn(wrapper) {
+    const form = document.createElement("form");
+    form.className = "password-sign-in";
+    const account = document.createElement("input");
+    account.type = "text";
+    account.autocomplete = "username";
+    account.value = wrapper.username ?? "";
+    account.tabIndex = -1;
+    account.className = "visually-hidden";
+    account.setAttribute("aria-hidden", "true");
+    const label = document.createElement("label");
+    label.htmlFor = "household-sign-in-password";
+    label.textContent = wrapper.username ? `Password for ${wrapper.username}` : "Password";
+    const input = document.createElement("input");
+    input.id = label.htmlFor;
+    input.type = "password";
+    input.autocomplete = "current-password";
+    input.required = true;
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.textContent = "Sign in";
+    form.append(account, label, input, submit);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const password = input.value;
+      input.value = "";
+      void this.ctx.account.signIn(password).catch(() => {});
+    });
+    this.host.append(form);
   }
 
   renderCreate() {
@@ -220,9 +257,10 @@ export class HouseholdViews {
         return;
       }
       this.showPath(joinerPathCopy(this.host.claim.purpose));
-      this.host.message(
-        "Approval succeeded. Use your passkey once more to activate this device.",
-      );
+      const withPassword = this.host.claim.signIn === "password";
+      this.host.message(withPassword
+        ? "You're approved. Compare the device key, then finish joining."
+        : "Approval succeeded. Use your passkey once more to activate this device.");
       this.host.showFingerprint(
         "Compare the approving device key",
         this.host.claim.inviterKeyFingerprint,
@@ -257,15 +295,44 @@ export class HouseholdViews {
           this.host.setControlDisabled(activate, !this.activationReady());
         });
       }
-      const activate = this.host.makeButton("Activate with passkey", () =>
-        this.host.activateClaim(),
-      );
+      // A password claim (#558) finishes with the password this page
+      // still holds from joining, or asks for it once more after a reload.
+      let passwordInput = null;
+      if (withPassword && !this.ctx.account.pendingSignUp) {
+        passwordInput = document.createElement("input");
+        passwordInput.type = "password";
+        passwordInput.id = "claim-password";
+        passwordInput.autocomplete = "current-password";
+        passwordInput.required = true;
+      }
+      const activate = this.host.makeButton(withPassword ? "Finish joining" : "Activate with passkey", () => {
+        if (!withPassword) return this.host.activateClaim();
+        if (passwordInput && !passwordInput.value) return this.host.message("Enter your password to finish joining.", true);
+        const password = passwordInput?.value ?? null;
+        if (passwordInput) passwordInput.value = "";
+        return this.ctx.account.activate(password).catch(() => {});
+      });
+      if (withPassword) activate.className = "primary-action";
       this.host.setControlDisabled(activate, !this.activationReady());
       confirmation.addEventListener("change", () => {
         this.host.verifiedInviterFingerprint = confirmation.checked;
         this.host.setControlDisabled(activate, !this.activationReady());
       });
-      this.host.append(label, ...(acknowledgement ? [acknowledgement] : []), activate);
+      const passwordField = [];
+      if (passwordInput) {
+        const passwordLabel = document.createElement("label");
+        passwordLabel.htmlFor = passwordInput.id;
+        passwordLabel.textContent = "Your password";
+        const account = document.createElement("input");
+        account.type = "text";
+        account.autocomplete = "username";
+        account.value = this.ctx.account.wrapper()?.username ?? "";
+        account.tabIndex = -1;
+        account.className = "visually-hidden";
+        account.setAttribute("aria-hidden", "true");
+        passwordField.push(account, passwordLabel, passwordInput);
+      }
+      this.host.append(label, ...(acknowledgement ? [acknowledgement] : []), ...passwordField, activate);
       return;
     }
     if (this.host.claim) {

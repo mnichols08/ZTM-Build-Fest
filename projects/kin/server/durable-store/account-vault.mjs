@@ -98,6 +98,18 @@ export const accountVaultMethods = {
     });
   },
 
+  /** Removes a member's vault, wrappers and password verifier (the member
+   * was removed or left). Returns whether anything was there. */
+  removeAccountKeys(householdId, memberId) {
+    this.assertAvailable();
+    return this.transaction(() => {
+      let removed = 0;
+      for (const table of ["account_vault_wrappers", "account_vaults", "account_passwords"])
+        removed += this.db.prepare(`DELETE FROM ${table} WHERE member_id = ? AND household_id = ?`).run(memberId, householdId).changes;
+      return removed > 0;
+    });
+  },
+
   /** The member's password parameters and verifier (#557), or null. */
   accountPassword(householdId, memberId) {
     this.assertAvailable();

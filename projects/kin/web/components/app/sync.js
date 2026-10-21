@@ -98,6 +98,14 @@ export class SyncController {
         if (this.app.search) this.app.search.chatRoom = room;
         this.ctx.simple?.updateAccess();
       },
+      // The member's account vault key (#557), unsealed from this device's
+      // key store while unlocked; null when locked or when this device keeps
+      // none. Private storage (ADR 0019) reads its member key through it.
+      vaultKey: async () => {
+        if (!this.ctx.session.isCurrentSession(session)) return null;
+        try { return await this.app.household?.syncKeyStore?.accountVaultKey(identity.householdId) ?? null; }
+        catch { return null; }
+      },
       // Simple view (#343, ADR 0013): the layout this member's admin chose.
       onSimpleView: (on, options) => {
         if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
@@ -142,6 +150,8 @@ export class SyncController {
     if (!this.app.vault || this.app.vault.locked) return;
     if (value.state) { this.app.syncState = value; this.updateSyncChip(); }
     if (value.state === "ready") void this.settlePendingShares();
+    // Names typed at first run are recorded once sync is ready (#557).
+    if (value.state === "ready" && this.app.pendingProfile) void this.ctx.firstRun?.applyProfile();
     if (value.state === "paused") {
       const attention = SYNC_PAUSE_MESSAGES[value.code] ?? value.message;
       if (attention) {

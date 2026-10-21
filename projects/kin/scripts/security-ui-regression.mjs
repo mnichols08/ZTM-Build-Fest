@@ -190,12 +190,23 @@ async function browserUiChecks() {
     "startup has no projection/engine/store/key",
   );
   check(app.main.hidden, "locked startup shell only");
+  // #557: a first visit starts with the gentle first run; the passkey and
+  // backup-key setup checked below is one tap away.
+  const buttonNamed = (label) => [...app.security.querySelectorAll("button")].find((button) => button.textContent === label);
   check(
     app.security.heading.textContent === "Welcome to Kin" &&
-      [...app.security.querySelectorAll("button")].some((button) => button.textContent === "Set up protection") &&
+      app.security.dataset.firstRunStep === "welcome" &&
+      Boolean(buttonNamed("Start a new household")) && Boolean(buttonNamed("I have an invitation")) &&
+      !app.security.querySelector("#recovery-unlock") && !app.security.querySelector(".recovery-key"),
+    "first visit offers the first run, with no keys to see: " + app.security.heading.textContent,
+  );
+  buttonNamed("Set up with a passkey instead").click();
+  check(
+    app.security.heading.textContent === "Welcome to Kin" &&
+      Boolean(buttonNamed("Set up protection")) &&
       !app.security.querySelector("#recovery-unlock") &&
       app.security.textContent.includes("Passkey unlock is for everyday use"),
-    "first visit explains setup instead of asking for a key: " + app.security.heading.textContent,
+    "the passkey setup explains itself instead of asking for a key: " + app.security.heading.textContent,
   );
   app.security.showSetup();
   let recovery = app.security.querySelector(".recovery-key").textContent;

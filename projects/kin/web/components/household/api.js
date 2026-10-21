@@ -68,6 +68,9 @@ export class HouseholdApi {
           const localKeys = await this.ctx.auth.ensureSyncDeviceKey(this.host.identity);
           this.host.localFingerprint = localKeys.fingerprint;
           this.host.syncKeyError = null;
+          // Keeps the member's account vault current, where this device
+          // holds its key (#558); otherwise it does nothing.
+          this.ctx.account.startKeeper(this.host.identity);
         } catch {
           this.host.syncKeyError =
             "Secure device-key storage is unavailable here. Household information remains local, but device sync and new device pairing are unavailable.";

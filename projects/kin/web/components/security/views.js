@@ -10,6 +10,7 @@ import { currentPlatform, installHelp } from "../../platform.js";
 import { installHelpCard } from "../shared/dom.js";
 import { passwordManagerField } from "./protection.js";
 import { entryHint, legacyEntryName, rememberedEntries, unlockEntryName } from "../../security/backup-key-entry.js";
+import { passwordWrapper } from "../../security/account-setup.js";
 
 export const AUTO_LOCK_OPTIONS = [
   [0, "Only when Kin closes"],
@@ -59,8 +60,10 @@ export class SecurityViews {
   // setup) that fills in the rest itself.
   render({ frameOnly = false } = {}) {
     this.host.replaceChildren();
+    delete this.host.dataset.firstRunStep;
     this.host.className = "security-panel";
     const heading = document.createElement("h2");
+    heading.id = "security-heading";
     heading.tabIndex = -1;
     heading.textContent = this.host.phase === "unlocked" ? "Household unlocked" : this.host.manifest ? "Welcome back" : "Welcome to Kin";
     this.host.heading = heading;
@@ -80,7 +83,9 @@ export class SecurityViews {
       return;
     }
     if (this.host.phase === "unlocked") return this.renderSettings();
-    if (!this.host.manifest) return this.renderWelcome();
+    // A new device starts with the first run (#557); the passkey and
+    // backup-key setup stays one tap away.
+    if (!this.host.manifest) return this.host.legacySetup ? this.renderWelcome() : this.ctx.firstRun.render();
     this.renderLocked();
   }
 
@@ -105,10 +110,67 @@ export class SecurityViews {
     this.host.button("Set up protection", () => this.host.showSetup(), "primary-action");
     const note = this.host.text("Information already saved in this browser is kept and encrypted once setup is verified. Close other old Kin tabs first.");
     note.className = "security-note";
+    this.host.button("Back", () => { this.host.legacySetup = false; this.host.render(); }, "secondary");
+  }
+
+  /** The lock screen of a device set up with a password (#558): the
+   * password unlocks it, offline; a passkey, if one was added, is offered
+   * beside it. */
+  renderPasswordLocked(wrapper) {
+    const lead = this.host.text("Unlock Kin");
+    lead.className = "security-lead";
+    this.host.text("Enter your password to open your household on this device.");
+    const form = document.createElement("form");
+    form.className = "password-unlock-form";
+    const account = passwordManagerField("text", "username", wrapper.username ?? "");
+    const who = document.createElement("p");
+    who.className = "security-note";
+    who.id = "password-unlock-account";
+    who.textContent = wrapper.username ? `Username: ${wrapper.username}` : "";
+    who.hidden = !wrapper.username;
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "password";
+    input.id = "password-unlock";
+    input.autocomplete = "current-password";
+    input.spellcheck = false;
+    input.required = true;
+    input.setAttribute("aria-describedby", "password-unlock-account security-alert");
+    label.htmlFor = input.id;
+    label.textContent = "Password";
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.className = "primary-action";
+    button.textContent = "Unlock";
+    form.append(account, who, label, input, button);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const password = input.value;
+      input.value = "";
+      if (!password) return this.host.error(new Error("Enter your password."));
+      void this.host.run(() => this.ctx.unlock.unlockPassword(password));
+    });
+    this.host.passwordInput = input;
+    this.host.append(form);
+    const passkeys = this.host.passkeyWrappers;
+    if (passkeys.length && passkeyUnlockSupported())
+      passkeys.forEach((entry, index) => this.host.button(index === 0 ? "Unlock with passkey" : `Unlock with passkey ${index + 1}`,
+        () => this.host.run(() => this.host.unlockPasskey(entry))));
+    const forgot = document.createElement("details");
+    forgot.className = "security-guidance";
+    const summary = document.createElement("summary");
+    summary.textContent = "Forgot your password?";
+    const help = document.createElement("p");
+    help.textContent = "Kin can't reset it. If you use Kin on another device, open it there and pair this device again. Otherwise this device's copy of the household can't be opened.";
+    forgot.append(summary, help);
+    this.host.append(forgot);
   }
 
   renderLocked() {
     const rotating = ["root-rotating", "root-cleanup"].includes(this.host.manifest.phase);
+    const password = rotating ? null : passwordWrapper(this.host.manifest);
+    if (password && !this.host.manifest.wrappers.some((wrapper) => wrapper.type === "recovery"))
+      return this.renderPasswordLocked(password);
     const passkeys = rotating ? [] : this.host.passkeyWrappers;
     const supported = passkeyUnlockSupported();
     const offline = navigator.onLine === false;
@@ -207,17 +269,21 @@ export class SecurityViews {
     this.host.text("Your household is encrypted on this device. Drafts last only while unlocked.");
     this.host.button("Lock household", () => this.host.onLockRequested?.());
 
+    // A member who signed up with a password (#558) has no passkey for
+    // passkey unlock to use until the passkey story lets them add one.
+    const passwordOnly = Boolean(passwordWrapper(getActiveVault()?.manifest ?? this.host.manifest)) && !passkeys.length;
+    const fallback = passwordOnly ? "your password" : "your backup key";
     const passkeySection = this.host.section("Passkey unlock");
     const passkeyStatus = document.createElement("p");
     passkeyStatus.className = "security-status";
     passkeyStatus.dataset.passkeyUnlock = !supported ? "unavailable" : passkeys.length ? "on" : "off";
     passkeyStatus.textContent = !supported
-      ? "Passkeys aren't available in this browser. You unlock with your backup key."
+      ? `Passkeys aren't available in this browser. You unlock with ${fallback}.`
       : passkeys.length
         ? `On — ${passkeys.length === 1 ? "a passkey" : `${passkeys.length} passkeys`} can unlock Kin on this device.`
-        : "Off — you unlock with your backup key.";
+        : `Off — you unlock with ${fallback}.`;
     passkeySection.append(passkeyStatus);
-    if (supported) {
+    if (supported && !passwordOnly) {
       this.host.button(passkeys.length ? "Add another passkey" : "Turn on passkey unlock", () => this.host.run(() => this.host.addPasskey()),
         passkeys.length ? "" : "primary-action", passkeySection);
       if (!passkeys.length) {
@@ -287,6 +353,26 @@ export class SecurityViews {
     resumeHint.textContent = "Closing the tab, Lock, and automatic lock still lock Kin.";
     lockSection.append(lockLabel, lockHint, resumeRow, resumeHint);
 
+    // A device set up with a password (#558) has no backup key to show or
+    // replace: the password is its verified way in.
+    const passwordUnlock = passwordWrapper(getActiveVault()?.manifest ?? this.host.manifest);
+    const hasBackupKey = (getActiveVault()?.manifest ?? this.host.manifest)?.wrappers?.some((wrapper) => wrapper.type === "recovery");
+    if (passwordUnlock) {
+      const passwordSection = this.host.section("Password");
+      const status = document.createElement("p");
+      status.className = "security-status";
+      status.textContent = passwordUnlock.username
+        ? `You unlock Kin on this device with the password for ${passwordUnlock.username}. It also signs you in.`
+        : "You unlock Kin on this device with your password. It also signs you in.";
+      const note = document.createElement("p");
+      note.className = "security-note";
+      note.textContent = "Kin never sees your password. It can't reset it: until you add a passkey or another device, a forgotten password means this household can't be opened.";
+      passwordSection.append(status, note);
+    }
+    if (!hasBackupKey) {
+      this.renderBackupSection();
+      return;
+    }
     const recoverySection = this.host.section("Backup key for this device");
     const recoveryStatus = document.createElement("p");
     recoveryStatus.className = "security-status";
@@ -323,7 +409,10 @@ export class SecurityViews {
     guidance.append(list);
     recoverySection.append(guidance);
     this.host.button("Replace backup key", () => this.host.showReplacement(), "", recoverySection);
+    this.renderBackupSection();
+  }
 
+  renderBackupSection() {
     const backupSection = this.host.section("Backup and move");
     this.host.chatOption = null;
     this.chatExportOption(backupSection);

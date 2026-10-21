@@ -45,14 +45,17 @@ export const lifecycleMethods = {
     };
   },
 
-  cancelHouseholdDeletion(deviceToken, credentialId) {
+  /** `credentialId` is the verified passkey; `passwordConfirmed` says the
+   * route verified a fresh password instead, for a member without a passkey
+   * (#558). */
+  cancelHouseholdDeletion(deviceToken, credentialId, { passwordConfirmed = false } = {}) {
     const { device, member } = this.trustedDevice(deviceToken, {
       allowDeletionPending: true,
     });
     const household = this.households.get(member.householdId);
     this.requireManagementAuthority(member, household, "cancel household deletion");
     const credential = this.credentials.get(credentialId);
-    if (!credential || credential.memberId !== member.id)
+    if (passwordConfirmed ? !this.confirmsWithPassword(member) : (!credential || credential.memberId !== member.id))
       throw new PairingError(
         "invalid_passkey",
         "That passkey could not be verified.",

@@ -28,7 +28,8 @@ AES-GCM ciphertext, avoiding redundant
 base64 expansion of the whole archive. HKDF purpose `kin/archive/v1` separates its
 key from local-record keys; manifest metadata is authenticated as AAD. The encrypted
 body contains exact canonical rows and protected replay/catch-up context. The
-normal export includes recovery wrappers; it never emits plaintext JSON or device
+normal export includes recovery wrappers (never a password wrapper, #558: a
+device set up only with a password can't make an export yet); it never emits plaintext JSON or device
 private keys. Store the export and its recovery key in different places, and
 write down which key label goes with which export (see Recovery key labels
 below).

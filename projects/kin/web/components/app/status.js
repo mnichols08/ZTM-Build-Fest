@@ -92,6 +92,7 @@ export class StatusController {
     if (!card || !this.app.vault || this.app.vault.locked) return;
     card.replaceChildren();
     delete card.dataset.passkeyOffer;
+    delete card.dataset.firstRun;
     card.classList.remove("onboarding-compact");
     const todayPage = this.app.pages?.get("today");
     todayPage?.classList.remove("compact-onboarding");
@@ -103,6 +104,9 @@ export class StatusController {
       this.ctx.navigation.navigate("#household/people");
       this.app.household?.startIntent?.(intent);
     };
+    // The first run signing up with the service (#557): one calm line, or
+    // what went wrong with a way to fix it and try again.
+    if (this.app.firstRun) return this.renderFirstRun(card, heading);
     if (status && !status.identity && !status.claimState && status.lifecycle !== "deleted" && status.lifecycle !== "deletion_pending") {
       const details = document.createElement("details");
       details.className = "onboarding-details";
@@ -153,7 +157,10 @@ export class StatusController {
     // household (enrolment asks the identity service) and online. Right after
     // setup it is setup's next step (#577); after a backup-key unlock it is a
     // one-time suggestion this device remembers dismissing (#579).
-    const offer = passkeyOffer({
+    // A member who signed up with a password has no passkey yet for
+    // passkey unlock to use; adding one is a later step (ADR 0018).
+    const passwordAccount = (this.app.security?.manifest?.wrappers ?? []).some((wrapper) => wrapper.type === "password");
+    const offer = !passwordAccount && passkeyOffer({
       identity: Boolean(status?.identity),
       passkeys,
       supported: passkeyUnlockSupported(),
@@ -222,6 +229,52 @@ export class StatusController {
       return;
     }
     card.hidden = true;
+  }
+
+  renderFirstRun(card, heading) {
+    const { state, error, pending } = this.app.firstRun;
+    card.dataset.firstRun = state;
+    if (state === "working") {
+      heading.textContent = pending.mode === "join" ? "Sending your request…" : "Setting up your household…";
+      const intro = document.createElement("p");
+      intro.textContent = "This takes a moment. You can look around meanwhile.";
+      card.append(heading, intro);
+      card.hidden = false;
+      return;
+    }
+    heading.textContent = pending.mode === "join" ? "Your request wasn't sent" : "Your household isn't set up yet";
+    const intro = document.createElement("p");
+    intro.setAttribute("role", "alert");
+    intro.textContent = error?.message || "Kin couldn't reach your household service.";
+    const form = document.createElement("form");
+    form.className = "first-run-retry";
+    let field = null;
+    const fix = error?.code === "username_taken" || error?.code === "username_invalid" ? "username"
+      : pending.mode === "join" && ["invalid_code", "pairing_expired", "pairing_revoked", "pairing_used", "pairing_claimed"].includes(error?.code) ? "code" : null;
+    if (fix) {
+      const label = document.createElement("label");
+      label.htmlFor = `first-run-retry-${fix}`;
+      label.textContent = fix === "username" ? "Choose another username" : "Invitation code";
+      field = document.createElement("input");
+      field.id = label.htmlFor;
+      field.required = true;
+      field.autocomplete = fix === "username" ? "username" : "one-time-code";
+      if (fix === "code") field.maxLength = 9;
+      form.append(label, field);
+    }
+    const retry = document.createElement("button");
+    retry.type = "submit";
+    retry.className = "primary-action";
+    retry.textContent = "Try again";
+    form.append(retry);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const value = field?.value.trim() ?? "";
+      if (field && !value) return field.focus();
+      void this.ctx.firstRun.retry(fix === "username" ? { username: value.toLowerCase() } : fix === "code" ? { code: value } : {});
+    });
+    card.append(heading, intro, form);
+    card.hidden = false;
   }
 
   // Registers the offline shell worker; an installed update shows a calm notice.

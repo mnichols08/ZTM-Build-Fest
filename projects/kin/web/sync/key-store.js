@@ -386,6 +386,44 @@ export class SyncKeyStore {
     return entries;
   }
 
+  /**
+   * Keeps the member's account vault key (ADR 0018, #558) with this
+   * device's bound record, so it is sealed under the local root like the
+   * device keys (encrypted at rest, readable only while unlocked) and moves
+   * with them through a root rotation. One vault key per device record.
+   */
+  setAccountVaultKey(deviceId, vaultKey) {
+    if (!(vaultKey instanceof Uint8Array) || vaultKey.length !== 32 || deviceId === PENDING_DEVICE_ID)
+      throw new SyncKeyStoreError("Kin could not keep this account's vault key.");
+    const transaction = this.database.transaction(DEVICE_STORE, "readwrite");
+    const store = transaction.objectStore(DEVICE_STORE);
+    const request = store.get(deviceId);
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => {
+        const record = request.result;
+        if (!record?.householdId) return abortWith(transaction, new SyncKeyStoreError("This device isn't bound to a household yet."));
+        store.put({ ...record, accountVaultKey: vaultKey.slice() });
+        finish(true);
+      };
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
+  /** A fresh copy of the account vault key this device keeps for
+   * `householdId`, or null. The caller zeroes it. */
+  accountVaultKey(householdId) {
+    const transaction = this.database.transaction(DEVICE_STORE, "readonly");
+    const request = transaction.objectStore(DEVICE_STORE).getAll();
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => {
+        const record = request.result.find((entry) => entry.deviceId !== PENDING_DEVICE_ID &&
+          entry.householdId === householdId && entry.accountVaultKey instanceof Uint8Array);
+        finish(record ? record.accountVaultKey.slice() : null);
+      };
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
   getEpoch(householdId, keyEpoch) {
     const transaction = this.database.transaction(EPOCH_STORE, "readonly");
     const request = transaction

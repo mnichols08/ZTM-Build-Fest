@@ -43,6 +43,7 @@ import { ChatShareController } from "./chat-share.js";
 import { BulkCommands } from "./commands/bulk.js";
 import { ConversationCommands } from "./commands/conversations.js";
 import { DetailController } from "./detail.js";
+import { FirstRunController } from "./first-run.js";
 import { ItemCommands } from "./commands/items.js";
 import { NavigationController } from "./navigation.js";
 import { PeerChannel } from "./peer-channel.js";
@@ -89,6 +90,7 @@ export function createAppContext(app) {
   ctx.detail = new DetailController(ctx);
   ctx.appearance = new AppearanceController(ctx);
   ctx.status = new StatusController(ctx);
+  ctx.firstRun = new FirstRunController(ctx);
   ctx.undo = new UndoController(ctx);
   ctx.render = new RenderController(ctx);
   ctx.shell = new ShellBuilder(ctx);
