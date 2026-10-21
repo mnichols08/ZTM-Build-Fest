@@ -104,6 +104,13 @@ class KinItem extends HTMLElement {
       toggle.type = "button";
       toggle.className = `complete-control ${completed ? "reopen-button" : "complete-button"}`;
       toggle.innerHTML = CHECK_ICON;
+      // Easy mode (#617) shows the word beside the tick; the name already
+      // starts with it.
+      const word = document.createElement("span");
+      word.className = "control-word";
+      word.setAttribute("aria-hidden", "true");
+      word.textContent = completed ? "Reopen" : "Complete";
+      toggle.append(word);
       toggle.setAttribute("aria-label", `${completed ? "Reopen" : "Complete"} ${record.text}`);
       toggle.setAttribute("aria-pressed", String(completed));
       toggle.dataset.itemId = record.itemId;

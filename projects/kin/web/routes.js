@@ -61,6 +61,10 @@ const PAGE_TITLES = Object.freeze({
   journal: "Journal",
 });
 
+/** Every page a route can name (primary destinations and the pages reached
+ * from them). Help (#621) has a topic for each page and segment. */
+export const ROUTE_PAGES = Object.freeze(Object.keys(PAGE_TITLES));
+
 // Legacy destinations and tabs from earlier releases.
 const ALIASES = Object.freeze({
   handoff: "updates/handoffs",

@@ -215,3 +215,61 @@ Recorded revalidation passed 82 Rust tests, 31 Node/real-WASM tests, and the com
 ## v0.7.0 Routines
 
 Routine capture uses labeled native text/cadence controls, a semantic list and named native actions. Text says Open/Done today or this week. Focus follows the corresponding row action, or returns to capture after archive; quiet periodic refresh does not announce a fabricated household change. Verify keyboard create/complete/reopen/archive, visible focus, 48px targets, forced colors, 320px reflow, spacing and zoom. Actual assistive-technology gaps remain in [V0.7.0](V0.7.0.md).
+
+## Easy mode and Help on every screen (#616, #620, ADR 0021)
+
+[ADR 0021](decisions/0021-kin-for-everyone.md) section 1; the behavior is in
+[UX §41](UX.md#41-easy-mode-and-help-on-every-screen-616-620).
+
+**Easy mode** is a presentation the member chooses (Identity & appearance, or
+the first week's offer on Today), kept as synced setting 8 `easy-mode` and on
+the device as `kin.easy-mode`, so the lock screen opens the same way. It is
+applied as `data-kin-easy="on"` on the document root (and `data-easy` on
+`<kin-app>`); Simple view wins, so the root never carries both.
+
+- **Size.** The page scales by 125% as text size does (Large 137.5%, Larger
+  150%), so base text is 20 px and Kin's 48 px targets become 60 px; small
+  hint and label text is raised to 16 px before scaling. It composes with
+  browser zoom and the OS large-text setting; lines reflow and nothing
+  scrolls sideways at 320 px.
+- **Words beside icons.** The tick says Complete (or Reopen), the header's
+  Search and Lock show their words on phones, Help shows its word everywhere,
+  and the Undo line's close button says Dismiss. Each visible word is the
+  start of the control's accessible name (WCAG 2.5.3).
+- **One clear action per row.** Item rows keep Complete and Details; Add
+  photo moves into Details. No everyday action (add, complete, undo) is in a
+  menu, and none needs a swipe or long press: Chat's long press and the
+  message sheet's swipe always have a ⋯ button and a Close button.
+- **Confirmation with Undo.** The existing undo toast is the confirmation
+  line: it never times out (WCAG 2.2.1) and is larger in easy mode.
+- **Focus** is a 4 px ring in the ink color with a 7 px halo of the surface
+  color (the header's own colors in the header); forced colors use
+  Highlight.
+- **Fewer places.** Today, Lists (To do, Shopping), Updates and Household,
+  plus anything the person opened in the last two weeks and the page on
+  screen; the Household overview links Routines and every Household page.
+  The rest is hidden with CSS only in easy mode (`data-easy-hidden`), so
+  nothing is removed from the document or from Search.
+
+**Help** is a native `<button>` named "Help" in each page's heading row, in
+Simple view's pages, and in Quick add, item details and Shopping mode. It
+opens a modal `<dialog>` labelled by its heading ("Help: To do"), which takes
+the focus; Escape or Close returns it to the Help button. "Show me" (named
+"Show me: …" with the step it shows) closes Help, opens any closed disclosure
+around the control, scrolls to it (instantly under reduced motion), moves the
+focus to it and outlines it for eight seconds with a 4 px outline (Highlight
+in forced colors; its gentle pulse stops under reduced motion). "Still
+stuck?" puts the focus in Chat's message box or the Handoff field. "Words on
+this page" is a description list from the glossary.
+
+**First-week tips** are a `section` labelled by its heading on Today, with two
+native buttons; dismissing moves the focus to Today's heading.
+
+`scripts/easy-mode-regression.mjs` checks, in Chromium: the tips; Help's
+topic, focus and return on every page and tab and in Quick add; Show me;
+Still stuck; then in easy mode 20 px base text, 56 px buttons, tabs and
+navigation links, words beside icons, the trimmed navigation and the Undo
+line at 1280 px, at 320 px and at 640 px with a device scale of 2 (200%);
+the Help panel at 320 px; and the highlight in dark mode, forced colors and
+reduced motion. Page-scale emulation is not native zoom; screen readers,
+Firefox and Safari are not certified by it.

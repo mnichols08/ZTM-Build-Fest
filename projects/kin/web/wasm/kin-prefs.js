@@ -15,7 +15,8 @@ export const MAX_TIME_ZONE_BYTES = 64;
 export const MAX_SETTING_VALUE_BYTES = 32;
 
 /** The settings Kin knows, by name (private_prefs.rs `SETTING_*`). Key 7
- * is reserved for the "Just for me" list's "my private things on Today". */
+ * is reserved for the "Just for me" list's "my private things on Today";
+ * key 8 is easy mode (#617, ADR 0021). */
 export const SETTING_KEYS = Object.freeze({
   "theme-mode": 1,
   "theme-color": 2,
@@ -24,6 +25,7 @@ export const SETTING_KEYS = Object.freeze({
   "reminder-alerts": 5,
   "app-badge": 6,
   "private-on-today": 7,
+  "easy-mode": 8,
 });
 const SETTING_NAMES = new Map(Object.entries(SETTING_KEYS).map(([name, key]) => [key, name]));
 const TARGET_KINDS = Object.freeze({ item: 1, routine: 2 });

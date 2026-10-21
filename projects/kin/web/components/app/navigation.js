@@ -79,6 +79,10 @@ export class NavigationController {
       if (pageId !== route.page) continue;
       for (const [segment, panel] of panels) panel.hidden = segment !== route.segment;
     }
+    // Easy mode remembers the place and trims the navigation; Help puts
+    // away a highlight left on another page and shows Today's tip (#617, #622).
+    this.ctx.easy?.routeShown(route);
+    this.ctx.help?.routeShown(route);
     if (route.page === "routines") this.app.routines.view = route.segment;
     if (route.page === "week") void this.ctx.week?.refresh();
     void this.ctx.sitter?.refresh();

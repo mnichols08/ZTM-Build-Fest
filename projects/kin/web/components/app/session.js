@@ -215,6 +215,7 @@ export class SessionController {
     this.app.commandGeneration = null;
     this.ctx.bulk.clearBulkOutcome();
     this.ctx.undo.clear();
+    this.ctx.help?.reset();
     this.app.shoppingMode?.close();
     this.app.importer?.close();
     this.app.pendingImport = null;

@@ -9,6 +9,33 @@ documentation only.
 
 ### Added
 
+- **Easy mode** (#616: #617, #618, #619; epic #603,
+  [ADR 0021](docs/decisions/0021-kin-for-everyone.md)): bigger text and
+  buttons, fewer things on screen. Turned on in Household → Identity &
+  appearance, or from a one-time offer on Today in the first week. It
+  follows the member as synced setting 8 `easy-mode` (on this device only
+  without private storage). The page scales by 125% (20 px base text,
+  targets of at least 56 px), the tick and the header's icons show their
+  words, focus is thicker, rows keep one clear action, the Undo line is
+  larger, and the navigation keeps Today, Lists (To do, Shopping), Updates
+  and Household plus whatever the person used in the last two weeks.
+  Simple view wins when both are on. A plain-language pass of the page
+  lines and the Household overview, and a glossary (`web/help/glossary.js`)
+  that Help uses, with a test that flags Kin's own words on a screen unless
+  its Help explains them. UX §41.
+- **Help on every screen** (#620: #621, #622): a Help button beside every
+  page's heading and in Quick add, item details and Shopping mode. It says
+  what the screen is for, two or three things to do (with **Show me**, which
+  points at the control), who sees it and the harder words it uses, and
+  **Still stuck?**: message a household admin (Chat, or Handoffs where Chat
+  is off) or report a problem (shown when the report dialog listens for
+  `kin:report-problem`). A first-week tip on Today points at it. Every route
+  and tab has its Help (a unit test checks).
+- **Browser regression** `scripts/easy-mode-regression.mjs`: the tips, Help
+  on every page and in Quick add, Show me, Still stuck, and easy mode's
+  sizes, words, navigation and Undo line at 1280 px, 320 px and 200%, in
+  dark mode, forced colours and reduced motion.
+
 - **Report a problem, suggest something, and see what you've sent** (#630,
   #627, #635; [ADR 0021](docs/decisions/0021-kin-for-everyone.md) §3).
   Anyone can report a problem from Household, the keyboard help, Help, any

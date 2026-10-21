@@ -21,6 +21,8 @@ export const SYNCED_SETTING_DEFAULTS = Object.freeze({
   motion: "system",
   "reminder-alerts": "on",
   "app-badge": "off",
+  // Easy mode (#617, ADR 0021): a presentation the member chooses.
+  "easy-mode": "off",
 });
 
 /** This browser's time zone and UTC offset at `at`, as a reminder keeps

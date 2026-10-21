@@ -35,6 +35,7 @@ import "./kin-app-badge.js";
 import "./kin-security.js";
 import "./kin-appearance.js";
 import "./kin-personal-settings.js";
+import "./kin-help.js";
 import "./kin-household-defaults.js";
 import "./kin-report.js";
 import "./kin-household-features.js";
@@ -99,7 +100,7 @@ const ELEMENT_EVENTS = [
   ["kin:caught-up", "onCaughtUp"], ["kin:sync-enabled", "onSyncEnabled"],
   ["kin:sync-now", "onSyncNow"], ["kin:sync-stop", "onSyncStop"],
   ["kin:lock", "onLockRequest"], ["kin:app-badge-choice", "onAppBadgeChoice"],
-  ["kin:personal-setting", "onPersonalSetting"], ["kin:settings-this-device", "onSettingsThisDevice"], ["kin:appearance-preview", "onAppearancePreview"],
+  ["kin:personal-setting", "onPersonalSetting"], ["kin:settings-this-device", "onSettingsThisDevice"], ["kin:open-help", "onOpenHelp"], ["kin:appearance-preview", "onAppearancePreview"],
   ["kin:save-appearance", "onSaveAppearance"], ["kin:use-household-appearance", "onUseHouseholdAppearance"],
   ["kin:inherit-appearance-property", "onInheritAppearanceProperty"], ["kin:household-defaults-preview", "onHouseholdDefaultsPreview"],
   ["kin:household-defaults-cancel", "onHouseholdDefaultsCancel"], ["kin:save-household-defaults", "onSaveHouseholdDefaults"],

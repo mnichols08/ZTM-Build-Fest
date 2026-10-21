@@ -334,9 +334,9 @@ device clock:
   (household, default, `preset-` or `custom-` and six lowercase hex digits),
   3 `text-size` (standard, large, larger), 4 `motion` (system, reduce), 5
   `reminder-alerts` (on, off), 6 `app-badge` (off, messages,
-  messages-and-mine) and 7 `private-on-today` (on, off; reserved: Just for
+  messages-and-mine), 7 `private-on-today` (on, off; reserved: Just for
   me keeps its Today setting as kind 118, which already follows the member)
-  take only those values; any other key takes any token, so an older engine
+  and 8 `easy-mode` (on, off; #617, ADR 0021) take only those values; any other key takes any token, so an older engine
   keeps a later release's settings unchanged.
 
 Commands (`kin_private_execute`) must change something: a reminder set

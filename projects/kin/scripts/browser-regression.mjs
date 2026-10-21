@@ -22,6 +22,7 @@ import { shoppingRegressions } from "./shopping-regression.mjs";
 import { mealsRegressions } from "./meals-regression.mjs";
 import { mealsAcceptanceRegressions } from "./meals-acceptance-regression.mjs";
 import { simpleRegressions } from "./simple-regression.mjs";
+import { easyModeRegressions } from "./easy-mode-regression.mjs";
 import { planningDateRegressions } from "./planning-date-regression.mjs";
 import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
 import { fridgeRegressions } from "./fridge-regression.mjs";
@@ -1795,6 +1796,9 @@ try {
     throw error;
   }
   if (heavy) console.log(await fridgeRegressions(first, until));
+  // Easy mode and Help on every screen (#616, #620), before Simple view
+  // reloads into the full layout.
+  if (heavy) console.log(await easyModeRegressions(first, { until }));
   console.log(await simpleRegressions(first, { until, ready }));
   await first.evaluate(
     'sessionStorage.setItem("kin.test.expectedState", JSON.stringify(document.querySelector("kin-app").state))',
