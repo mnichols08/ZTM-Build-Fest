@@ -143,7 +143,9 @@ export async function roseOpens(helper, rose) {
   check(security.textContent.includes(rose.note), "Mikey's note is there");
   check(!security.querySelector("input"), "nothing to type on the welcome");
   check(fits(), "the welcome fits 320px");
-  check(smallButtons().length === 0, `every button is at least 56px: ${smallButtons().join(", ")}`);
+  // The page settles at easy mode's size (it turned on as the screen opened).
+  await wait(() => smallButtons().length === 0, `every button is at least 56px: ${smallButtons().join(", ")} (zoom ${getComputedStyle(document.body).zoom}, easy ${document.documentElement.dataset.kinEasy})`, 5_000);
+  checks.push("every button is at least 56px");
   [...security.querySelectorAll("button")].find((element) => element.textContent === "Continue").click();
   await wait(() => security.dataset.firstRunStep === "account", "the password screen");
   check(security.heading.textContent === "Choose a password", "then a password");
