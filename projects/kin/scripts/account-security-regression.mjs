@@ -313,7 +313,7 @@ export async function accountSecurityRegressions({ endpoint, browserClient }) {
     // Another device: the same page with no cookies and no site data.
     const fresh = async () => {
       // Four devices of one member in a few minutes spend the vault
-      // download limit (10 per member and 30 per address in 15 minutes);
+      // download limits (per member and per address in 15 minutes);
       // in real use they'd be hours apart, so each new device starts a
       // fresh window here. The limits themselves are tested on the service.
       kin.accountVaultService.memberDownloads.spends.clear();

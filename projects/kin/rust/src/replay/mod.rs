@@ -326,9 +326,11 @@ impl Replay {
                 crate::store_sections::apply(&mut self.store_sections, event)?
             }
             K::SitterPageSet { .. } => crate::sitter::apply(&mut self.sitter_page, event)?,
-            K::PrivateNoteSet { .. } | K::PrivateItem(_) => {
-                crate::private::apply(&mut self.private, event)?
-            }
+            K::PrivateNoteSet { .. }
+            | K::PrivateItem(_)
+            | K::ReminderSet { .. }
+            | K::ReminderCleared { .. }
+            | K::SettingSet { .. } => crate::private::apply(&mut self.private, event)?,
         }
         self.last_logical_time = event.logical_time;
         self.event_bytes

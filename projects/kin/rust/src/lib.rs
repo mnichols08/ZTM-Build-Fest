@@ -15,6 +15,7 @@ pub mod meals;
 pub mod private;
 pub mod private_command;
 pub mod private_items;
+pub mod private_prefs;
 pub mod qr;
 pub mod recurrence;
 pub mod replay;
@@ -83,6 +84,8 @@ mod board_tests;
 mod meals_tests;
 #[cfg(test)]
 mod private_item_tests;
+#[cfg(test)]
+mod private_prefs_tests;
 #[cfg(test)]
 mod private_tests;
 #[cfg(test)]

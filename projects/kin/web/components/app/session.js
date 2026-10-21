@@ -139,6 +139,8 @@ export class SessionController {
       const editorValue = resolveAppearance(appearance, this.app.householdSettings);
       this.app.appearance.initialize(editorValue);
       this.ctx.appearance.applyEffectiveAppearance();
+      // A synced theme (#525) that arrived before the saved one loaded.
+      void this.ctx.privatePrefs.refresh();
     } catch (error) {
       this.assertCurrentSession(session);
       this.app.appearance.initialize({ version: 1, owner: null, mode: "system", colorSource: "default", seed: "#984D38", manual: null, image: null });
@@ -187,8 +189,11 @@ export class SessionController {
     const vault = this.app.vault ?? getActiveVault();
     // Reminder timers hold decrypted titles; none may fire once locked. A lock
     // suspends them as { id, at, vaultId } only; ending the session clears them.
-    if (endSession) this.app.localReminders.clearAll();
-    else this.app.localReminders.suspendAll(vault?.vaultId ?? null);
+    if (endSession) {
+      this.app.localReminders.clearAll();
+      this.ctx.privatePrefs?.forget();
+    } else this.app.localReminders.suspendAll(vault?.vaultId ?? null);
+    this.ctx.privatePrefs?.detach({ render: false });
     this.app.vault = null;
     vault?.lock();
     clearTimeout(this.app.autoLockTimer);

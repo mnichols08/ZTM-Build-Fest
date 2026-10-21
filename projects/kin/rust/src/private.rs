@@ -16,8 +16,9 @@
 //! and the first of those stories may replace it.
 //!
 //! "Just for me" (#510) owns kinds 110–119 and KPRV section 11
-//! (private_items.rs); new private events are made by `kin_private_execute`
-//! (private_command.rs).
+//! (private_items.rs); reminders (120–129) and settings (130–139) that follow
+//! a member (#520) own KPRV sections 12 and 13 (private_prefs.rs). New
+//! private events are made by `kin_private_execute` (private_command.rs).
 //!
 //! Replay rules (replay never fails on a decoded private event, beyond the
 //! checks every log makes):
@@ -70,6 +71,9 @@ pub fn encode_payload(kind: &EventKind) -> Result<Vec<u8>, KinError> {
             Ok(payload)
         }
         EventKind::PrivateItem(event) => event.encode(),
+        kind @ (EventKind::ReminderSet { .. }
+        | EventKind::ReminderCleared { .. }
+        | EventKind::SettingSet { .. }) => crate::private_prefs::encode_payload(kind),
         _ => Err(KinError::InvalidEvent),
     }
 }
@@ -100,6 +104,10 @@ pub fn decode_payload(code: u16, payload: &[u8]) -> Result<EventKind, KinError> 
         code if crate::private_items::is_item_code(code) => Ok(EventKind::PrivateItem(
             crate::private_items::PrivateItemEvent::decode(code, payload)?,
         )),
+        // Reminders and settings (#520): private_prefs.rs.
+        code if crate::private_prefs::is_prefs_code(code) => {
+            crate::private_prefs::decode_payload(code, payload)
+        }
         _ => Err(KinError::UnsupportedVersion),
     }
 }
@@ -130,6 +138,8 @@ pub struct PrivateState {
     notes: BTreeMap<PrivateRecordId, PrivateNote>,
     /// "Just for me" (#510, private_items.rs).
     items: crate::private_items::PrivateItems,
+    /// Reminders and settings (#520, private_prefs.rs).
+    prefs: Arc<crate::private_prefs::PrefsState>,
 }
 
 impl PrivateState {
@@ -152,6 +162,11 @@ impl PrivateState {
         &self.items
     }
 
+    /// Reminders and settings that follow the member (#520).
+    pub fn prefs(&self) -> &crate::private_prefs::PrefsState {
+        &self.prefs
+    }
+
     /// Whether a new private event may be written (`kin_private_execute`):
     /// each part of the projection judges its own kinds. The placeholder
     /// note has no rule beyond its payload's.
@@ -159,6 +174,11 @@ impl PrivateState {
         match kind {
             EventKind::PrivateNoteSet { .. } => Ok(()),
             EventKind::PrivateItem(event) => self.items.check_command(event),
+            EventKind::ReminderSet { .. }
+            | EventKind::ReminderCleared { .. }
+            | EventKind::SettingSet { .. } => {
+                crate::private_prefs::check_command(&self.prefs, kind)
+            }
             _ => Err(KinError::InvalidEvent),
         }
     }
@@ -194,6 +214,9 @@ pub fn apply(state: &mut Arc<PrivateState>, event: &EventEnvelope) -> Result<(),
             state.items.apply(item_event, event);
             Ok(())
         }
+        EventKind::ReminderSet { .. }
+        | EventKind::ReminderCleared { .. }
+        | EventKind::SettingSet { .. } => crate::private_prefs::apply(&mut state.prefs, event),
         _ => Err(KinError::InvalidEvent),
     }
 }
@@ -214,6 +237,9 @@ pub fn apply(state: &mut Arc<PrivateState>, event: &EventEnvelope) -> Result<(),
 ///
 /// Section 11, "Just for me" (#510, private_items.rs `encode_section`),
 /// once the member has a private item or a list setting.
+///
+/// Section 12, reminders, and section 13, settings (#520, private_prefs.rs
+/// `encode_reminders` and `encode_settings`), each once there is one.
 pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u8>, KinError> {
     let mut notes = Vec::new();
     notes.extend_from_slice(&(state.notes.len() as u32).to_le_bytes());
@@ -229,6 +255,18 @@ pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u
         sections.push((
             crate::private_items::SECTION_ITEMS,
             state.items.encode_section()?,
+        ));
+    }
+    if state.prefs.reminders().next().is_some() {
+        sections.push((
+            crate::private_prefs::SECTION_REMINDERS,
+            crate::private_prefs::encode_reminders(&state.prefs),
+        ));
+    }
+    if state.prefs.settings().next().is_some() {
+        sections.push((
+            crate::private_prefs::SECTION_SETTINGS,
+            crate::private_prefs::encode_settings(&state.prefs),
         ));
     }
     let size = sections

@@ -359,7 +359,8 @@ passkey's credential ID and PRF salt; and the 61 wrapped bytes) and
 `account_passwords` (PBKDF2 salt and iterations, Argon2id verifier). Routes
 serve only the session's own member on a trusted device; a vault is created
 with its first wrapper and can never lose its last; downloads are limited
-to 10 per member and 30 per address in 15 minutes. A download for a device
+to 60 per member and 120 per address in 15 minutes (every download is already
+behind a session or a new-device capability, so this bounds traffic, not guessing). A download for a device
 without a cookie (#568) goes through a new-device capability (below) and
 releases only the one wrapper that sign-in opens: the password wrapper for a
 password sign-in, the asserted passkey's wrapper for a passkey sign-in, its

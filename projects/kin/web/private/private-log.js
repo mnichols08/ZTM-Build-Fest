@@ -101,6 +101,7 @@ export class PrivateLog {
     this.syncError = null;
     this.keyError = null;
     this.streamChecked = false;
+    this.streamEventsSeen = 0;
     this.revocationMark = 0;
     // Whether the service lets this member have private storage: "write"
     // or "none" (Temporary, or Limited while the household turned it off).
@@ -265,7 +266,8 @@ export class PrivateLog {
 
   /**
    * Makes and stores one private change (#511): `command` is a private
-   * command (kin-private.js PRIVATE_ITEM_COMMANDS). Under the write lock,
+   * command (kin-private.js PRIVATE_ITEM_COMMANDS, or kin-prefs.js
+   * PREFS_COMMANDS for reminders and settings, #520). Under the write lock,
    * after reading what other tabs stored, the engine validates it against
    * the log as it is now and names it with this member, this device and the
    * next logical time; the event is then sealed like `append`. A refusal
@@ -327,18 +329,26 @@ export class PrivateLog {
   }
 
   /** Makes sure this device holds the member key if the member has one:
-   * after a failed read, and once per unlock when the stream holds events
-   * this device can't read yet (another device created the key). */
+   * after a failed read, and when the stream holds events this device can't
+   * read yet (another device created the key): checked once per unlock, and
+   * again on each pass while the member has no key here, reading the vault
+   * only when the stream has grown since the last look (#520: a reminder
+   * set on another device after this one opened). */
   async ensureKeys() {
     if (this.ring.available) return true;
     if (SETTLED.has(this.ring.status)) return false;
     if (this.keyError) {
       this.keyError = null;
       try { await this.ring.load(); } catch (error) { this.keyError = error; throw error; }
-    } else if (!this.streamChecked) {
+    } else if (!this.streamChecked || this.ring.status === "no_member_key") {
       this.streamChecked = true;
       const { events } = await this.request("/api/private/status");
-      if (Number.isSafeInteger(events) && events > 0) await this.ring.load();
+      if (Number.isSafeInteger(events) && events > this.streamEventsSeen) {
+        // Remembered only once read, so a refused read (a busy vault) is
+        // tried again on the next pass.
+        await this.ring.load();
+        this.streamEventsSeen = events;
+      }
     }
     if (this.ring.available) await this.refresh();
     return this.ring.available;

@@ -1471,6 +1471,33 @@ kin-app > .security-panel {
   }
 }
 
+/* "Reduce motion in Kin" (#524): the same calm as the system setting above. */
+:root[data-kin-motion="reduce"] .chat-row.chat-highlight { transition: none; }
+:root[data-kin-motion="reduce"] *,
+:root[data-kin-motion="reduce"] *::before,
+:root[data-kin-motion="reduce"] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: .01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: .01ms !important;
+}
+
+/* Text size (#524). Kin's type and spacing are set in CSS pixels, so the
+   page scales as a whole, as browser zoom does: lines reflow into the
+   narrower layout width and nothing scrolls sideways. */
+:root[data-kin-text-size="large"] body { zoom: 1.125; }
+:root[data-kin-text-size="larger"] body { zoom: 1.25; }
+
+kin-personal-settings { display: grid; gap: 10px; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+kin-personal-settings h2 { margin: 0; font-size: 18px; font-weight: 650; }
+kin-personal-settings .section-hint { margin: 0; }
+kin-personal-settings fieldset { display: grid; gap: 4px; margin: 0; padding: 0; border: 0; min-width: 0; }
+kin-personal-settings legend { padding: 0; margin-bottom: 4px; font-weight: 650; }
+kin-personal-settings label { display: flex; align-items: center; gap: 10px; min-height: var(--tap); }
+kin-personal-settings .personal-setting { display: grid; gap: 2px; }
+kin-personal-settings .personal-setting .section-hint { padding-left: 30px; }
+kin-personal-settings input[type="radio"], kin-personal-settings input[type="checkbox"] { width: 20px; height: 20px; flex: none; accent-color: var(--accent); }
+
 @media (forced-colors: active) {
   .brand-mark { border: 1px solid CanvasText; forced-color-adjust: none; }
   .nav-link[aria-current="page"], .segment-link[aria-current="true"], .today-section, .household-panel,

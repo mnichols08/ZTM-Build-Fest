@@ -46,12 +46,14 @@ import {
 } from "./durable-store.mjs";
 import { PairingError } from "./pairing-service.mjs";
 
-/** Vault downloads one member may make in a window (a handful of devices
- * signing in, with retries). */
-export const VAULT_DOWNLOADS_PER_MEMBER = 10;
+/** Vault downloads one member may make in a window. Every download is
+ * behind a signed-in session or a new-device capability (which has its own
+ * limits), so this bounds traffic, not guessing: a sign-up, a second device
+ * signing in and both opening private storage use several (#520). */
+export const VAULT_DOWNLOADS_PER_MEMBER = 60;
 /** Vault downloads from one client address in a window, across members (a
  * household behind one router). */
-export const VAULT_DOWNLOADS_PER_ADDRESS = 30;
+export const VAULT_DOWNLOADS_PER_ADDRESS = 120;
 /** Vault and wrapper writes one member may make in a window. A new epoch
  * writes once per trusted device that notices it; this stops a loop. */
 export const VAULT_WRITES_PER_MEMBER = 60;

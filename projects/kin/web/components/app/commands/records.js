@@ -156,18 +156,30 @@ export class RecordCommands {
     // A reminder carries its decrypted title, so it may only notify while its
     // record is live in this unlocked session (lock suspends every timer).
     const session = this.ctx.session.captureSession();
-    const target = this.reminderTarget(id, session);
-    const token = Symbol(id);
     try {
-      const result = await this.app.localReminders.schedule({ id, title, at, isCurrent: target?.isCurrent ?? (() => false), token });
-      // The permission prompt can outlast the session; never keep a timer or
-      // report success into a locked or different household. The token makes
-      // sure only this attempt's reminder is cancelled, never a newer one.
-      if (!this.ctx.session.isCurrentSession(session)) { this.app.localReminders.cancel(id, token); return; }
+      // With private storage the reminder follows the member (#522,
+      // app/private-prefs.js); without it, this device only, as before. The
+      // permission prompt can outlast the session: nothing is kept or
+      // reported into a locked or different household.
+      let result, synced = false;
+      if (this.ctx.privatePrefs.available) ({ result, synced } = await this.ctx.privatePrefs.setReminder({ id, title, at }));
+      else {
+        const target = this.reminderTarget(id, session);
+        const token = Symbol(id);
+        result = await this.app.localReminders.schedule({ id, title, at, isCurrent: target?.isCurrent ?? (() => false), token });
+        // The token makes sure only this attempt's reminder is cancelled.
+        if (!this.ctx.session.isCurrentSession(session)) { this.app.localReminders.cancel(id, token); return; }
+      }
+      if (!this.ctx.session.isCurrentSession(session)) return;
       this.renderReminders();
-      for (const control of this.app.querySelectorAll("kin-reminder")) if (control.targetRecord?.id === id) control.saved(result === "granted" ? at : null);
+      for (const control of this.app.querySelectorAll("kin-reminder")) if (control.targetRecord?.id === id) control.saved(result === "granted" || (synced && result !== "stale") ? at : null);
       if (itemId) this.app.detail?.reminderDrafts?.delete(itemId);
-      this.ctx.status.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." :
+      this.ctx.status.setStatus(synced ? (
+        result === "granted" ? "Reminder set. It goes off on your devices that allow notifications while Kin is open." :
+        result === "stale" ? "That task changed before the reminder was set. Nothing was scheduled." :
+        result === "denied" ? "Reminder set for your other devices. Notifications are blocked in this browser's settings." :
+        "Reminder set for your other devices. This browser can't show reminders.") :
+        result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." :
         result === "stale" ? "That task changed before the reminder was set. Nothing was scheduled." : "Reminders are unavailable in this browser. Kin still works normally.");
     } catch (error) {
       if (this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(error.message ?? "Choose a future reminder time.");
@@ -188,10 +200,16 @@ export class RecordCommands {
   // Logout, leaving or deleting the household, and restore end reminders.
   clearReminders() {
     this.app.localReminders.clearAll();
+    this.ctx.privatePrefs.forget();
     this.renderReminders();
   }
+  // Synced reminders (#522) where private storage is on, else this device's.
   renderReminders() {
-    const reminders = new Map([...this.app.localReminders.entries].map(([id, entry]) => [id, { at: entry.at }]));
+    const reminders = this.ctx.privatePrefs.reminderView();
+    const scope = this.ctx.privatePrefs.available ? "devices" : "device";
+    const Reminder = customElements.get("kin-reminder");
+    if (Reminder) Reminder.scope = scope;
+    for (const control of this.app.querySelectorAll("kin-reminder")) control.scope = scope;
     if (this.app.routines) this.app.routines.reminders = reminders;
     if (this.app.selection) this.app.detail.reminder = reminders.get(`item:${this.app.selection.itemId}`) ?? null;
   }
