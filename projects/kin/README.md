@@ -181,6 +181,57 @@ with an explanation.
 KIN_ORIGIN=https://kin.example.org KIN_TRUSTED_PROXIES=127.0.0.1,::1 KIN_ALLOW_NEW_HOUSEHOLDS=false node server/start.mjs
 ```
 
+### Reports and suggestions from the app
+
+People can report a problem from inside Kin (anyone, also from the lock
+screen without signing in), and household admins can suggest a feature
+([ADR 0021](docs/decisions/0021-kin-for-everyone.md) §3). Nothing is sent
+until the person presses Send on a preview that shows every detail (each
+removable) and where it goes. Reports arrive on this service, in server
+schema 25's `feedback` and `feedback_screenshots` tables: the typed text and
+the diagnostics the person kept (a version, browser, screen size, route
+name, sync state, recent error codes; never household text, names,
+usernames or IDs), plus a cropped picture of Kin's screen of at most 1 MiB
+only if they chose one. A signed-in report is linked to its member, so they
+can follow its status in What I've sent; one from the lock screen is linked
+to nobody. Limits: 5 reports and 3 suggestions per member per hour, 20 per
+address per day; without signing in 2 per address per hour and 5 per day.
+Everything is purged after 180 days, with the member on removal and with
+the household on its deletion.
+
+Read them with the admin command, which is safe while the service runs:
+
+```text
+node server/admin.mjs feedback-list [--kind problem|suggestion] [--status received|planned|done|wont-do] [--limit n]
+node server/admin.mjs feedback-show <reference> [--screenshot <new-file>]
+node server/admin.mjs feedback-set-status <reference> received|planned|done|wont-do
+node server/admin.mjs feedback-forward <reference>
+node server/admin.mjs feedback-purge [<reference> --confirm-reference <reference>]
+```
+
+The status you set shows in the sender's What I've sent. `feedback-purge`
+without a reference removes everything past 180 days now.
+
+**Forwarding to GitHub issues** is optional. Set both
+`KIN_FEEDBACK_GITHUB_REPO=owner/name` and `KIN_FEEDBACK_GITHUB_TOKEN` (a
+fine-grained token for that one repository with Issues read and write only),
+or neither; one without the other stops startup. `KIN_FEEDBACK_GITHUB_API`
+may name a GitHub Enterprise API over https. Each report then becomes an
+issue with its title, typed text, diagnostics and reference, labelled
+`from-app` and `bug` or `enhancement`; never household or member IDs,
+usernames or the picture, which stays on the service. **Use a private
+repository**: the typed text is whatever the person wrote, and in a public
+repository anyone can read it. The service asks GitHub whether the
+repository is private and the preview says so ("anyone on the internet can
+read" when public or unknown). Forwarding runs in the background, retries
+with backoff (1 minute doubling to 6 hours, giving up after 8 attempts or a
+refusal such as a bad token; `feedback-forward` tries again) and is
+idempotent by reference: after a lost answer it looks for the issue before
+opening another. Every 15 minutes the status follows the issue: closed as
+completed is Done, closed as not planned is Won't do, open with the label
+`planned` is Planned. A status set with the command holds until the issue
+changes. The token goes only to that API and is never logged.
+
 The service persists household identity, authorization metadata, opaque relay
 events and synchronization state. Sessions and in-flight WebAuthn/pairing
 ceremonies expire on restart, so members sign in again with a trusted device
