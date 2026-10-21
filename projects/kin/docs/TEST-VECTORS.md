@@ -352,7 +352,65 @@ count 0, `01 00 00 00` (one section), `01 00 00 00` (section 1) and length
 and note 1 "one" (event 2), the member is `01` × 16, the count 2, and the
 notes section lists note 1 (logical time 2, device `11` × 16, "one") before
 note 2. A later note for the same ID replaces it and empty text removes it,
-the latest in replay order winning.
+the latest in replay order winning. With sections 12 and 13 (#520) an empty
+log is 68 bytes: the notes section, then `0c 00 00 00` `04 00 00 00` and a
+zero count, then `0d 00 00 00` `04 00 00 00` and a zero count.
+
+## Reminders and settings that follow a member (#520)
+
+Written out by hand in `rust/src/private_prefs_tests.rs`, with the household,
+member Sam and event IDs of 065–067; the phone is `11` × 16 and the laptop
+`12` × 16. The instant is 2026-10-20 13:00 UTC, 9:00 in New York:
+1,792,501,200,000 ms. `web/wasm/kin-prefs.test.mjs` encodes the same
+payloads and reads both sections.
+
+**090 — Reminder set (kind 120).** Event 1, logical time 1, item `5a` × 16:
+header `01 00` `78 00`, payload length `30 00 00 00` (32 + 16), then `01 00
+00 00`, `5a` × 16, the instant (i64 LE), `10 ff` (−240 minutes), `10 00` (16
+bytes of zone) and "America/New_York": 136 bytes in all. It decodes to
+`REMINDER_SET` and re-encodes byte for byte. A target kind of 0 or 3, a zero
+target ID, a non-zero reserved byte, trailing bytes, an instant beyond the
+valid range, an offset of −721 or 841, a zone with a space or of 65 bytes
+fail with code 2; offsets −720 and 840, a 64-byte zone and an empty zone
+decode.
+
+**091 — Reminder cleared (kind 121).** Event 2, item `5a` × 16, reason 3
+(dismissed), the same instant: header kind `79 00`, payload `01 03 00 00`,
+`5a` × 16, the instant: 116 bytes. Reasons 0 and 4, a 29-byte payload and a
+non-zero reserved byte fail with code 2. Replay: "canceled" removes the
+item's reminder whatever its instant; "done" and "dismissed" remove it only
+while it is set for the instant they name.
+
+**092 — Setting set (kind 130).** Event 3, key 1 (`theme-mode`) "dark":
+header kind `82 00`, payload `01 00 04 00` "dark". Key 0 or 256, "Dark",
+"sepia" for key 1, a five- or non-hex color, "huge" for key 3 and a 33-byte
+value fail with code 2; every listed value of keys 1–7, any token for key 99
+and an empty value decode. Codes 122, 129, 131 and 139 fail with code 3.
+Replay is last writer wins per key: at equal logical times the laptop
+(`12` × 16) wins over the phone (`11` × 16) in every arrival order; an older
+logical time never overrides a newer one; empty unsets.
+
+**093 — Convergence and clocks.** Eight records (sets, a move, a stale
+dismissal, a canceled routine and settings from both devices) give the same
+KPRV in every rotation and reversal of their arrival order. Timestamps a
+day fast or an hour slow change nothing: logical time decides.
+
+**094 — Commands.** `kin_private_execute` with KCMD action 120 and the 090
+payload returns KCMT whose event is the 090 record and whose projection
+length is 0. Then, with code 4: the same set again; a dismissal for another
+instant; a clear for a thing with no reminder; a logical time not after the
+log's latest; an event ID the log holds; another member; a setting to its
+current value; unsetting a key that isn't set. Against the household log the
+command fails with code 4; an item action (1) or a non-zero entity ID fails
+with code 2.
+
+**095 — KPRV sections 12 and 13.** A routine reminder (event 1, Paris,
+offset 60) and the item reminder (event 2 from the laptop), then
+`text-size` "large" (event 3) and `theme-mode` "dark" (event 4): three
+sections; section 12 is `0c 00 00 00` and 4 + 72 + 68 bytes listing the item
+(kind 1) before the routine (kind 2), each with its instant, offset, zone
+length, logical time, device and zone; section 13 lists key 1 ("dark",
+logical time 4, the phone) before key 3 ("large").
 
 ## Household chat (v1.1)
 

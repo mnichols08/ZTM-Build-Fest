@@ -39,6 +39,7 @@ kin_private_history_reset() -> status   empty the member's private log (#489)
 kin_private_history_append(ptr, len)    append a private record batch to the private log
 kin_private_history_truncate(count) -> status   keep the private log's first `count`
 kin_private_state(ptr, len)          replay the private log: KINE context -> KPRV
+kin_private_execute(ptr, len)        private command: length + KCMD (100–199) + KINE context -> KCMT (#520)
 kin_execute(ptr, len)                command: length + KCMD + KINE context -> KCMT
 kin_encode_command(ptr, len)         KCMD -> canonical event bytes
 kin_event_metadata(ptr, len)         one canonical event -> KMET
@@ -138,9 +139,16 @@ refuses a private record with code 4; the private log refuses every other
 kind the same way. It holds up to 50,000 records and 64 MiB, and every record
 in it must have the same header actor (the member): a second author fails
 replay with code 4. `kin_private_state` takes a record-less KINE context and
-publishes KPRV (side formats below). There is no private command export yet:
-the stories that add private records add it. `kin_clear` empties the private
-log with the others.
+publishes KPRV (side formats below). `kin_private_execute` (#520) takes a
+u32 command length, a KCMD whose action is a private kind and whose text is
+that event's exact payload (zero entity ID, option, date and expiry, as for
+the fridge), then a record-less KINE context; it checks the command against
+the private log — the log's member, a logical time after its latest, an
+event ID it doesn't hold, and the kind's rules (a reminder or setting change
+must change something, [EVENTS](EVENTS.md#a-members-private-log)) — and
+publishes KCMT with an empty projection. The log is not changed: the host
+appends the event once it is sealed and stored. `kin_clear` empties the
+private log with the others.
 
 Records stay where they were appended: the history keeps one buffer and an
 `(offset, length)` span per record, and reads them as `EventView`s
@@ -278,7 +286,10 @@ N  payload
 | 68 | ROUTINE_ROTATION_SET (#429) | routine ID [16] (non-zero), member count u8 (0, or 2–12), current index u8 (below the count; 0 when the count is 0), reserved u16, then each member ID [16] (non-zero, no repeats): 20 + 16 × count bytes. An empty list ends the rotation |
 | 69 | ROUTINE_TURN_SET (#429) | routine ID [16] (non-zero), member ID [16] (non-zero): 32 bytes |
 | 70 | SITTER_PAGE_SET (#442) | entry count u16 (0–30), reserved u16, then each entry: kind u8 (1 note, 2 reference record, 3 routine), 3 reserved, record ID [16] (non-zero; no entry twice); then the intro (u16 length + UTF-8; trimmed, 0–500 bytes, no controls but newline) |
-| 100 | PRIVATE_NOTE_SET (#489, private log) | note ID [16] (non-zero), text length u32 (0 removes the note; at most 2,048 bytes), UTF-8 text (no control characters except line feed). A placeholder until the journal, list and reminder stories add their kinds; 101–199 are reserved for private records and fail with code 3 until defined |
+| 100 | PRIVATE_NOTE_SET (#489, private log) | note ID [16] (non-zero), text length u32 (0 removes the note; at most 2,048 bytes), UTF-8 text (no control characters except line feed). A placeholder until the journal and list stories add their kinds; codes of 101–199 not defined here are reserved for private records and fail with code 3 |
+| 120 | REMINDER_SET (#522, private log) | target kind u8 (1 item, 2 routine), 3 reserved, target ID [16] (non-zero), due instant i64 (Unix ms), UTC offset i16 (minutes, −720 to 840), zone length u8 (0–64), reserved u8, zone (ASCII letters, digits and `/ _ + -`): 32 + length bytes |
+| 121 | REMINDER_CLEARED (#522, private log) | target kind u8, reason u8 (1 canceled, 2 done, 3 dismissed), 2 reserved, target ID [16], instant i64: 28 bytes |
+| 130 | SETTING_SET (#525, private log) | key u16 (1–255), value length u8 (0–32), reserved u8, value (`a-z 0-9 -`; keys 1–7 take only their listed values): 4 + length bytes. 122–129 and 131–139 are reserved for reminders and settings |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -520,7 +531,15 @@ tuned for printed codes under heavy blur.
   once, and a reader skips codes it doesn't know: later stories extend KPRV by
   adding sections. Section 1 (notes, the placeholder kind 100): note count
   u32, then each note in ascending ID order: ID [16], logical time u64,
-  device ID [16], text length u32, text. `web/wasm/kin-private.js` decodes it.
+  device ID [16], text length u32, text. Section 12 (reminders, #522):
+  count u32, then each in ascending target order (kind, then ID): target
+  kind u8, 3 reserved, target ID [16], instant i64, UTC offset i16, zone
+  length u8, reserved u8, logical time u64, device ID [16] (of the event
+  that set it), zone. Section 13 (settings, #525): count u32, then each in
+  ascending key order: key u16, value length u8, reserved u8, logical time
+  u64, device ID [16], value. The journal and "Just for me" add their own
+  section codes. `web/wasm/kin-private.js` decodes it (sections 12 and 13
+  through `web/wasm/kin-prefs.js`).
 - **KBRD v1** (the fridge, `kin_board_state`, #317, [ADR 0011](decisions/0011-family-fridge.md)):
   `"KBRD"`, version 1, reserved u16, visible stroke count u32, visible magnet
   count u32, open-clear flag u8 + 3 reserved, open clear ID (16 bytes, zero
