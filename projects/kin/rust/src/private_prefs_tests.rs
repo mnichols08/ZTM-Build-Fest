@@ -6,12 +6,12 @@
 // `kin_private_execute` takes, and KPRV sections 12 and 13. Wire records
 // are written out by hand; they never come from the encoders.
 use crate::codec::encode_event;
-use crate::command::execute_private_history;
 use crate::error::KinError;
 use crate::event::*;
 use crate::event_decode::decode_event;
 use crate::history::History;
 use crate::private::is_private_code;
+use crate::private_command::execute as execute_private_history;
 use crate::private_prefs::*;
 use crate::test_support::*;
 
@@ -173,7 +173,7 @@ const fn item() -> ReminderTarget {
 
 #[test]
 fn the_reminder_and_setting_vectors_decode_and_reencode_byte_for_byte() {
-    // docs/TEST-VECTORS.md 090.
+    // docs/TEST-VECTORS.md 100.
     let record = set(1, 1, NINE_NEW_YORK).bytes();
     let event = decode_event(&record).unwrap();
     assert_eq!(
@@ -687,7 +687,7 @@ fn private_commands_need_a_private_kind_and_the_private_log() {
     assert_eq!(run(&mut household, &dark), Err(KinError::InvalidEvent));
     let mut log = History::private();
     let item = command(1, 1, 1, b"Milk".to_vec());
-    assert_eq!(run(&mut log, &item), Err(KinError::MalformedProtocol));
+    assert_eq!(run(&mut log, &item), Err(KinError::UnsupportedVersion));
     // An entity ID, date, option or expiry is malformed for a private
     // command.
     let mut packet = dark.packet();

@@ -474,6 +474,9 @@ pub enum EventKind {
         note_id: PrivateRecordId,
         text: String,
     },
+    /// "Just for me" (#510, private_items.rs, kinds 110–118), in a member's
+    /// private log only.
+    PrivateItem(crate::private_items::PrivateItemEvent),
     /// A reminder that follows its member (#522, private_prefs.rs): set or moved
     /// to the absolute instant `at`, with the setter's UTC offset and time
     /// zone at that instant.
@@ -521,6 +524,7 @@ impl EventKind {
         matches!(
             self,
             EventKind::PrivateNoteSet { .. }
+                | EventKind::PrivateItem(_)
                 | EventKind::ReminderSet { .. }
                 | EventKind::ReminderCleared { .. }
                 | EventKind::SettingSet { .. }

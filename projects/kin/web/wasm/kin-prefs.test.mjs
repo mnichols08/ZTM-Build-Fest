@@ -1,7 +1,7 @@
 // Reminders and settings on the browser side (#520): the payloads and KCMD
 // packets kin_private_execute takes (byte for byte the records
 // rust/src/private_prefs_tests.rs writes out by hand, docs/TEST-VECTORS.md
-// 090–092), and KPRV sections 12 and 13.
+// 100–102), and KPRV sections 12 and 13.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { decodeReminders, decodeSettings, encodePrefsIntent, encodePrefsPayload, parseReminderId, PrefsFormatError, PREFS_KIND_CODES, SETTING_KEYS } from "./kin-prefs.js";
@@ -12,7 +12,7 @@ const NINE_NEW_YORK = 1_792_501_200_000;
 const encoder = new TextEncoder();
 const hex = (bytes) => [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
-test("a reminder set encodes as the 090 payload", () => {
+test("a reminder set encodes as the 100 payload", () => {
   const { code, bytes } = encodePrefsPayload({
     type: "set-reminder", reminderId: `item:${ITEM}`, at: NINE_NEW_YORK, utcOffsetMinutes: -240, timeZone: "America/New_York",
   });
@@ -27,7 +27,7 @@ test("a reminder set encodes as the 090 payload", () => {
   assert.equal(new TextDecoder().decode(bytes.subarray(32)), "America/New_York");
 });
 
-test("a dismissal and a setting encode as the 091 and 092 payloads", () => {
+test("a dismissal and a setting encode as the 101 and 102 payloads", () => {
   const cleared = encodePrefsPayload({ type: "clear-reminder", reminderId: `item:${ITEM}`, reason: "dismissed", at: NINE_NEW_YORK });
   assert.equal(cleared.code, 121);
   assert.equal(cleared.bytes.length, 28);

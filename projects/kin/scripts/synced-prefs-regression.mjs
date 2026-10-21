@@ -2,12 +2,9 @@
 // browser against the production Kin server: one member, two browser
 // contexts (a phone in New York and a laptop in Paris). The member signs up
 // with a password on the phone (#557), so the phone keeps the account vault
-// key and private storage is on. The laptop joins as the same member through
-// the existing same-member path, "Add my device" (a device pairing with a
-// passkey, approved on the phone with the password). Until a new device can
-// sign in with the password and open the vault itself (#568), the laptop is
-// handed the phone's vault key the way that story will give it one; nothing
-// else is stood in for.
+// key and private storage is on. The laptop signs in as the same member with
+// the username and password and "Add this as a new device" (#568), which
+// opens the member's vault there too.
 //
 // Then: a reminder, a theme and a text size set on the phone arrive on the
 // laptop (the reminder at the same instant, with the phone's time zone beside
@@ -20,6 +17,7 @@
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { captureFailure, waitForOrigin } from "./cdp-page.mjs";
 import { createHousehold, eventually, isolatedPage, pageClient } from "./first-run-regression.mjs";
+import { signInHere } from "./new-device-regression.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -31,98 +29,15 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createKinServer } from "../server/server.mjs";
 import { DurableStore } from "../server/durable-store.mjs";
 
-const MEMBER = { name: "Jordan", household: "The Okafors", username: "jordan.okafor", password: "copper willow lighthouse" };
+// `item` is what the new-device sign-in waits to see arrive: createHousehold
+// adds it.
+const MEMBER = { name: "Jordan", household: "The Okafors", username: "jordan.okafor", password: "copper willow lighthouse", item: "Milk" };
 // The reminder is due soon enough to go off during the run.
 const REMINDER_IN_MS = 45_000;
 // Lets a killed browser release its profile before the folder is removed.
 const BROWSER_EXIT_MS = 300;
 
 // ---- In-page steps (stringified and run in the browser) ---------------------
-
-async function pageSetupProtection() {
-  const step = 25; // ms between looks at the page's state
-  const app = document.querySelector("kin-app");
-  for (let i = 0; i < 1200 && !(app?.security?.heading && !app.starting); i++) await new Promise((r) => setTimeout(r, step));
-  app.security.showSetup();
-  const recovery = app.security.querySelector(".recovery-key").textContent;
-  const input = app.security.querySelector("#confirm-recovery");
-  input.checked = true;
-  input.form.requestSubmit();
-  for (let i = 0; i < 400 && !(app.store && !app.security.busy && !app.busy); i++) await new Promise((r) => setTimeout(r, step));
-  if (!app.store) throw new Error("Recovery setup did not unlock: " + app.security.alert.textContent);
-  for (let i = 0; i < 400 && !(app.household && !app.household.busy && app.household.childElementCount > 0); i++) await new Promise((r) => setTimeout(r, step));
-  return recovery;
-}
-
-async function pageCreateDevicePairing() {
-  const step = 25; // ms between looks at the page's state
-  const app = document.querySelector("kin-app");
-  for (let i = 0; i < 1200 && !(app.household?.identity && app.household.syncStatus?.enabled && !app.household.busy); i++)
-    await new Promise((r) => setTimeout(r, step));
-  await app.household.loaded;
-  await app.household.createDevicePairing();
-  if (!app.household.pairing?.code) throw new Error("No device pairing code: " + app.household.textContent.slice(0, 300));
-  return app.household.pairing.code;
-}
-
-async function pageClaimDevice(code) {
-  const app = document.querySelector("kin-app");
-  await app.household.register("claim", { code, deviceLabel: "Laptop" });
-  const claim = app.household.claim;
-  if (!claim) throw new Error("The laptop's claim failed: " + (app.household.querySelector(".household-message")?.textContent ?? ""));
-  return claim.state;
-}
-
-async function pageApproveDevice(member) {
-  const step = 25; // ms between looks at the page's state
-  const wait = async (condition, label, ms = 30_000) => {
-    for (let i = 0, step = 25; i < ms / step; i++) { if (condition()) return; await new Promise((r) => setTimeout(r, step)); }
-    throw new Error(`Wait timed out: ${label}; household=${document.querySelector("kin-app")?.household?.textContent?.slice(0, 300)}`);
-  };
-  const household = document.querySelector("kin-app").household;
-  for (let i = 0; i < 300 && household.pairing?.state !== "Claimed"; i++) {
-    const latest = await household.api(`/api/pairings/${household.pairing.pairingId}`);
-    if (latest.state === "Claimed") { household.pairing = { ...household.pairing, ...latest }; household.render(); break; }
-    await new Promise((r) => setTimeout(r, step));
-  }
-  await wait(() => household.pairing?.state === "Claimed" && household.pairing.syncKeyFingerprint, "the laptop's claim reaches the phone");
-  household.verifiedFingerprint = household.pairing.syncKeyFingerprint;
-  // The member has no passkey yet: approving asks for the password (#557).
-  const approving = household.ctx.pairing.approve();
-  await wait(() => document.querySelector("dialog.password-confirmation input[type=password]"), "the password confirmation");
-  const dialog = document.querySelector("dialog.password-confirmation");
-  dialog.querySelector("input[type=password]").value = member.password;
-  dialog.querySelector("form").requestSubmit();
-  await approving;
-  await wait(() => household.pairing?.state === "Confirmed", "the laptop approved");
-  return household.pairing.confirmedMemberId;
-}
-
-async function pageActivateDevice() {
-  const step = 25; // ms between looks at the page's state
-  const household = document.querySelector("kin-app").household;
-  for (let i = 0; i < 300 && household.claim?.state !== "Confirmed"; i++) {
-    const latest = await household.api("/api/claim");
-    if (latest.state === "Confirmed") { household.claim = latest; household.render(); break; }
-    await new Promise((r) => setTimeout(r, step));
-  }
-  if (household.claim?.state !== "Confirmed") throw new Error("The laptop never saw its approval: " + JSON.stringify(household.claim));
-  household.verifiedInviterFingerprint = true;
-  // Activation may navigate: return first, then activate.
-  setTimeout(() => void household.ctx.pairing.activateClaim(), 100);
-  return true;
-}
-
-async function pageUnlockIfLocked(secret) {
-  const step = 25; // ms between looks at the page's state
-  const app = document.querySelector("kin-app");
-  for (let i = 0; i < 1200 && !(app?.security?.heading && !app.starting && !app.security.busy); i++)
-    await new Promise((r) => setTimeout(r, step));
-  if (!app.store) await app.security.run(() => app.security.unlockRecovery(secret));
-  for (let i = 0; i < 1200 && !(app.store && !app.busy && app.household?.identity); i++) await new Promise((r) => setTimeout(r, step));
-  if (!app.household?.identity) throw new Error("The laptop didn't unlock as a household device: " + app.security.alert?.textContent);
-  return "unlocked";
-}
 
 async function pageSync() {
   const step = 25; // ms between looks at the page's state
@@ -141,23 +56,6 @@ async function pageSync() {
 async function pageIdentity() {
   const identity = document.querySelector("kin-app").household.identity;
   return { memberId: identity.memberId, deviceId: identity.deviceId, householdId: identity.householdId };
-}
-
-async function pageExportVaultKey() {
-  const household = document.querySelector("kin-app").household;
-  const key = await household.syncKeyStore.accountVaultKey(household.identity.householdId);
-  if (!key) throw new Error("The phone keeps no vault key.");
-  const text = btoa(String.fromCharCode(...key));
-  key.fill(0);
-  return text;
-}
-
-async function pageImportVaultKey(text) {
-  const household = document.querySelector("kin-app").household;
-  const key = Uint8Array.from(atob(text), (character) => character.charCodeAt(0));
-  await household.syncKeyStore.setAccountVaultKey(household.identity.deviceId, key);
-  key.fill(0);
-  return true;
 }
 
 async function pageSetReminderAndTheme(inMs) {
@@ -287,7 +185,7 @@ export async function syncedPrefsRegressions({ endpoint, browserClient }) {
   const pages = [];
   let checks = 0;
   const check = (value, message) => { assert.ok(value, message); checks += 1; };
-  const run = (client, fn, argument) => client.evaluate(`(${fn.toString()})(${argument === undefined ? "" : JSON.stringify(argument)})`)
+  const run = (client, fn, ...args) => client.evaluate(`(${fn.toString()})(${args.map((value) => JSON.stringify(value)).join(", ")})`)
     .catch((error) => { error.message = `${fn.name}: ${error.message}`; throw error; });
   const open = async (url, timezoneId) => {
     const page = await isolatedPage(endpoint, browserClient, url);
@@ -307,42 +205,20 @@ export async function syncedPrefsRegressions({ endpoint, browserClient }) {
     }, "private storage on the phone", 60_000);
     check(phoneSync.privateLog, "the phone opens the member's private log and makes the member key on first use");
 
-    // The laptop, in Paris: the same member through "Add my device".
-    const laptopPage = await isolatedPage(endpoint, browserClient, "about:blank");
-    pages.push(laptopPage);
-    const laptop = laptopPage.client;
-    await laptop.send("Emulation.setTimezoneOverride", { timezoneId: "Europe/Paris" });
-    await browserClient.send("Browser.grantPermissions", { origin, permissions: ["notifications"], browserContextId: laptopPage.browserContextId });
-    await laptop.send("WebAuthn.enable", { enableUI: false });
-    await laptop.send("WebAuthn.addVirtualAuthenticator", { options: {
-      protocol: "ctap2", ctap2Version: "ctap2_1", transport: "internal", hasResidentKey: true,
-      hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true, hasPrf: true,
-    } });
-    await laptop.send("Page.navigate", { url: origin });
-    await waitForOrigin(laptop.evaluate, origin, { navigate: () => laptop.send("Page.navigate", { url: origin }) });
-    const recovery = await run(laptop, pageSetupProtection);
-    const code = await run(phone, pageCreateDevicePairing);
-    check((await run(laptop, pageClaimDevice, code)) === "Claimed", "the laptop claims the phone's device pairing");
-    const approvedMember = await run(phone, pageApproveDevice, MEMBER);
-    check(approvedMember === created.identity.memberId, "the phone approves the laptop as the same member, with the password");
-    await run(laptop, pageActivateDevice);
-    // Activation reloads Kin into its lock screen; the laptop unlocks with
-    // its own backup key.
-    const laptopIdentity = await eventually(async () => {
-      if ((await run(laptop, pageUnlockIfLocked, recovery).catch(() => null)) !== "unlocked") return null;
-      const identity = await run(laptop, pageIdentity).catch(() => null);
-      return identity?.memberId === created.identity.memberId ? identity : null;
-    }, "the laptop is a household device", 90_000);
-    check(laptopIdentity.memberId === created.identity.memberId && laptopIdentity.deviceId !== created.identity.deviceId,
+    // The laptop, in Paris: the same member, signed in with the password,
+    // once the phone has endorsed the member's certification key and filled
+    // the vault (as new-device-regression.mjs waits).
+    await eventually(() => kin.service.certificationEndorsement(created.identity.memberId), "the certification key endorsed", 60_000);
+    await eventually(() => (store.accountVault(created.identity.householdId, created.identity.memberId)?.version ?? 0) >= 2, "the vault holds the first key", 60_000);
+    const laptop = await open(origin, "Europe/Paris");
+    const signedIn = await run(laptop, signInHere, MEMBER, "new");
+    const laptopIdentity = await run(laptop, pageIdentity);
+    check(signedIn.identity.memberId === created.identity.memberId && laptopIdentity.deviceId !== created.identity.deviceId,
       "one member, two devices");
-    await run(phone, pageSync); // provisions the laptop's household keys
-    await eventually(async () => (await run(laptop, pageSync)).state === "ready", "the laptop syncs the household", 60_000);
-    // #568 stand-in: the laptop gets the member's vault key.
-    await run(laptop, pageImportVaultKey, await run(phone, pageExportVaultKey));
     const laptopSync = await eventually(async () => {
       const result = await run(laptop, pageSync);
       return result.scope === "synced" ? result : null;
-    }, "private storage on the laptop", 60_000);
+    }, "private storage on the laptop", 90_000);
     check(laptopSync.privateLog, "the laptop opens the same private log with the member key from the vault");
 
     // A reminder, a theme and a text size, set on the phone.

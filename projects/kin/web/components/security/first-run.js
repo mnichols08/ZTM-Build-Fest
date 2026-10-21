@@ -1,7 +1,8 @@
 // The first run (#557, #559): at most three screens from opening Kin to
 // Today, with no keys and no security choices up front (ADR 0018).
 //
-//   1. Welcome: start a new household, or join one with an invitation.
+//   1. Welcome: start a new household, join one with an invitation, or sign
+//      in as an existing member (security/sign-in.js, #568).
 //   2. About you: your name, and the household's name (or the invitation code).
 //   3. Sign in: a username and a password.
 //   -> Today (creating) or waiting for approval (joining).
@@ -105,6 +106,8 @@ export class SecurityFirstRun {
     choices.append(
       this.choice("Start a new household", "Nobody in your household uses Kin yet.", () => this.go("about", "create"), "primary-action"),
       this.choice("I have an invitation", "Someone in your household invited you.", () => this.go("about", "join")),
+      // A member on a new phone or a wiped browser (#568).
+      this.choice("Sign in", "You already use Kin, on another device or one you lost.", () => this.ctx.signIn.start()),
     );
     this.host.append(choices);
     const other = this.host.text("Prefer a passkey, adding a device you already use, or signing in with your phone?");

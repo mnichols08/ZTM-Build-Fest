@@ -12,7 +12,8 @@ import { parseReminderId } from "../wasm/kin-prefs.js";
 export const LATE_WINDOW_MS = 10 * 60_000;
 
 /** The settings that follow a member, with this device's defaults. Key 7
- * ("private-on-today") is reserved for the "Just for me" list (#510). */
+ * ("private-on-today") is reserved: Just for me keeps its Today setting as
+ * its own kind 118, which already follows the member (#510). */
 export const SYNCED_SETTING_DEFAULTS = Object.freeze({
   "theme-mode": "household",
   "theme-color": "household",

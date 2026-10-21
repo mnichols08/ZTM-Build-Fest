@@ -95,7 +95,9 @@ New device authenticates with a member credential
 Authorize device and provision its household-key access
 ```
 
-This flow does not create another member. It requires proof of the existing member's authority, binds the locally generated device key to that member/device, compares the fingerprint on both devices, and separately provisions household key epochs. Same-member devices receive retained history. If no authorized device remains, there is no recovery path; possession of an old pairing code is not recovery.
+This flow does not create another member. It requires proof of the existing member's authority, binds the locally generated device key to that member/device, compares the fingerprint on both devices, and separately provisions household key epochs. Same-member devices receive retained history. Possession of an old pairing code is not recovery.
+
+**Without another device (#568).** A member with an account vault doesn't need an authorized device present: they sign in on the new device with their password (or passkey), open the vault there, and the device certifies itself with the member's certification key, which one of their own devices endorsed earlier (CRYPTOGRAPHY, "Certification key chain"). The household's devices accept that certificate as they accept an approval by that member's device. The device can also replace one of the member's devices, revoking it in the same step (RECOVERY, "Signing in on a new device"). Pairing as above stays available and unchanged; it remains the only way for a member who has no vault yet.
 
 ## Invite by QR code (v1.1, #97)
 

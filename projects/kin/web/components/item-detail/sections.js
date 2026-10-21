@@ -285,6 +285,19 @@ export class ItemDetailSections {
     note.className = "item-detail-note";
     note.textContent = "Archiving keeps the record in household history but removes it from every list.";
     group.append(archive, note);
+    // Just for me (#517): something this member added can move into their
+    // private list; the household sees it archived, and Undo brings it back.
+    if (this.host.makePrivateAllowed && record.status !== "archived") {
+      const makePrivate = this.host.button("Make private", () => this.host.dispatch("make-item-private", { itemId: record.itemId }), "make-private-button");
+      makePrivate.setAttribute("aria-label", `Make ${record.text} private`);
+      makePrivate.dataset.itemId = record.itemId;
+      makePrivate.dataset.itemAction = "make-private";
+      makePrivate.dataset.focusId = "make-private";
+      const privateNote = document.createElement("p");
+      privateNote.className = "item-detail-note";
+      privateNote.textContent = "Moves it to your Just for me list, where only you can see it. Your household sees it archived.";
+      group.append(makePrivate, privateNote);
+    }
     return group;
   }
 

@@ -235,14 +235,16 @@ export class StatusController {
     const { state, error, pending } = this.app.firstRun;
     card.dataset.firstRun = state;
     if (state === "working") {
-      heading.textContent = pending.mode === "join" ? "Sending your request…" : "Setting up your household…";
+      heading.textContent = pending.mode === "join" ? "Sending your request…"
+        : pending.mode === "sign-in" ? "Setting up this device…" : "Setting up your household…";
       const intro = document.createElement("p");
       intro.textContent = "This takes a moment. You can look around meanwhile.";
       card.append(heading, intro);
       card.hidden = false;
       return;
     }
-    heading.textContent = pending.mode === "join" ? "Your request wasn't sent" : "Your household isn't set up yet";
+    heading.textContent = pending.mode === "join" ? "Your request wasn't sent"
+      : pending.mode === "sign-in" ? "This device isn't set up yet" : "Your household isn't set up yet";
     const intro = document.createElement("p");
     intro.setAttribute("role", "alert");
     intro.textContent = error?.message || "Kin couldn't reach your household service.";

@@ -133,6 +133,7 @@ fn event(event_number: u8, logical_time: u64, kind: EventKind) -> EventEnvelope 
         }
         EventKind::SitterPageSet { .. }
         | EventKind::PrivateNoteSet { .. }
+        | EventKind::PrivateItem(_)
         | EventKind::ReminderSet { .. }
         | EventKind::ReminderCleared { .. }
         | EventKind::SettingSet { .. } => {

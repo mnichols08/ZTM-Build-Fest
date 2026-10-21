@@ -132,6 +132,9 @@ export class UndoController {
         }
         this.ctx.session.assertCurrentSession(session);
       }
+      // Undoing "Make private" (#517): the household item is back, so the
+      // private copy goes. It has no Redo (its inverse is null).
+      if (entry.kind === "item-made-private") await this.ctx.privateItems.removeCopy(entry.privateItemId);
       // Undoing an add archives it: its reminder goes too, as on Archive.
       if (entry.kind === "item-added") void this.ctx.privatePrefs?.endReminder(`item:${entry.itemId}`, "canceled").catch(() => {});
       if (entry.kind === "routine-created") void this.ctx.privatePrefs?.endReminder(`routine:${entry.routineId}`, "canceled").catch(() => {});

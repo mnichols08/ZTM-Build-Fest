@@ -49,7 +49,7 @@ function fakeLog() {
         if (command.value) log.settings.set(command.key, command.value); else log.settings.delete(command.key);
       }
     },
-    async change(command) {
+    async execute(command) {
       log.apply(command);
       log.changes.push(command);
       log.notify();

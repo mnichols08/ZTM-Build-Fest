@@ -887,8 +887,9 @@ The owner's principle for accounts ([ADR 0018](decisions/0018-account-key-vault.
 don't overwhelm people at the start. A new device opens on **at most three
 screens before Today**, with no keys and no security choices:
 
-1. **Welcome to Kin.** `Start a new household` (primary) or `I have an
-   invitation`. Nothing to type. A quiet `Set up with a passkey instead`
+1. **Welcome to Kin.** `Start a new household` (primary), `I have an
+   invitation`, or `Sign in` ("You already use Kin, on another device or one
+   you lost"; below). Nothing to type. A quiet `Set up with a passkey instead`
    leads to the earlier setup (backup key, then passkey create or join),
    which is also where adding a device you already use and signing in with
    your phone live.
@@ -921,6 +922,37 @@ device meanwhile. A joiner lands on People & devices, waiting for approval
 exactly as before (compare the device keys), and after approval finishes
 with `Finish joining`, without typing the password again unless the page was
 reloaded meanwhile, then lands on Today.
+
+### Sign in on a new device — Adopted (#568, #569)
+
+For a member on a new phone or a wiped browser, from `Sign in` on the
+welcome screen; two screens, then Today, with no other device needed:
+
+1. **Sign in to your household** — `Username` (`autocomplete="username"`)
+   and `Password` (`autocomplete="current-password"`), so a password manager
+   offers the saved login. `Sign in` and `Back`; below, a quiet `Sign in with
+   a passkey` for members who added one. A wrong username or password says
+   "That username and password didn't match. Check them and try again." in
+   the alert line and keeps the form. A member whose account signs in with a
+   passkey is told so; a member who requires both sees **Confirm with your
+   passkey** next (`Use my passkey`).
+2. **Which device is this?** "Signed in as <username>." A radio group (a
+   fieldset with the question as its legend): **Add this as a new device**
+   (chosen), then one **This replaces <device name>** per trusted device of
+   theirs, with the date it was added. Choosing a replacement shows, and ties
+   to that choice with `aria-describedby`, the warning "The device you choose
+   is signed out for good: it can't open your household again, even if it
+   turns up. Choose this only for a device that's lost, broken or wiped."
+   `Continue` / `Cancel`. At the household's device limit, adding says to
+   choose a device to replace instead.
+
+Then this device's storage is made with the same password (it unlocks this
+device every day, offline, as after the first run) and Today opens; the card
+reads "Setting up this device…" while the device registers and installs the
+household's keys, and the household's items arrive with the first sync. A
+failure says so on the card with `Try again`. After a passkey-only sign-in,
+a backup key for this device is shown once (with "I've saved this key
+somewhere safe") before Today, since there is no password to protect it with.
 
 **Daily unlock.** The lock screen of a device set up this way reads "Unlock
 Kin", "Enter your password to open your household on this device.", with
@@ -1357,7 +1389,63 @@ service enforces only the switch and Chat and Fridge access.
   shows small beside the item's text in lists and large on a child's Simple
   view.
 
-## 8.13 Reminders and settings on all my devices (#520)
+## 8.13 Just for me (#510)
+
+A member's own private to-dos and short notes, on all their devices, that
+the household never sees ([ADR 0019](decisions/0019-member-private-log.md)).
+They live in the member's private log; nothing about them enters a
+household record.
+
+- **Where.** Lists › **Just for me** (`#lists/mine`), after Meals. The
+  heading is followed by a lock and **Only you can see this.**, then one line:
+  "Private to-dos and short notes, on all your devices. Your household never
+  sees them."
+- **When it isn't available.** One calm sentence instead of the list.
+  Without an account vault key on the device: "Just for me needs your Kin
+  account on this device, so your private things can follow you to your other
+  devices. Set up your account." (linking to Privacy & recovery). When the
+  household turned private storage off for a child or teen, or for a
+  Temporary member: "Your household has turned off private things for you,
+  so Just for me isn't available."
+- **Capture.** One field, **Add something just for you**, and an optional
+  **Date**; Enter or **Add** saves it and leaves the field focused and empty.
+  The member's first private thing creates their member key; nothing else is
+  asked.
+- **The list.** Open things first (dated soonest first, then undated in the
+  order added); a checkbox completes and reopens; done things go under
+  **Completed (n)**. Each item's **More** holds its wording, its date, a short
+  note (up to 2,048 bytes, line breaks kept) and **Share with the
+  household…** and **Delete**. Deleting says "Deleted “…”." with **Undo**,
+  which takes focus and stays until the next change (it never times out);
+  Undo brings the item back with its note and date.
+- **My Today and This week (#514).** A setting at the foot of the list, on by
+  default and kept in the private log so it follows the member: **Show my
+  dated private things on my Today and This week**. With it on, dated
+  private items join Today's Earlier plans, Today, Coming up and Completed,
+  and This week's days (open ones from before the week on its first day),
+  each with a **Private** tag and a lock, and named "Private: …" for
+  assistive technology. They complete and reopen there; Today's counts
+  include them. Never in Simple view (a shared kitchen screen), never on
+  anyone else's device, never in household search, the sitter page,
+  calendar exports or household exports.
+- **Share with the household… (#517).** Not offered for done items. A
+  dialog names who will see it ("“…” will move to To do, where Alex and Sam
+  will see it.", or everyone in the household, including anyone who joins
+  later, when no one else is there yet) and says it leaves Just for me and
+  its note stays private. **Keep it private** has the focus; **Share with the
+  household** adds it to To do with its date and then removes it from Just
+  for me. If the second step fails, the alert says it's already in To do and
+  that trying again won't add it twice.
+- **Make private (#517).** In a household item's details, under History,
+  only for something this member added: **Make private** copies it into Just
+  for me (with its date, and done if it was done) and archives the household
+  item; the household sees it archived, as with Archive. The status line says
+  so and the toast offers **Undo**, which brings the household item back
+  (as an archive's Undo does) and removes the private copy. There is no
+  Redo. A failure after the copy says so, and trying again copies nothing
+  twice.
+
+## 8.14 Reminders and settings on all my devices (#520)
 
 A member's reminders and personal settings follow them to every device they
 use, in their private storage ([ADR 0019](decisions/0019-member-private-log.md)):
@@ -1396,8 +1484,9 @@ no other member, admin or the service can read them.
   wins; different settings never overwrite each other. Simple view is not a
   personal setting: it stays the household admin's choice for the member
   ([§8.12](#812-simple-view-341)), so a kitchen tablet keeps its own layout.
-  "My private things on Today" joins the list with the "Just for me" list
-  (#510).
+  "Show my dated private things on my Today and This week" is Just for me's
+  own setting ([§8.13](#813-just-for-me-510)), which already follows the
+  member; setting key 7 stays reserved for it.
 - **One line says where they live:** "Your theme, the app icon count and
   these choices follow you to your other devices, and so do your
   reminders."; "This device keeps its own settings. Your reminders still

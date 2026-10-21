@@ -106,16 +106,6 @@ export class SyncController {
         try { return await this.app.household?.syncKeyStore?.accountVaultKey(identity.householdId) ?? null; }
         catch { return null; }
       },
-      // The member's private log (#489): reminders and settings that follow
-      // them (#520, app/private-prefs.js). Null when it closes.
-      onPrivateLog: (log) => {
-        if (!log) {
-          if (this.ctx.privatePrefs.log && this.app.syncCoordinator === coordinator) this.ctx.privatePrefs.detach();
-          return;
-        }
-        if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
-        this.ctx.privatePrefs.attach(log, session);
-      },
       // Simple view (#343, ADR 0013): the layout this member's admin chose.
       onSimpleView: (on, options) => {
         if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
@@ -130,6 +120,18 @@ export class SyncController {
         this.app.fridge.room = room;
         if (room) void this.labelFridge(identity.memberId);
         this.ctx.simple?.updateAccess();
+      },
+      // The member's private log (#492), for Lists › Just for me (#510) and
+      // the reminders and settings that follow the member (#520,
+      // app/private-prefs.js); null when it closes. It opens once this device
+      // holds a vault key (#557).
+      onPrivateLog: (log) => {
+        if (log && !(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
+        if (!log) {
+          if (this.ctx.privatePrefs.log && this.app.syncCoordinator === coordinator) this.ctx.privatePrefs.detach();
+        } else this.ctx.privatePrefs.attach(log, session);
+        if (!log && this.ctx.privateItems.log !== coordinator.privateLog && this.ctx.privateItems.log) return;
+        this.ctx.privateItems.attach(log);
       },
     });
     this.app.syncCoordinator = coordinator;

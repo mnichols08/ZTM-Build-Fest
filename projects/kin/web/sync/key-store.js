@@ -229,6 +229,49 @@ export class SyncKeyStore {
     });
   }
 
+  /** Every device this browser pinned for `householdId`:
+   * `[{ deviceId, memberId, fingerprint }]` (no certification-key pins). */
+  listPinnedDevices(householdId) {
+    const transaction = this.database.transaction(TRUSTED_DEVICE_STORE, "readonly");
+    const request = transaction.objectStore(TRUSTED_DEVICE_STORE).getAll();
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => finish((request.result ?? [])
+        .filter((pin) => pin.householdId === householdId && pin.kind !== "certification")
+        .map(({ deviceId, memberId, fingerprint }) => ({ deviceId, memberId, fingerprint })));
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
+  /**
+   * Pins a member's certification key (ADR 0018, #568) the first time this
+   * browser accepts a device it certified: the same trusted-device store,
+   * under its own key, so no storage format changes. A different key for the
+   * same member afterwards is refused (SyncKeyStoreError), as a changed
+   * device key is.
+   */
+  pinCertificationKey({ householdId, memberId, fingerprint }) {
+    this.vault?.assertUnlocked();
+    if (!/^[a-f0-9]{64}$/.test(fingerprint ?? "")) throw new SyncKeyStoreError("Kin could not pin this certification key.");
+    const pin = { key: `${householdId}:certification:${memberId}`, kind: "certification", householdId, memberId, fingerprint };
+    const transaction = this.database.transaction(TRUSTED_DEVICE_STORE, "readwrite");
+    const store = transaction.objectStore(TRUSTED_DEVICE_STORE);
+    const request = store.get(pin.key);
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => {
+        const existing = request.result;
+        if (existing && existing.fingerprint !== fingerprint)
+          return abortWith(transaction, new SyncKeyStoreError("Kin detected that a member's certification key changed."));
+        if (!existing) store.add(pin);
+        finish(existing ?? pin);
+      };
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
+  getPinnedCertificationKey(householdId, memberId) {
+    return this.getPinnedDevice(householdId, `certification:${memberId}`);
+  }
+
   getPinnedDevice(householdId, deviceId) {
     const transaction = this.database.transaction(
       TRUSTED_DEVICE_STORE,
@@ -932,6 +975,12 @@ async function verifyProtectedKeyRows(rows, check) {
   }
   for (const pin of rows.trusted_devices) {
     await check();
+    // A member's certification-key pin (#568) has no device keys.
+    if (pin.kind === "certification") {
+      if (pin.key !== `${pin.householdId}:certification:${pin.memberId}` || !/^[a-f0-9]{64}$/.test(pin.fingerprint ?? ""))
+        throw new SyncKeyStoreError("A replacement trusted-device pin is inconsistent.");
+      continue;
+    }
     if (pin.key !== `${pin.householdId}:${pin.deviceId}` || await deviceKeyFingerprint(pin.publicKeys) !== pin.fingerprint)
       throw new SyncKeyStoreError("A replacement trusted-device pin is inconsistent.");
   }

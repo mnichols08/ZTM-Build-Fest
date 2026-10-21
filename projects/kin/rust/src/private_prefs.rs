@@ -57,8 +57,9 @@ pub const MAX_UTC_OFFSET_MINUTES: i16 = 840;
 pub const MAX_SETTING_KEY: u16 = 255;
 pub const MAX_SETTING_VALUE_BYTES: usize = 32;
 
-/// The settings this engine knows (#525). Key 7 is reserved for the "Just
-/// for me" list's "my private things on Today" (#510).
+/// The settings this engine knows (#525). Key 7 ("my private things on
+/// Today") is reserved: "Just for me" (#510) keeps that setting as its own
+/// kind 118, which already follows the member.
 pub const SETTING_THEME_MODE: u16 = 1;
 pub const SETTING_THEME_COLOR: u16 = 2;
 pub const SETTING_TEXT_SIZE: u16 = 3;

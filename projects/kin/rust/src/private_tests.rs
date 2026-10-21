@@ -178,7 +178,7 @@ fn a_household_replay_with_a_full_private_log_beside_it_is_unchanged() {
     private
         .append(&batch(&[note(1, 1, b"Mine"), note(2, 2, b"Also mine")]))
         .unwrap();
-    assert!(kprv(&mut private).len() > 68);
+    assert!(kprv(&mut private).len() > 44);
     let beside = crate::core::replay(&kine(&household, 0, TEST_DATE, None)).unwrap();
     assert_eq!(alone, beside);
     // The household projection's finalized state has nowhere to carry them.
@@ -280,18 +280,11 @@ fn kprv_lays_out_the_member_count_and_note_section() {
     assert_eq!(&bytes[4..8], &[1, 0, 0, 0]);
     assert_eq!(&bytes[8..24], &[0; 16], "no member while empty");
     assert_eq!(u32_at(&bytes, 24), 0);
-    assert_eq!(
-        &bytes[28..32],
-        &[3, 0, 0, 0],
-        "three sections, reserved zero"
-    );
+    assert_eq!(&bytes[28..32], &[1, 0, 0, 0], "one section, reserved zero");
     assert_eq!(&bytes[32..36], &[1, 0, 0, 0], "section 1, reserved zero");
     assert_eq!(u32_at(&bytes, 36), 4);
     assert_eq!(u32_at(&bytes, 40), 0);
-    // Then reminders (12) and settings (13), empty (private_prefs_tests.rs).
-    assert_eq!(&bytes[44..56], &[12, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0]);
-    assert_eq!(&bytes[56..68], &[13, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0]);
-    assert_eq!(bytes.len(), 68);
+    assert_eq!(bytes.len(), 44);
 
     let mut log = History::private();
     log.append(&batch(&[note(1, 2, b"two"), note(2, 1, b"one")]))
@@ -300,7 +293,7 @@ fn kprv_lays_out_the_member_count_and_note_section() {
     assert_eq!(&bytes[8..24], &SAM);
     assert_eq!(u32_at(&bytes, 24), 2);
     let section = u32_at(&bytes, 36) as usize;
-    assert_eq!(bytes.len(), 40 + section + 24, "two empty sections follow");
+    assert_eq!(bytes.len(), 40 + section);
     assert_eq!(u32_at(&bytes, 40), 2);
     // Ascending ID order: note 1 first.
     let first = 44;
@@ -311,5 +304,5 @@ fn kprv_lays_out_the_member_count_and_note_section() {
     assert_eq!(&bytes[first + 44..first + 47], b"one");
     let second = first + 47;
     assert_eq!(&bytes[second..second + 16], &[2; 16]);
-    assert_eq!(&bytes[second + 44..second + 47], b"two");
+    assert_eq!(&bytes[second + 44..], b"two");
 }

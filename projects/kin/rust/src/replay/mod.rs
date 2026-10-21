@@ -327,6 +327,7 @@ impl Replay {
             }
             K::SitterPageSet { .. } => crate::sitter::apply(&mut self.sitter_page, event)?,
             K::PrivateNoteSet { .. }
+            | K::PrivateItem(_)
             | K::ReminderSet { .. }
             | K::ReminderCleared { .. }
             | K::SettingSet { .. } => crate::private::apply(&mut self.private, event)?,

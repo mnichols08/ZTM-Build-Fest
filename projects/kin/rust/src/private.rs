@@ -10,11 +10,15 @@
 //!
 //! Kinds 100–199 are reserved for private records. The journal (#496), the
 //! "Just for me" list (#510) and reminders and settings that follow a member
-//! (#520) add their own kinds here and their own sections to KPRV. Reminders
-//! (120–129) and settings (130–139) live in private_prefs.rs. The log also
-//! has one placeholder kind, `PRIVATE_NOTE_SET` (100): a short private note
-//! by ID, enough to prove the log end to end. It is unreleased and the
-//! journal or list story may replace it.
+//! (#520) add their own kinds here and their own sections to KPRV. Until
+//! then the log has one placeholder kind, `PRIVATE_NOTE_SET` (100): a short
+//! private note by ID, enough to prove the log end to end. It is unreleased
+//! and the first of those stories may replace it.
+//!
+//! "Just for me" (#510) owns kinds 110–119 and KPRV section 11
+//! (private_items.rs); reminders (120–129) and settings (130–139) that follow
+//! a member (#520) own KPRV sections 12 and 13 (private_prefs.rs). New
+//! private events are made by `kin_private_execute` (private_command.rs).
 //!
 //! Replay rules (replay never fails on a decoded private event, beyond the
 //! checks every log makes):
@@ -66,6 +70,7 @@ pub fn encode_payload(kind: &EventKind) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(text.as_bytes());
             Ok(payload)
         }
+        EventKind::PrivateItem(event) => event.encode(),
         kind @ (EventKind::ReminderSet { .. }
         | EventKind::ReminderCleared { .. }
         | EventKind::SettingSet { .. }) => crate::private_prefs::encode_payload(kind),
@@ -96,6 +101,9 @@ pub fn decode_payload(code: u16, payload: &[u8]) -> Result<EventKind, KinError> 
                 text: text.to_owned(),
             })
         }
+        code if crate::private_items::is_item_code(code) => Ok(EventKind::PrivateItem(
+            crate::private_items::PrivateItemEvent::decode(code, payload)?,
+        )),
         // Reminders and settings (#520): private_prefs.rs.
         code if crate::private_prefs::is_prefs_code(code) => {
             crate::private_prefs::decode_payload(code, payload)
@@ -128,6 +136,8 @@ pub struct PrivateNote {
 pub struct PrivateState {
     member: Option<ActorId>,
     notes: BTreeMap<PrivateRecordId, PrivateNote>,
+    /// "Just for me" (#510, private_items.rs).
+    items: crate::private_items::PrivateItems,
     /// Reminders and settings (#520, private_prefs.rs).
     prefs: Arc<crate::private_prefs::PrefsState>,
 }
@@ -147,28 +157,30 @@ impl PrivateState {
         self.notes.get(id)
     }
 
-    /// Reminders and settings (#520).
+    /// The member's "Just for me" list (#510).
+    pub fn items(&self) -> &crate::private_items::PrivateItems {
+        &self.items
+    }
+
+    /// Reminders and settings that follow the member (#520).
     pub fn prefs(&self) -> &crate::private_prefs::PrefsState {
         &self.prefs
     }
-}
 
-/// Command rules for a private event (`kin_private_execute`): every event
-/// in the log has the same author, and each kind's own rules.
-pub fn check_command(
-    state: &PrivateState,
-    kind: &EventKind,
-    actor: ActorId,
-) -> Result<(), KinError> {
-    if actor.0 == [0; 16] || state.member.is_some_and(|member| member != actor) {
-        return Err(KinError::InvalidEvent);
-    }
-    match kind {
-        EventKind::PrivateNoteSet { .. } => Ok(()),
-        EventKind::ReminderSet { .. }
-        | EventKind::ReminderCleared { .. }
-        | EventKind::SettingSet { .. } => crate::private_prefs::check_command(&state.prefs, kind),
-        _ => Err(KinError::InvalidEvent),
+    /// Whether a new private event may be written (`kin_private_execute`):
+    /// each part of the projection judges its own kinds. The placeholder
+    /// note has no rule beyond its payload's.
+    pub fn check_command(&self, kind: &EventKind) -> Result<(), KinError> {
+        match kind {
+            EventKind::PrivateNoteSet { .. } => Ok(()),
+            EventKind::PrivateItem(event) => self.items.check_command(event),
+            EventKind::ReminderSet { .. }
+            | EventKind::ReminderCleared { .. }
+            | EventKind::SettingSet { .. } => {
+                crate::private_prefs::check_command(&self.prefs, kind)
+            }
+            _ => Err(KinError::InvalidEvent),
+        }
     }
 }
 
@@ -198,6 +210,10 @@ pub fn apply(state: &mut Arc<PrivateState>, event: &EventEnvelope) -> Result<(),
             }
             Ok(())
         }
+        EventKind::PrivateItem(item_event) => {
+            state.items.apply(item_event, event);
+            Ok(())
+        }
         EventKind::ReminderSet { .. }
         | EventKind::ReminderCleared { .. }
         | EventKind::SettingSet { .. } => crate::private_prefs::apply(&mut state.prefs, event),
@@ -219,8 +235,11 @@ pub fn apply(state: &mut Arc<PrivateState>, event: &EventEnvelope) -> Result<(),
 /// in ascending ID order: ID [16], logical time u64, device ID [16], text
 /// length u32, text.
 ///
-/// Section 12, reminders, and section 13, settings (#520): see
-/// private_prefs.rs `encode_reminders` and `encode_settings`.
+/// Section 11, "Just for me" (#510, private_items.rs `encode_section`),
+/// once the member has a private item or a list setting.
+///
+/// Section 12, reminders, and section 13, settings (#520, private_prefs.rs
+/// `encode_reminders` and `encode_settings`), each once there is one.
 pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u8>, KinError> {
     let mut notes = Vec::new();
     notes.extend_from_slice(&(state.notes.len() as u32).to_le_bytes());
@@ -231,23 +250,28 @@ pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u
         notes.extend_from_slice(&(note.text.len() as u32).to_le_bytes());
         notes.extend_from_slice(note.text.as_bytes());
     }
-    // Ascending section codes, each once.
-    let sections: [(u16, Vec<u8>); 3] = [
-        (SECTION_NOTES, notes),
-        (
+    let mut sections: Vec<(u16, Vec<u8>)> = vec![(SECTION_NOTES, notes)];
+    if !state.items.is_empty() {
+        sections.push((
+            crate::private_items::SECTION_ITEMS,
+            state.items.encode_section()?,
+        ));
+    }
+    if state.prefs.reminders().next().is_some() {
+        sections.push((
             crate::private_prefs::SECTION_REMINDERS,
             crate::private_prefs::encode_reminders(&state.prefs),
-        ),
-        (
+        ));
+    }
+    if state.prefs.settings().next().is_some() {
+        sections.push((
             crate::private_prefs::SECTION_SETTINGS,
             crate::private_prefs::encode_settings(&state.prefs),
-        ),
-    ];
-    let size = 32
-        + sections
-            .iter()
-            .map(|(_, bytes)| 8 + bytes.len())
-            .sum::<usize>();
+        ));
+    }
+    let size = sections
+        .iter()
+        .fold(32, |size, (_, bytes)| size + 8 + bytes.len());
     if size > MAX_PROTOCOL_BYTES {
         return Err(KinError::SizeLimit);
     }

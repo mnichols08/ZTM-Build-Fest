@@ -1,14 +1,25 @@
 // Username and password accounts on the household panel (ADR 0018, #558):
 // creating a household or joining one with the password chosen at first
 // run, finishing a password claim once it is approved, signing in again
-// with the password, and keeping the member's account vault current.
+// with the password, keeping the member's account vault current, endorsing
+// the member's certification key (#570), and provisioning a device that
+// signed in with no other device's help (#568).
 // Part of <kin-household>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
 import { currentPlatform, householdDeviceName } from "../../platform.js";
 import { createAccountVault, passwordUnlockKeys, passwordWrapper, signUpBody } from "../../security/account-setup.js";
+import { openVault, wipeVaultContents } from "../../security/account-vault.js";
 import { vaultApi, VaultKeeper } from "../../security/account-vault-sync.js";
+import {
+  certificationKeyPair,
+  createCertificationEndorsement,
+  createMemberCertificate,
+  MAX_ENDORSEMENT_ANCHORS,
+  verifyOwnEndorsement,
+} from "../../security/device-certification.js";
 import { fromBase64Url, getActiveVault, toBase64Url } from "../../security/local-vault.js";
-import { deviceKeyFingerprint } from "../../sync/crypto.js";
+import { vaultHouseholdEpochs } from "../../security/new-device.js";
+import { deviceKeyFingerprint, importVaultEpochKey, verifiedDeviceKeyHistory } from "../../sync/crypto.js";
 import { onEpochInstalled } from "../../sync/key-store.js";
 
 export class HouseholdAccount {
@@ -177,6 +188,102 @@ export class HouseholdAccount {
     });
   }
 
+  /**
+   * Finishes signing in on a new device (#568/#570), once this browser's
+   * local storage exists: `signIn` comes from the security panel's sign-in
+   * (`{ view, opened: { vaultKey, contents }, endorsement, replaceDeviceId }`).
+   * Generates this device's keys, certifies them with the member's
+   * certification key from the vault, registers the device with the
+   * capability (replacing one of the member's devices if chosen), installs
+   * the household's epoch keys from the vault, keeps the vault key, pins the
+   * devices the member's account trusts, and turns sync on. A retry after a
+   * later step failed goes on from the registered device.
+   */
+  provisionNewDevice(signIn) {
+    return this.guarded(async () => {
+      await this.ctx.api.openSyncKeyStore();
+      const store = this.host.syncKeyStore;
+      const { view, opened, endorsement } = signIn;
+      const { householdId, memberId } = view;
+      if (!signIn.registered) {
+        const certification = await certificationKeyPair(opened.contents.certificationKey);
+        // The service's endorsement must be this vault's key, signed by it;
+        // only then are its anchors this account's own trusted devices.
+        signIn.anchors = await verifyOwnEndorsement(endorsement, { householdId, memberId, certification });
+        const pending = await store.getOrCreatePendingDevice();
+        this.host.localFingerprint = pending.fingerprint;
+        const certificate = await createMemberCertificate({ householdId, memberId, endorsement, certification,
+          device: { deviceId: view.deviceId, publicKeys: pending.publicKeys, fingerprint: pending.fingerprint } });
+        const registered = await this.host.api("/api/account/sign-in/device", { method: "POST", body: JSON.stringify({
+          syncPublicKeys: pending.publicKeys, certificate, replaceDeviceId: signIn.replaceDeviceId ?? null,
+          deviceLabel: householdDeviceName(currentPlatform()), vaultEpochs: vaultHouseholdEpochs(opened.contents),
+        }) });
+        const bound = await store.bindPendingDevice({ deviceId: registered.deviceId, householdId: registered.householdId, memberId: registered.memberId });
+        this.host.localFingerprint = bound.fingerprint;
+        signIn.registered = registered;
+      }
+      const identity = signIn.registered;
+      const device = await store.getDevice(identity.deviceId);
+      for (const entry of opened.contents.epochs) {
+        const label = entry.family === "chat" ? `chat:${householdId}` : householdId;
+        if (await store.getEpoch(label, entry.epoch)) continue;
+        await store.saveEpoch({ householdId: label, keyEpoch: entry.epoch,
+          ...await importVaultEpochKey({ rawKey: entry.key, householdId: label, keyEpoch: entry.epoch, deviceKeys: device.keys }) });
+      }
+      await store.setAccountVaultKey(identity.deviceId, opened.vaultKey);
+      // The devices the endorsing device trusted become this device's pins,
+      // at the key the endorsement named (a later signed key change is
+      // followed by sync as for any pin).
+      const { devices } = await this.host.api("/api/sync/devices");
+      for (const anchor of signIn.anchors) {
+        const entry = devices.find((candidate) => candidate.deviceId === anchor.deviceId);
+        if (!entry?.publicKeys) continue;
+        const key = (await verifiedDeviceKeyHistory(entry)).find((historic) => historic.fingerprint === anchor.fingerprint);
+        if (!key) throw new Error("A device your account trusts no longer matches its key. Sign in from one of your devices instead.");
+        await store.pinTrustedDevice({ householdId, memberId: entry.memberId, deviceId: entry.deviceId, publicKeys: key.publicKeys, fingerprint: key.fingerprint });
+      }
+      await store.pinCertificationKey({ householdId, memberId, fingerprint: endorsement.fingerprint });
+      globalThis.history.replaceState(null, "", "/");
+      await this.host.load();
+      this.host.dispatchEvent(new CustomEvent("kin:sync-enabled", { bubbles: true, composed: true, detail: this.host.identity }));
+      return this.host.identity;
+    });
+  }
+
+  /**
+   * Endorses the member's certification key from this trusted device when
+   * the service has no endorsement yet (#570): the step that lets a new
+   * device certify itself later. Runs where this device holds the vault key
+   * (after the vault is made, and for members whose vault predates this);
+   * the endorsement lists this device's pins as the account's trust anchors.
+   */
+  async ensureCertificationEndorsement(identity) {
+    const store = this.host.syncKeyStore;
+    const vaultKey = await store?.accountVaultKey(identity.householdId);
+    if (!vaultKey) return { status: "no_vault_key" };
+    let contents = null;
+    try {
+      const value = await this.host.api("/api/account/vault");
+      if (value.certificationEndorsement || !value.vault) return { status: value.vault ? "endorsed" : "no_vault" };
+      contents = await openVault(vaultKey, fromBase64Url(value.vault.ciphertext),
+        { householdId: identity.householdId, memberId: identity.memberId, version: value.vault.version });
+      if (!contents.certificationKey) return { status: "no_certification_key" };
+      const certification = await certificationKeyPair(contents.certificationKey);
+      const device = await store.getDevice(identity.deviceId);
+      const pins = (await store.listPinnedDevices(identity.householdId)).filter((pin) => pin.deviceId !== identity.deviceId);
+      const endorsement = await createCertificationEndorsement({
+        householdId: identity.householdId, memberId: identity.memberId, certification,
+        device: { deviceId: identity.deviceId, fingerprint: device.fingerprint, signingKey: device.keys.signingPrivateKey },
+        anchors: pins.slice(0, MAX_ENDORSEMENT_ANCHORS - 1),
+      });
+      await this.host.api("/api/account/certification", { method: "PUT", body: JSON.stringify({ endorsement }) });
+      return { status: "endorsed_now" };
+    } finally {
+      vaultKey.fill(0);
+      wipeVaultContents(contents);
+    }
+  }
+
   /** The member's first account vault, and its key kept on this device.
    * Done once: a device that keeps the key already has a vault. */
   async createVault(identity, keys) {
@@ -225,6 +332,9 @@ export class HouseholdAccount {
     this.stopKeeper = this.keeper.watch(onEpochInstalled);
     // Keys installed while this device was offline or locked.
     void this.keeper.update().catch(() => {});
+    // A member whose certification key isn't endorsed yet gets it endorsed
+    // here (#570); tried again the next time the panel starts.
+    void this.ensureCertificationEndorsement(identity).catch(() => {});
   }
 
   stop() {

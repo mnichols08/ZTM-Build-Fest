@@ -129,7 +129,7 @@ export class PrivatePrefsController {
     const log = this.log;
     if (!log?.active || !this.current()) return false;
     try {
-      await log.change(command);
+      await log.execute(command);
       return true;
     } catch (error) {
       if (error?.code === 4) return false;

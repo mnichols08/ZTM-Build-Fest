@@ -254,46 +254,72 @@ export class PrivateLog {
     } catch {
       throw new PrivateLogRoomError("Kin couldn't save that private change.", "private_event_invalid");
     }
-    const eventId = idToHex(metadata.eventId);
+    const eventId = this.checkOwnEvent(metadata);
+    await this.exclusive(async () => {
+      await this.refresh();
+      await this.seal(eventId, metadata, encodedEvent);
+    });
+    try { this.onLocalChange(); } catch { /* sync starts on its own schedule */ }
+    return eventId;
+  }
+
+  /**
+   * Makes and stores one private change (#511): `command` is a private
+   * command (kin-private.js PRIVATE_ITEM_COMMANDS, or kin-prefs.js
+   * PREFS_COMMANDS for reminders and settings, #520). Under the write lock,
+   * after reading what other tabs stored, the engine validates it against
+   * the log as it is now and names it with this member, this device and the
+   * next logical time; the event is then sealed like `append`. A refusal
+   * (code 4: it changed meanwhile, maybe on another device) stores nothing.
+   * Resolves with the event ID.
+   */
+  async execute(command) {
+    this.assertActive();
+    let eventId = null;
+    await this.exclusive(async () => {
+      await this.refresh();
+      const { asOf, civilDate } = projectionContext(this.now());
+      const identity = {
+        eventId: newPrivateId(), householdId: this.identity.householdId, actorId: this.identity.memberId,
+        deviceId: this.identity.deviceId, timestamp: asOf, logicalTime: this.nextLogicalTime(),
+      };
+      const { encodedEvent, metadata } = this.engine.executePrivateCommand(
+        command, identity, this.records.view(), asOf, civilDate, this.syncIdentity());
+      try {
+        eventId = this.checkOwnEvent(metadata);
+        await this.seal(eventId, metadata, encodedEvent);
+      } finally {
+        encodedEvent.fill(0);
+      }
+    });
+    try { this.onLocalChange(); } catch { /* sync starts on its own schedule */ }
+    return eventId;
+  }
+
+  /** A private event this member's device made here: its ID (hex). */
+  checkOwnEvent(metadata) {
     if (!isPrivateKind(metadata.kind) ||
         idToHex(metadata.householdId) !== this.identity.householdId ||
         idToHex(metadata.actorId) !== this.identity.memberId ||
         idToHex(metadata.deviceId) !== this.identity.deviceId ||
         metadata.logicalTime < 1n)
       throw new PrivateLogRoomError("Kin couldn't save that private change.", "private_event_invalid");
-    const write = async () => {
-      await this.refresh();
-      const state = await this.store.state();
-      const { epoch, key } = this.ring.current();
-      const envelope = await encryptPrivateEvent({
-        eventId, householdId: this.identity.householdId, memberId: this.identity.memberId, deviceId: this.identity.deviceId,
-        deviceSequence: state.deviceSequence + 1, logicalTime: metadata.logicalTime.toString(), keyEpoch: epoch,
-        plaintext: encodedEvent, memberKey: key, signingKey: this.signingKey(),
-      });
-      this.assertActive();
-      await this.store.addLocal(envelope);
-      await this.refresh();
-    };
-    await this.exclusive(write);
-    try { this.onLocalChange(); } catch { /* sync starts on its own schedule */ }
-    return eventId;
+    return idToHex(metadata.eventId);
   }
 
-  /**
-   * Makes and stores one private change from an intent (kin-prefs.js
-   * PREFS_COMMANDS, #520): the engine checks it against the log as it
-   * stands (a change that changes nothing fails with engine code 4).
-   * Resolves with its event ID.
-   */
-  async change(command) {
+  /** Seals one event under the newest member-key epoch and stores it with
+   * an outbox entry. Runs inside `exclusive`. */
+  async seal(eventId, metadata, encodedEvent) {
+    const state = await this.store.state();
+    const { epoch, key } = this.ring.current();
+    const envelope = await encryptPrivateEvent({
+      eventId, householdId: this.identity.householdId, memberId: this.identity.memberId, deviceId: this.identity.deviceId,
+      deviceSequence: state.deviceSequence + 1, logicalTime: metadata.logicalTime.toString(), keyEpoch: epoch,
+      plaintext: encodedEvent, memberKey: key, signingKey: this.signingKey(),
+    });
     this.assertActive();
+    await this.store.addLocal(envelope);
     await this.refresh();
-    const { asOf, civilDate } = projectionContext(this.now());
-    const { encodedEvent } = this.engine.executePrivateCommand(command, {
-      eventId: newPrivateId(), householdId: this.identity.householdId, actorId: this.identity.memberId,
-      deviceId: this.identity.deviceId, timestamp: this.now(), logicalTime: this.nextLogicalTime(),
-    }, this.records.view(), asOf, civilDate, this.syncIdentity());
-    return this.append(encodedEvent);
   }
 
   /** Runs `work` while no tab of this member is writing privately. */

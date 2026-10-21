@@ -301,6 +301,7 @@ catch-up summary, household search or household exports.
 | Kind | Name | Payload |
 |---|---|---|
 | 100 | `PRIVATE_NOTE_SET` | note ID, text length u32 (0 removes it; at most 2,048 bytes), text (line feeds allowed, no other control characters) |
+| 110–118 | "Just for me" | below |
 | 120 | `REMINDER_SET` (#522) | target kind u8 (1 item, 2 routine), target ID, due instant (Unix ms, UTC), the setter's UTC offset in minutes (−720 to 840) and IANA time zone (0–64 ASCII bytes; empty when unknown) |
 | 121 | `REMINDER_CLEARED` (#522) | target kind, reason u8 (1 canceled, 2 done, 3 dismissed), target ID, the instant it clears |
 | 130 | `SETTING_SET` (#525) | key u16 (1–255), value (0–32 bytes of `a-z 0-9 -`; empty unsets the key) |
@@ -333,7 +334,8 @@ device clock:
   (household, default, `preset-` or `custom-` and six lowercase hex digits),
   3 `text-size` (standard, large, larger), 4 `motion` (system, reduce), 5
   `reminder-alerts` (on, off), 6 `app-badge` (off, messages,
-  messages-and-mine) and 7 `private-on-today` (on, off; reserved for #510)
+  messages-and-mine) and 7 `private-on-today` (on, off; reserved: Just for
+  me keeps its Today setting as kind 118, which already follows the member)
   take only those values; any other key takes any token, so an older engine
   keeps a later release's settings unchanged.
 
@@ -341,6 +343,40 @@ Commands (`kin_private_execute`) must change something: a reminder set
 exactly as it is, a clear of a thing with no reminder (or a done or dismissed
 for an instant it no longer has), or a setting set to its current value is
 refused with code 4.
+
+### Just for me (kinds 110–119)
+
+"Just for me" (#510, `rust/src/private_items.rs`) owns kinds 110–119 (the
+journal uses 101–109; reminders and settings that follow a member use
+120–139). All are schema 1. IDs are never zero; dates are 0 (none) or a
+valid civil date (YYYYMMDD); text is 1–4,096 bytes of UTF-8 with no control
+characters; a note is at most 2,048 bytes and may hold line feeds; reserved
+bytes are zero; nothing is left over.
+
+| Kind | Name | Payload |
+|---|---|---|
+| 110 | `PRIVATE_ITEM_ADDED` | item ID, date u32, text length u32, text |
+| 111 | `PRIVATE_ITEM_EDITED` | item ID, text length u32, text |
+| 112 | `PRIVATE_ITEM_COMPLETED` | item ID |
+| 113 | `PRIVATE_ITEM_REOPENED` | item ID |
+| 114 | `PRIVATE_ITEM_DATED` | item ID, date u32 (0 clears it) |
+| 115 | `PRIVATE_ITEM_DELETED` | item ID |
+| 116 | `PRIVATE_ITEM_RESTORED` | item ID (Undo of a delete) |
+| 117 | `PRIVATE_ITEM_NOTE_SET` | item ID, note length u32 (0 clears it), note |
+| 118 | `PRIVATE_ITEMS_ON_TODAY_SET` | on u8 (0 or 1), 3 zero bytes: whether dated items show on the member's own Today and This week (on until set) |
+
+Kind 119 is reserved and decodes as unsupported. The Today setting is kept
+here, in the member's own range, so it follows the member to their other
+devices; the settings story (#520) may move it into its own range later
+with a migration that reads 118.
+
+Replay never fails on a decoded item event: an add for an ID the list
+already has (live or deleted), a change to an ID it lacks, and an add or
+restore beyond 2,000 live items change nothing. Delete keeps a tombstone
+(text, note, date) so a restore brings the item back as it was; deleted
+items are left out of KPRV. Commands (`kin_private_execute`) are stricter:
+a new ID, a live item, a change that changes something, trimmed text and
+notes, and room in the list.
 
 ## Meals
 

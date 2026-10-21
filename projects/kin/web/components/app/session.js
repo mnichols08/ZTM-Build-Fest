@@ -9,6 +9,7 @@ import { clearLegacyDrafts } from "../kin-security.js";
 import { loadAppearance } from "../../appearance/store.js";
 import { resolveAppearance } from "../../appearance/household.js";
 import { getActiveVault, setActiveVault } from "../../security/local-vault.js";
+import { wipeSignIn } from "../../security/new-device.js";
 import { AUTO_LOCK_KEY, START_ERROR } from "./constants.js";
 import { assertCurrentSession, captureSession, isCurrentSession } from "../shared/session-guard.js";
 
@@ -231,6 +232,8 @@ export class SessionController {
     this.app.passkeyPromptDismissed = false;
     // A first run still signing up ends with the session; its keys go too.
     if (this.app.firstRun?.pending?.signUp) for (const key of ["authKey", "passwordKey", "localKek"]) this.app.firstRun.pending.signUp[key]?.fill?.(0);
+    // A new-device sign-in (#568) still finishing: its vault key goes too.
+    if (this.app.firstRun?.pending?.signIn) wipeSignIn(this.app.firstRun.pending.signIn.opened);
     this.app.firstRun = null;
     this.app.pendingProfile = null;
     if (this.app.onboarding) { this.app.onboarding.hidden = true; this.app.onboarding.replaceChildren(); }
@@ -285,6 +288,8 @@ export class SessionController {
         ["tonight", "kin-tonight"],
       ];
       this.ctx.meals?.reset();
+      // Just for me (#510): the decrypted private list leaves with the lock.
+      this.ctx.privateItems?.reset();
       for (const [field, name] of components)
         this.app[field] = document.createElement(name);
       this.app.detailMode = null;

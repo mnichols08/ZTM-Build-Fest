@@ -160,9 +160,21 @@ bothStores("downloads are rate-limited per member and per address; writes per me
   assert.ok(rejects("vault_rate_limited", 429)(refused));
 });
 
-test("the no-cookie download path is a stub that refuses until #568", () => {
+test("a no-cookie download (#568) needs a checked capability and releases only the wrapper its sign-in opens", () => {
   const vaults = new AccountVaultService();
-  assert.throws(() => vaults.downloadWithCapability("anything", "client"), rejects("vault_capability_unavailable", 403));
+  assert.throws(() => vaults.downloadWithCapability("anything", "client"), rejects("new_device_expired", 401));
+  const auth = { household: { id: "a".repeat(32) }, member: { id: "b".repeat(32) } };
+  const passkey = wrapper({ wrapperId: "2".repeat(32), type: "passkey",
+    params: { credentialId: Buffer.alloc(32, 4).toString("base64url"), prfSalt: Buffer.alloc(32, 5).toString("base64url") } });
+  vaults.upload(auth, { expectedVersion: 0, ciphertext: sealedVault(), wrappers: [wrapper(), passkey] });
+  const capability = { householdId: auth.household.id, memberId: auth.member.id };
+  const byPassword = vaults.downloadWithCapability({ ...capability, method: "password" }, "client");
+  assert.deepEqual(byPassword.wrappers.map((entry) => entry.type), ["password"]);
+  const byPasskey = vaults.downloadWithCapability({ ...capability, method: "passkey", credentialId: passkey.params.credentialId }, "client");
+  assert.deepEqual(byPasskey.wrappers.map((entry) => entry.type), ["passkey"]);
+  assert.throws(() => vaults.downloadWithCapability({ ...capability, method: "passkey", credentialId: "other" }, "client"), rejects("vault_not_found", 404));
+  assert.throws(() => vaults.downloadWithCapability({ ...capability, method: "password-passkey", credentialId: passkey.params.credentialId }, "client"), rejects("vault_not_found", 404));
+  assert.deepEqual(vaults.wrapperSummary(auth.household.id, auth.member.id).map((entry) => entry.type).sort(), ["passkey", "password"]);
 });
 
 test("the vault routes serve only the session's own member on a trusted device", { timeout: 30_000 }, async (t) => {
@@ -191,7 +203,7 @@ test("the vault routes serve only the session's own member on a trusted device",
 
   // Another member of the same household sees only their own (none).
   const theirs = await call("/api/account/vault", { cookie: cookieOf(other) });
-  assert.deepEqual(await theirs.json(), { vault: null, wrappers: [] });
+  assert.deepEqual(await theirs.json(), { vault: null, wrappers: [], certificationEndorsement: null });
   // ... and their writes land on their own vault, never the founder's.
   assert.equal((await call("/api/account/vault", { cookie: cookieOf(other), method: "PUT", body: { expectedVersion: 1, ciphertext: sealedVault(100, 1) } })).status, 409);
   assert.equal((await call(`/api/account/vault/wrappers/${"1".repeat(32)}`, { cookie: cookieOf(other), method: "DELETE" })).status, 404);
