@@ -161,7 +161,15 @@ export class RecordCommands {
       // app/private-prefs.js); without it, this device only, as before. The
       // permission prompt can outlast the session: nothing is kept or
       // reported into a locked or different household.
-      const { result, synced } = await this.ctx.privatePrefs.setReminder({ id, title, at });
+      let result, synced = false;
+      if (this.ctx.privatePrefs.active) ({ result, synced } = await this.ctx.privatePrefs.setReminder({ id, title, at }));
+      else {
+        const target = this.reminderTarget(id, session);
+        const token = Symbol(id);
+        result = await this.app.localReminders.schedule({ id, title, at, isCurrent: target?.isCurrent ?? (() => false), token });
+        // The token makes sure only this attempt's reminder is cancelled.
+        if (!this.ctx.session.isCurrentSession(session)) { this.app.localReminders.cancel(id, token); return; }
+      }
       if (!this.ctx.session.isCurrentSession(session)) return;
       this.renderReminders();
       for (const control of this.app.querySelectorAll("kin-reminder")) if (control.targetRecord?.id === id) control.saved(result === "granted" || (synced && result !== "stale") ? at : null);

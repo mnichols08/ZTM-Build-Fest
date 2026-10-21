@@ -289,16 +289,20 @@ export class PrivatePrefsController {
   shownReminder(id, at, notification) {
     this.fired.add(`${id}@${at}`);
     this.shown.set(id, { at, notification });
-    notification.onclick = () => {
-      try { globalThis.focus?.(); } catch { /* focus is a courtesy */ }
-      notification.close();
-    };
-    // Closed or clicked on one device: dealt with on every device.
-    notification.onclose = () => {
+    // Clicked or closed on one device: dealt with on every device. A click
+    // dismisses by itself, since not every platform reports the close that
+    // follows it.
+    const dismiss = () => {
       if (this.shown.get(id)?.notification !== notification) return;
       this.shown.delete(id);
       void this.endReminder(id, "dismissed", at).catch(() => {});
     };
+    notification.onclick = () => {
+      try { globalThis.focus?.(); } catch { /* focus is a courtesy */ }
+      dismiss();
+      try { notification.close(); } catch { /* already gone */ }
+    };
+    notification.onclose = dismiss;
   }
 
   closeQuietly(notification) {

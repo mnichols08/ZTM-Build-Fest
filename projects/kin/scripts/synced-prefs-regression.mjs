@@ -216,17 +216,22 @@ async function pageDismissWhenItGoesOff({ id, at, ms }) {
   const shown = prefs.shown.get(id);
   let how;
   if (shown?.at === at) {
-    // The member closes the notification, as on a real screen.
-    shown.notification.close();
-    how = "closed the notification";
+    // The member clicks the notification, as on a real screen (a click is
+    // a dismissal on every platform; a close event isn't reported on all).
+    shown.notification.dispatchEvent(new Event("click"));
+    how = "clicked the notification";
   } else {
     // A browser that can't construct a notification here: the same step
     // closing it takes.
     await prefs.endReminder(id, "dismissed", at);
     how = "dismissed without a notification";
   }
-  for (let i = 0; i < 20; i++) await prefs.work;
-  return { how, gone: !prefs.projection?.reminders.some((reminder) => reminder.reminderId === id) };
+  const gone = () => !prefs.projection?.reminders.some((reminder) => reminder.reminderId === id);
+  for (let i = 0; i < 400 && !gone(); i++) {
+    await prefs.work;
+    await new Promise((r) => setTimeout(r, step));
+  }
+  return { how, gone: gone() };
 }
 
 async function pageGone(id) {
