@@ -121,10 +121,15 @@ export class SyncController {
         if (room) void this.labelFridge(identity.memberId);
         this.ctx.simple?.updateAccess();
       },
-      // The member's private log (#492) for Lists › Just for me (#510); null
-      // when it closes. It opens once this device holds a vault key (#557).
+      // The member's private log (#492), for Lists › Just for me (#510) and
+      // the reminders and settings that follow the member (#520,
+      // app/private-prefs.js); null when it closes. It opens once this device
+      // holds a vault key (#557).
       onPrivateLog: (log) => {
         if (log && !(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
+        if (!log) {
+          if (this.ctx.privatePrefs.log && this.app.syncCoordinator === coordinator) this.ctx.privatePrefs.detach();
+        } else this.ctx.privatePrefs.attach(log, session);
         if (!log && this.ctx.privateItems.log !== coordinator.privateLog && this.ctx.privateItems.log) return;
         this.ctx.privateItems.attach(log);
       },
