@@ -98,6 +98,9 @@ export class PrivateLog {
     this.pass = 0;
     this.refreshQueue = Promise.resolve();
     this.listeners = new Set();
+    // Work a private surface runs on each pass once the member key is here,
+    // before events are pushed (the journal's photo uploads, #502).
+    this.passHooks = new Set();
     this.syncError = null;
     this.keyError = null;
     this.streamChecked = false;
@@ -126,6 +129,13 @@ export class PrivateLog {
   subscribe(listener) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Runs `hook()` on each pass, after the keys and before the push; its
+   * failure fails the pass like a push would. Returns an unsubscribe. */
+  onPass(hook) {
+    this.passHooks.add(hook);
+    return () => this.passHooks.delete(hook);
   }
 
   notify() {
@@ -325,6 +335,9 @@ export class PrivateLog {
       this.notify();
     }
     await this.refresh();
+    // Photos go before the events that name them, so another device rarely
+    // finds a photo still on its way.
+    for (const hook of [...this.passHooks]) await hook();
     let pushMore = false, pushError = null;
     try {
       pushMore = await this.push();
@@ -505,6 +518,7 @@ export class PrivateLog {
     this.orderById.clear();
     this.pending.clear();
     this.listeners.clear();
+    this.passHooks.clear();
     this.ring.lock();
     this.deviceKeys = null;
     this.store.close();
