@@ -34,6 +34,18 @@ function fakeEngine() {
   return {
     eventMetadata: metadata,
     eventMetadataBatch: (records) => records.map(metadata),
+    // A private command (#511) as JSON: "refuse" is refused like code 4.
+    commands: [],
+    executePrivateCommand(command, identity, source) {
+      assert.equal(typeof source.copyRecordsTo, "function", "commands see the log as a view");
+      this.commands.push({ command, identity, records: source.length });
+      if (command.type === "refuse") throw Object.assign(new Error("It changed meanwhile."), { code: 4 });
+      const encodedEvent = encoder.encode(JSON.stringify({
+        kind: "PRIVATE_ITEM_ADDED", eventId: identity.eventId, householdId: identity.householdId, actorId: identity.actorId,
+        deviceId: identity.deviceId, timestamp: identity.timestamp, logicalTime: String(identity.logicalTime), noteId: command.itemId, text: command.text,
+      }));
+      return { encodedEvent, metadata: metadata(encodedEvent) };
+    },
     privateState(source) {
       assert.equal(typeof source.copyRecordsTo, "function", "the private log goes to the engine as a view");
       const events = Array.from({ length: source.length }, (_, index) => decode(source.record(index)))
@@ -185,6 +197,36 @@ test("a private note written offline counts at once, then reaches the member's o
   b.log.close();
   assert.equal(b.log.ring.available, false);
   assert.throws(() => b.log.projection(), (error) => error.code === "private_locked");
+});
+
+test("execute makes a private change through the engine with the next logical time, offline, and stores nothing it refuses", { timeout: 30_000 }, async () => {
+  const householdId = newPrivateId(), memberId = newPrivateId(), deviceId = newPrivateId();
+  const store = vaults();
+  await store.seed(householdId, memberId);
+  const phone = await device({ memberId, deviceId });
+  const request = Object.assign(async () => { throw Object.assign(new Error("offline"), { code: "connection_unavailable" }); }, { paths: [] });
+  const { log } = await openLog(phone, { householdId, store, request });
+  await log.enable();
+  const changed = [];
+  log.onLocalChange = () => changed.push(true);
+  const itemId = newPrivateId();
+  const eventId = await log.execute({ type: "add-private-item", itemId, text: "Dentist" });
+  assert.match(eventId, /^[a-f0-9]{32}$/);
+  const [first] = log.engine.commands;
+  assert.equal(first.identity.logicalTime, 1n);
+  assert.equal(first.identity.actorId, memberId);
+  assert.equal(first.identity.deviceId, deviceId);
+  assert.equal(first.records, 0);
+  assert.deepEqual(texts(log), ["Dentist"], "it counts at once");
+  assert.ok(log.waiting, "and waits to send");
+  await log.execute({ type: "add-private-item", itemId: newPrivateId(), text: "Gift" });
+  assert.equal(log.engine.commands[1].identity.logicalTime, 2n);
+  assert.equal(log.engine.commands[1].records, 1, "the engine sees what is already stored");
+  await assert.rejects(log.execute({ type: "refuse" }), (error) => error.code === 4);
+  assert.deepEqual(texts(log), ["Dentist", "Gift"], "a refusal stores nothing");
+  assert.equal(changed.length, 2);
+  log.close();
+  await assert.rejects(log.execute({ type: "add-private-item", itemId, text: "x" }), (error) => error.code === "private_locked");
 });
 
 test("without the member key, or with private storage off, the pass does nothing", { timeout: 30_000 }, async (t) => {

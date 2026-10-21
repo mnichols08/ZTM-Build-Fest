@@ -15,6 +15,10 @@
 //! private note by ID, enough to prove the log end to end. It is unreleased
 //! and the first of those stories may replace it.
 //!
+//! "Just for me" (#510) owns kinds 110–119 and KPRV section 11
+//! (private_items.rs); new private events are made by `kin_private_execute`
+//! (private_command.rs).
+//!
 //! Replay rules (replay never fails on a decoded private event, beyond the
 //! checks every log makes):
 //! - Every event in one private log has the same author: the log's member.
@@ -65,6 +69,7 @@ pub fn encode_payload(kind: &EventKind) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(text.as_bytes());
             Ok(payload)
         }
+        EventKind::PrivateItem(event) => event.encode(),
         _ => Err(KinError::InvalidEvent),
     }
 }
@@ -92,6 +97,9 @@ pub fn decode_payload(code: u16, payload: &[u8]) -> Result<EventKind, KinError> 
                 text: text.to_owned(),
             })
         }
+        code if crate::private_items::is_item_code(code) => Ok(EventKind::PrivateItem(
+            crate::private_items::PrivateItemEvent::decode(code, payload)?,
+        )),
         _ => Err(KinError::UnsupportedVersion),
     }
 }
@@ -120,6 +128,8 @@ pub struct PrivateNote {
 pub struct PrivateState {
     member: Option<ActorId>,
     notes: BTreeMap<PrivateRecordId, PrivateNote>,
+    /// "Just for me" (#510, private_items.rs).
+    items: crate::private_items::PrivateItems,
 }
 
 impl PrivateState {
@@ -135,6 +145,22 @@ impl PrivateState {
 
     pub fn note(&self, id: &PrivateRecordId) -> Option<&PrivateNote> {
         self.notes.get(id)
+    }
+
+    /// The member's "Just for me" list (#510).
+    pub fn items(&self) -> &crate::private_items::PrivateItems {
+        &self.items
+    }
+
+    /// Whether a new private event may be written (`kin_private_execute`):
+    /// each part of the projection judges its own kinds. The placeholder
+    /// note has no rule beyond its payload's.
+    pub fn check_command(&self, kind: &EventKind) -> Result<(), KinError> {
+        match kind {
+            EventKind::PrivateNoteSet { .. } => Ok(()),
+            EventKind::PrivateItem(event) => self.items.check_command(event),
+            _ => Err(KinError::InvalidEvent),
+        }
     }
 }
 
@@ -164,6 +190,10 @@ pub fn apply(state: &mut Arc<PrivateState>, event: &EventEnvelope) -> Result<(),
             }
             Ok(())
         }
+        EventKind::PrivateItem(item_event) => {
+            state.items.apply(item_event, event);
+            Ok(())
+        }
         _ => Err(KinError::InvalidEvent),
     }
 }
@@ -181,6 +211,9 @@ pub fn apply(state: &mut Arc<PrivateState>, event: &EventEnvelope) -> Result<(),
 /// Section 1, notes (the placeholder kind): note count u32, then each note
 /// in ascending ID order: ID [16], logical time u64, device ID [16], text
 /// length u32, text.
+///
+/// Section 11, "Just for me" (#510, private_items.rs `encode_section`),
+/// once the member has a private item or a list setting.
 pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u8>, KinError> {
     let mut notes = Vec::new();
     notes.extend_from_slice(&(state.notes.len() as u32).to_le_bytes());
@@ -191,7 +224,16 @@ pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u
         notes.extend_from_slice(&(note.text.len() as u32).to_le_bytes());
         notes.extend_from_slice(note.text.as_bytes());
     }
-    let size = 32 + 8 + notes.len();
+    let mut sections: Vec<(u16, Vec<u8>)> = vec![(SECTION_NOTES, notes)];
+    if !state.items.is_empty() {
+        sections.push((
+            crate::private_items::SECTION_ITEMS,
+            state.items.encode_section()?,
+        ));
+    }
+    let size = sections
+        .iter()
+        .fold(32, |size, (_, bytes)| size + 8 + bytes.len());
     if size > MAX_PROTOCOL_BYTES {
         return Err(KinError::SizeLimit);
     }
@@ -204,11 +246,13 @@ pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u
     out.extend_from_slice(&[0; 2]);
     out.extend_from_slice(&state.member.map_or([0; 16], |member| member.0));
     out.extend_from_slice(&record_count.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&(sections.len() as u16).to_le_bytes());
     out.extend_from_slice(&[0; 2]);
-    out.extend_from_slice(&SECTION_NOTES.to_le_bytes());
-    out.extend_from_slice(&[0; 2]);
-    out.extend_from_slice(&(notes.len() as u32).to_le_bytes());
-    out.extend_from_slice(&notes);
+    for (code, bytes) in &sections {
+        out.extend_from_slice(&code.to_le_bytes());
+        out.extend_from_slice(&[0; 2]);
+        out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        out.extend_from_slice(bytes);
+    }
     Ok(out)
 }
