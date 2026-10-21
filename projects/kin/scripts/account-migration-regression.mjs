@@ -203,6 +203,12 @@ async function backupCodeRetiresTheKey(member, h) {
   const checks = [];
   const check = (value, message) => { if (!value) throw new Error(message); checks.push(message); };
   const app = h.app();
+  // Back online: the next unlock signs this device in again (an offline
+  // unlock doesn't), and the household panel loads with it.
+  await h.lock();
+  await h.unlockWithPassword(member.password);
+  await h.today();
+  await h.wait(() => app.household?.identity, "the household signed in again");
   app.ctx.navigation.navigate("#household/privacy");
   const before = () => h.security().querySelector("[data-backup-key-retired]");
   await h.security().account.refresh({ render: false });
