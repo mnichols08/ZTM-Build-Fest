@@ -361,9 +361,13 @@ async function signInAgainAndHarden(member, h) {
   return { checks: checks.length, credentialId };
 }
 
-/** What another of the member's devices does to change the password: the
- * service's verifier and the vault's password wrappers, nothing here. */
-async function changePasswordElsewhere(oldPassword, newPassword, h) {
+async function newPasswordAtUnlock(member, h) {
+  const checks = [];
+  const check = (value, message) => { if (!value) throw new Error(message); checks.push(message); };
+  // What another of the member's devices does to change the password: the
+  // service's verifier and the vault's password wrappers, nothing here.
+  // (Defined in here: each step runs in the page on its own.)
+  const changePasswordElsewhere = async (oldPassword, newPassword) => {
   const app = h.app();
   const { derivePasswordKeys, newPasswordSalt } = await import("/security/account-vault.js");
   const { passwordChangeWrappers, wrapperChangeBody } = await import("/security/account-wrappers.js");
@@ -380,12 +384,8 @@ async function changePasswordElsewhere(oldPassword, newPassword, h) {
     currentAuthKey: toBase64Url(current.authKey), salt: toBase64Url(salt), iterations: 600_000, authKey: toBase64Url(fresh.authKey), vaultChange: wrapperChangeBody(change) }) });
   if (!response.ok) throw new Error(`The password change failed: ${response.status}`);
   return toBase64Url(salt);
-}
-
-async function newPasswordAtUnlock(member, h) {
-  const checks = [];
-  const check = (value, message) => { if (!value) throw new Error(message); checks.push(message); };
-  const salt = await changePasswordElsewhere(member.password, member.newPassword, h);
+  };
+  const salt = await changePasswordElsewhere(member.password, member.newPassword);
   await h.lock();
   // The previous password opens this device's storage, but online Kin asks for the new one first.
   await h.unlockWithPassword(member.password);
