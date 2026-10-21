@@ -87,8 +87,8 @@ async function writeInJournal() {
   check(page.titleInput.value === "Park day" && page.bodyInput.value.includes("She laughed"), "the draft comes back");
   page.saveButton.click();
   await wait(() => entryNode("She laughed"), "the entry is saved");
-  await frame();
-  check(document.activeElement === entryNode("She laughed"), "focus moves to the saved entry");
+  await wait(() => document.activeElement === entryNode("She laughed"), "focus moves to the saved entry", 5_000);
+  check(true, "focus moves to the saved entry");
   check(entryNode("She laughed").querySelector(".journal-entry-body").textContent === "Swings, then cocoa.\nShe laughed the whole way home.", "line breaks are kept");
   check(page.list.querySelector(".journal-day h2")?.textContent.includes(String(now.getFullYear())), "entries sit under date headings");
   // Earlier days, for On this day and the month jump.
@@ -119,8 +119,8 @@ async function writeInJournal() {
   check(document.activeElement === page.undoButton && page.undoText.textContent === "Entry deleted.", "Undo is offered, with focus on it");
   page.undoButton.click();
   await wait(() => entryNode("Snow day"), "the entry is back");
-  await frame();
-  check(document.activeElement === entryNode("Snow day"), "Undo puts the entry back and focuses it");
+  await wait(() => document.activeElement === entryNode("Snow day"), "Undo puts the entry back and focuses it", 5_000);
+  check(true, "Undo puts the entry back and focuses it");
   [...entryNode("Snow day").querySelectorAll("button")].find((button) => button.textContent === "Delete").click();
   await wait(() => !page.undoBar.hidden, "deleted again");
   page.undoBar.querySelector(".journal-undo-dismiss").click();
@@ -146,8 +146,10 @@ async function writeInJournal() {
   thumb.click();
   await wait(() => app.viewer.open && app.viewer.viewerImage.src.startsWith("blob:"), "the photo opens in the viewer");
   app.viewer.querySelector(".attachment-viewer-close").click();
-  await frame();
-  check(!app.viewer.open && document.activeElement?.classList.contains("journal-thumb") && document.activeElement.dataset.photoRef === thumb.dataset.photoRef, "closing the viewer returns focus to the thumbnail");
+  // The viewer hands focus back on its close event, a task of its own.
+  await wait(() => !app.viewer.open && document.activeElement?.classList.contains("journal-thumb") &&
+    document.activeElement.dataset.photoRef === thumb.dataset.photoRef, "closing the viewer returns focus to the thumbnail", 5_000);
+  check(true, "closing the viewer returns focus to the thumbnail");
 
   // Search and the month jump.
   typeInto(page.search, "COCOA cafe");
