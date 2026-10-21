@@ -228,14 +228,21 @@ export const approveMethods = {
       );
     const memberId = pairing.claimant.memberId;
     const deviceId = pairing.claimant.deviceId;
-    this.addCredential(memberId, pairing.claimant.credential);
+    // A joiner who signed up with a password (#558) has a username and no
+    // passkey yet. The claim reserved the username; it is checked again
+    // before it is kept.
+    const password = pairing.claimant.password ?? null;
+    if (password && [...this.members.values()].some((other) => other.username === password.username && other.active))
+      throw new PairingError("username_taken", "That username is taken. Ask them to join again with another.", 409);
+    if (pairing.claimant.credential) this.addCredential(memberId, pairing.claimant.credential);
     this.members.set(memberId, {
       id: memberId,
       householdId: household.id,
       active: true,
       kind: pairing.admissionKind ?? "adult",
       ...(pairing.admissionKind === "temporary" ? { expiresAt: pairing.admissionExpiresAt } : {}),
-      credentials: new Set([pairing.claimant.credential.id]),
+      credentials: new Set(pairing.claimant.credential ? [pairing.claimant.credential.id] : []),
+      ...(password ? { username: password.username, password } : {}),
     });
     this.devices.set(deviceId, {
       id: deviceId,
@@ -357,6 +364,8 @@ export const approveMethods = {
           : undefined,
       memberId: pairing.claimant?.memberId,
       deviceId: pairing.claimant?.deviceId,
+      // How the joiner finishes (#558): with their passkey, or their password.
+      signIn: pairing.claimant ? (pairing.claimant.password ? "password" : "passkey") : undefined,
       confirmedMemberId: pairing.confirmedMemberId,
       confirmedDeviceId: pairing.confirmedDeviceId,
       lostDeviceId: pairing.lostDeviceId,

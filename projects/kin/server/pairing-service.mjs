@@ -5,7 +5,8 @@
 // sessions.mjs (bootstrap, sessions, reauthentication), create.mjs (stage 1:
 // an adult creates a pairing), claim.mjs (stage 2: the new device claims it),
 // approve.mjs (stage 3: approval or revocation), then devices.mjs,
-// membership.mjs, lifecycle.mjs and link.mjs (phone-approved sign-in, #99). shared.mjs holds the constants, errors
+// membership.mjs, lifecycle.mjs, link.mjs (phone-approved sign-in, #99) and
+// passwords.mjs (username and password sign-in, #558). shared.mjs holds the constants, errors
 // and member-kind rules; its public names are re-exported here.
 import { createHmac, randomBytes } from "node:crypto";
 import { addMethods } from "./mixins.mjs";
@@ -18,6 +19,7 @@ import { deviceMethods } from "./pairing-service/devices.mjs";
 import { lifecycleMethods } from "./pairing-service/lifecycle.mjs";
 import { linkMethods } from "./pairing-service/link.mjs";
 import { membershipMethods } from "./pairing-service/membership.mjs";
+import { passwordMethods } from "./pairing-service/passwords.mjs";
 import { sessionMethods } from "./pairing-service/sessions.mjs";
 import {
   MAX_RATE_BUCKETS,
@@ -54,6 +56,7 @@ export {
   TERMINAL_PAIRING_RETENTION_MS,
 } from "./pairing-service/shared.mjs";
 export { MAX_ACTIVE_MEMBERS, MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
+export { PASSWORD_ATTEMPTS, PASSWORD_WINDOW_MS, SIGN_IN_FAILED, USERNAME_CHECKS } from "./pairing-service/passwords.mjs";
 export { LINK_CODE_ATTEMPTS, LINK_CODE_TTL_MS, LINK_REQUEST_TTL_MS, MAX_LINK_REQUESTS, MAX_LINK_REQUESTS_PER_CLIENT } from "./pairing-service/link.mjs";
 export {
   BOOTSTRAP_LIMIT,
@@ -201,4 +204,4 @@ export class PairingService {
 
 }
 
-addMethods(PairingService, bootstrapLimitMethods, sessionMethods, createMethods, claimMethods, approveMethods, deviceMethods, membershipMethods, lifecycleMethods, linkMethods);
+addMethods(PairingService, bootstrapLimitMethods, sessionMethods, createMethods, claimMethods, approveMethods, deviceMethods, membershipMethods, lifecycleMethods, linkMethods, passwordMethods);

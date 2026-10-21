@@ -33,8 +33,16 @@ export const sessionMethods = {
     });
   },
 
-  bootstrap({ credential, deviceLabel = "Device", syncPublicKeys, rateKey }) {
+  /**
+   * Creates a household with its first adult and device. The founder signs
+   * up with a passkey `credential`, or (#558) a `password` record from
+   * preparePassword: then they have a username and no passkey yet.
+   */
+  bootstrap({ credential, password, deviceLabel = "Device", syncPublicKeys, rateKey }) {
     this.assertBootstrapAllowed(rateKey);
+    if (Boolean(credential) === Boolean(password))
+      throw new PairingError("invalid_credential", "A valid passkey is required.");
+    if (password) this.assertUsernameAvailable(password.username);
     const keyRecord = syncPublicKeys
       ? validateSyncPublicKeys(syncPublicKeys)
       : {};
@@ -57,9 +65,10 @@ export const sessionMethods = {
       active: true,
       kind: "adult",
       householdAdmin: true,
-      credentials: new Set([credential.id]),
+      credentials: new Set(credential ? [credential.id] : []),
+      ...(password ? { username: password.username, password } : {}),
     });
-    this.addCredential(memberId, credential);
+    if (credential) this.addCredential(memberId, credential);
     const device = {
       id: deviceId,
       memberId,

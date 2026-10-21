@@ -82,8 +82,12 @@ fields must match the public key-path/index fields.
 
 Wrapper updates compare a durable `configRevision`; removal atomically advances
 the lock epoch and invalidates previously unlocked capabilities. This prevents a
-stale tab from resurrecting a removed wrapper. The independent recovery wrapper
-cannot be removed. Lock drops references, clears engine buffers and closes
+stale tab from resurrecting a removed wrapper. The independent verified unlock
+path cannot be removed: for a device set up with a backup key that is the
+recovery wrapper, exactly as before; for a device set up with a password
+(#558) it is the password wrapper (below). A passkey (PRF) wrapper never
+counts on its own. One test, `hasVerifiedUnlockPath`, enforces it in the
+vault and in `EventStore`; see [RECOVERY](RECOVERY.md#members-who-signed-up-with-a-password-557-558). Lock drops references, clears engine buffers and closes
 capabilities, without promising physical memory erasure.
 
 PRF is an optional WebAuthn extension, not a universal passkey property. Use required
@@ -116,15 +120,56 @@ agreement keys are removed and migration verification completes.
 - Existing canonical event bytes are encrypted directly. Historical placeholder identities remain byte-for-byte intact; a separate signed, encrypted identity-binding control record establishes the authenticated importing identity for v8 replay. No semantic JSON event replacement is used.
 - Tests cover roundtrip, wrong keys, metadata substitution, ciphertext/signature/nonce mutation, unsupported/truncated envelopes, nonce variation, sealed-key restore, correct/wrong recipient, expiry, signature tampering, and actual two-trusted-device opaque relay exchange.
 
-Key generation and authenticated encryption use platform Web Crypto. The implementation has no custom cipher, MAC, nonce counter, or password-derived content key. [ADR 0018](decisions/0018-account-key-vault.md) (accepted) allows a password-derived key, from Web Crypto PBKDF2-SHA-256, to wrap a member's vault key and a device's local root; it never encrypts content directly. The vault formats, key derivations and service storage below are implemented (#564); password sign-in, the no-cookie sign-in, the backup code and the local password wrapper are later stories.
+Key generation and authenticated encryption use platform Web Crypto. The implementation has no custom cipher, MAC, nonce counter, or password-derived content key. [ADR 0018](decisions/0018-account-key-vault.md) (accepted) allows a password-derived key, from Web Crypto PBKDF2-SHA-256, to wrap a member's vault key and a device's local root; it never encrypts content directly. The vault formats, key derivations and service storage below are implemented (#564), and so are password sign-in, the local password wrapper and creating the vault at first run (#557, #558); the no-cookie sign-in and the backup code are later stories.
+
+### Local password wrapper (#558)
+
+A device set up at the first run with a password has one root wrapper of
+type `password` (local manifest format 1, root version 1; no recovery
+wrapper):
+
+```text
+password --PBKDF2-SHA-256 (member salt, >= 600,000) + HKDF--> passwordKey   (as for the vault, below)
+KEK  = HKDF-SHA-256(passwordKey, empty salt, info "kin/local-password/v1")
+root wrapper = the v0.10 wrapper construction (purpose kin/local-wrapper/v1)
+  with wrapper context ["password", wrapperId, "pbkdf2-sha256", salt, "<iterations>"]
+public fields: { version 1, id, type "password", kdf "pbkdf2-sha256",
+                 salt (16 bytes, base64url), iterations, username? }
+```
+
+The KEK has its own HKDF purpose, so it is never the vault wrapper's key
+(which is passwordKey itself) and never authKey. The salt and iterations are
+bound into the wrapper's authenticated data; the username is only a hint for
+password managers and the sign-in request, and is not bound. Unlocking runs
+one PBKDF2 on the device, offline, and the same run gives the authKey that
+signs the device in. The salt is the member's account salt, chosen at
+sign-up, so the device and the service derive the same keys. A wrong
+password fails AES-GCM authentication like any wrong wrapper key; Kin counts
+nothing on the service (it never sees local attempts). Offline guessing
+against a stolen device costs a full PBKDF2 per guess; the strength floor
+(at least 10 characters, not one of about 200 very common passwords, not
+the username) keeps out the first guesses.
 
 ## Account key vault (ADR 0018)
 
 Implemented in `web/security/account-vault.js` (formats and cryptography),
-`web/security/account-vault-sync.js` (keeping it current) and
+`web/security/account-vault-sync.js` (keeping it current),
+`web/security/account-setup.js` (sign-up and the first vault) and
 `server/account-vault-service.mjs` (storage and routes). All primitives are
 Web Crypto in the browser and Node's built-in `crypto` on the service.
-Nothing creates a vault yet; the first-run story will.
+
+**Creating it (#558).** A member who signs up with a password gets a vault on
+their first device as soon as the service knows them (after creating the
+household, or after their invitation is approved): a fresh VK, the household
+and chat epoch keys the device holds (none yet, at first), and a new
+certification key (generated and kept in the vault for the new-device story,
+#568; not yet certified or used), sealed as version 1 with one password
+wrapper (KEK = passwordKey; parameters `{ kdf, iterations, salt }`) and
+uploaded compare-and-set from version 0. The device keeps VK in its bound
+device record in the key database, sealed under the local root like its
+device keys (so it is encrypted at rest, readable only while unlocked, and
+carried through a root rotation), and runs the keeper below, so the first
+household key joins the vault as soon as sync installs it.
 
 **Vault key (VK).** 32 random bytes from `crypto.getRandomValues`, made once
 per member on their first device. It never leaves a device unwrapped.
@@ -203,17 +248,20 @@ Argon2id(`authKey`), from Node's `crypto.argon2` (`server/account-password.mjs`)
 Argon2id v1.3, 19 MiB, 2 passes, parallelism 1, a 16-byte random salt and a
 32-byte tag (OWASP's first recommended configuration), kept as a PHC string
 so the parameters can rise later; a check uses the stored parameters within
-fixed bounds and compares in constant time. Nothing writes it yet (#557).
+fixed bounds and compares in constant time. It is written when a member
+signs up with a password and checked at sign-in, activation and fresh
+confirmations (#558; IDENTITY, "Username and password sign-in").
 
 **Keeping it current (#567).** When a device installs a household or chat
 epoch key it didn't hold, and it holds the member's VK, it merges the key
 into the vault by (family, epoch), seals the next version and uploads it
 compare-and-set. On a conflict it downloads, merges and retries once. A
 merge only adds keys; the same epoch with different key bytes is refused.
-Where a device keeps VK between sessions is decided by the story that first
-opens a vault on a device.
+A device keeps VK in its bound device record (above, "Creating it"); each
+unlocked household panel runs the keeper once (for keys installed while it
+was offline or locked) and then on every install.
 
-**Service storage (server schema 21).** `account_vaults` (member, household,
+**Service storage (server schema 21; usernames in 22).** `account_vaults` (member, household,
 version, update time, sealed bytes), `account_vault_wrappers` (wrapper ID,
 type, version, public parameters: PBKDF2 salt and iterations, or the
 passkey's credential ID and PRF salt; and the 61 wrapped bytes) and

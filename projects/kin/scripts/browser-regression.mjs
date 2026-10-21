@@ -53,6 +53,7 @@ import {
 import { syncStorageRegressions } from "./sync-storage-regression.mjs";
 import { eventArenaPeerRegressions } from "./event-arena-regression.mjs";
 import { incrementalRenderPeerRegressions } from "./incremental-render-regression.mjs";
+import { firstRunRegressions } from "./first-run-regression.mjs";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -2971,6 +2972,10 @@ try {
   );
   await syncStorageRegressions(first);
   console.log("PASS final encrypted sync storage regression");
+  // The first run with a password (#557) needs the real service, so it
+  // runs its own on another origin, in isolated browser contexts; its pages
+  // are not part of the same-origin and console checks above.
+  if (REGRESSION_PART !== "1") console.log(await firstRunRegressions({ endpoint, browserClient }));
 } catch (error) {
   // Before the browser closes: what each page showed (#328).
   await captureFailure("browser regression");

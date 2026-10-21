@@ -2,7 +2,7 @@
 // leaving, and the views shown while a deletion is pending or done.
 // Part of <kin-household>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
-import { authenticationOptions, credentialJson } from "./auth.js";
+import { freshConfirmation } from "./fresh-confirmation.js";
 
 export class HouseholdLifecycle {
   constructor(ctx) {
@@ -22,15 +22,12 @@ export class HouseholdLifecycle {
         method: "POST",
         body: "{}",
       });
-      const credential = await navigator.credentials.get({
-        publicKey: authenticationOptions(started.publicKey),
-        signal: this.host.connectionAbort.signal,
-      });
+      const proof = await freshConfirmation(started, { signal: this.host.connectionAbort.signal });
       const result = await this.host.api("/api/household/deletion/finish", {
         method: "POST",
         body: JSON.stringify({
           flow: started.flow,
-          credential: credentialJson(credential),
+          ...proof,
         }),
       });
       this.host.householdLifecycle = {
@@ -55,17 +52,14 @@ export class HouseholdLifecycle {
         "/api/household/deletion/cancel/options",
         { method: "POST", body: "{}" },
       );
-      const credential = await navigator.credentials.get({
-        publicKey: authenticationOptions(started.publicKey),
-        signal: this.host.connectionAbort.signal,
-      });
+      const proof = await freshConfirmation(started, { signal: this.host.connectionAbort.signal });
       const identity = await this.host.api(
         "/api/household/deletion/cancel/finish",
         {
           method: "POST",
           body: JSON.stringify({
             flow: started.flow,
-            credential: credentialJson(credential),
+            ...proof,
           }),
         },
       );

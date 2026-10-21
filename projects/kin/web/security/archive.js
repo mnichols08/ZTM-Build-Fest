@@ -68,7 +68,13 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
     formatVersion: source.formatVersion, vaultId: source.vaultId, rootVersion: source.rootVersion,
     wrappers: source.wrappers.filter((wrapper) => wrapper.type === "recovery"), verifier: source.verifier,
   };
-  if (!manifest.wrappers.length) throw new VaultError("Create a verified recovery path before exporting.");
+  // An export opens with a backup key. A device set up with a password
+  // (#558) has none yet, so it can't make one (the backup code, #571, is
+  // what will open exports for it).
+  if (!manifest.wrappers.length)
+    throw new VaultError(source.wrappers.some((wrapper) => wrapper.type === "password")
+      ? "This device was set up with a password and has no backup key, so it can't make an export yet. Your household stays on this device and syncs as usual."
+      : "Create a verified recovery path before exporting.");
   const household = await EventStore.validateArchiveParts({ parts, engine, vault });
   let included = null;
   if (chat?.view?.length > 0) {

@@ -9,6 +9,18 @@ documentation only.
 
 ### Added
 
+- **A gentle first run: your name and a password, then you're in** (#557,
+  #558, #559, [ADR 0018](docs/decisions/0018-account-key-vault.md)): a new
+  device asks at most three screens (start or join; your name and the
+  household's name or invitation code; a username and password) and lands
+  on Today, with no backup key or security choices up front. The password
+  unlocks the device daily, offline, and signs it in; the service stores only
+  a username and an Argon2id verifier of a key derived from the password.
+  The member's encrypted account vault is created on their first device and
+  kept current. Joining still needs the inviter's approval. A member with no
+  passkey yet confirms admin actions with a fresh password. Server schema 22
+  (`members.username`). The passkey and backup-key setup stays available as
+  "Set up with a passkey instead".
 - **Encrypted key vault on the service, groundwork** (#564, [ADR 0018](docs/decisions/0018-account-key-vault.md)):
   the vault and wrapper formats, password/passkey/backup-code key
   derivations, server schema 21 with the vault routes (own member, trusted

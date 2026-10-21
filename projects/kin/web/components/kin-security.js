@@ -3,6 +3,7 @@ import { discardValidatedHouseholdArchive } from "../security/archive.js";
 import { button, section, text } from "./shared/dom.js";
 import { OperationGuard } from "./shared/operation.js";
 import { SecurityArchive } from "./security/archive.js";
+import { SecurityFirstRun } from "./security/first-run.js";
 import { SecurityProtection } from "./security/protection.js";
 import { SecurityUnlock } from "./security/unlock.js";
 import { SecurityViews } from "./security/views.js";
@@ -20,6 +21,7 @@ const PARTS = {
   protection: SecurityProtection,
   unlock: SecurityUnlock,
   archive: SecurityArchive,
+  firstRun: SecurityFirstRun,
 };
 
 class KinSecurity extends HTMLElement {
@@ -54,6 +56,9 @@ class KinSecurity extends HTMLElement {
     // True from a completed setup until the next lock: the unlocked shell then
     // offers passkey unlock as setup's next step (#577).
     this.justSetUp = false;
+    // Presentation only: the person chose "Set up with a passkey instead"
+    // on the first run (#557), so the earlier backup-key setup shows.
+    this.legacySetup = false;
   }
 
   get busy() { return this.operations.busy; }
@@ -107,6 +112,8 @@ class KinSecurity extends HTMLElement {
     this.alert.textContent = ["AbortError", "NotAllowedError"].includes(error.name)
       ? "Authentication was cancelled or the credential was unavailable. Your saved data was not changed."
       : error.userMessage ?? error.message ?? "Kin could not complete security setup.";
+    // A wrong password leaves the person where they type it again.
+    if (this.phase === "locked" && this.passwordInput?.isConnected) this.passwordInput.focus();
   }
 
   text(value, parent = this) { return text(value, { parent }); }
@@ -125,6 +132,8 @@ class KinSecurity extends HTMLElement {
   showRestore(...args) { return this.ctx.archive.showRestore(...args); }
   showSetup(...args) { return this.ctx.protection.showSetup(...args); }
   unlockPasskey(...args) { return this.ctx.unlock.unlockPasskey(...args); }
+  unlockPassword(...args) { return this.ctx.unlock.unlockPassword(...args); }
+  get firstRun() { return this.ctx.firstRun; }
   unlockRecovery(...args) { return this.ctx.unlock.unlockRecovery(...args); }
   render(...args) { return this.ctx.views.render(...args); }
 }

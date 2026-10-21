@@ -32,15 +32,22 @@ export const claimMethods = {
   claimPairing({
     code,
     credential,
+    password,
     deviceLabel,
     syncPublicKeys,
     rateKey = "unknown",
   }) {
     return this.rateLimitedAttempt(rateKey, () =>
-      this.claimPairingCode({ code, credential, deviceLabel, syncPublicKeys }));
+      this.claimPairingCode({ code, credential, password, deviceLabel, syncPublicKeys }));
   },
 
-  claimPairingCode({ code, credential, deviceLabel, syncPublicKeys }) {
+  /**
+   * Claims a pairing with the new device's passkey `credential`, or (#558,
+   * new members only) a `password` record from preparePassword. Adding a
+   * device to an existing member, replacing one and recovery still need a
+   * passkey: those devices join an identity that already exists.
+   */
+  claimPairingCode({ code, credential, password, deviceLabel, syncPublicKeys }) {
     const verifier = this.verifier(code);
     const pairing = this.pairings.get(this.codeIndex.get(verifier));
     if (!pairing) {
@@ -49,6 +56,9 @@ export const claimMethods = {
     }
     const state = this.state(pairing);
     if (state !== "Pending") throw terminalPairingError(state);
+    if (password && pairing.purpose)
+      throw new PairingError("passkey_required", "Adding a device to an existing member still uses a passkey.", 409);
+    if (password) this.assertUsernameAvailable(password.username);
     pairing.attempts += 1;
     if (pairing.attempts > MAX_CODE_ATTEMPTS) {
       pairing.state = "Revoked";
@@ -65,7 +75,8 @@ export const claimMethods = {
     const claimedAt = this.now();
     pairing.expiresAt = claimedAt + CLAIM_TTL_MS;
     pairing.claimant = {
-      credential,
+      credential: password ? null : credential,
+      ...(password ? { password } : {}),
       deviceLabel: cleanLabel(deviceLabel),
       memberId: pairing.memberId ?? id(),
       deviceId: id(),
@@ -133,6 +144,8 @@ export const claimMethods = {
         "Approval is still required.",
         409,
       );
+    if (!pairing.claimant.credential)
+      throw new PairingError("password_required", "Use your password to finish joining.", 409);
     return this.credentials.get(pairing.claimant.credential.id);
   },
 

@@ -881,6 +881,72 @@ step, then create/join choices; passkey unlock is offered as soon as the
 device holds a household credential (§8.1, "Calmer unlock"). Security settings
 state whether passkey unlock is on.
 
+### A gentle first run: your name and a password — Adopted (#557, #559)
+
+The owner's principle for accounts ([ADR 0018](decisions/0018-account-key-vault.md)):
+don't overwhelm people at the start. A new device opens on **at most three
+screens before Today**, with no keys and no security choices:
+
+1. **Welcome to Kin.** `Start a new household` (primary) or `I have an
+   invitation`. Nothing to type. A quiet `Set up with a passkey instead`
+   leads to the earlier setup (backup key, then passkey create or join),
+   which is also where adding a device you already use and signing in with
+   your phone live.
+2. **Start your household** — `Your name` (`autocomplete="name"`) and an
+   optional `Household name`; or **Join your household** — `Your name` and
+   the `Invitation code`. An invitation link opens straight on this screen
+   with the code filled in, so a joiner sees two screens. A wrong or used
+   code is said here, before a password is chosen. "Step 1 of 2".
+3. **Choose how you'll sign in** — `Username` (`autocomplete="username"`) and
+   `Password` (`autocomplete="new-password"`), so password managers save a
+   new account. Plain guidance: "Use at least 10 characters. A few unrelated
+   words works well." One short line states the trade-off: "Kin can't reset
+   this password. Until you add a passkey or another device, a forgotten
+   password means this household can't be opened." `Create household` or
+   `Join household`. "Step 2 of 2".
+
+Each screen checks its answers when sent and says what to fix beside the
+field (`aria-invalid`, `aria-describedby`); nothing typed is lost, the
+password included, and the first field with a problem takes focus. A taken
+username is checked before anything is created. Then Kin derives the
+password's keys (a second or so on a phone, "Setting up your household on
+this device…"), makes this device's encrypted storage and opens **Today**
+right away. Meanwhile Today's card reads "Setting up your household…"; the
+household is created with the service, sync turns on, and the names typed on
+screen 2 are recorded once sync is ready (the member's name as Set my name
+does, the household's name as an admin's shared setting). If that fails
+(offline, a username taken meanwhile, a code that ended), the card says so
+in one line with what to change and `Try again`; Kin stays usable on this
+device meanwhile. A joiner lands on People & devices, waiting for approval
+exactly as before (compare the device keys), and after approval finishes
+with `Finish joining`, without typing the password again unless the page was
+reloaded meanwhile, then lands on Today.
+
+**Daily unlock.** The lock screen of a device set up this way reads "Unlock
+Kin", "Enter your password to open your household on this device.", with
+the username shown and offered to password managers (an off-screen
+`autocomplete="username"` field) and one `Password` field
+(`autocomplete="current-password"`) with `Unlock`. It works offline, and
+signs the device in when online. A wrong password says "That password didn't
+work. Check it and try again." and keeps the form, focused on the field. A
+passkey, once added, is offered beside it. `Forgot your password?` explains
+plainly that Kin can't reset it and what still works.
+
+**Confirming important actions.** Where a passkey member confirms with their
+passkey (approving a device or a member, admin changes, removing someone,
+deleting the household), a member who has no passkey yet sees a small dialog,
+"Confirm it's you" — "Enter your Kin password to continue." `Confirm` /
+`Cancel` (Cancel reads as "cancelled", nothing changes). Messages say
+"Confirm … with your password" for them.
+
+**Later, calmly.** No passkey or backup code is asked for at sign-up. The
+passkey offer card (#577) stays for devices set up with a passkey; for a
+password member, adding a passkey is the passkey-second-step story, and the
+backup code is #571. Security settings show a **Password** section instead
+of the backup-key one, and passkey unlock reads "Off — you unlock with your
+password." A password-only device can't make an export yet (exports open
+with a backup key), and says so plainly.
+
 ### Calmer unlock until accounts arrive — Adopted (#563)
 
 A tester unlocked with the recovery key every time, and a synced password

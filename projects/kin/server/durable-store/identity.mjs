@@ -1,5 +1,6 @@
 // DurableStore identity: households, members, devices and sessions loaded
 // into and saved from the pairing service, and household settings.
+import { normalizeUsername } from "../../web/security/account-credentials.js";
 import {
   validCredentialId,
   validStoredCredential,
@@ -140,6 +141,7 @@ export const identityMethods = {
           ...(row.expires_at == null ? {} : { expiresAt: row.expires_at }),
           ...(row.household_admin === 1 ? { householdAdmin: true } : {}),
           ...(row.simple_view === 1 ? { simpleView: true } : {}),
+          ...(row.username == null ? {} : { username: row.username }),
           credentials: new Set(credentialIds),
         };
         if (!["adult", "limited", "temporary"].includes(member.kind) ||
@@ -150,7 +152,8 @@ export const identityMethods = {
             !["active", "removed", "expired"].includes(member.memberStatus) ||
             (member.memberStatus === "expired" && member.kind !== "temporary") ||
             (member.kind === "temporary" && !Number.isSafeInteger(member.expiresAt)) ||
-            (member.kind !== "temporary" && member.expiresAt !== undefined))
+            (member.kind !== "temporary" && member.expiresAt !== undefined) ||
+            (member.username !== undefined && normalizeUsername(member.username) !== member.username))
           throw new DurableStoreError("Kin server membership data is invalid.");
         members.set(member.id, member);
         const household = households.get(member.householdId);
@@ -170,6 +173,20 @@ export const identityMethods = {
           activeKindCounts.set(`${household.id}:${member.kind}`, kindCount + 1);
         }
       }
+      // Password verifiers (#558): every active member with a username has
+      // one. (A row whose member is gone is ignored: like a vault, it
+      // outlives an authority restore.)
+      for (const row of this.db.prepare("SELECT member_id, household_id, kdf_salt, kdf_iterations, verifier, updated_at FROM account_passwords").all()) {
+        const member = members.get(row.member_id);
+        if (!member) continue;
+        if (member.householdId !== row.household_id ||
+            !(row.kdf_salt instanceof Uint8Array) || row.kdf_salt.length !== 16 || typeof row.verifier !== "string")
+          throw new DurableStoreError("Kin server password data is invalid.");
+        member.password = { salt: new Uint8Array(row.kdf_salt), iterations: row.kdf_iterations, verifier: row.verifier, updatedAt: row.updated_at };
+      }
+      for (const member of members.values())
+        if (member.active && member.username !== undefined && !member.password)
+          throw new DurableStoreError("Kin server password data is invalid.");
       for (const household of households.values()) {
         if (household.ownerMemberId === null) continue;
         const owner = members.get(household.ownerMemberId);
@@ -264,7 +281,7 @@ export const identityMethods = {
           throw new DurableStoreError("Kin server membership data is invalid.");
         this.db
           .prepare(
-            "INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status, household_admin, simple_view) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET active = excluded.active, credential_ids = excluded.credential_ids, kind = excluded.kind, expires_at = excluded.expires_at, member_status = excluded.member_status, household_admin = excluded.household_admin, simple_view = excluded.simple_view",
+            "INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status, household_admin, simple_view, username) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET active = excluded.active, credential_ids = excluded.credential_ids, kind = excluded.kind, expires_at = excluded.expires_at, member_status = excluded.member_status, household_admin = excluded.household_admin, simple_view = excluded.simple_view, username = excluded.username",
           )
           .run(
             member.id,
@@ -276,7 +293,16 @@ export const identityMethods = {
             member.memberStatus ?? (member.active ? "active" : "removed"),
             Number(member.householdAdmin === true),
             Number(member.simpleView === true && member.kind === "limited"),
+            member.username ?? null,
           );
+        // The verifier changes only when the password does; it is rewritten
+        // with the member (an upsert of identical values otherwise).
+        if (member.password)
+          this.db
+            .prepare(`INSERT INTO account_passwords (member_id, household_id, kdf_salt, kdf_iterations, verifier, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+              ON CONFLICT (member_id) DO UPDATE SET kdf_salt = excluded.kdf_salt, kdf_iterations = excluded.kdf_iterations,
+                verifier = excluded.verifier, updated_at = excluded.updated_at WHERE account_passwords.household_id = excluded.household_id`)
+            .run(member.id, householdId, member.password.salt, member.password.iterations, member.password.verifier, member.password.updatedAt);
         for (const credentialId of member.credentials) {
           const credential = service.credentials.get(credentialId);
           if (!credential || credential.memberId !== memberId)

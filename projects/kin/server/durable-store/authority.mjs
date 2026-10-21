@@ -87,9 +87,10 @@ export const authorityMethods = {
             snapshot.household.board_policy_revision ?? 0, snapshot.householdId,
           );
         const insertMember = this.db.prepare(
-          `INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status, household_admin, simple_view)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status, household_admin, simple_view, username)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
+             username = excluded.username,
              household_id = excluded.household_id,
              active = excluded.active,
              credential_ids = excluded.credential_ids,
@@ -100,7 +101,7 @@ export const authorityMethods = {
              simple_view = excluded.simple_view`,
         );
         for (const row of snapshot.members)
-          insertMember.run(row.id, row.household_id, row.active, row.credential_ids, row.kind ?? "adult", row.expires_at ?? null, row.member_status ?? (row.active ? "active" : "removed"), row.household_admin ?? 0, row.kind === "limited" ? currentSimpleView.get(row.id) ?? row.simple_view ?? 0 : 0);
+          insertMember.run(row.id, row.household_id, row.active, row.credential_ids, row.kind ?? "adult", row.expires_at ?? null, row.member_status ?? (row.active ? "active" : "removed"), row.household_admin ?? 0, row.kind === "limited" ? currentSimpleView.get(row.id) ?? row.simple_view ?? 0 : 0, row.username ?? null);
         const insertCredential = this.db.prepare(
           "INSERT INTO credentials(id, member_id, credential_json) VALUES (?, ?, ?)",
         );

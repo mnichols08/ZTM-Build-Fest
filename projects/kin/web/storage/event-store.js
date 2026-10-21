@@ -5,6 +5,7 @@ import {
   encryptedDatabase, snapshotStores, protectRows, valuesEqual, compareStoreRows,
 } from "./encrypted-idb.js";
 import { projectionContext } from "../browser-time.js";
+import { hasVerifiedUnlockPath } from "../security/local-vault.js";
 import { bumpEventGeneration as bumpGeneration, EventArena, EVENT_GENERATION_KEY, historyWith } from "./event-arena.js";
 import { rotateEventProtection, resumeEventProtection } from "./root-rotation.js";
 import { nextQuarantine, quarantineRetryItems } from "./quarantine.js";
@@ -231,7 +232,7 @@ export class EventStore {
       return await transactionResult(transaction, (finish) => {
         request.onsuccess = () => {
           if (request.result) { abortWith(transaction, new EventStoreError("Kin already has a local security setup. Unlock the existing store.")); return; }
-          if (manifest?.formatVersion !== 1 || !/^[a-f0-9]{32}$/.test(manifest.vaultId ?? "") || !manifest.verifier || !manifest.wrappers?.some((wrapper) => wrapper.type === "recovery")) {
+          if (manifest?.formatVersion !== 1 || !/^[a-f0-9]{32}$/.test(manifest.vaultId ?? "") || !manifest.verifier || !hasVerifiedUnlockPath(manifest.wrappers)) {
             abortWith(transaction, new EventStoreError("Kin requires a verified recovery path before migration.")); return;
           }
           const record = { ...structuredClone(manifest), key: SECURITY_KEY, phase: "preparing", lockEpoch: 0, configRevision: 0 };
@@ -244,7 +245,7 @@ export class EventStore {
 
   static async updateSecurityManifest(manifest, vault) {
     vault.assertUnlocked();
-    if (manifest.vaultId !== vault.vaultId || !manifest.wrappers?.some((wrapper) => wrapper.type === "recovery"))
+    if (manifest.vaultId !== vault.vaultId || !hasVerifiedUnlockPath(manifest.wrappers))
       throw new EventStoreError("Kin requires the current vault and a verified recovery path.");
     const database = await openEventDatabase();
     try {

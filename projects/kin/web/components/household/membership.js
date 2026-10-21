@@ -3,7 +3,7 @@
 // Part of <kin-household>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
 import { MAX_MEMBER_NAME_CHARS, MEMBER_KIND_LABELS, friendlyDeviceLabel, memberLabels, misleadingMemberName } from "./member-labels.js";
-import { authenticationOptions, credentialJson } from "./auth.js";
+import { confirmWith, freshConfirmation } from "./fresh-confirmation.js";
 
 const MAX_ACTIVE_ADULTS = 4;
 const MAX_ACTIVE_LIMITED = 8;
@@ -307,14 +307,11 @@ export class HouseholdMembership {
                   const started = await this.host.api(`/api/devices/${device.id}/revocation/options`, {
                     method: "POST", body: "{}",
                   });
-                  this.host.message(`Confirm revoking ${displayName} with your passkey.`);
-                  const credential = await navigator.credentials.get({
-                    publicKey: authenticationOptions(started.publicKey),
-                    signal: this.host.connectionAbort.signal,
-                  });
+                  this.host.message(`Confirm revoking ${displayName} with ${confirmWith(started)}.`);
+                  const proof = await freshConfirmation(started, { signal: this.host.connectionAbort.signal });
                   await this.host.api("/api/devices/revocation/finish", {
                     method: "POST",
-                    body: JSON.stringify({ flow: started.flow, credential: credentialJson(credential) }),
+                    body: JSON.stringify({ flow: started.flow, ...proof }),
                   });
                   revoked = true;
                 });
@@ -684,17 +681,11 @@ export class HouseholdMembership {
         method: "POST",
         body: JSON.stringify({ memberId, admin }),
       });
-      this.host.message("Confirm the household admin change with your passkey.");
-      const credential = await navigator.credentials.get({
-        publicKey: authenticationOptions(started.publicKey),
-        signal: this.host.connectionAbort.signal,
-      });
+      this.host.message(`Confirm the household admin change with ${confirmWith(started)}.`);
+      const proof = await freshConfirmation(started, { signal: this.host.connectionAbort.signal });
       await this.host.api("/api/household/admins/finish", {
         method: "POST",
-        body: JSON.stringify({
-          flow: started.flow,
-          credential: credentialJson(credential),
-        }),
+        body: JSON.stringify({ flow: started.flow, ...proof }),
       });
     });
     await this.host.showHousehold();
@@ -714,14 +705,11 @@ export class HouseholdMembership {
         method: "POST",
         body: JSON.stringify({ memberId, simpleView }),
       });
-      this.host.message("Confirm Simple view with your passkey.");
-      const credential = await navigator.credentials.get({
-        publicKey: authenticationOptions(started.publicKey),
-        signal: this.host.connectionAbort.signal,
-      });
+      this.host.message(`Confirm Simple view with ${confirmWith(started)}.`);
+      const proof = await freshConfirmation(started, { signal: this.host.connectionAbort.signal });
       await this.host.api("/api/household/simple-view/finish", {
         method: "POST",
-        body: JSON.stringify({ flow: started.flow, credential: credentialJson(credential) }),
+        body: JSON.stringify({ flow: started.flow, ...proof }),
       });
     });
     await this.host.showHousehold();
@@ -732,16 +720,10 @@ export class HouseholdMembership {
       method: "POST",
       body: JSON.stringify({ memberId }),
     });
-    const credential = await navigator.credentials.get({
-      publicKey: authenticationOptions(started.publicKey),
-      signal: this.host.connectionAbort.signal,
-    });
+    const proof = await freshConfirmation(started, { signal: this.host.connectionAbort.signal });
     await this.host.api("/api/household/membership/remove/finish", {
       method: "POST",
-      body: JSON.stringify({
-        flow: started.flow,
-        credential: credentialJson(credential),
-      }),
+      body: JSON.stringify({ flow: started.flow, ...proof }),
     });
   }
 }

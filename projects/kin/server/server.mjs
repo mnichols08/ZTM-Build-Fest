@@ -596,6 +596,77 @@ async function api(request, response, url, context) {
     json(response, 200, omitToken(result));
     return;
   }
+  // Username and password accounts (ADR 0018, #558). The browser sends
+  // authKey, derived from the password; the password itself never arrives.
+  if (request.method === "POST" && url.pathname === "/api/account/username") {
+    json(response, 200, service.usernameAvailable(body.username, context.clientKey(request)));
+    return;
+  }
+  // The first run checks an invitation code before a password is chosen,
+  // with the same per-client limit as every code attempt.
+  if (request.method === "POST" && url.pathname === "/api/account/invitation") {
+    json(response, 200, service.validatePairingCode(body.code, { rateKey: context.clientKey(request) }));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/bootstrap") {
+    const rateKey = context.clientKey(request);
+    // Refused before any Argon2id work, like the passkey prompt (#157).
+    service.assertBootstrapAllowed(rateKey);
+    const password = await service.preparePassword(body);
+    const result = withTransaction(context, () => service.bootstrap({
+      password,
+      deviceLabel: deviceLabel(body.deviceLabel),
+      syncPublicKeys: body.syncPublicKeys,
+      rateKey,
+    }));
+    cookie(response, "kin_session", result.sessionToken, secureCookies);
+    cookie(response, "kin_device", result.deviceToken, secureCookies, 31_536_000);
+    json(response, 201, omitToken(result));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/claim") {
+    const rateKey = context.clientKey(request);
+    // The code is checked (and a wrong one charged) before any Argon2id work.
+    const pairing = service.validatePairingCode(body.code, { rateKey });
+    if (pairing.purpose !== "adult")
+      throw new PairingError("passkey_required", "Adding a device to an existing member still uses a passkey.", 409);
+    const password = await service.preparePassword(body);
+    if (claimToken) {
+      service.clearClaim(claimToken);
+      clearCookie(response, "kin_claim", secureCookies);
+    }
+    const result = service.claimPairing({
+      code: body.code,
+      password,
+      deviceLabel: deviceLabel(body.deviceLabel),
+      syncPublicKeys: body.syncPublicKeys,
+      rateKey,
+    });
+    cookie(response, "kin_claim", result.claimToken, secureCookies);
+    cookie(response, "kin_device", result.deviceToken, secureCookies, 31_536_000);
+    json(response, 200, omitToken(result));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/login/password") {
+    const result = await service.signInWithPassword({
+      deviceToken,
+      username: body.username,
+      authKey: body.authKey,
+      rateKey: context.clientKey(request),
+    });
+    cookie(response, "kin_session", result.sessionToken, secureCookies);
+    cookie(response, "kin_device", result.deviceToken, secureCookies, 31_536_000);
+    json(response, 200, omitToken(result));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/claim/activate/password") {
+    const result = await service.activateClaimWithPassword(claimToken, body.authKey, context.clientKey(request));
+    cookie(response, "kin_session", result.sessionToken, secureCookies);
+    cookie(response, "kin_device", result.deviceToken, secureCookies, 31_536_000);
+    clearCookie(response, "kin_claim", secureCookies);
+    json(response, 200, omitToken(result));
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/login/options") {
     const { member, device } = service.trustedDevice(deviceToken);
     const issued = issueAuthenticationFlow(
@@ -679,8 +750,10 @@ async function api(request, response, url, context) {
       const flow = consumeFlow(body.flow, context);
       if (flow.purpose !== "link-approve" || flow.requestId !== requestId || flow.memberId !== auth.member.id)
         throw badRequest();
-      const credential = service.credentialForAuthenticatedMember(session, body.credential?.id);
-      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+      await confirmFresh(context, request, auth.member, body, () => {
+        const credential = service.credentialForAuthenticatedMember(session, body.credential?.id);
+        webauthn.verifyAuthentication(body.credential, body.flow, credential);
+      });
       const approved = linked(() => withTransaction(context, () =>
         service.approveLinkRequest(session, requestId, {
           secret: body.secret,
@@ -786,11 +859,13 @@ async function api(request, response, url, context) {
       flow.memberId !== auth.member.id
     )
       throw badRequest();
-    const credential = service.credentialForAuthenticatedMember(
-      session,
-      body.credential?.id,
-    );
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentialForAuthenticatedMember(
+        session,
+        body.credential?.id,
+      );
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const approved = withTransaction(context, () => {
       const result = service.approvePairing(
         session,
@@ -908,10 +983,12 @@ async function api(request, response, url, context) {
     const auth = service.authorize(session);
     if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id)
       throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== auth.member.id)
-      throw new PairingError("passkey_member_mismatch", "Use this Adult's passkey to continue.", 401);
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError("passkey_member_mismatch", "Use this Adult's passkey to continue.", 401);
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const target = service.devices.get(flow.targetDeviceId);
     const alreadyRevoked = Boolean(target?.revokedAt);
     const result = withTransaction(context, () => {
@@ -1270,11 +1347,13 @@ async function api(request, response, url, context) {
       flow.deviceId !== auth.device.id
     )
       throw badRequest();
-    const credential = service.credentialForAuthenticatedMember(
-      session,
-      body.credential?.id,
-    );
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentialForAuthenticatedMember(
+        session,
+        body.credential?.id,
+      );
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const result = withTransaction(context, () =>
       service.requestHouseholdDeletion(session, auth.member.id),
     );
@@ -1338,16 +1417,19 @@ async function api(request, response, url, context) {
       flow.deviceId !== device.id
     )
       throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== member.id)
-      throw new PairingError(
-        "passkey_member_mismatch",
-        "Use this member's passkey to continue.",
-        401,
-      );
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const credential = await confirmFresh(context, request, member, body, () => {
+      const passkey = service.credentials.get(body.credential?.id);
+      if (!passkey || passkey.memberId !== member.id)
+        throw new PairingError(
+          "passkey_member_mismatch",
+          "Use this member's passkey to continue.",
+          401,
+        );
+      webauthn.verifyAuthentication(body.credential, body.flow, passkey);
+      return passkey;
+    });
     const result = withTransaction(context, () =>
-      service.cancelHouseholdDeletion(deviceToken, credential.id),
+      service.cancelHouseholdDeletion(deviceToken, credential?.id, { passwordConfirmed: !credential }),
     );
     cookie(response, "kin_session", result.sessionToken, secureCookies);
     cookie(
@@ -1397,14 +1479,16 @@ async function api(request, response, url, context) {
     const auth = service.authorize(session);
     if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id)
       throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== auth.member.id)
-      throw new PairingError(
-        "passkey_member_mismatch",
-        "Use this member's passkey to continue.",
-        401,
-      );
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError(
+          "passkey_member_mismatch",
+          "Use this member's passkey to continue.",
+          401,
+        );
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const leaving = flow.targetMemberId === auth.member.id;
     const excludedDevices = [...service.devices.values()]
       .filter((device) => device.memberId === flow.targetMemberId)
@@ -1452,14 +1536,16 @@ async function api(request, response, url, context) {
     const auth = service.authorize(session);
     if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id)
       throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== auth.member.id)
-      throw new PairingError(
-        "passkey_member_mismatch",
-        "Use this member's passkey to continue.",
-        401,
-      );
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError(
+          "passkey_member_mismatch",
+          "Use this member's passkey to continue.",
+          401,
+        );
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     json(
       response,
       200,
@@ -1485,10 +1571,12 @@ async function api(request, response, url, context) {
     if (flow.purpose !== "set-simple-view") throw badRequest();
     const auth = service.authorize(session);
     if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== auth.member.id)
-      throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const result = withTransaction(context, () =>
       service.setSimpleView(session, flow.targetMemberId, flow.simpleView, auth.member.id),
     );
@@ -1513,10 +1601,12 @@ async function api(request, response, url, context) {
     if (flow.purpose !== "set-board-policy") throw badRequest();
     const auth = service.authorize(session);
     if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== auth.member.id)
-      throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const result = withTransaction(context, () =>
       service.setBoardPolicy(session, { limited: flow.limited, temporary: flow.temporary }, auth.member.id),
     );
@@ -1539,10 +1629,12 @@ async function api(request, response, url, context) {
     if (flow.purpose !== "set-chat-policy") throw badRequest();
     const auth = service.authorize(session);
     if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
-    const credential = service.credentials.get(body.credential?.id);
-    if (!credential || credential.memberId !== auth.member.id)
-      throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
-    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
     const result = withTransaction(context, () =>
       service.setChatPolicy(session, { limited: flow.limited, temporary: flow.temporary }, auth.member.id),
     );
@@ -1643,15 +1735,37 @@ function issueRegistrationFlow(value, context, { anonymous = false } = {}) {
 function issueAuthenticationFlow(value, credentialIds, context) {
   const flow = createFlow(value, context);
   try {
+    // A member who has no passkey yet confirms with their password (#558):
+    // the options then also carry the parameters their device needs to
+    // derive authKey. Members with a passkey get exactly what they did.
+    const member = value.memberId ? context.service.members.get(value.memberId) : null;
+    const password = context.service.confirmsWithPassword?.(member) ? context.service.passwordParameters(member) : null;
     return {
       flow,
       publicKey: context.webauthn.authenticationOptions(flow, credentialIds),
+      ...(password ? { password } : {}),
     };
   } catch (error) {
     context.flows.delete(flow);
     context.webauthn.discardFlow?.(flow);
     throw error;
   }
+}
+
+/**
+ * A fresh confirmation for a sensitive action. A member with a passkey uses
+ * it: `passkey()` runs the route's own WebAuthn check, unchanged. A member
+ * who has no passkey yet (#558) re-enters their password instead: the body
+ * carries `authKey`, checked against their Argon2id verifier with the
+ * password limits. THREAT-MODEL records this as weaker than a passkey until
+ * one is added. Resolves to what `passkey()` returned, or null.
+ */
+async function confirmFresh(context, request, member, body, passkey) {
+  if (!context.service.confirmsWithPassword(member)) return passkey();
+  if (body.credential !== undefined || typeof body.authKey !== "string") throw badRequest();
+  context.webauthn.discardFlow?.(body.flow);
+  await context.service.verifyFreshPassword(member, body.authKey, context.clientKey(request));
+  return null;
 }
 
 function pruneFlows({ flows, now }) {

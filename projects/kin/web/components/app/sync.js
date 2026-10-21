@@ -142,6 +142,8 @@ export class SyncController {
     if (!this.app.vault || this.app.vault.locked) return;
     if (value.state) { this.app.syncState = value; this.updateSyncChip(); }
     if (value.state === "ready") void this.settlePendingShares();
+    // Names typed at first run are recorded once sync is ready (#557).
+    if (value.state === "ready" && this.app.pendingProfile) void this.ctx.firstRun?.applyProfile();
     if (value.state === "paused") {
       const attention = SYNC_PAUSE_MESSAGES[value.code] ?? value.message;
       if (attention) {
