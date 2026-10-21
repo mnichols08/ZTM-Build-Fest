@@ -34,7 +34,7 @@ export function randomRecoverySecret() {
 export function parseRecoverySecret(value) {
   const normalized = String(value).trim().replaceAll("-", "").replaceAll(" ", "");
   if (!/^[a-fA-F0-9]{64}$/.test(normalized))
-    throw new VaultError("Enter the complete 64-character recovery key.", "recovery_invalid");
+    throw new VaultError("Enter the complete 64-character backup key.", "recovery_invalid");
   return Uint8Array.from(normalized.match(/../g), (part) => Number.parseInt(part, 16));
 }
 
@@ -118,7 +118,7 @@ export class LocalVault {
       return vault;
     } catch (error) {
       vault?.lock();
-      throw new VaultError("Kin could not unlock this household. Check the credential or recovery key; saved data was not changed.", "unlock_failed", error);
+      throw new VaultError("Kin could not unlock this household. Check the passkey or backup key for this device; saved data was not changed.", "unlock_failed", error);
     } finally {
       bytes.fill(0);
       root?.fill(0);

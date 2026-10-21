@@ -31,7 +31,7 @@ export function rotateEventProtection(options, contract) {
           candidateVault.vaultId !== source.vaultId || candidateVault.manifest.rootVersion !== source.rootVersion + 1 ||
           valuesEqual(candidateVault.root, sourceVault.root) ||
           candidateVault.manifest.wrappers?.length !== 1 || candidateVault.manifest.wrappers[0].type !== "recovery")
-        throw failure("Kin requires a fresh root and a new verified recovery key.");
+        throw failure("Kin requires a fresh root and a new verified backup key.");
       if (await candidateVault.open(candidateVault.manifest.verifier, { store: "security", id: "verifier" }) !== "kin-vault-check-v1")
         throw failure("Kin could not verify the candidate local root.");
       const epoch = source.lockEpoch ?? 0, revision = source.configRevision ?? 0;
@@ -71,7 +71,7 @@ export function resumeEventProtection(options, contract) {
       const capabilityEpoch = candidateVault.securityEpoch ?? candidateVault.manifest.lockEpoch ?? 0;
       if (!Number.isSafeInteger(capabilityEpoch) || capabilityEpoch < 0 || capabilityEpoch !== (marker.lockEpoch ?? 0)) {
         candidateVault.lock();
-        throw failure("Kin was locked after this recovery key was verified. Unlock the new recovery key again to resume.", "locked");
+        throw failure("Kin was locked after this backup key was verified. Unlock with the new backup key again to resume.", "locked");
       }
       if (marker.phase === "root-rotating") {
         const rotation = marker.rotation;
@@ -104,7 +104,7 @@ async function continueRotation(database, options, contract, marker) {
     if (!current || !["root-rotating", "root-cleanup"].includes(current.phase) ||
         current.vaultId !== rotation.vaultId || current.rotation?.id !== rotation.id ||
         (current.lockEpoch ?? 0) !== epoch || current.rotation.toRootVersion !== rotation.toRootVersion)
-      throw failure("Kin was locked or local protection changed. Unlock the new recovery key to resume.", "locked");
+      throw failure("Kin was locked or local protection changed. Unlock with the new backup key to resume.", "locked");
     candidateVault.assertUnlocked();
     if (current.phase === "root-rotating") sourceVault?.assertUnlocked();
     return current;

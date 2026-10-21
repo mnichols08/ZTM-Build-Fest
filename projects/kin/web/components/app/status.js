@@ -1,6 +1,7 @@
 // Busy state, status and alert messages, onboarding prompts and app-update notices.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { passkeyUnlockSupported } from "../../security/passkey-unlock.js";
+import { dismissPasskeySuggestion, passkeyOffer, passkeySuggestionDismissed } from "../../security/backup-key-entry.js";
 
 export class StatusController {
   constructor(ctx) {
@@ -90,6 +91,7 @@ export class StatusController {
     const card = this.app.onboarding;
     if (!card || !this.app.vault || this.app.vault.locked) return;
     card.replaceChildren();
+    delete card.dataset.passkeyOffer;
     card.classList.remove("onboarding-compact");
     const todayPage = this.app.pages?.get("today");
     todayPage?.classList.remove("compact-onboarding");
@@ -147,26 +149,51 @@ export class StatusController {
       card.hidden = false;
       return;
     }
-    if (status?.identity && passkeys === 0 && passkeyUnlockSupported() && !this.app.passkeyPromptDismissed) {
-      heading.textContent = "Unlock faster next time";
+    // Passkey unlock, offered once it can work: the device is signed in to a
+    // household (enrolment asks the identity service) and online. Right after
+    // setup it is setup's next step (#577); after a backup-key unlock it is a
+    // one-time suggestion this device remembers dismissing (#579).
+    const offer = passkeyOffer({
+      identity: Boolean(status?.identity),
+      passkeys,
+      supported: passkeyUnlockSupported(),
+      online: !this.app.offline && navigator.onLine !== false,
+      justSetUp: Boolean(this.app.security?.justSetUp),
+      sessionDismissed: Boolean(this.app.passkeyPromptDismissed),
+      suggestionDismissed: passkeySuggestionDismissed(),
+    });
+    if (offer) {
+      card.dataset.passkeyOffer = offer;
+      heading.textContent = offer === "setup"
+        ? "Unlock with your face, fingerprint or screen lock next time?"
+        : "Skip the backup key next time?";
       const intro = document.createElement("p");
-      intro.textContent = "Turn on passkey unlock so your face, fingerprint, or screen lock opens Kin on this device. Your recovery key stays as a backup.";
+      intro.textContent = offer === "setup"
+        ? "Kin can use a passkey on this device instead of the long backup key. The backup key still works if you need it."
+        : "Turn on passkey unlock so your face, fingerprint or screen lock opens Kin on this device. Your backup key still works if you need it.";
       const turnOn = document.createElement("button");
       turnOn.type = "button";
       turnOn.className = "primary-action";
-      turnOn.textContent = "Turn on passkey unlock";
+      turnOn.textContent = offer === "setup" ? "Turn on" : "Turn on passkey unlock";
       turnOn.addEventListener("click", async () => {
         turnOn.disabled = true;
         try {
           await this.app.security.run(() => this.app.security.addPasskey());
-          if (this.app.security.alert.textContent) this.showAlert(this.app.security.alert.textContent);
-          else this.ctx.status.setStatus("Passkey unlock is on for this device.");
+          if (this.app.security.alert.textContent) {
+            // Never a dead end: say what happened and carry on without it.
+            this.app.passkeyPromptDismissed = true;
+            this.showAlert(`Passkey unlock didn't turn on. ${this.app.security.alert.textContent} You can try again under More → Security.`);
+          } else this.ctx.status.setStatus("Passkey unlock is on for this device.");
         } finally { this.renderOnboarding(); }
       });
       const later = document.createElement("button");
       later.type = "button";
       later.textContent = "Not now";
-      later.addEventListener("click", () => { this.app.passkeyPromptDismissed = true; this.renderOnboarding(); });
+      later.addEventListener("click", () => {
+        this.app.passkeyPromptDismissed = true;
+        if (offer === "suggestion") dismissPasskeySuggestion();
+        this.renderOnboarding();
+      });
       card.append(heading, intro, turnOn, later);
       card.hidden = false;
       return;

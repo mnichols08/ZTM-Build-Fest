@@ -43,4 +43,4 @@ export function exportFileName(exportedAt, label) {
 
 /** The one storage rule used wherever exports and recovery keys are mentioned. */
 export const EXPORT_STORAGE_RULE =
-  "Store the export and its recovery key in different places, and write down which key label goes with which export.";
+  "Store the export and its backup key in different places, and write down which key label goes with which export.";

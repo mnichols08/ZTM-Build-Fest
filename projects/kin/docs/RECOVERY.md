@@ -155,6 +155,10 @@ visible countdown/expiry behavior. Revocation and recovery completion require
 explicit confirmation plus WebAuthn approval; activation requires a second
 passkey action on the recovering device.
 
+Screens call the recovery key the **backup key for this device** (#563): each
+device has its own, and the words say so. This document and the code keep
+"recovery key"; the stored format is unchanged.
+
 An export opens only with the recovery key its device had when it was made.
 Each key has a short label (for example `K-7F3A`) shown with the key, in
 Settings, on the export's file name and on the restore screen, and a wrong key
