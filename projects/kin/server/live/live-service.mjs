@@ -595,6 +595,13 @@ export class LiveService {
       if (connection.deviceId !== authorDeviceId && (!chat || this.chatAllowed(connection))) connection.send(LIVE_TYPE.SYNC_HINT);
   }
 
+  /** New events in a member's private stream (#491): tell that member's
+   * other devices only, so no one else's device learns when they happen. */
+  memberEventsAccepted(householdId, memberId, authorDeviceId) {
+    for (const connection of this.households.get(householdId) ?? [])
+      if (connection.memberId === memberId && connection.deviceId !== authorDeviceId) connection.send(LIVE_TYPE.SYNC_HINT);
+  }
+
   /** A member's read-receipt slot changed: tell the household's other
    * chat-allowed devices to fetch the slots. */
   receiptsChanged(householdId, authorDeviceId) {

@@ -35,6 +35,10 @@ kin_board_history_append(ptr, len)   append a board record batch to the fridge l
 kin_board_history_truncate(count) -> status   keep the fridge log's first `count`
 kin_board_execute(ptr, len)          fridge command: length + KCMD (52–58) + KINE context -> KCMT
 kin_board_state(ptr, len)            replay the fridge log: KINE context -> KBRD
+kin_private_history_reset() -> status   empty the member's private log (#489)
+kin_private_history_append(ptr, len)    append a private record batch to the private log
+kin_private_history_truncate(count) -> status   keep the private log's first `count`
+kin_private_state(ptr, len)          replay the private log: KINE context -> KPRV
 kin_execute(ptr, len)                command: length + KCMD + KINE context -> KCMT
 kin_encode_command(ptr, len)         KCMD -> canonical event bytes
 kin_event_metadata(ptr, len)         one canonical event -> KMET
@@ -125,6 +129,18 @@ mention may name, #130), then a record-less
 KINE context. It publishes KCMT with an empty projection: a chat event changes
 no projection, and applying it to a copy of the chat would copy all of it. `kin_chat_page` and `kin_chat_text` read the
 chat log and the text arena (side formats below).
+
+**The private log (#489, [ADR 0019](decisions/0019-member-private-log.md)).**
+A fourth history holds the unlocked member's private records (kinds
+100–199), with the same layout, batches, checkpoint and mirror
+(`kin_private_history_*`). Every other history, and a whole KINE request,
+refuses a private record with code 4; the private log refuses every other
+kind the same way. It holds up to 50,000 records and 64 MiB, and every record
+in it must have the same header actor (the member): a second author fails
+replay with code 4. `kin_private_state` takes a record-less KINE context and
+publishes KPRV (side formats below). There is no private command export yet:
+the stories that add private records add it. `kin_clear` empties the private
+log with the others.
 
 Records stay where they were appended: the history keeps one buffer and an
 `(offset, length)` span per record, and reads them as `EventView`s
@@ -262,6 +278,7 @@ N  payload
 | 68 | ROUTINE_ROTATION_SET (#429) | routine ID [16] (non-zero), member count u8 (0, or 2–12), current index u8 (below the count; 0 when the count is 0), reserved u16, then each member ID [16] (non-zero, no repeats): 20 + 16 × count bytes. An empty list ends the rotation |
 | 69 | ROUTINE_TURN_SET (#429) | routine ID [16] (non-zero), member ID [16] (non-zero): 32 bytes |
 | 70 | SITTER_PAGE_SET (#442) | entry count u16 (0–30), reserved u16, then each entry: kind u8 (1 note, 2 reference record, 3 routine), 3 reserved, record ID [16] (non-zero; no entry twice); then the intro (u16 length + UTF-8; trimmed, 0–500 bytes, no controls but newline) |
+| 100 | PRIVATE_NOTE_SET (#489, private log) | note ID [16] (non-zero), text length u32 (0 removes the note; at most 2,048 bytes), UTF-8 text (no control characters except line feed). A placeholder until the journal, list and reminder stories add their kinds; 101–199 are reserved for private records and fail with code 3 until defined |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -495,6 +512,15 @@ tuned for printed codes under heavy blur.
   payload and a zero entity ID; action 43 (`nickname-device`) carries the
   target device as its entity ID and the nickname as its payload (empty
   clears). Executing either rejects a name that would change nothing.
+- **KPRV v1** (a member's private projection, `kin_private_state`, #489,
+  [ADR 0019](decisions/0019-member-private-log.md)): `"KPRV"`, version 1,
+  reserved u16, member ID (16 bytes, zero while the log is empty), record
+  count u32, section count u16, reserved u16; then each section: code u16,
+  reserved u16, byte length u32, bytes. Sections ascend by code, each at most
+  once, and a reader skips codes it doesn't know: later stories extend KPRV by
+  adding sections. Section 1 (notes, the placeholder kind 100): note count
+  u32, then each note in ascending ID order: ID [16], logical time u64,
+  device ID [16], text length u32, text. `web/wasm/kin-private.js` decodes it.
 - **KBRD v1** (the fridge, `kin_board_state`, #317, [ADR 0011](decisions/0011-family-fridge.md)):
   `"KBRD"`, version 1, reserved u16, visible stroke count u32, visible magnet
   count u32, open-clear flag u8 + 3 reserved, open clear ID (16 bytes, zero

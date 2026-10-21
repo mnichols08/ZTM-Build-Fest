@@ -570,6 +570,61 @@ epoch (there is no board key).
   (`durable-store/stream-events.mjs` serves both). Household deletion purges
   them with the rest.
 
+## Private relay (#489)
+
+A member's private events (kinds 100–199, [ADR 0019](decisions/0019-member-private-log.md))
+travel in a fourth stream, `server/private-relay-service.mjs`, **keyed by
+member instead of household**, through the same shared core
+(`server/event-stream.mjs`, which takes the stream key, envelope check and
+oldest readable epoch from each stream): the device's own envelopes only;
+a gapless per-device private sequence counted apart from every other
+stream; identical-bytes idempotency; the logical-time advance bound on the
+member stream's own clock. Private events are sealed under the **member
+key** (MK), not a household key epoch: the envelope's `keyEpoch` is an MK
+epoch (1–128), which the service can only range-check, and every page shows
+every epoch, since all of them are the member's own.
+
+- **Routes.** `POST /api/private/events` takes a KSEV batch (at most 20
+  envelopes); `GET /api/private/events?cursor=&limit=` returns a KSEP page of
+  at most 200; `GET /api/private/status` returns `{ deviceSequence,
+  latestCursor, events, eventLimit }`. No route names a member: each request
+  reaches the session's own member's stream. Pushes need household sync set
+  up (`private_sync_unavailable`, 409); a pending household key rotation
+  doesn't pause them, since the member key is apart.
+- **Who.** Only the member's own trusted devices. Another member's device,
+  an admin's included, reaches only its own stream and can't post an envelope
+  naming any device but its own (`event_envelope_invalid`); a removed member
+  or a revoked device has no session; Temporary members are refused
+  (`private_unavailable`, 403); Limited members are refused
+  (`private_off`, 403) while the household admin has turned **private storage
+  for children and teens** off (`/api/household/private-policy/options` and
+  `/finish`, a fresh passkey like "Who can chat", schema 22, default on).
+  `GET /api/sync/status` carries `private.access` (`write` or `none`), and
+  `private.policy.limited` for an admin; `GET /api/household/settings` carries
+  `privatePolicy` for an admin.
+- **Limits.** 50,000 private events per member (`private_limit`, 413, the
+  engine's private log cap) and 120 per device per minute
+  (`private_rate_limited`, 429); a retry of events already held is free.
+- **Hints.** An accepted batch sends the live sync hint to **the member's own
+  other devices only**, so no one else's device learns when they write. No
+  push notification.
+- **Storage and purge.** Server schema 22 adds `private_relay_state`,
+  `private_events` and `private_device_sequences` keyed by member (each with
+  the member's household; no foreign key to members, like the account vault),
+  served by `durable-store/private-events.mjs`. Removing a member purges their
+  stream in the removal's transaction; household deletion purges every
+  member's stream with the rest.
+- **The device side.** `web/private/private-log.js` runs a private pass after
+  the board pass in the sync coordinator, and only once the member key is on
+  the device: it starts a new MK epoch if one of the member's devices was
+  revoked after the newest epoch was made (the device directory each pass
+  reads says so), pushes pending envelopes (resealing any under an older
+  epoch), then pulls and authenticates each event: signed by one of **this
+  member's** devices (its verified key history), not by a device revoked
+  before the epoch it uses, a private kind, and the same identity inside as
+  out. The member key comes from the account vault
+  ([CRYPTOGRAPHY](CRYPTOGRAPHY.md#member-key-and-private-envelopes-adr-0019)).
+
 ## Chat relay (v1.1, #111)
 
 Chat events are canonical events in the same signed, encrypted envelopes as

@@ -74,6 +74,8 @@ struct AbiState {
     chat_texts: crate::chat::ChatTexts,
     /// The fridge log (#317, board.rs), apart from the other two.
     board_history: History,
+    /// The unlocked member's private log (#489, private.rs).
+    private_history: History,
     result: Vec<u8>,
     error: Vec<u8>,
     /// Where `result` holds a projection, when it does.
@@ -93,6 +95,7 @@ impl AbiState {
             chat_history: History::chat(),
             chat_texts: crate::chat::ChatTexts::new(),
             board_history: History::board(),
+            private_history: History::private(),
             result: Vec::new(),
             error: Vec::new(),
             projection: None,
@@ -139,6 +142,7 @@ impl AbiState {
         self.chat_history.clear();
         self.chat_texts.clear();
         self.board_history.clear();
+        self.private_history.clear();
         self.result = Vec::new();
         self.error = Vec::new();
         self.projection = None;
@@ -492,6 +496,38 @@ pub extern "C" fn kin_board_state(pointer: u32, length: u32) -> i32 {
     run_board(pointer, length, crate::core::board_state)
 }
 
+/// Empties the instance's private log (#489). Always succeeds.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_private_history_reset() -> i32 {
+    lock_state().private_history.clear();
+    0
+}
+
+/// Appends a batch of private records to the private log, as
+/// `kin_history_append` does; every log refuses the others' events.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_private_history_append(pointer: u32, length: u32) -> i32 {
+    run_private(pointer, length, |input, private| {
+        private.append(input).map(|()| Vec::new())
+    })
+}
+
+/// Keeps the private log's first `count` records.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_private_history_truncate(count: u32) -> i32 {
+    match lock_state().private_history.truncate(count as usize) {
+        Ok(()) => 0,
+        Err(error) => error.code(),
+    }
+}
+
+/// The member's private projection: a record-less KINE context against the
+/// private log; publishes KPRV (private.rs).
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_private_state(pointer: u32, length: u32) -> i32 {
+    run_private(pointer, length, crate::core::private_state)
+}
+
 /// Reduces decoded voice-message samples to 64 waveform peaks (#134):
 /// KAPQ -> KAPR. Touches no household or chat state.
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
@@ -621,12 +657,26 @@ fn run_board(
     )
 }
 
+fn run_private(
+    pointer: u32,
+    length: u32,
+    operation: impl FnOnce(&[u8], &mut History) -> Result<Vec<u8>, KinError>,
+) -> i32 {
+    run_parts(
+        pointer,
+        length,
+        |input, parts| operation(input, parts.private_history),
+        None,
+    )
+}
+
 /// The instance's logs and arena, borrowed for one operation.
 struct Parts<'a> {
     history: &'a mut History,
     chat_history: &'a mut History,
     chat_texts: &'a mut crate::chat::ChatTexts,
     board_history: &'a mut History,
+    private_history: &'a mut History,
 }
 
 fn run_parts(
@@ -644,6 +694,7 @@ fn run_parts(
         chat_history,
         chat_texts,
         board_history,
+        private_history,
         ..
     } = &mut *state;
     let outcome = if !request_length_is_supported(length) {
@@ -664,6 +715,7 @@ fn run_parts(
                             chat_history,
                             chat_texts,
                             board_history,
+                            private_history,
                         },
                     )
                 }
@@ -842,6 +894,30 @@ mod tests {
         state.clear();
         assert!(state.chat_history.is_empty());
         assert!(state.chat_texts.is_empty());
+    }
+
+    #[test]
+    fn clearing_drops_the_private_log_too() {
+        let mut state = AbiState::new();
+        let mut note = vec![0u8; 88 + 21];
+        note[..2].copy_from_slice(&1u16.to_le_bytes());
+        note[2..4].copy_from_slice(&crate::private::PRIVATE_NOTE_SET.to_le_bytes());
+        for range in [4..20, 20..36, 36..52, 52..68] {
+            note[range].fill(0x11);
+        }
+        note[68..76].copy_from_slice(&1_791_475_200_000i64.to_le_bytes());
+        note[76..84].copy_from_slice(&1u64.to_le_bytes());
+        note[84..88].copy_from_slice(&21u32.to_le_bytes());
+        note[88..104].fill(0x07);
+        note[104..108].copy_from_slice(&1u32.to_le_bytes());
+        note[108] = b'x';
+        let mut batch = 1u32.to_le_bytes().to_vec();
+        batch.extend_from_slice(&(note.len() as u32).to_le_bytes());
+        batch.extend_from_slice(&note);
+        state.private_history.append(&batch).unwrap();
+        assert_eq!(state.private_history.len(), 1);
+        state.clear();
+        assert!(state.private_history.is_empty());
     }
 
     #[test]

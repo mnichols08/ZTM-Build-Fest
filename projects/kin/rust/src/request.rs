@@ -108,8 +108,9 @@ impl DecodedRequest {
             return Err(KinError::SizeLimit);
         }
         let event = self.decode_bound(record)?;
-        // A household request never carries chat or board events (history.rs).
-        if event.kind.is_chat() || event.kind.is_board() {
+        // A household request never carries chat, board or private events
+        // (history.rs).
+        if event.kind.is_chat() || event.kind.is_board() || event.kind.is_private() {
             return Err(KinError::InvalidEvent);
         }
         self.events.push(event);

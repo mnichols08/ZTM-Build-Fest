@@ -61,7 +61,7 @@ export function vaultApi(request = fetchJson) {
 
 /**
  * Merges `local` (vault contents: `{ epochs, certificationKey?,
- * privateStorageKey? }`) into the member's vault and uploads a new version
+ * memberKeys? }`) into the member's vault and uploads a new version
  * when that adds anything. `current` is a known `{ version, ciphertext }`
  * (from an earlier download or upload) to start from instead of
  * downloading. Returns `{ status, version, ciphertext }`, where status is
