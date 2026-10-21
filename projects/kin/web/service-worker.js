@@ -11,6 +11,8 @@ const SHELL = [
   // Not the manifest or /install-icon/*: they depend on the household that
   // published an install identity (#78), so they always come from the network.
   "/", "/index.html", "/styles/app.css", "/icon.svg",
+  // The public privacy policy (#541), readable offline from the app.
+  "/privacy.html",
   // Kin's own PNG app and shortcut icons (#473); scripts/render-icons.mjs.
   ...["icon-192", "icon-512", "icon-maskable-512"].map((name) => `/icons/${name}.png`),
   ...["add-shopping", "add-task", "new-journal-entry", "week", "shopping", "chat", "today"].flatMap((name) => [96, 192].map((size) => `/icons/shortcut-${name}-${size}.png`)),

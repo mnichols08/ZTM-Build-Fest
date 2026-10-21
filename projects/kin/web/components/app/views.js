@@ -347,7 +347,15 @@ export class ViewBuilder {
     const privacyLead = document.createElement("p");
     privacyLead.className = "section-hint";
     privacyLead.textContent = "Your household is encrypted on this device. Lock Kin whenever you step away; closing the tab always locks it.";
-    privacyPage.append(privacyLead);
+    // The public privacy policy (#541), in a new tab so this one stays
+    // unlocked; the service worker keeps it for offline reading.
+    const policy = document.createElement("p");
+    policy.className = "section-hint privacy-policy-link";
+    const policyLink = Object.assign(document.createElement("a"), {
+      href: "/privacy.html", target: "_blank", rel: "noopener", textContent: "Read Kin's privacy policy",
+    });
+    policy.append(policyLink, " — what stays on your devices, what Kin's service stores and sees, and how to delete it.");
+    privacyPage.append(privacyLead, policy);
     this.app.privacyPage = privacyPage;
     // Kept for callers that still address the former More security block.
     this.app.moreSecurity = privacyPage;

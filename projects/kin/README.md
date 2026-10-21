@@ -195,6 +195,19 @@ First setup generates a recovery secret that must be confirmed and stored separa
 
 Sync is off until an authenticated adult enables it. The v0.11 implementation candidate persists identity, relay ciphertext, cursors and provisioning state in SQLite; sessions, incomplete pairing and passkey flows remain process-local and expire on restart. Device-token verifiers persist, but raw tokens and private keys do not. A new/replacement adult cannot receive pre-join epochs. Existing adults can pair another device after comparing fingerprints. Encryption does not protect a compromised unlocked runtime, origin, privileged extension or OS. This prototype has not received an independent security audit.
 
+## Privacy policy
+
+Kin's public, plain-language privacy policy is [`web/privacy.html`](web/privacy.html),
+served at `/privacy.html` (for the hosted service,
+<https://kin.journeytocode.io/privacy.html>) and linked from Household ›
+Privacy & recovery. It is the policy URL for the Google Play listing; keep it
+accurate to [PRIVACY](docs/PRIVACY.md), the [threat model](docs/THREAT-MODEL.md)
+and [RETENTION](docs/RETENTION.md). A self-hosted server serves the same page,
+which names the hosted service: an operator should publish their own.
+The Play listing and Data safety answers are in
+[PLAY-LISTING](docs/PLAY-LISTING.md); releasing to Play is in
+[PLAY-RELEASE](docs/PLAY-RELEASE.md).
+
 ## AI usage
 
 AI-assisted development tools are used for brainstorming, product planning, architecture exploration, documentation, implementation support, debugging, and testing. Kin has no AI runtime or analytics, and household data is not sent to an AI service. When sync is explicitly enabled, the service receives encrypted event envelopes and limited routing metadata, never plaintext household semantics or content keys.
