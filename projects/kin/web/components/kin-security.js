@@ -1,10 +1,12 @@
 import { EventStore } from "../storage/event-store.js";
 import { discardValidatedHouseholdArchive } from "../security/archive.js";
+import { takeStartOverSignIn } from "../security/start-over.js";
 import { button, section, text } from "./shared/dom.js";
 import { OperationGuard } from "./shared/operation.js";
 import { SecurityAccount } from "./security/account.js";
 import { SecurityArchive } from "./security/archive.js";
 import { SecurityFirstRun } from "./security/first-run.js";
+import { SecurityPrivateExport } from "./security/private-export.js";
 import { SecurityProtection } from "./security/protection.js";
 import { SecuritySignIn } from "./security/sign-in.js";
 import { SecurityUnlock } from "./security/unlock.js";
@@ -26,6 +28,7 @@ const PARTS = {
   firstRun: SecurityFirstRun,
   signIn: SecuritySignIn,
   account: SecurityAccount,
+  privateExport: SecurityPrivateExport,
 };
 
 class KinSecurity extends HTMLElement {
@@ -65,6 +68,10 @@ class KinSecurity extends HTMLElement {
     this.legacySetup = false;
     // Presentation only: the person chose "Sign in" on the first run (#568).
     this.signingIn = false;
+    // A password changed on another device (#560 follow-up): `{ vault,
+    // parameters, username }` while the new password is asked for, or
+    // `{ keys, username }` while the previous one is.
+    this.passwordChange = null;
   }
 
   get busy() { return this.operations.busy; }
@@ -78,6 +85,11 @@ class KinSecurity extends HTMLElement {
       const manifest = await EventStore.securityStatus();
       if (operation !== this.operation) return;
       this.manifest = manifest;
+      // Right after "Start over on this browser": straight to Sign in.
+      if (!manifest && takeStartOverSignIn()) {
+        this.signingIn = true;
+        this.ctx.signIn.reset();
+      }
       this.render();
       // A refresh of an unlocked tab picks up where it was (#351).
       const resumed = await this.services?.takeReloadResume?.(() => EventStore.securityStatus());
@@ -102,6 +114,8 @@ class KinSecurity extends HTMLElement {
     this.phase = "locked";
     this.recoveryExpanded = false;
     this.justSetUp = false;
+    // A vault the previous password opened while the new one was asked for.
+    this.ctx.unlock.cancelPasswordChange();
     // An open account flow (a backup code on screen) ends with the lock.
     this.ctx.account.wipeFlow();
     this.ctx.account.security = null;
@@ -144,9 +158,11 @@ class KinSecurity extends HTMLElement {
   showSetup(...args) { return this.ctx.protection.showSetup(...args); }
   unlockPasskey(...args) { return this.ctx.unlock.unlockPasskey(...args); }
   unlockPassword(...args) { return this.ctx.unlock.unlockPassword(...args); }
+  unlockNewPassword(...args) { return this.ctx.unlock.unlockNewPassword(...args); }
   get firstRun() { return this.ctx.firstRun; }
   get signIn() { return this.ctx.signIn; }
   get account() { return this.ctx.account; }
+  get privateExport() { return this.ctx.privateExport; }
   unlockRecovery(...args) { return this.ctx.unlock.unlockRecovery(...args); }
   render(...args) { return this.ctx.views.render(...args); }
 }

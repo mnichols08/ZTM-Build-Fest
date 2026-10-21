@@ -17,6 +17,7 @@ import {
   backupCodeChange,
   newPrfSalt,
   passwordChangeWrappers,
+  removePasskeyChange,
   requireBothChange,
   wrapperChangeBody,
 } from "./account-wrappers.js";
@@ -37,7 +38,11 @@ export function accountState(security) {
   const backup = wrappers.find((wrapper) => wrapper.type === "backup-code") ?? null;
   return {
     ...state,
-    account: Boolean(security?.password && security?.vault),
+    // An account this device can change: the member has a password and a
+    // vault, and (when the panel said so) this device keeps the vault key.
+    // A device set up the old way, of a member who moved to an account on
+    // another device, isn't one until it finishes the move (#575).
+    account: Boolean(security?.password && security?.vault) && security?.deviceHoldsVaultKey !== false,
     passkeys: security?.passkeys ?? [],
     // A passkey registered but not (or no longer) opening the vault: after
     // a passkey without PRF, or a backup-code sign-in that dropped the
@@ -178,6 +183,40 @@ export async function changeAccountPassword({ current, next, security, identity,
     return await localVault.replacePasswordWrapper(kek, { salt: toBase64Url(salt), iterations, username: security.username ?? undefined });
   } finally {
     wipe(keys.authKey, keys.passwordKey, fresh?.authKey, fresh?.passwordKey, asserted?.first, kek);
+  }
+}
+
+/**
+ * Removes one of the member's passkeys (#592 follow-up), after the
+ * password: its vault wrappers go (and, for the last passkey, a password
+ * wrapper comes back) with the service's record of it, in one request.
+ * This device's own unlock with that passkey goes too; if that was its only
+ * way in (a device set up with the passkey alone), the password unlocks it
+ * from now on instead. Resolves to the local manifest to save, or null.
+ */
+export async function removeAccountPasskey({ password, credentialId, security, identity, vaultKey, localVault, request = signInRequest }) {
+  if (!(security?.passkeys ?? []).includes(credentialId))
+    throw new VaultError("That passkey isn't on your account any more.", "credential_unavailable");
+  const keys = await currentPasswordKeys(password, security);
+  let kek = null;
+  try {
+    const change = await removePasskeyChange({ vaultKey, ...context(identity), wrappers: security.vault?.wrappers ?? [], credentialId,
+      passwordKey: keys.passwordKey, password: { salt: keys.salt, iterations: keys.iterations } });
+    const body = { currentAuthKey: toBase64Url(keys.authKey), credentialId };
+    if (change.put.length || change.remove.length) body.vaultChange = wrapperChangeBody(change);
+    await request("/api/account/passkeys/remove", body);
+    const local = localVault.manifest.wrappers.filter((wrapper) => wrapper.type === "prf" && wrapper.credentialId === credentialId);
+    if (!local.length) return null;
+    let manifest = null;
+    // The passkey was this device's only way in: the password takes over.
+    if (!localVault.manifest.wrappers.some((wrapper) => wrapper.type === "recovery" || wrapper.type === "password")) {
+      kek = await localPasswordKek(keys.passwordKey);
+      manifest = await localVault.addPasswordWrapper(kek, { salt: toBase64Url(keys.salt), iterations: keys.iterations, username: security.username ?? undefined });
+    }
+    for (const wrapper of local) manifest = localVault.removeWrapper(wrapper.id);
+    return manifest;
+  } finally {
+    wipe(keys.authKey, keys.passwordKey, kek);
   }
 }
 

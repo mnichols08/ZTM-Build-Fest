@@ -60,6 +60,7 @@ import { accountSecurityRegressions } from "./account-security-regression.mjs";
 import { justForMeRegressions } from "./just-for-me-regression.mjs";
 import { syncedPrefsRegressions } from "./synced-prefs-regression.mjs";
 import { journalRegressions } from "./journal-regression.mjs";
+import { accountMigrationRegressions } from "./account-migration-regression.mjs";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -2999,6 +3000,11 @@ try {
   // The journal (#496) through the same real password flow, on its own
   // origin: private storage opens with the vault key sign-up keeps.
   if (REGRESSION_PART !== "1") console.log(await journalRegressions({ endpoint, browserClient }));
+  // Finishing epic #546 and #480: a household set up the old way moves to an
+  // account and signs in on a fresh browser, offline passkey unlock, the
+  // member's own private export, start over, remove passkey and a password
+  // changed elsewhere, with a virtual authenticator on its own service.
+  if (REGRESSION_PART !== "1") console.log(await accountMigrationRegressions({ endpoint, browserClient }));
 } catch (error) {
   // Before the browser closes: what each page showed (#328).
   await captureFailure("browser regression");

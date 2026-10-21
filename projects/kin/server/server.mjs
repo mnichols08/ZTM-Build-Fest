@@ -1304,13 +1304,66 @@ async function api(request, response, url, context) {
     json(response, 200, context.accountVaultService.upload(syncService.authorize(session), body));
     return;
   }
+  // One wrapper at a time (hardening after #561/#572): like every other
+  // change to how the vault opens, these need the current password, fresh
+  // (`currentAuthKey`), or a fresh passkey (`flow` and `credential` from
+  // /api/account/confirm/options). A session alone, say a browser left
+  // signed in, can't add a way into the vault or take one away.
   const vaultWrapper = ACCOUNT_VAULT_WRAPPER_ROUTE.exec({ pathname: url.pathname })?.pathname.groups.id ?? null;
-  if (vaultWrapper && request.method === "PUT") {
-    json(response, 200, context.accountVaultService.putWrapper(syncService.authorize(session), vaultWrapper, body));
+  if (vaultWrapper && (request.method === "PUT" || request.method === "DELETE")) {
+    syncService.authorize(session);
+    const auth = await confirmAccountChange(context, request, session, body);
+    const { currentAuthKey: _current, flow: _flow, credential: _credential, ...wrapper } = body;
+    json(response, 200, request.method === "PUT"
+      ? context.accountVaultService.putWrapper(auth, vaultWrapper, wrapper)
+      : context.accountVaultService.removeWrapper(auth, vaultWrapper));
     return;
   }
-  if (vaultWrapper && request.method === "DELETE") {
-    json(response, 200, context.accountVaultService.removeWrapper(syncService.authorize(session), vaultWrapper));
+  // A fresh passkey confirmation for an account change (the per-wrapper
+  // routes above). A member without a passkey gets the password parameters
+  // instead, as every fresh confirmation does.
+  if (url.pathname === "/api/account/confirm/options" && request.method === "POST") {
+    const auth = service.authorize(session);
+    json(response, 200, issueAuthenticationFlow({ purpose: "account-confirm", memberId: auth.member.id, deviceId: auth.device.id },
+      [...auth.member.credentials], context));
+    return;
+  }
+  // Moving a member set up the old way (passkey and per-device backup key)
+  // to an account (#575): a fresh assertion of their passkey, then a
+  // username and password. The same touch gives the device the passkey's
+  // PRF output for the vault wrapper; the service never sees it.
+  if (url.pathname === "/api/account/migrate/options" && request.method === "POST") {
+    const auth = service.authorize(session);
+    service.assertAccountMigratable(auth.member);
+    json(response, 200, issueAuthenticationFlow({ purpose: "account-migrate", memberId: auth.member.id, deviceId: auth.device.id },
+      [...auth.member.credentials], context));
+    return;
+  }
+  if (url.pathname === "/api/account/migrate/finish" && request.method === "POST") {
+    const flow = consumeFlow(body.flow, context);
+    const auth = service.authorize(session);
+    if (flow.purpose !== "account-migrate" || flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = service.credentials.get(body.credential?.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError("passkey_member_mismatch", "Use your own passkey to continue.", 401);
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    service.assertAccountMigratable(auth.member);
+    const prepared = await service.preparePassword(body);
+    json(response, 200, withTransaction(context, () => service.migrateAccount(service.authorize(session), prepared)));
+    return;
+  }
+  // Removing one of the member's passkeys (#592 follow-up): the vault
+  // wrappers that named it go (and, for the last passkey, a password
+  // wrapper comes back) in the same transaction, after the password.
+  if (url.pathname === "/api/account/passkeys/remove" && request.method === "POST") {
+    syncService.authorize(session);
+    const vaultChange = body.vaultChange ? context.accountVaultService.parseChange(body.vaultChange) : null;
+    const auth = await service.confirmAccountPassword(session, body.currentAuthKey, context.clientKey(request));
+    json(response, 200, withTransaction(context, () => {
+      if (vaultChange) context.accountVaultService.applyChange(auth, vaultChange);
+      return service.removeAccountPasskey(auth, body.credentialId,
+        context.accountVaultService.wrapperSummary(auth.household.id, auth.member.id));
+    }));
     return;
   }
   // A member's own account security (ADR 0018, #560/#571). Every change
@@ -2064,6 +2117,32 @@ async function confirmFresh(context, request, member, body, passkey) {
   context.webauthn.discardFlow?.(body.flow);
   await context.service.verifyFreshPassword(member, body.authKey, context.clientKey(request));
   return null;
+}
+
+/**
+ * A fresh confirmation for a change to how the member's vault opens: the
+ * current password (`currentAuthKey`, checked with the password limits), or
+ * a fresh passkey assertion (`flow` from /api/account/confirm/options and
+ * `credential`). Resolves to the session's authorization afterwards; a body
+ * with neither is refused (`fresh_auth_required`, 401).
+ */
+async function confirmAccountChange(context, request, session, body) {
+  const { service } = context;
+  if (typeof body.currentAuthKey === "string")
+    return service.confirmAccountPassword(session, body.currentAuthKey, context.clientKey(request));
+  if (typeof body.flow === "string" && body.credential && typeof body.credential === "object") {
+    const flow = consumeFlow(body.flow, context);
+    const auth = service.authorize(session);
+    if (flow.purpose !== "account-confirm" || flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = service.credentials.get(body.credential.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError("passkey_member_mismatch", "Use your own passkey to continue.", 401);
+    context.webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    // The verified signature counter is kept, as for any passkey sign-in.
+    withTransaction(context, () => service.persistHousehold(auth.household.id));
+    return service.authorize(session);
+  }
+  throw new PairingError("fresh_auth_required", "Confirm with your password or your passkey to change how your account opens.", 401);
 }
 
 function pruneFlows({ flows, now }) {

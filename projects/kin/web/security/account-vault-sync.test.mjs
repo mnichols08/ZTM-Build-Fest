@@ -147,14 +147,18 @@ test("vaultApi speaks the service's JSON with base64url bytes", async () => {
   assert.deepEqual(downloaded.vault.ciphertext, ciphertext);
   assert.deepEqual(downloaded.wrappers[0].wrapped, wrapped);
   await api.upload({ expectedVersion: 3, ciphertext });
-  await api.putWrapper({ wrapperId: "2".repeat(32), type: "backup-code", version: 1, params: {}, wrapped });
-  await api.removeWrapper("2".repeat(32));
+  await api.putWrapper({ wrapperId: "2".repeat(32), type: "backup-code", version: 1, params: {}, wrapped }, { currentAuthKey: "A".repeat(43), extra: "dropped" });
+  await api.removeWrapper("2".repeat(32), { flow: "flow-1", credential: { id: "cred" } });
   assert.throws(() => api.removeWrapper("../x"));
   assert.deepEqual(calls.slice(1).map(([path, method]) => [path, method]), [
     ["/api/account/vault", "PUT"], [`/api/account/vault/wrappers/${"2".repeat(32)}`, "PUT"], [`/api/account/vault/wrappers/${"2".repeat(32)}`, "DELETE"],
   ]);
   assert.deepEqual(calls[1][2], { expectedVersion: 3, ciphertext: "S1ZMVAECAw" });
   assert.equal(calls[2][2].wrapped.length, 82);
+  // The per-wrapper routes carry the fresh confirmation the service asks for (#592 follow-up).
+  assert.equal(calls[2][2].currentAuthKey, "A".repeat(43));
+  assert.equal(calls[2][2].extra, undefined);
+  assert.deepEqual(calls[3][2], { flow: "flow-1", credential: { id: "cred" } });
 });
 
 /** Just enough of IndexedDB for SyncKeyStore.saveEpoch: one epochs store. */
