@@ -232,6 +232,17 @@ chosen again. The member's preferred display name, typed at
 first run, is a household event like before: encrypted, never seen by the
 service.
 
+A member set up the old way who moves to an account (#575) gives the service
+the same things, from then on: a username, the password's verifier and
+parameters, and an account vault (`account_migrated` in the audit log); the
+service still never sees the password, the passkey's PRF output or the
+vault key. Members who decline give it nothing new. "Not now" on the Today
+invitation is remembered on that device only (a date in browser storage).
+
+"Start over on this browser" (#592 follow-up) removes Kin's databases and
+storage entries from that browser and ends its session; the service learns
+only that the session ended, and later that the member signed in again.
+
 **Private storage for each member (ADR 0019, #489).** A member's private
 things (the journal, "Just for me", reminders that follow them) are sealed
 under a member key that only their own devices hold, read from their account
@@ -247,7 +258,10 @@ that only stops the service relaying it, and nobody gains access to what is
 already on the child's devices. Temporary members have none. Removing a
 member deletes their private stream on the service; deleting the household
 deletes every member's. Copies on the member's own devices stay, as for
-household data. Household exports never include private logs. Reminders and
+household data. Household exports never include private logs; a member saves
+their own private things in a separate file only they can open (#493,
+PORTABILITY "A member's private things"), made on their device and never sent
+to the service, and restorable only for themselves. Reminders and
 settings that follow a member (#520) make the member key on the member's
 first private change: a reminder, or a setting changed from Kin's default
 (a device that already has some brings them the first time it opens with

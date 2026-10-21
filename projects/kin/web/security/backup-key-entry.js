@@ -112,6 +112,35 @@ export function accountOffer({ state, supported, online, hasContent, now = Date.
   return null;
 }
 
+export const ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY = "kin.account-migrate-offer-dismissed";
+/** "Not now" on the move to an account (#575) holds for a week. */
+export const MIGRATE_OFFER_AGAIN_AFTER_MS = 7 * 24 * 60 * 60_000;
+
+/** When an offer was last dismissed on this device (milliseconds), or null. */
+export function offerDismissedAt(key, storage = defaultStorage()) {
+  try {
+    const value = Number(storage?.getItem(key));
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  } catch { return null; }
+}
+
+export function dismissOfferAt(key, now = Date.now(), storage = defaultStorage()) {
+  try { storage?.setItem(key, String(now)); } catch { /* Shown again next time; harmless. */ }
+}
+
+/**
+ * Today's invitation to move to an account (#575), if due: "account-migrate"
+ * for a member set up the old way (`migration` "invite",
+ * account-migration.js), "account-finish" for a device of a member who
+ * moved elsewhere ("finish"). Calm and optional: never offline, gone for
+ * this unlock after "Not now", and back no sooner than a week later.
+ */
+export function migrationOffer({ migration, online, sessionDismissed = false, dismissedAt = null, now = Date.now() }) {
+  if (!["invite", "finish"].includes(migration) || !online || sessionDismissed) return null;
+  if (Number.isFinite(dismissedAt) && now - dismissedAt < MIGRATE_OFFER_AGAIN_AFTER_MS) return null;
+  return migration === "invite" ? "account-migrate" : "account-finish";
+}
+
 export function passkeySuggestionDismissed(storage = defaultStorage()) {
   try { return storage?.getItem(PASSKEY_SUGGESTION_DISMISSED_KEY) === "1"; } catch { return false; }
 }

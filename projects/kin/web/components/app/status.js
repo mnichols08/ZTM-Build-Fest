@@ -2,12 +2,16 @@
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { passkeyUnlockSupported } from "../../security/passkey-unlock.js";
 import {
+  ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY,
   ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY,
   BACKUP_CODE_OFFER_DISMISSED_KEY,
   accountOffer,
   dismissOffer,
+  dismissOfferAt,
   dismissPasskeySuggestion,
+  migrationOffer,
   offerDismissed,
+  offerDismissedAt,
   passkeyOffer,
   passkeySuggestionDismissed,
 } from "../../security/backup-key-entry.js";
@@ -264,12 +268,13 @@ export class StatusController {
     const state = security ? accountState(security) : null;
     // Loaded once per unlock; again (at most every 10 seconds) while a
     // password member's vault isn't there yet (the first run makes it).
-    const stale = !security || (security.password && !state.account);
+    const stale = !security || (security.password && !security.vault);
     if (stale && account && !account.loading && Date.now() - (this.accountAttemptedAt ?? 0) > 10_000) {
       this.accountAttemptedAt = Date.now();
       void account.refresh({ render: false });
     }
     if (!security) return false;
+    if (this.renderMigrationOffer(card, heading, account)) return true;
     const offer = accountOffer({
       state,
       supported: passkeyUnlockSupported(),
@@ -299,6 +304,44 @@ export class StatusController {
     later.addEventListener("click", () => {
       this.app.accountOfferDismissed = true;
       dismissOffer(offer === "account-passkey" ? ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY : BACKUP_CODE_OFFER_DISMISSED_KEY);
+      this.renderOnboarding();
+    });
+    card.append(heading, intro, go, later);
+    card.hidden = false;
+    return true;
+  }
+
+  /** The calm invitation to move to an account (#575), or to finish the
+   * move on this device; false when none is due. "Set up" opens the step
+   * under Security; "Not now" puts it away for a week. */
+  renderMigrationOffer(card, heading, account) {
+    const offer = migrationOffer({
+      migration: account?.migration?.() ?? null,
+      online: !this.app.offline && navigator.onLine !== false,
+      sessionDismissed: Boolean(this.app.migrationOfferDismissed),
+      dismissedAt: offerDismissedAt(ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY),
+    });
+    if (!offer) return false;
+    card.dataset.accountOffer = offer;
+    heading.textContent = offer === "account-migrate" ? "Sign in on your other devices?" : "Use your account on this device?";
+    const intro = document.createElement("p");
+    intro.textContent = offer === "account-migrate"
+      ? "Choose a username and password so you can sign in on your other devices. Your passkey and backup key keep working; nothing else changes."
+      : "Your account is set up on another device. Enter your password here once, and this device uses it too.";
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "primary-action";
+    go.textContent = offer === "account-migrate" ? "Set up" : "Use my account here";
+    go.addEventListener("click", () => {
+      this.ctx.navigation.navigate("#household/privacy");
+      void this.app.security?.account?.start("migrate");
+    });
+    const later = document.createElement("button");
+    later.type = "button";
+    later.textContent = "Not now";
+    later.addEventListener("click", () => {
+      this.app.migrationOfferDismissed = true;
+      dismissOfferAt(ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY);
       this.renderOnboarding();
     });
     card.append(heading, intro, go, later);

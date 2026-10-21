@@ -45,16 +45,20 @@ export function vaultApi(request = fetchJson) {
       if (wrappers) body.wrappers = wrappers.map((wrapper) => ({ ...wrapper, wrapped: toBase64Url(wrapper.wrapped) }));
       return request("/api/account/vault", { method: "PUT", body: JSON.stringify(body) });
     },
-    /** Adds (version 1) or replaces (version + 1) one wrapper. */
-    putWrapper({ wrapperId, type, version, params, wrapped }) {
+    /** Adds (version 1) or replaces (version + 1) one wrapper. `confirm` is
+     * the fresh confirmation the service asks for: `{ currentAuthKey }`
+     * (base64url), or `{ flow, credential }` from a passkey assertion for
+     * /api/account/confirm/options. */
+    putWrapper({ wrapperId, type, version, params, wrapped }, confirm = {}) {
       if (!ID.test(wrapperId ?? "")) throw new AccountVaultError("The vault wrapper is invalid.");
       return request(`/api/account/vault/wrappers/${wrapperId}`, { method: "PUT",
-        body: JSON.stringify({ type, version, params, wrapped: toBase64Url(wrapped) }) });
+        body: JSON.stringify({ ...confirmation(confirm), type, version, params, wrapped: toBase64Url(wrapped) }) });
     },
-    /** Removes one wrapper; the service keeps the last one. */
-    removeWrapper(wrapperId) {
+    /** Removes one wrapper, after the same fresh confirmation; the service
+     * keeps the last one. */
+    removeWrapper(wrapperId, confirm = {}) {
       if (!ID.test(wrapperId ?? "")) throw new AccountVaultError("The vault wrapper is invalid.");
-      return request(`/api/account/vault/wrappers/${wrapperId}`, { method: "DELETE" });
+      return request(`/api/account/vault/wrappers/${wrapperId}`, { method: "DELETE", body: JSON.stringify(confirmation(confirm)) });
     },
   };
 }
@@ -147,6 +151,13 @@ export class VaultKeeper {
       return this.update();
     });
   }
+}
+
+/** Only the confirmation's own fields, so nothing else rides along. */
+function confirmation({ currentAuthKey, flow, credential } = {}) {
+  if (typeof currentAuthKey === "string") return { currentAuthKey };
+  if (typeof flow === "string" && credential) return { flow, credential };
+  return {};
 }
 
 async function fetchJson(path, options = {}) {

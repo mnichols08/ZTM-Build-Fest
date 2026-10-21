@@ -69,6 +69,45 @@ export async function passwordUnlockKeys(wrapper, password) {
   return { localKek: await localPasswordKek(passwordKey), authKey, passwordKey };
 }
 
+/**
+ * The account's current password parameters (`{ salt, iterations }`) from
+ * the service, for `username`, or null when it can't be asked (offline, a
+ * limit, an error). Used at unlock to notice a password changed on another
+ * device (#560 follow-up). An unknown username gets made-up parameters from
+ * the service; they differ from the wrapper's too, and the new password then
+ * simply fails to sign in.
+ */
+export async function currentPasswordParameters(username, { fetchImpl = (...args) => globalThis.fetch(...args), signal } = {}) {
+  if (!username || globalThis.navigator?.onLine === false) return null;
+  try {
+    const response = await fetchImpl("/api/account/sign-in/parameters", {
+      method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal, body: JSON.stringify({ username }),
+    });
+    if (!response.ok) return null;
+    const value = await response.json();
+    return typeof value?.salt === "string" && Number.isSafeInteger(value.iterations) ? { salt: value.salt, iterations: value.iterations } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether `parameters` (the service's) are not this device's password
+ * wrapper's: the password was changed on another device. */
+export function passwordChangedElsewhere(wrapper, parameters) {
+  return Boolean(wrapper && parameters && (parameters.salt !== wrapper.salt || parameters.iterations !== wrapper.iterations));
+}
+
+/**
+ * The keys of a password typed under the service's current `parameters`:
+ * `{ localKek, authKey, passwordKey, salt, iterations }`; the caller zeroes
+ * the byte arrays.
+ */
+export async function keysUnder(parameters, password) {
+  if (typeof password !== "string" || !password) throw new VaultError("Enter your password.", "password_rejected");
+  const { authKey, passwordKey } = await derivePasswordKeys(password, fromBase64Url(parameters.salt), { iterations: parameters.iterations });
+  return { localKek: await localPasswordKek(passwordKey), authKey, passwordKey, salt: parameters.salt, iterations: parameters.iterations };
+}
+
 /** authKey for a fresh confirmation, from the parameters the service sent
  * (`{ salt, iterations }`). Returns base64url; nothing else is kept. */
 export async function confirmationAuthKey(password, { salt, iterations }) {

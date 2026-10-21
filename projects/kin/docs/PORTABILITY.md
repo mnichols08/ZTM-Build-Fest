@@ -148,6 +148,43 @@ the file and the code.
 - The export grants no authority, as before: the code opens the history in
   the file, never membership or device trust.
 
+## A member's private things (#493, #494, #495)
+
+**A household export never includes private data.** The journal, the "Just
+for me" list, and the reminders and settings that follow a member live in
+that member's private log (ADR 0019), which the household export never
+reads. A member saves their own copy separately, under Security → Backup and
+move → **Your private things**:
+
+- **Save my private things** makes one file, `kin-private-<date>.kinp`
+  (format KPEX 1, CRYPTOGRAPHY "A member's own export of their private
+  things"): every private change this device holds, exactly as it's kept
+  (each sealed under the member key for its epoch), and the member's journal
+  photos, newest first, **as long as the file stays under 64 MiB**. Photos
+  that don't fit are counted and named in the message ("3 journal photos
+  didn't fit in the file and aren't included; they stay in your account").
+  The whole is sealed under the member key; nothing of the household's (no
+  household event, key, setting or chat) is in it.
+- **Who can open it.** Only that member: on any of their own devices (their
+  vault gives the member key), or, for a member with an account backup code,
+  with the code alone (the file carries the code's vault wrapper and the
+  member keys under the vault key). Without a backup code the message says
+  so, and suggests making one.
+- **Restore my private things** takes the file and, only if Kin asks, the
+  backup code. Kin restores private things **only for the member who saved
+  them**: a file naming another member or household is refused before
+  anything is opened, and every change in it must open under this member's
+  own key. What's already here is skipped by event ID, so restoring twice, or
+  on a device that already has it all, adds nothing ("Everything in this file
+  is already here. Nothing was duplicated."). Photos come back as pending
+  uploads.
+- **What a restore can't do.** Changes the service no longer has (for
+  example after a service restore from an old backup) come back on the
+  device that restores them; the relay takes only a device's own new
+  changes, so another device gets them by restoring the same file there.
+- **Format.** New, additive (V1.0-COMPATIBILITY): the household package
+  formats (2 and 3) are unchanged.
+
 ## Ownership principle
 
 ### Household chat in an archive (v1.1, #136)

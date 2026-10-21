@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { openVault, PASSWORD_ITERATIONS, unwrapVaultKey } from "./account-vault.js";
-import { confirmationAuthKey, createAccountVault, passwordUnlockKeys, passwordWrapper, prepareSignUp, signUpBody, wipeSignUp } from "./account-setup.js";
+import { confirmationAuthKey, createAccountVault, currentPasswordParameters, keysUnder, passwordChangedElsewhere, passwordUnlockKeys, passwordWrapper, prepareSignUp, signUpBody, wipeSignUp } from "./account-setup.js";
 import { LocalVault, toBase64Url } from "./local-vault.js";
 
 const householdId = "a".repeat(32);
@@ -69,4 +69,24 @@ test("the first account vault holds this device's epoch keys and a certification
   // A failed upload leaves nothing behind.
   await assert.rejects(createAccountVault({ api: { upload: async () => { throw Object.assign(new Error("taken"), { code: "vault_version_conflict" }); } },
     householdId, memberId, passwordKey: prepared.passwordKey, salt: prepared.salt }), { code: "vault_version_conflict" });
+});
+
+test("a password changed on another device is noticed from the service's parameters, online only (#560 follow-up)", async () => {
+  const wrapper = { salt: "c2FsdHNhbHRzYWx0c2FsdA", iterations: 600_000, username: "sam" };
+  const answers = [];
+  const fetchImpl = async (path, options) => { answers.push([path, JSON.parse(options.body)]); return { ok: true, json: async () => ({ salt: "bmV3c2FsdG5ld3NhbHRuZQ", iterations: 600_000 }) }; };
+  const parameters = await currentPasswordParameters("sam", { fetchImpl });
+  assert.deepEqual(answers, [["/api/account/sign-in/parameters", { username: "sam" }]]);
+  assert.equal(passwordChangedElsewhere(wrapper, parameters), true);
+  assert.equal(passwordChangedElsewhere(wrapper, { salt: wrapper.salt, iterations: 600_000 }), false);
+  assert.equal(passwordChangedElsewhere(wrapper, null), false, "offline: nothing to compare, the device's password works");
+  assert.equal(await currentPasswordParameters("sam", { fetchImpl: async () => { throw new TypeError("offline"); } }), null);
+  assert.equal(await currentPasswordParameters("sam", { fetchImpl: async () => ({ ok: false, json: async () => ({}) }) }), null);
+  assert.equal(await currentPasswordParameters("", { fetchImpl }), null);
+  // The keys of the new password under the new parameters.
+  const prepared = await prepareSignUp({ username: "sam", password: "five other unrelated words" });
+  const keys = await keysUnder({ salt: toBase64Url(prepared.salt), iterations: prepared.iterations }, "five other unrelated words");
+  assert.deepEqual(keys.authKey, prepared.authKey);
+  assert.deepEqual(keys.localKek, prepared.localKek);
+  wipeSignUp(prepared);
 });

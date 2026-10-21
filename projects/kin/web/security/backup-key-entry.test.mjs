@@ -131,3 +131,22 @@ test("a password account's calm offers (#562/#573): a passkey after the first us
   assert.equal(offerDismissed(ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY, brokenStorage), false, "blocked storage is tolerated");
   dismissOffer(ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY, brokenStorage);
 });
+
+test("the move to an account (#575): a calm invitation, never offline, Not now for a week", async () => {
+  const { migrationOffer, MIGRATE_OFFER_AGAIN_AFTER_MS, dismissOfferAt, offerDismissedAt, ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY } = await import("./backup-key-entry.js");
+  const now = 100 * MIGRATE_OFFER_AGAIN_AFTER_MS;
+  assert.equal(migrationOffer({ migration: "invite", online: true, now }), "account-migrate");
+  assert.equal(migrationOffer({ migration: "finish", online: true, now }), "account-finish");
+  assert.equal(migrationOffer({ migration: "done", online: true, now }), null);
+  assert.equal(migrationOffer({ migration: null, online: true, now }), null, "guests and households without a summary");
+  assert.equal(migrationOffer({ migration: "invite", online: false, now }), null, "never offline");
+  assert.equal(migrationOffer({ migration: "invite", online: true, sessionDismissed: true, now }), null, "Not now holds for this unlock");
+  assert.equal(migrationOffer({ migration: "invite", online: true, dismissedAt: now - 1000, now }), null, "and for a week");
+  assert.equal(migrationOffer({ migration: "invite", online: true, dismissedAt: now - MIGRATE_OFFER_AGAIN_AFTER_MS, now }), "account-migrate", "then it comes back, once");
+  const storage = memoryStorage();
+  assert.equal(offerDismissedAt(ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY, storage), null);
+  dismissOfferAt(ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY, 1234, storage);
+  assert.equal(offerDismissedAt(ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY, storage), 1234);
+  assert.equal(offerDismissedAt(ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY, brokenStorage), null);
+  dismissOfferAt(ACCOUNT_MIGRATE_OFFER_DISMISSED_KEY, 1, brokenStorage);
+});

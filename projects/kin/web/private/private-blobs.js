@@ -178,6 +178,13 @@ export class PrivateBlobStore {
     await finished;
   }
 
+  /** Every kept blob, `[{ ref, ciphertext, storedAt }]` (the member's own
+   * export, #494). */
+  async entries() {
+    const rows = await settle(this.db.transaction([BLOBS], "readonly").objectStore(BLOBS).getAll());
+    return rows.filter((row) => isRef(row.ref) && row.ciphertext).map((row) => ({ ref: row.ref, ciphertext: new Uint8Array(row.ciphertext), storedAt: row.storedAt ?? 0 }));
+  }
+
   /** References still waiting to upload. */
   async pending() {
     const rows = await settle(this.db.transaction([BLOBS], "readonly").objectStore(BLOBS).getAll());

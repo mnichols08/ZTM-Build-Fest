@@ -16,10 +16,12 @@ import {
   addAccountPasskey,
   changeAccountPassword,
   finishPasskeySetup,
+  removeAccountPasskey,
   saveBackupCode,
   setRequireBoth,
 } from "../../security/account-security.js";
-import { PASSWORD_GUIDANCE } from "../../security/account-credentials.js";
+import { PASSWORD_GUIDANCE, USERNAME_GUIDANCE } from "../../security/account-credentials.js";
+import { migrateAccount, migrationProblems, migrationState } from "../../security/account-migration.js";
 import { generateBackupCode } from "../../security/backup-code.js";
 import { getActiveVault } from "../../security/local-vault.js";
 import { passkeyUnlockSupported } from "../../security/passkey-unlock.js";
@@ -52,18 +54,30 @@ export class SecurityAccount {
 
   state() { return accountState(this.security); }
 
+  /** "invite", "finish", "done" or null (account-migration.js). */
+  migration() {
+    const identity = this.identity();
+    if (!identity || this.security?.memberId !== identity.memberId) return null;
+    const state = migrationState(this.security, { holdsVaultKey: this.security.deviceHoldsVaultKey === true });
+    // "Finish here" is for a device set up the old way (a backup key, no
+    // password unlock): a device the first run or a sign-in set up is
+    // already the account's, even while its vault is still being made.
+    const manifest = getActiveVault()?.manifest ?? this.host.manifest;
+    const oldWay = !(manifest?.wrappers ?? []).some((wrapper) => wrapper.type === "password") && !manifest?.accountRecovery;
+    return state === "finish" && !oldWay ? null : state;
+  }
+
   /** Loads (or reloads) the account summary; re-renders the settings once it
    * arrives. Errors leave the older sections in place. */
   refresh({ render = true } = {}) {
     const identity = this.identity();
     if (!identity) return Promise.resolve(null);
-    this.loading ??= this.holdsVaultKey(identity).then((holds) => holds
-      // Only a device that keeps its member's vault key belongs to a
-      // password account; households set up with a passkey and a backup
-      // key never ask.
-      ? accountSecurity()
-      : { username: null, password: false, passkeys: [], memberSince: null, vault: null }).then((security) => {
-      this.security = { ...security, memberId: identity.memberId };
+    // Every signed-in device asks: a member set up the old way (passkey and
+    // backup key) is invited to move to an account (#575), and a device of a
+    // member who moved on another device is offered to finish here. Only a
+    // device that keeps the vault key changes the account (accountState).
+    this.loading ??= Promise.all([this.holdsVaultKey(identity), accountSecurity()]).then(([holds, security]) => {
+      this.security = { ...security, memberId: identity.memberId, deviceHoldsVaultKey: holds };
       const app = this.app();
       if (app) app.accountSecurity = this.security;
       if (render && this.host.phase === "unlocked" && !this.host.busy && !this.flow) this.host.render();
@@ -74,17 +88,22 @@ export class SecurityAccount {
   }
 
   async holdsVaultKey(identity) {
+    // Right after an unlock the household panel may still be opening its
+    // key store; ask once it has.
+    await this.app()?.household?.loaded?.catch?.(() => {});
     const vaultKey = await this.app()?.household?.syncKeyStore?.accountVaultKey?.(identity.householdId).catch(() => null);
     vaultKey?.fill(0);
     return Boolean(vaultKey);
   }
 
-  /** Opens a flow (from Today's cards or a settings button). */
-  async start(kind) {
-    if (!this.ready()) await this.refresh({ render: false });
-    if (!this.ready()) return false;
+  /** Opens a flow (from Today's cards or a settings button). `details` go
+   * with it (the passkey "remove-passkey" names). */
+  async start(kind, details = {}) {
+    const moving = kind === "migrate";
+    if (!this.ready() && !(moving && this.migration())) await this.refresh({ render: false });
+    if (moving ? !["invite", "finish"].includes(this.migration()) : !this.ready()) return false;
     this.wipeFlow();
-    this.flow = { kind };
+    this.flow = { kind, ...details };
     if (kind === "backup-code") Object.assign(this.flow, await generateBackupCode());
     this.host.render();
     queueMicrotask(() => {
@@ -159,6 +178,147 @@ export class SecurityAccount {
     }
     this.note(section, state.backupCode ? LOST_PASSKEY_COPY : `${LOST_PASSKEY_COPY} Make a backup code below.`);
     if (["add-passkey", "finish-passkey", "require-both"].includes(this.flow?.kind)) this.renderPasswordFlow(section);
+    this.renderPasskeyList(section, state);
+  }
+
+  /** Each of the account's passkeys, with "Remove this passkey" (#592
+   * follow-up). Removing one never leaves the account without a way in:
+   * the password stays, and the last passkey's going brings back the
+   * password's own way into the vault. */
+  renderPasskeyList(section, state) {
+    if (!state.passkeys.length) return;
+    const local = new Set((this.host.manifest?.wrappers ?? []).filter((wrapper) => wrapper.type === "prf").map((wrapper) => wrapper.credentialId));
+    const list = document.createElement("ul");
+    list.className = "account-passkeys";
+    state.passkeys.forEach((credentialId, index) => {
+      const item = document.createElement("li");
+      item.dataset.credentialId = credentialId;
+      const name = document.createElement("span");
+      name.textContent = `${state.passkeys.length === 1 ? "Your passkey" : `Passkey ${index + 1}`}${local.has(credentialId) ? " (unlocks this device)" : ""}`;
+      item.append(name, " ");
+      const remove = this.host.button(state.passkeys.length === 1 ? "Remove this passkey" : `Remove passkey ${index + 1}`,
+        () => void this.start("remove-passkey", { credentialId }), "", item);
+      remove.dataset.removePasskey = credentialId;
+      list.append(item);
+      if (this.flow?.kind === "remove-passkey" && this.flow.credentialId === credentialId) this.renderRemovePasskey(item, state, local.has(credentialId));
+    });
+    section.append(list);
+  }
+
+  renderRemovePasskey(parent, state, unlocksHere) {
+    const { credentialId } = this.flow;
+    const last = state.passkeys.length === 1;
+    const form = this.form("remove-passkey", () => {
+      const password = input.value;
+      input.value = "";
+      void this.runFlow("remove-passkey", (context) => this.removePasskey(password, credentialId, context));
+    });
+    const lead = document.createElement("p");
+    lead.textContent = last
+      ? "Your passkey will stop signing you in. Your password signs you in on a new device again, until you add another passkey."
+      : "This passkey will stop signing you in. Your password and your other passkeys keep working.";
+    form.prepend(lead);
+    // Taking an unlock away from this device locks Kin (like removing any
+    // unlock path), so it's said before.
+    if (unlocksHere) this.note(form, this.host.manifest?.wrappers?.some((wrapper) => wrapper.type === "recovery" || wrapper.type === "password")
+      ? "It also stops unlocking Kin on this device, and Kin locks once it's done."
+      : "It also stops unlocking Kin on this device: Kin locks once it's done, and your password unlocks it from then on.");
+    const input = this.passwordField(form, { id: "account-password-remove-passkey", label: "Your password" });
+    this.actions(form, "Remove passkey");
+    parent.append(form);
+  }
+
+  /** "Your account" for a member set up the old way (#575): a calm offer to
+   * choose a username and password, or, when the account exists but this
+   * device doesn't hold its keys, to finish here. Nothing is required. */
+  renderMigrationSection() {
+    const state = this.migration();
+    if (!["invite", "finish"].includes(state)) return false;
+    const section = this.host.section("Your account");
+    section.dataset.accountSection = "migrate";
+    const status = document.createElement("p");
+    status.className = "security-status";
+    status.textContent = state === "invite"
+      ? "You unlock Kin with your passkey and this device's backup key."
+      : `Your account${this.security.username ? ` (${this.security.username})` : ""} is set up, but not on this device yet.`;
+    section.append(status);
+    this.note(section, state === "invite"
+      ? "Choose a username and password so you can sign in on your other devices, including a new phone. Your passkey and this device's backup key keep working."
+      : "Enter your password to use your account here too: this device then keeps your account's keys, and your password unlocks it.");
+    if (this.flow?.kind === "migrate") this.renderMigration(section, state);
+    else this.flowButton(section, "migrate", state === "invite" ? "Choose a username and password" : "Use my account here", "primary-action");
+    return true;
+  }
+
+  renderMigration(section, state) {
+    const form = this.form("migrate", () => {
+      if (state === "invite") {
+        const problems = migrationProblems({ username: username.value, password: password.value, again: again.value });
+        const first = Object.values(problems)[0];
+        if (first) return this.host.error(new Error(first));
+      }
+      const values = { username: username?.value ?? "", password: password.value };
+      password.value = "";
+      if (again) again.value = "";
+      void this.runMigration(values);
+    });
+    let username = null;
+    let again = null;
+    if (state === "invite") {
+      // The username a password manager saves with the new password.
+      form.querySelector('input[autocomplete="username"]')?.remove();
+      const caption = document.createElement("label");
+      caption.htmlFor = "account-migrate-username";
+      caption.textContent = "Username";
+      username = document.createElement("input");
+      Object.assign(username, { id: "account-migrate-username", type: "text", autocomplete: "username", required: true, spellcheck: false });
+      username.setAttribute("autocapitalize", "none");
+      const hint = this.note(form, USERNAME_GUIDANCE);
+      hint.id = "account-migrate-username-hint";
+      username.setAttribute("aria-describedby", `${hint.id} security-alert`);
+      form.append(caption, username, hint);
+    }
+    const password = this.passwordField(form, state === "invite"
+      ? { id: "account-migrate-password", label: "Password", autocomplete: "new-password", hint: PASSWORD_GUIDANCE }
+      : { id: "account-migrate-password", label: "Your password" });
+    if (state === "invite") {
+      again = this.passwordField(form, { id: "account-migrate-password-again", label: "Password again", autocomplete: "new-password" });
+      this.note(form, "Kin can't reset this password. Next, confirm with your passkey.");
+    }
+    this.actions(form, state === "invite" ? "Set up my account" : "Use my account here");
+    section.append(form);
+  }
+
+  /** Runs the move (account-migration.js) as the panel's operation. */
+  async runMigration({ username, password }) {
+    const app = this.app();
+    const identity = this.identity();
+    const household = app?.household;
+    await this.host.run(async (operation) => {
+      const keyStore = household?.syncKeyStore;
+      if (!identity || !keyStore) throw new Error("Connect to your household first, then set up your account.");
+      const localVault = getActiveVault();
+      const steps = { password: "Confirming with your passkey…", vault: "Making your account's key vault…", endorse: "Getting your account ready for new devices…", local: "Letting your password unlock this device…" };
+      const { manifest, wrapper } = await migrateAccount({
+        username, password, security: this.security, identity, keyStore, localVault,
+        endorse: () => household.account.ensureCertificationEndorsement(identity),
+        signal: this.host.operationAbort.signal,
+        onStep: (step) => { if (operation === this.host.operation) this.host.message.textContent = this.security?.password && step === "password" ? "Checking your password…" : steps[step]; },
+      });
+      if (manifest) await this.saveManifest(manifest, localVault);
+      this.host.assertCurrentOperation(operation);
+      // The vault follows new epoch keys from now on, and private storage opens.
+      void household.account.keeper?.update().catch(() => {});
+      void app.syncCoordinator?.syncNow?.();
+      this.wipeFlow();
+      await this.refresh({ render: false });
+      this.host.assertCurrentOperation(operation);
+      this.host.render();
+      this.host.message.textContent = wrapper === "passkey"
+        ? "Your account is ready. On another device, sign in with your username and your passkey. Your password unlocks this device too."
+        : "Your account is ready. On another device, sign in with your username and password.";
+      this.host.dispatchEvent(new CustomEvent("kin:security-changed", { bubbles: true, composed: true }));
+    });
   }
 
   renderPasswordActions(section) {
@@ -277,7 +437,7 @@ export class SecurityAccount {
     const nextInput = this.passwordField(form, { id: "account-new-password", label: "New password", autocomplete: "new-password", hint: PASSWORD_GUIDANCE });
     const againInput = this.passwordField(form, { id: "account-new-password-again", label: "New password again", autocomplete: "new-password" });
     if (this.state().requireBoth) this.note(form, "Your account asks for your password and your passkey, so you'll use your passkey too.");
-    this.note(form, "Your other devices keep unlocking with your old password until Kin asks you to sign in there again; your new password takes over from then.");
+    this.note(form, "Your other devices ask for the new password the next time they unlock with a connection; until then, offline, they still open with the old one.");
     this.actions(form, "Change password");
     section.append(form);
   }
@@ -369,6 +529,7 @@ export class SecurityAccount {
         "finish-passkey": "Your passkey signs you in on a new device again.",
         "require-both": this.state().requireBoth ? "Signing in on a new device now asks for your password and your passkey." : "Your passkey signs you in on a new device by itself again.",
         "change-password": "Password changed. Use the new one from now on.",
+        "remove-passkey": "Passkey removed. It no longer signs you in.",
         "backup-code": "Your backup code is on. Keep it somewhere safe.",
       }[kind];
       this.host.dispatchEvent(new CustomEvent("kin:security-changed", { bubbles: true, composed: true }));
@@ -387,12 +548,24 @@ export class SecurityAccount {
     if (manifest) await this.saveManifest(manifest, vault);
   }
 
+  async removePasskey(password, credentialId, context) {
+    const vault = getActiveVault();
+    const manifest = await removeAccountPasskey({ password, credentialId, localVault: vault, ...context });
+    if (manifest) await this.saveManifest(manifest, vault);
+  }
+
   async saveCode(password, context) {
     await saveBackupCode({ password, codeBytes: this.flow.bytes, ...context });
   }
 
   async saveManifest(manifest, vault) {
-    await EventStore.updateSecurityManifest(manifest, vault);
-    this.host.manifest = await EventStore.securityStatus();
+    try {
+      await EventStore.updateSecurityManifest(manifest, vault);
+    } finally {
+      // Removing an unlock path locks Kin (the security epoch moves on); the
+      // lock screen then shows what this device unlocks with now.
+      this.host.manifest = await EventStore.securityStatus().catch(() => this.host.manifest);
+      if (this.host.phase === "locked" && !this.host.passwordChange) this.host.render();
+    }
   }
 }

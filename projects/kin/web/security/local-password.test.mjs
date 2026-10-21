@@ -133,3 +133,25 @@ test("households set up with a backup key keep the old rule exactly", async () =
   assert.throws(() => vault.removeWrapper(recoveryId), { code: "last_wrapper" });
   vault.lock();
 });
+
+test("a member moving to an account adds a password unlock beside the backup key and passkey (#575)", async () => {
+  const { vault, manifest } = await LocalVault.create();
+  const secret = crypto.getRandomValues(new Uint8Array(32));
+  await vault.addCredentialWrapper(secret, { credentialId: "credential-A", prfSalt: "salt-A" });
+  const salt = newPasswordSalt();
+  const keys = await derivePasswordKeys("four unrelated words", salt);
+  const kek = await localPasswordKek(keys.passwordKey);
+  const added = await vault.addPasswordWrapper(kek, { salt: toBase64Url(salt), iterations: PASSWORD_ITERATIONS, username: "robin" });
+  assert.deepEqual(added.wrappers.map((entry) => entry.type), ["recovery", "prf", "password"]);
+  validateManifest(added);
+  await assert.rejects(vault.addPasswordWrapper(kek, { salt: toBase64Url(salt), iterations: PASSWORD_ITERATIONS }), { code: "wrapper_exists" });
+  // The same root opens with the password, the backup key and the passkey.
+  const sealed = await vault.seal({ text: "rice" }, { store: "events", id: "three" });
+  vault.lock();
+  const passwordWrapper = added.wrappers.find((entry) => entry.type === "password");
+  const byPassword = await LocalVault.unlock(added, kek, passwordWrapper.id);
+  assert.deepEqual(await byPassword.open(sealed, { store: "events", id: "three" }), { text: "rice" });
+  byPassword.lock();
+  (await LocalVault.unlock(added, secret, added.wrappers[1].id)).lock();
+  assert.equal(added.wrappers[0].id, manifest.wrappers[0].id, "the backup key's wrapper is untouched (#576)");
+});

@@ -11,6 +11,7 @@ import { installHelpCard } from "../shared/dom.js";
 import { passwordManagerField } from "./protection.js";
 import { entryHint, legacyEntryName, rememberedEntries, unlockEntryName } from "../../security/backup-key-entry.js";
 import { passwordWrapper } from "../../security/account-setup.js";
+import { startOverOnThisBrowser } from "../../security/start-over.js";
 
 export const AUTO_LOCK_OPTIONS = [
   [0, "Only when Kin closes"],
@@ -121,7 +122,12 @@ export class SecurityViews {
   renderPasswordLocked(wrapper) {
     const lead = this.host.text("Unlock Kin");
     lead.className = "security-lead";
-    this.host.text("Enter your password to open your household on this device.");
+    const change = this.host.passwordChange;
+    // The password was changed on another device (#560 follow-up).
+    if (change?.vault) return this.renderNewPasswordLocked(wrapper);
+    this.host.text(change?.keys
+      ? "Your password was changed on another device. Enter your previous password once more, so Kin can switch this device to the new one."
+      : "Enter your password to open your household on this device.");
     const form = document.createElement("form");
     form.className = "password-unlock-form";
     const account = passwordManagerField("text", "username", wrapper.username ?? "");
@@ -139,7 +145,7 @@ export class SecurityViews {
     input.required = true;
     input.setAttribute("aria-describedby", "password-unlock-account security-alert");
     label.htmlFor = input.id;
-    label.textContent = "Password";
+    label.textContent = change?.keys ? "Previous password" : "Password";
     const button = document.createElement("button");
     button.type = "submit";
     button.className = "primary-action";
@@ -154,23 +160,70 @@ export class SecurityViews {
     });
     this.host.passwordInput = input;
     this.host.append(form);
+    if (change?.keys) this.host.button("Cancel", () => { this.ctx.unlock.cancelPasswordChange(); this.host.render(); });
     const passkeys = this.host.passkeyWrappers;
-    if (passkeys.length && passkeyUnlockSupported())
+    if (passkeys.length && passkeyUnlockSupported()) {
       passkeys.forEach((entry, index) => this.host.button(index === 0 ? "Unlock with passkey" : `Unlock with passkey ${index + 1}`,
         () => this.host.run(() => this.host.unlockPasskey(entry))));
+      // #551: the passkey works offline too.
+      if (navigator.onLine === false) this.offlinePasskeyNote();
+    }
+    // A member who moved to an account (#575) keeps this device's backup key
+    // until they have a backup code (#576): one tap away, never in the way.
+    if (this.host.manifest.wrappers.some((entry) => entry.type === "recovery")) this.renderRecoveryForm({ collapsed: !this.host.recoveryExpanded });
     const forgot = document.createElement("details");
     forgot.className = "security-guidance";
     const summary = document.createElement("summary");
     summary.textContent = "Forgot your password?";
     const help = document.createElement("p");
-    help.textContent = "Kin can't reset it. If you changed your password on another device, this device still opens with the one before, until it signs in with the new one. If you added a passkey here, unlock with it. If you made a backup code, sign in with it on a new device (or on this one, after clearing Kin's data for this site) and choose a new password. If you use Kin on another device, open it there and pair this device again. Otherwise this device's copy of the household can't be opened.";
+    help.textContent = "Kin can't reset it. If you changed your password on another device, enter the new one: when you're online, Kin then asks for the previous one once, to switch this device over (offline, this device still opens with the previous one). If you added a passkey here, unlock with it. If you made a backup code, sign in with it on a new device (or on this one, after clearing Kin's data for this site) and choose a new password. If you use Kin on another device, open it there and pair this device again. Otherwise this device's copy of the household can't be opened.";
     forgot.append(summary, help);
     this.host.append(forgot);
   }
 
+  /** After the previous password opened this device while the service
+   * said the password changed elsewhere (#560 follow-up): the new one, which
+   * must sign in before Kin opens. */
+  renderNewPasswordLocked(wrapper) {
+    this.host.text("Your password was changed on another device. Enter your new password to open Kin here; this device then unlocks with it from now on.");
+    const form = document.createElement("form");
+    form.className = "password-unlock-form";
+    form.dataset.passwordChange = "new";
+    const account = passwordManagerField("text", "username", wrapper.username ?? "");
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    Object.assign(input, { type: "password", id: "password-new-unlock", autocomplete: "current-password", spellcheck: false, required: true });
+    input.setAttribute("aria-describedby", "security-alert");
+    label.htmlFor = input.id;
+    label.textContent = "New password";
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.className = "primary-action";
+    button.textContent = "Unlock";
+    form.append(account, label, input, button);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const password = input.value;
+      input.value = "";
+      if (!password) return this.host.error(new Error("Enter your new password."));
+      void this.host.run(() => this.ctx.unlock.unlockNewPassword(password));
+    });
+    this.host.passwordInput = input;
+    this.host.append(form);
+    this.host.button("Cancel", () => { this.ctx.unlock.cancelPasswordChange(); this.host.render(); });
+    queueMicrotask(() => input.focus());
+  }
+
+  offlinePasskeyNote() {
+    const note = this.host.text("You're offline. Your passkey still unlocks Kin on this device; Kin signs you in again once you're connected.");
+    note.className = "security-note";
+    note.dataset.offlinePasskey = "";
+  }
+
   /** The lock screen of a device a member with a backup code signed in on
-   * with their passkey alone (#572): the passkey unlocks it; there is no
-   * backup key for this device, and the account is the way back. */
+   * with their passkey alone (#572): the passkey unlocks it, online or off
+   * (#551); there is no backup key for this device, and the account is the
+   * way back: "Start over on this browser" (#592 follow-up). */
   renderAccountPasskeyLocked() {
     const lead = this.host.text("Unlock Kin");
     lead.className = "security-lead";
@@ -178,25 +231,45 @@ export class SecurityViews {
     this.host.text(supported ? "Use your passkey to open your household on this device." : "This browser can't use passkeys, so it can't unlock Kin here.");
     if (supported) this.host.passkeyWrappers.forEach((wrapper, index) => this.host.button(index === 0 ? "Unlock with passkey" : `Unlock with passkey ${index + 1}`,
       () => this.host.run(() => this.host.unlockPasskey(wrapper)), index === 0 ? "primary-action" : ""));
-    if (navigator.onLine === false) {
-      const note = this.host.text("You're offline. Passkey unlock needs a connection to confirm your passkey; try again once you're connected.");
-      note.className = "security-note";
-    }
+    if (supported && navigator.onLine === false) this.offlinePasskeyNote();
     const help = document.createElement("details");
     help.className = "security-guidance";
+    help.open = !supported || this.host.recoveryExpanded;
     const summary = document.createElement("summary");
     summary.textContent = "Can't use your passkey?";
     const text = document.createElement("p");
-    text.textContent = "This device has no backup key of its own: your account is its way back. Clear Kin's data for this site in your browser's settings, open Kin again, choose Sign in and use your backup code, then choose “This replaces” this device. Your household comes back from your other devices; anything this device hadn't synced yet is lost.";
+    text.id = "start-over-help";
+    text.textContent = "This device has no backup key of its own: your account is its way back. Start over on this browser, then sign in with your password, passkey or backup code and choose “This replaces” this device. Your household comes back from your other devices; anything this device hadn't synced yet is lost.";
     help.append(summary, text);
+    const startOver = document.createElement("button");
+    startOver.type = "button";
+    startOver.textContent = "Start over on this browser";
+    startOver.setAttribute("aria-describedby", text.id);
+    startOver.addEventListener("click", () => this.confirmStartOver());
+    help.append(startOver);
     this.host.append(help);
+  }
+
+  /** "Start over on this browser" (#592 follow-up): a clear warning, then
+   * this browser's Kin data goes and the sign-in screen opens. */
+  confirmStartOver() {
+    if (this.host.busy) return;
+    const ok = globalThis.confirm("Start over on this browser?\n\nKin removes everything it keeps in this browser: this device's copy of your household, its keys and anything it hasn't synced yet. Your household stays on your other devices and in your account.\n\nAfterwards, sign in again and choose “This replaces” this device.");
+    if (!ok) return;
+    void this.host.run(async () => {
+      this.host.message.textContent = "Removing Kin's data from this browser…";
+      await startOverOnThisBrowser();
+      this.host.message.textContent = "Done. Opening sign-in…";
+      this.host.services?.reloadAfterStartOver?.() ?? globalThis.location.assign("/");
+    });
   }
 
   renderLocked() {
     const rotating = ["root-rotating", "root-cleanup"].includes(this.host.manifest.phase);
-    const password = rotating ? null : passwordWrapper(this.host.manifest);
-    if (password && !this.host.manifest.wrappers.some((wrapper) => wrapper.type === "recovery"))
-      return this.renderPasswordLocked(password);
+    const password = rotating || this.host.manifest.phase !== "encrypted" ? null : passwordWrapper(this.host.manifest);
+    // A password unlocks it (#558); for a member who moved to an account
+    // (#575), the backup key stays beside it.
+    if (password) return this.renderPasswordLocked(password);
     if (!rotating && this.host.manifest.accountRecovery && !this.host.manifest.wrappers.some((wrapper) => wrapper.type === "recovery"))
       return this.renderAccountPasskeyLocked();
     const passkeys = rotating ? [] : this.host.passkeyWrappers;
@@ -215,20 +288,9 @@ export class SecurityViews {
         this.host.button(index === 0 ? "Unlock with passkey" : `Unlock with passkey ${index + 1}`,
           () => this.host.run(() => this.host.unlockPasskey(wrapper)), index === 0 ? "primary-action" : "");
       });
-      if (offline) {
-        const note = this.host.text("You're offline. Passkey unlock needs a connection to confirm your passkey, so use your backup key for now.");
-        note.className = "security-note";
-      }
-      expanded = offline || this.host.recoveryExpanded;
-      if (!expanded) {
-        this.host.button("Use backup key", () => {
-          this.host.recoveryExpanded = true;
-          this.host.recoveryForm.hidden = false;
-          this.host.recoveryToggle.hidden = true;
-          this.host.recoveryInput.focus();
-        });
-        this.host.recoveryToggle = this.host.lastElementChild;
-      }
+      // #551: offline, the passkey unlocks with a challenge made here.
+      if (offline) this.offlinePasskeyNote();
+      expanded = this.host.recoveryExpanded;
     } else if (passkeys.length) {
       const lead = this.host.text("Unlock Kin");
       lead.className = "security-lead";
@@ -240,9 +302,24 @@ export class SecurityViews {
         ? "Use your backup key for this device to unlock. Once you're in, turn on passkey unlock under More → Security so your face, fingerprint, or screen lock opens Kin next time."
         : "Use your backup key to unlock this device's copy of your household.");
     }
+    this.renderRecoveryForm({ collapsed: !expanded });
+  }
+
+  /** The backup-key form; collapsed behind "Use backup key" when another
+   * way in comes first. */
+  renderRecoveryForm({ collapsed = false } = {}) {
+    if (collapsed) {
+      this.host.button("Use backup key", () => {
+        this.host.recoveryExpanded = true;
+        this.host.recoveryForm.hidden = false;
+        this.host.recoveryToggle.hidden = true;
+        this.host.recoveryInput.focus();
+      });
+      this.host.recoveryToggle = this.host.lastElementChild;
+    }
     const form = document.createElement("form");
     form.className = "recovery-form";
-    form.hidden = !expanded;
+    form.hidden = collapsed;
     const label = document.createElement("label");
     const input = document.createElement("input");
     input.type = "password";
@@ -302,6 +379,9 @@ export class SecurityViews {
     const account = this.ctx.account.ready();
     if (!account && !this.ctx.account.security && this.host.closest("kin-app")?.household?.identity) void this.ctx.account.refresh();
     const accountState = account ? this.ctx.account.state() : null;
+    // A member set up the old way: the calm offer to move to an account
+    // (#575), first, since it's the one thing worth doing here.
+    if (!account) this.ctx.account.renderMigrationSection();
     if (account) this.ctx.account.renderPasskeySection();
     else this.renderPasskeyUnlock(supported, passkeys);
     this.renderLockSection();
@@ -442,9 +522,12 @@ export class SecurityViews {
     const recoverySection = this.host.section("Backup key for this device");
     const recoveryStatus = document.createElement("p");
     recoveryStatus.className = "security-status";
+    // #576: once the member has an account backup code, the per-device key
+    // is no longer needed; it keeps working, and nothing asks for a new one.
     recoveryStatus.textContent = accountBackupCode
-      ? "Your account backup code is now your way back in. This device's backup key still unlocks it, and still opens the exports made with it."
+      ? "You no longer need this device's backup key: your account backup code is your way back in now. The key still unlocks this device, and still opens the exports made with it, so keep it until you don't need those."
       : "Your backup key unlocks Kin on this device when a passkey can't. Each device has its own, and Kin never stores it.";
+    recoverySection.dataset.backupKeyRetired = String(accountBackupCode);
     recoverySection.append(recoveryStatus);
     // The current key's label, which this device's exports name.
     const keyLabel = document.createElement("p");
@@ -456,6 +539,7 @@ export class SecurityViews {
       keyLabel.textContent = `This device's backup key is ${joinLabels(labels)}. Exports made now open with it.`;
       keyLabel.hidden = false;
     }, () => {});
+    if (accountBackupCode) return;
     const guidance = document.createElement("details");
     guidance.className = "security-guidance";
     const summary = document.createElement("summary");
@@ -497,5 +581,8 @@ export class SecurityViews {
     const rule = code ? "Exports open with your account backup code; store the export and the code in different places." : EXPORT_STORAGE_RULE;
     backupNote.textContent = `Use a Kin export to move or restore your household. ${rule} Exports are manual, not automatic backups, and do not restore device trust.`;
     backupSection.append(backupNote);
+    // The member's own private things (#493): a separate file, never part
+    // of the household export.
+    this.ctx.privateExport.render(backupSection);
   }
 }

@@ -151,6 +151,25 @@ export async function backupCodeChange({ vaultKey, householdId, memberId, wrappe
   }
 }
 
+/**
+ * Removing one passkey (#592 follow-up): every wrapper it opens goes. When
+ * that leaves no wrapper a password or a passkey opens (it was the last
+ * passkey), a password wrapper comes back, so the account is in the
+ * password-only stage again (D3) rather than left with its backup code
+ * alone; that needs `passwordKey` and `password` (`{ salt, iterations }`).
+ */
+export async function removePasskeyChange({ vaultKey, householdId, memberId, wrappers, credentialId, passwordKey = null, password = null }) {
+  const remove = wrappers.filter((wrapper) => PASSKEY_TYPES.includes(wrapper.type) && wrapper.params?.credentialId === credentialId)
+    .map((wrapper) => wrapper.wrapperId);
+  const left = wrappers.filter((wrapper) => !remove.includes(wrapper.wrapperId));
+  const put = [];
+  if (!left.some((wrapper) => wrapper.type === "password" || PASSKEY_TYPES.includes(wrapper.type))) {
+    if (!passwordKey || !password) throw new Error("Enter your password: it opens your account again once this passkey is gone.");
+    put.push(await makeWrapper({ vaultKey, kek: passwordKey, householdId, memberId, type: "password", params: passwordParams(password) }));
+  }
+  return { put, remove };
+}
+
 /** A change's request body: the wrapped bytes as base64url. */
 export function wrapperChangeBody({ put = [], remove = [] }) {
   return { put: put.map((wrapper) => ({ ...wrapper, wrapped: toBase64Url(wrapper.wrapped) })), remove: [...remove] };
