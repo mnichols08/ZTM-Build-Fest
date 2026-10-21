@@ -82,12 +82,20 @@ fields must match the public key-path/index fields.
 
 Wrapper updates compare a durable `configRevision`; removal atomically advances
 the lock epoch and invalidates previously unlocked capabilities. This prevents a
-stale tab from resurrecting a removed wrapper. The independent verified unlock
-path cannot be removed: for a device set up with a backup key that is the
-recovery wrapper, exactly as before; for a device set up with a password
-(#558) it is the password wrapper (below). A passkey (PRF) wrapper never
-counts on its own. One test, `hasVerifiedUnlockPath`, enforces it in the
-vault and in `EventStore`; see [RECOVERY](RECOVERY.md#members-who-signed-up-with-a-password-557-558). Lock drops references, clears engine buffers and closes
+stale tab from resurrecting a removed wrapper. **The final unlock path**
+cannot be removed. For a device set up with a backup key it is the recovery
+wrapper, exactly as before; for a device set up with a password (#558) it
+is the password wrapper (below). A passkey (PRF) wrapper doesn't count on
+its own, with one exception (#572): a device that a member **with an
+account backup code** signed in on with their passkey alone has only a
+passkey wrapper, and its manifest records `accountRecovery: "backup-code"`.
+Its final path is the account itself: if the passkey can't open it, the
+member signs this browser in again with the backup code (replacing this
+device) and the household comes back from sync; only what hadn't synced
+yet is lost. No other device is set up that way, and no per-device backup
+key is shown for it. One test, `hasFinalUnlockPath` (with
+`hasVerifiedUnlockPath` for the wrapper part), enforces this in the vault
+and in `EventStore`; see [RECOVERY](RECOVERY.md#members-who-signed-up-with-a-password-557-558). Lock drops references, clears engine buffers and closes
 capabilities, without promising physical memory erasure.
 
 PRF is an optional WebAuthn extension, not a universal passkey property. Use required
@@ -120,7 +128,7 @@ agreement keys are removed and migration verification completes.
 - Existing canonical event bytes are encrypted directly. Historical placeholder identities remain byte-for-byte intact; a separate signed, encrypted identity-binding control record establishes the authenticated importing identity for v8 replay. No semantic JSON event replacement is used.
 - Tests cover roundtrip, wrong keys, metadata substitution, ciphertext/signature/nonce mutation, unsupported/truncated envelopes, nonce variation, sealed-key restore, correct/wrong recipient, expiry, signature tampering, and actual two-trusted-device opaque relay exchange.
 
-Key generation and authenticated encryption use platform Web Crypto. The implementation has no custom cipher, MAC, nonce counter, or password-derived content key. [ADR 0018](decisions/0018-account-key-vault.md) (accepted) allows a password-derived key, from Web Crypto PBKDF2-SHA-256, to wrap a member's vault key and a device's local root; it never encrypts content directly. The vault formats, key derivations and service storage below are implemented (#564), and so are password sign-in, the local password wrapper and creating the vault at first run (#557, #558); the no-cookie sign-in and the backup code are later stories.
+Key generation and authenticated encryption use platform Web Crypto. The implementation has no custom cipher, MAC, nonce counter, or password-derived content key. [ADR 0018](decisions/0018-account-key-vault.md) (accepted) allows a password-derived key, from Web Crypto PBKDF2-SHA-256, to wrap a member's vault key and a device's local root; it never encrypts content directly. The vault formats, key derivations and service storage below are implemented (#564), and so are password sign-in, the local password wrapper and creating the vault at first run (#557, #558), the no-cookie sign-in (#568), adding a passkey with "require password and passkey" (#560) and the backup code (#571).
 
 ### Local password wrapper (#558)
 
@@ -242,6 +250,71 @@ Types are `password`, `passkey`, `password-passkey` and `backup-code`; the
 The PRF output and the backup code are uniformly random 256-bit values, so
 HKDF needs no salt for them.
 
+**Which wrappers may exist together (#561/#572).** The service checks the
+set a change would leave, before storing anything
+(`server/account-vault-service.mjs` `wrapperSetProblem`), and refuses it
+with `vault_wrapper_rules`:
+
+- at least one wrapper (as before);
+- **no `password` wrapper beside a `passkey` or `password-passkey` one**
+  (ADR 0018 D3): once a passkey is added, a copy of the service's database
+  holds nothing a password guess opens;
+- **no `passkey` wrapper beside a `password-passkey` one**: "require
+  password and passkey" means a passkey alone opens nothing;
+- each passkey (credential ID) opens the vault at most once, and there is
+  at most one `backup-code` wrapper.
+
+So the transitions are swaps, made in one request
+(`POST /api/account/vault/wrappers` with `{ put, remove }`, applied in one
+transaction after a fresh password check) by
+`web/security/account-wrappers.js`:
+
+```text
+sign-up                  [password]
+add a passkey            [passkey]              password removed in the same step
+require password+passkey [password-passkey]     passkey-alone wrapper replaced
+turn that off            [passkey]              combined wrapper replaced
+make a backup code       [..., backup-code]     an older code's wrapper replaced
+change the password      password / password-passkey wrappers re-wrapped (same ID, version + 1)
+backup-code sign-in      password wrappers re-wrapped under the new password;
+                         password-passkey wrappers removed (they need the passkey too)
+```
+
+Each passkey wrapper gets its own random 32-byte PRF input. Adding a passkey
+asks it for two PRF values in one touch (the extension's `first` and
+`second` inputs): one for the vault wrapper, one for this device's local
+passkey unlock wrapper, so those two keys are independent.
+
+**Backup code (#572).** 32 random bytes, shown as 56 Crockford base32
+characters in 8 groups of 7 (`web/security/backup-code.js`): the bytes and
+a 3-byte check, the first three bytes of
+SHA-256("kin/backup-code-check/v1" ‖ code). The check only catches typos
+(a mistyped character slips through with probability 2^-24); it adds
+nothing to the code's strength. From the code bytes:
+
+```text
+KEK      = HKDF-SHA-256(code, empty salt, "kin/vault-backup/v1")   -> the backup-code wrapper
+codeAuth = HKDF-SHA-256(code, empty salt, "kin/backup-auth/v1")    -> sent at a backup-code sign-in
+verifier = SHA-256(codeAuth)                                       -> kept by the service, never sent out
+```
+
+The service keeps the verifier in the backup-code wrapper's parameters
+(`{ verifier }`), strips it from every download and summary, and compares
+SHA-256 of a sign-in's `codeAuth` with it in constant time. No stretching:
+the code is 256 random bits, so neither the verifier nor the wrapper can be
+guessed. A new code's wrapper replaces the old one in one step, so the old
+code stops opening the vault and signing in at that moment (exports made
+under it keep its own wrapper; see PORTABILITY).
+
+**Exports for a member with a backup code (#572).** The export's root gets
+one more recovery-type wrapper whose 32-byte secret is
+HKDF-SHA-256(VK, empty salt, JSON ["kin/export-backup-code/v1", vaultId]),
+and that wrapper carries the code's vault wrapper (`backupCode: {
+householdId, memberId, wrapperId, version, wrapped }`). Opening: code ->
+KEK -> VK -> the secret -> the root, offline. The whole export manifest is
+authenticated by the archive key, and the embedded wrapper by its own AAD,
+so neither can be swapped.
+
 **Password keys.** One stretch, split by HKDF:
 
 ```text
@@ -291,8 +364,23 @@ behind a session or a new-device capability, so this bounds traffic, not guessin
 without a cookie (#568) goes through a new-device capability (below) and
 releases only the one wrapper that sign-in opens: the password wrapper for a
 password sign-in, the asserted passkey's wrapper for a passkey sign-in, its
-password-passkey wrapper when both were required. The service never learns
+password-passkey wrapper when both were required, the backup-code wrapper
+for a backup-code sign-in (#572; that one also lists the other wrappers'
+IDs, types, versions and public parameters, without their keys, so the
+new password can re-wrap them). The service never learns
 whether a device's unlock attempt failed; devices count their own.
+
+**Changing the password (#560).** One request
+(`POST /api/account/password`, after the current password) carries the new
+PBKDF2 salt and iterations, the new `authKey` and the re-wrapped wrappers;
+the service stores the new Argon2id verifier and applies the wrapper change
+in one transaction. The device then re-wraps its own local password wrapper
+under the new password, keeping the wrapper's ID (no other tab is
+revoked; the root is unchanged). Another device of the member keeps its
+local password wrapper under the old password (it is that device's own)
+until it next signs in to the service: its sign-in derives `authKey` from
+the service's current salt and iterations, and once the new password
+signs in, the device re-wraps its local wrapper under it (THREAT-MODEL).
 
 ## Certification key chain (ADR 0018 section 3, #568/#570)
 

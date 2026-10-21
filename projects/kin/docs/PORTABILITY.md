@@ -28,11 +28,12 @@ AES-GCM ciphertext, avoiding redundant
 base64 expansion of the whole archive. HKDF purpose `kin/archive/v1` separates its
 key from local-record keys; manifest metadata is authenticated as AAD. The encrypted
 body contains exact canonical rows and protected replay/catch-up context. The
-normal export includes recovery wrappers (never a password wrapper, #558: a
-device set up only with a password can't make an export yet); it never emits plaintext JSON or device
-private keys. Store the export and its recovery key in different places, and
-write down which key label goes with which export (see Recovery key labels
-below).
+normal export includes recovery wrappers (never a password or passkey
+wrapper) and, for a member with an account backup code, a wrapper that opens
+with that code (see "Exports that open with the backup code" below); it
+never emits plaintext JSON or device private keys. Store the export and its
+recovery key (or backup code) in different places, and write down which key
+label goes with which export (see Recovery key labels below).
 
 Restore requires an unlocked empty target and the archive's recovery key. Kin
 validates the manifest, authenticates and decrypts the complete payload, checks
@@ -106,6 +107,46 @@ chance (1 in 65,536); it is for a person to match, not an identifier.
 The storage rule, used everywhere Kin mentions exports: **Store the export and
 its recovery key in different places, and write down which key label goes
 with which export.**
+
+## Exports that open with the backup code (#572)
+
+**Decision: an export from a member with an account backup code opens with
+that code**, not with the password. A device set up with a password (or with
+a passkey alone) has no per-device backup key, and the backup code is the
+one secret such a member keeps for exactly this: 256 random bits, printed
+and kept at home. Sealing exports for the password instead was rejected: an
+export file can be copied anywhere, and a password-sealed export could be
+guessed offline at PBKDF2 cost, which is the very exposure adding a passkey
+removes from the service (ADR 0018 D3).
+
+How (CRYPTOGRAPHY, "Exports for a member with a backup code"): the export's
+security manifest gets one more `recovery`-type root wrapper, **after** the
+device's own recovery wrappers if it has any. Its 32-byte secret is
+HKDF(VK, "kin/export-backup-code/v1", vault ID), and it carries the code's
+vault wrapper as `backupCode: { householdId, memberId, wrapperId, version,
+wrapped }`. Restoring with the code: the code opens that vault wrapper (VK),
+VK derives the secret, the secret opens the root. Offline, with nothing but
+the file and the code.
+
+- **Format.** Still package format 3 (and 2 still read); the only addition is
+  the optional `backupCode` field on one recovery wrapper of the header's
+  manifest, which the archive key authenticates with the rest of the header.
+  Exports made before #572 are unchanged and open exactly as before.
+- **Which code.** The one current when the export was made: making a new
+  code doesn't change exports already made, and the old code keeps opening
+  them (and only them). Keep each code until you no longer need the exports
+  made under it, or make a new export after a new code.
+- **Both.** A device that also has its own backup key (households set up
+  before accounts) makes exports that open with either; older Kin releases
+  find the device key first, as they always did, and can't use the code.
+- **Restore screen.** It says whether an export opens with the account
+  backup code, a device's backup key, or both; one field takes either (the
+  code is recognised by its shape: 8 groups of 7 letters and numbers).
+- **Needs a connection.** The device fetches the code's current vault wrapper
+  from the service when exporting; a device with its own backup key still
+  exports offline.
+- The export grants no authority, as before: the code opens the history in
+  the file, never membership or device trust.
 
 ## Ownership principle
 

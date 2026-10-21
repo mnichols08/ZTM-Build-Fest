@@ -21,6 +21,7 @@ const SHELL = [
   "/attachments/attachment-crypto.js", "/attachments/attachment-lifecycle.js", "/attachments/attachment-permissions.js", "/attachments/attachment-preview.js", "/attachments/attachment-progress.js", "/attachments/object-urls.js",
   "/storage/event-store.js", "/storage/event-arena.js", "/storage/encrypted-idb.js", "/storage/root-rotation.js", "/storage/quarantine.js",
   "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js", "/security/archive-stream.js", "/security/key-label.js", "/security/backup-key-entry.js", "/security/reload-resume.js", "/security/account-vault.js", "/security/account-vault-sync.js", "/security/account-credentials.js", "/security/account-setup.js", "/security/device-certification.js", "/security/new-device.js",
+  "/security/backup-code.js", "/security/account-wrappers.js", "/security/account-passkey.js", "/security/account-security.js",
   "/private/member-key.js", "/private/private-envelope.js", "/private/private-log-store.js", "/private/private-log.js", "/private/synced-prefs.js", "/private/private-blobs.js", "/private/journal.js", "/private/journal-view.js",
   // Just for me (#510).
   "/private-items.js", "/components/kin-just-for-me.js", "/components/app/private-items.js", "/components/shared/private-marker.js",
@@ -35,7 +36,7 @@ const SHELL = [
   "/components/app/appearance.js", "/components/app/attachments.js", "/components/app/journal.js", "/components/kin-journal.js", "/components/app/chat-share.js", "/components/app/commands/append.js", "/components/app/commands/bulk.js", "/components/app/commands/conversations.js", "/components/app/commands/items.js", "/components/app/commands/records.js", "/components/app/commands/routines.js", "/components/app/constants.js", "/components/app/context.js", "/components/app/detail.js", "/components/app/feedback.js", "/components/app/first-run.js", "/components/app/meals.js", "/components/app/simple.js", "/components/app/share.js", "/components/app/badge.js", "/components/app/private-prefs.js", "/components/app/sections.js", "/components/app/import.js", "/components/app/week.js", "/components/app/sitter.js", "/components/app/rotations.js", "/components/app/navigation.js", "/components/app/peer-channel.js", "/components/app/refresh.js", "/components/app/render.js", "/components/app/session.js", "/components/app/shell.js", "/components/app/status.js", "/components/app/sync.js", "/components/app/undo.js", "/components/app/views.js",
   ...["assignee-label", "dom", "focus", "icons", "operation", "props", "session-guard"].map((name) => `/components/shared/${name}.js`),
   ...["account", "api", "auth", "fresh-confirmation", "lifecycle", "link", "link-approval", "member-labels", "membership", "pairing", "pairing-path", "views"].map((name) => `/components/household/${name}.js`),
-  ...["archive", "first-run", "protection", "sign-in", "unlock", "views"].map((name) => `/components/security/${name}.js`),
+  ...["account", "archive", "first-run", "protection", "sign-in", "unlock", "views"].map((name) => `/components/security/${name}.js`),
   ...["focus", "sections", "selection"].map((name) => `/components/today/${name}.js`),
   "/components/item-detail/sections.js", "/components/notes/notes.js", "/components/notes/references.js",
 ];

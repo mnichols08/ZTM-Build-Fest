@@ -52,6 +52,25 @@ export function hasVerifiedUnlockPath(wrappers) {
   return Array.isArray(wrappers) && wrappers.some((wrapper) => wrapper?.type === "recovery" || wrapper?.type === "password");
 }
 
+/**
+ * The final-unlock-path rule for a whole manifest (#572): a verified path
+ * as above, or, on a device that a member with an account backup code
+ * signed in with their passkey alone, the account itself. Such a manifest
+ * records `accountRecovery: "backup-code"` and keeps at least one passkey
+ * wrapper; if that passkey can't open it, the member signs this browser in
+ * again with the backup code (replacing this device), and the household
+ * comes back from sync. What wasn't synced yet is the only loss, which is
+ * why only members with a backup code get this, and why no other device is
+ * set up this way. Every writer of the manifest applies this test.
+ */
+export function hasFinalUnlockPath(manifest) {
+  if (hasVerifiedUnlockPath(manifest?.wrappers)) return true;
+  return manifest?.accountRecovery === ACCOUNT_RECOVERY && manifest.wrappers.some((wrapper) => wrapper?.type === "prf");
+}
+
+/** The one value of a manifest's `accountRecovery` field. */
+export const ACCOUNT_RECOVERY = "backup-code";
+
 /** The local password wrapper's KEK: HKDF-SHA-256 of the member's
  * passwordKey (account-vault.js derivePasswordKeys) under its own purpose,
  * so it is never the same key as the account vault's password wrapper. */
@@ -151,6 +170,35 @@ export class LocalVault {
       validateManifest(manifest);
       vault.manifest = structuredClone(manifest);
       const verified = await LocalVault.unlock(manifest, kek, wrapper.id);
+      verified.lock();
+      return { vault, manifest };
+    } catch (error) {
+      vault.lock();
+      throw error;
+    }
+  }
+
+  /**
+   * A new root whose only wrapper is a passkey (PRF) wrapper (#572): a
+   * device a member with an account backup code signed in on with their
+   * passkey alone. No per-device backup key is made or shown; the manifest
+   * says the account is its final path (`hasFinalUnlockPath`). `secret` is
+   * the PRF output for `prfSalt`. Verified by unlocking first.
+   */
+  static async createWithPasskey(secret, { credentialId, prfSalt }) {
+    requireCrypto();
+    const vaultId = hex(crypto.getRandomValues(new Uint8Array(16)));
+    const root = crypto.getRandomValues(new Uint8Array(32));
+    const manifest = { formatVersion: 1, vaultId, rootVersion: 1, wrappers: [], accountRecovery: ACCOUNT_RECOVERY };
+    const vault = new LocalVault(vaultId, root, manifest);
+    root.fill(0);
+    try {
+      const wrapper = await vault.createWrapper(secret, { type: "prf", credentialId, prfSalt });
+      manifest.wrappers.push(wrapper);
+      manifest.verifier = await vault.seal("kin-vault-check-v1", { store: "security", id: "verifier" });
+      validateManifest(manifest);
+      vault.manifest = structuredClone(manifest);
+      const verified = await LocalVault.unlock(manifest, secret, wrapper.id);
       verified.lock();
       return { vault, manifest };
     } catch (error) {
@@ -274,10 +322,31 @@ export class LocalVault {
     this.assertUnlocked();
     const wrappers = this.manifest.wrappers.filter((wrapper) => wrapper.id !== id);
     if (wrappers.length === this.manifest.wrappers.length) throw new VaultError("That unlock path was not found.");
-    if (!hasVerifiedUnlockPath(wrappers))
+    if (!hasFinalUnlockPath({ ...this.manifest, wrappers }))
       throw new VaultError("Keep a verified recovery path before removing this unlock method.", "last_wrapper");
     this.manifest = { ...this.manifest, wrappers };
     return structuredClone(this.manifest);
+  }
+
+  /**
+   * The password wrapper again under a new password (#560), keeping its ID
+   * (so no other tab's unlock is revoked: the root is the same, only the
+   * way to it changed). `kek` is localPasswordKek of the new passwordKey;
+   * `salt`, `iterations` and `username` are its public parameters. Verified
+   * by unlocking with the candidate before it is returned; the caller saves
+   * it (EventStore.updateSecurityManifest).
+   */
+  async replacePasswordWrapper(kek, { salt, iterations, username }) {
+    this.assertUnlocked();
+    const current = this.manifest.wrappers.find((wrapper) => wrapper.type === "password");
+    if (!current) throw new VaultError("This device doesn't unlock with a password.", "wrapper_unavailable");
+    const wrapper = await this.createWrapper(kek, { type: "password", id: current.id, salt, iterations, username: username ?? current.username });
+    const candidate = { ...this.manifest, wrappers: this.manifest.wrappers.map((entry) => entry.id === current.id ? wrapper : entry) };
+    const verified = await LocalVault.unlock(candidate, kek, wrapper.id);
+    verified.lock();
+    this.assertUnlocked();
+    this.manifest = candidate;
+    return structuredClone(candidate);
   }
 
   async sealArchive(value, metadata = new Uint8Array(), { rawCiphertext = false } = {}) {
@@ -332,7 +401,8 @@ function validRootFormat(manifest) {
 
 export function validateManifest(manifest) {
   if (!validRootFormat(manifest) || !/^[a-f0-9]{32}$/.test(manifest.vaultId) ||
-      !Array.isArray(manifest.wrappers) || !manifest.wrappers.length || manifest.wrappers.length > MAX_WRAPPERS)
+      !Array.isArray(manifest.wrappers) || !manifest.wrappers.length || manifest.wrappers.length > MAX_WRAPPERS ||
+      (manifest.accountRecovery !== undefined && manifest.accountRecovery !== ACCOUNT_RECOVERY))
     throw new VaultError("The household security format is unsupported or corrupt.");
   const ids = new Set();
   for (const wrapper of manifest.wrappers) {

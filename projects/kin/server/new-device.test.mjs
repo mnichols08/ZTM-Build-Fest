@@ -339,7 +339,10 @@ test("passkeys: once added, the password alone no longer signs in; a passkey alo
       wrapped: b64(Buffer.concat([Buffer.from([1]), Buffer.alloc(60, 1)])), householdId, memberId,
     });
     const strip = (make) => async (context) => { const { householdId: _h, memberId: _m, ...wrapper } = await make(context); return wrapper; };
-    const household = await foundHousehold(server, { extraWrappers: [strip(passkeyWrapper("passkey"))] });
+    const household = await foundHousehold(server);
+    // Adding the passkey removes the password-only wrapper in the same step (D3).
+    server.accountVaultService.changeWrappers({ household: { id: household.householdId }, member: { id: household.memberId } },
+      { put: [await strip(passkeyWrapper("passkey"))({})], remove: ["1".repeat(32)] });
     server.service.addCredential(household.memberId, { id: credentialId, publicKey: "key", algorithm: -7 });
     server.service.members.get(household.memberId).credentials.add(credentialId);
     // The password alone is refused now.
@@ -371,10 +374,11 @@ test("passkeys: once added, the password alone no longer signs in; a passkey alo
     const both = async () => ({ wrapperId: "3".repeat(32), type: "password-passkey", version: 1,
       params: { kdf: "pbkdf2-sha256", iterations: 600_000, salt: b64(SALT), credentialId, prfSalt: b64(Buffer.alloc(32, 2)) },
       wrapped: b64(Buffer.concat([Buffer.from([1]), Buffer.alloc(60, 1)])) });
-    const household = await foundHousehold(strict, { extraWrappers: [both] });
-    // Require-both means no password-only wrapper: drop it, as adding the
-    // passkey does (ADR 0018).
-    strict.accountVaultService.removeWrapper({ household: { id: household.householdId }, member: { id: household.memberId } }, "1".repeat(32));
+    const household = await foundHousehold(strict);
+    // Require-both means no password-only wrapper: it goes in the same step
+    // (ADR 0018).
+    strict.accountVaultService.changeWrappers({ household: { id: household.householdId }, member: { id: household.memberId } },
+      { put: [await both()], remove: ["1".repeat(32)] });
     strict.service.addCredential(household.memberId, { id: credentialId, publicKey: "key", algorithm: -7 });
     strict.service.members.get(household.memberId).credentials.add(credentialId);
     // A passkey alone isn't enough.

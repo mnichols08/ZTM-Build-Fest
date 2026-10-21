@@ -2,6 +2,7 @@ import { EventStore } from "../storage/event-store.js";
 import { discardValidatedHouseholdArchive } from "../security/archive.js";
 import { button, section, text } from "./shared/dom.js";
 import { OperationGuard } from "./shared/operation.js";
+import { SecurityAccount } from "./security/account.js";
 import { SecurityArchive } from "./security/archive.js";
 import { SecurityFirstRun } from "./security/first-run.js";
 import { SecurityProtection } from "./security/protection.js";
@@ -24,6 +25,7 @@ const PARTS = {
   archive: SecurityArchive,
   firstRun: SecurityFirstRun,
   signIn: SecuritySignIn,
+  account: SecurityAccount,
 };
 
 class KinSecurity extends HTMLElement {
@@ -100,6 +102,11 @@ class KinSecurity extends HTMLElement {
     this.phase = "locked";
     this.recoveryExpanded = false;
     this.justSetUp = false;
+    // An open account flow (a backup code on screen) ends with the lock.
+    this.ctx.account.wipeFlow();
+    this.ctx.account.security = null;
+    const app = this.closest("kin-app");
+    if (app) app.accountSecurity = null;
     this.setAttribute("aria-busy", "false");
     clearLegacyDrafts();
     this.render();
@@ -139,6 +146,7 @@ class KinSecurity extends HTMLElement {
   unlockPassword(...args) { return this.ctx.unlock.unlockPassword(...args); }
   get firstRun() { return this.ctx.firstRun; }
   get signIn() { return this.ctx.signIn; }
+  get account() { return this.ctx.account; }
   unlockRecovery(...args) { return this.ctx.unlock.unlockRecovery(...args); }
   render(...args) { return this.ctx.views.render(...args); }
 }

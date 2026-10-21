@@ -3,12 +3,14 @@
 // run, finishing a password claim once it is approved, signing in again
 // with the password, keeping the member's account vault current, endorsing
 // the member's certification key (#570), and provisioning a device that
-// signed in with no other device's help (#568).
+// signed in with no other device's help (#568), including with the backup
+// code and its new password (#572).
 // Part of <kin-household>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
 import { currentPlatform, householdDeviceName } from "../../platform.js";
 import { createAccountVault, passwordUnlockKeys, passwordWrapper, signUpBody } from "../../security/account-setup.js";
-import { openVault, wipeVaultContents } from "../../security/account-vault.js";
+import { derivePasswordKeys, openVault, wipeVaultContents } from "../../security/account-vault.js";
+import { EventStore } from "../../storage/event-store.js";
 import { vaultApi, VaultKeeper } from "../../security/account-vault-sync.js";
 import {
   certificationKeyPair,
@@ -17,7 +19,7 @@ import {
   MAX_ENDORSEMENT_ANCHORS,
   verifyOwnEndorsement,
 } from "../../security/device-certification.js";
-import { fromBase64Url, getActiveVault, toBase64Url } from "../../security/local-vault.js";
+import { fromBase64Url, getActiveVault, localPasswordKek, toBase64Url } from "../../security/local-vault.js";
 import { vaultHouseholdEpochs } from "../../security/new-device.js";
 import { deviceKeyFingerprint, importVaultEpochKey, verifiedDeviceKeyHistory } from "../../sync/crypto.js";
 import { onEpochInstalled } from "../../sync/key-store.js";
@@ -172,16 +174,35 @@ export class HouseholdAccount {
   }
 
   /** Signs this device in again with the password (a session ended while
-   * Kin stayed unlocked). */
+   * Kin stayed unlocked). The password may have changed on another device
+   * (#560): the service's current parameters derive the key it checks, and
+   * once that signs in, this device's own password wrapper follows the new
+   * password (same wrapper ID), so the new password unlocks it from now on. */
   signIn(password) {
     return this.guarded(async () => {
       const wrapper = this.wrapper();
-      const keys = await passwordUnlockKeys(wrapper, password);
+      let parameters = { salt: wrapper.salt, iterations: wrapper.iterations };
+      try {
+        const current = await this.host.api("/api/account/sign-in/parameters", { method: "POST", body: JSON.stringify({ username: wrapper.username }) });
+        if (current?.salt && Number.isSafeInteger(current.iterations)) parameters = { salt: current.salt, iterations: current.iterations };
+      } catch { /* Offline or limited: this device's own parameters. */ }
+      const keys = await derivePasswordKeys(password, fromBase64Url(parameters.salt), { iterations: parameters.iterations });
+      let kek = null;
       try {
         await this.host.api("/api/login/password", { method: "POST",
           body: JSON.stringify({ username: wrapper.username, authKey: toBase64Url(keys.authKey) }) });
+        if (parameters.salt !== wrapper.salt || parameters.iterations !== wrapper.iterations) {
+          const vault = getActiveVault();
+          kek = await localPasswordKek(keys.passwordKey);
+          const manifest = await vault.replacePasswordWrapper(kek, { ...parameters, username: wrapper.username });
+          await EventStore.updateSecurityManifest(manifest, vault);
+          const security = this.host.closest("kin-app")?.security;
+          if (security) security.manifest = await EventStore.securityStatus();
+        }
       } finally {
-        for (const key of ["authKey", "passwordKey", "localKek"]) keys[key].fill(0);
+        keys.authKey.fill(0);
+        keys.passwordKey.fill(0);
+        kek?.fill(0);
       }
       history.replaceState(null, "", "/");
       await this.host.load();
@@ -217,7 +238,11 @@ export class HouseholdAccount {
         const registered = await this.host.api("/api/account/sign-in/device", { method: "POST", body: JSON.stringify({
           syncPublicKeys: pending.publicKeys, certificate, replaceDeviceId: signIn.replaceDeviceId ?? null,
           deviceLabel: householdDeviceName(currentPlatform()), vaultEpochs: vaultHouseholdEpochs(opened.contents),
+          // After a backup code (#572): the new password, and the vault's
+          // password wrappers re-wrapped under it, in the same step.
+          ...(signIn.registration ?? {}),
         }) });
+        signIn.registration = null;
         const bound = await store.bindPendingDevice({ deviceId: registered.deviceId, householdId: registered.householdId, memberId: registered.memberId });
         this.host.localFingerprint = bound.fingerprint;
         signIn.registered = registered;

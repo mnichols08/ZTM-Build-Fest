@@ -202,6 +202,17 @@ receives the vault key, a password, a passkey's PRF output or a backup
 code. Deleting the household deletes the vaults; backups keep old copies.
 See [Cryptography](CRYPTOGRAPHY.md#account-key-vault-adr-0018).
 
+A passkey and a backup code for an account (#560, #571): the service also
+learns **when a member adds a passkey, changes their password, turns
+"require password and passkey" on or off, or makes a new backup code**
+(each changes their wrappers or verifier; the audit log records
+`passkey_added`, `password_changed` and `password_reset`), and keeps, for a
+backup code, **SHA-256 of a key derived from it** so it can check a
+backup-code sign-in. That value never leaves the service and can't be turned
+back into the code. A backup-code sign-in is recorded like any new-device
+sign-in (method `backup-code`). The code itself, its printout and the
+exports it opens stay with the member.
+
 Username and password sign-in (#557, #558): for a member who signs up with
 a password, the service now stores **a username** (with the member, in
 normalized lower-case form, unique among active members) and **an Argon2id

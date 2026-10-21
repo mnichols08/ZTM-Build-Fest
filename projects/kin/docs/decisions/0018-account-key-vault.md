@@ -4,9 +4,10 @@ Status: **Accepted** (owner decisions D1–D5, 2026-10-20; #547, epic #546).
 Partly implemented: the vault (#564–#567) and the first run with a username
 and password (#557–#559: sign-up, the local password wrapper, creating the
 vault, sign-in on a trusted device, fresh password confirmations) and the
-no-cookie sign-in with the certification key chain (#568–#570) are in; the
-passkey second step (adding passkey wrappers) and the backup code (#571) are
-not. It changes four standing rules, listed under "Rules this
+no-cookie sign-in with the certification key chain (#568–#570), adding a
+passkey with "require password and passkey" (#560–#562) and the backup code
+(#571–#573) are in; the migration of existing households (#574) and the
+offline passkey (#551) are not. It changes four standing rules, listed under "Rules this
 changes"; AGENTS.md and CRYPTOGRAPHY point here until the implementation
 stories update the rest of the docs.
 

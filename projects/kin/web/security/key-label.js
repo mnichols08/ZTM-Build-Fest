@@ -21,11 +21,13 @@ export async function recoveryKeyLabel(wrapperId, rootVersion) {
   return `K-${((digest[0] << 8) | digest[1]).toString(16).padStart(4, "0").toUpperCase()}`;
 }
 
-/** Labels of the recovery keys that open a vault with `manifest`, in order. */
+/** Labels of the recovery keys that open a vault with `manifest`, in order.
+ * An export's wrapper for the account backup code (#572) is a recovery-type
+ * wrapper too, but no device key: it gets no label. */
 export async function manifestRecoveryLabels(manifest) {
   const labels = [];
   for (const wrapper of manifest?.wrappers ?? [])
-    if (wrapper?.type === "recovery") labels.push(await recoveryKeyLabel(wrapper.id, manifest.rootVersion));
+    if (wrapper?.type === "recovery" && !wrapper.backupCode) labels.push(await recoveryKeyLabel(wrapper.id, manifest.rootVersion));
   return labels;
 }
 

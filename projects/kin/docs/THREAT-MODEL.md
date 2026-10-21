@@ -179,8 +179,9 @@ the new-device rows are below.
 | Online guessing against the service | From a trusted device's cookie, or (#568) from any browser through the new-device sign-in; failures are limited to 10 per 15 minutes per member, per device and per address, and past that even the right password waits. One message and the same Argon2id work for every failure, so neither says whether a username exists. |
 | A **fresh password** instead of a fresh passkey | Weaker than a passkey until one is added. For a member with no passkey, admin-only and trust actions (approving a device or a member, signing in a computer, revoking a device, removing a member, household admins, Simple view, chat and fridge access, deleting the household or cancelling that) accept a password re-entry. Anyone who has the member's password *and* one of their trusted devices (or an open session on one) can do those things; with a passkey, they'd also need the passkey's device or account. A member who has a passkey always confirms with it, and an `authKey` is no substitute. |
 | Usernames can be listed | Whether a username is free is answered at sign-up, as on every sign-up page, limited to 30 checks per client address in 15 minutes. A claim waiting for approval holds its username. |
-| Forgotten password, one device, no other way in | The household can't be opened on that device (RECOVERY, "Members who signed up with a password"). No backup key exists to fall back to until the backup code (#571); the first run says so in one line. |
-| Phishing for the password | Possible, as for any password; another reason to add a passkey once that is offered. A phished `authKey` alone opens nothing locally (the local wrapper's key is derived separately). |
+| Forgotten password, one device, no other way in | With a backup code (#571): sign in with it (on a new device, or this one after clearing Kin's site data) and choose a new password. Without one, the household can't be opened on that device (RECOVERY, "Members who signed up with a password"); the first run says so in one line and Today offers the backup code after the first week. |
+| Password changed on one device, another device still has the old one | The other device keeps unlocking locally with the **old** password (its local wrapper is its own), but signing it in to the service needs the new one; when it does, its local wrapper moves to the new password. Until then, someone who knows the old password and holds that device can open its local copy, as before the change. Changing the password doesn't revoke a device: to shut a lost device out, revoke or replace it. |
+| Phishing for the password | Possible, as for any password; another reason to add a passkey (offered on Today after the first useful action, #562). A phished `authKey` alone opens nothing locally (the local wrapper's key is derived separately). |
 
 Nothing in the vault, the verifier or the local wrapper lets the service
 read household content: it sees `authKey` (from which the password-derived
@@ -204,10 +205,34 @@ and gets a **new-device capability**, not a session.
 | Passkey-alone sign-in (D4) and require-both | The service lets the password sign in on a new device only while the vault has a password wrapper and no passkey wrapper; with a passkey wrapper, only the passkey (WebAuthn with user verification, then its PRF output opens the wrapper); with "require password and passkey", the password step leaves the capability pending until the passkey assertion completes it, and only the combined wrapper is released. Whoever controls a synced passkey can sign in on a new device unless require-both is on (ADR 0018). |
 
 Deferred (not claimed): rotating a member's certification key; showing the
-member a notice on their other devices when a new device signs in;
-creating passkey vault wrappers (the passkey second step, a later story), so
-the passkey paths are implemented and tested on the service and in the
-browser library but no member has a passkey wrapper yet.
+member a notice on their other devices when a new device signs in.
+
+### A passkey and a backup code for an account (#560, #571)
+
+What each way into an account protects against (the success criterion of
+epic #546), with the wrapper-set rules the service enforces (CRYPTOGRAPHY,
+"Which wrappers may exist together"):
+
+| The account has | Stolen copy of the service's database | Stolen password | Stolen or phished synced passkey (the account that syncs it) | Lost every device |
+| --- | --- | --- | --- | --- |
+| Password only (sign-up, D3) | Weak passwords can be guessed offline at PBKDF2 cost | Opens the account on a new device | n/a | Password signs in on a new device |
+| Password + passkey (default once added, D4) | Nothing to guess: the password-only wrapper is gone, the passkey wrapper's key is 256 PRF bits. Older database backups still hold the old password-only wrapper. | Not enough on its own: the service refuses the password alone (`passkey_required`) and holds no wrapper it opens | **Enough** on its own: whoever controls the synced passkey signs in on a new device (ADR 0018 D4, owner's choice) | Passkey signs in on a new device |
+| "Require password and passkey" on | Nothing to guess (the combined key needs the PRF output) | Not enough | Not enough: the passkey alone is offered nothing real and opens nothing; both are needed | Password and passkey together |
+| + a backup code (any of the above) | Nothing to guess: the code is 256 random bits; the service keeps only SHA-256 of a key derived from it | — | — | The backup code signs in and sets a new password |
+
+| Threat | What Kin does |
+| --- | --- |
+| **Stolen backup code** | Enough on its own, with the username, to sign in on a new device, open the vault and replace the password (it is the way back when everything else is lost). That's why it's printed and kept at home, never asked for at sign-up, and offered only after the first week. The sign-in is charged and limited like a password (10 failures per 15 minutes per member and per address, one generic answer) and appears in the member's device list and the audit log (`new_device_sign_in` with method `backup-code`, `password_reset`). Making a new code stops the old one at once (its wrapper and check value are replaced in one step); exports made under the old code still open with it (PORTABILITY). |
+| Guessing a backup code online | 256 bits, behind the password limits: not feasible. A typo is caught on the device (a 24-bit check) before anything is sent, so honest typos don't spend the limit. |
+| A session alone (a browser left signed in) changing how the account opens | Every account change (adding a passkey, require-both on or off, a new backup code, a new password) needs the current password, checked fresh with the password limits, and goes to the service as one request; the service also checks the resulting wrapper set. A session can still remove one wrapper at a time through the older per-wrapper route (never the last one, never against the rules), which could lock the member out of new-device sign-in but opens nothing. |
+| A passkey without the PRF extension | Kin keeps it for confirming household actions but can't use it for the vault; Security says so and the password keeps working. |
+| Admin actions after a passkey is added | They ask for the passkey again (as for members who started with one); the password is no longer accepted as a fresh confirmation. |
+| A device signed in with a passkey alone, for a member with a backup code | It has no backup key and no offline unlock: its final path is the account (RECOVERY). If the passkey stops working there, the member signs that browser in again with the backup code, as a replacement; anything it hadn't synced is lost. |
+
+Deferred (not claimed): a one-tap "start over on this browser" for that last
+case (today the person clears the site's data in browser settings); updating
+other devices' local password wrapper without them signing in again;
+removing a single passkey from the account in Security.
 
 ## Private storage per member (ADR 0019, #489)
 

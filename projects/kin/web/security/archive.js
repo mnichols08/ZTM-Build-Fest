@@ -13,6 +13,8 @@ import { LocalVault, validateManifest, serializeProtectedValue, deserializeProte
 import { EventStore } from "../storage/event-store.js";
 import { readArchive, writeArchive } from "./archive-stream.js";
 import { manifestRecoveryLabels } from "./key-label.js";
+import { backupCodeKek, exportUnlockSecret, unwrapVaultKey } from "./account-vault.js";
+import { looksLikeBackupCode, parseBackupCode } from "./backup-code.js";
 import {
   appendChatBlob, appendChatEvents, blobSegment, blobSegmentLength, chatBlobBudget, chatEventsView, chooseChatBlobs,
   discardChatSection, importChatSection, MAX_ARCHIVE_CHAT_BLOBS, MAX_ARCHIVE_CHAT_EVENTS, openChatSection, validateChatSection,
@@ -56,7 +58,7 @@ function syncId(value) {
   return [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export async function exportHouseholdArchive({ store, engine, vault, portableMembership, chat = null, board = null, report = null, onProgress }) {
+export async function exportHouseholdArchive({ store, engine, vault, portableMembership, chat = null, board = null, report = null, backupCode = null, onProgress }) {
   await assertCurrentProtection(vault);
   const parts = await store.archiveParts({ portableMembership });
   const context = parts.local_context[0];
@@ -66,14 +68,17 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
   await assertCurrentProtection(vault);
   const manifest = {
     formatVersion: source.formatVersion, vaultId: source.vaultId, rootVersion: source.rootVersion,
-    wrappers: source.wrappers.filter((wrapper) => wrapper.type === "recovery"), verifier: source.verifier,
+    wrappers: source.wrappers.filter((wrapper) => wrapper.type === "recovery" && !wrapper.backupCode), verifier: source.verifier,
   };
-  // An export opens with a backup key. A device set up with a password
-  // (#558) has none yet, so it can't make one (the backup code, #571, is
-  // what will open exports for it).
+  // An export opens with this device's backup key, and, for a member with
+  // an account backup code (#572), with that code: one more recovery-type
+  // wrapper, after the device's, carrying the code's vault wrapper
+  // (backupCodeExportWrapper). Older Kin sees an ordinary recovery wrapper
+  // it can't open, and still opens the device's key, which comes first.
+  if (backupCode) manifest.wrappers.push(await backupCodeExportWrapper(vault, backupCode));
   if (!manifest.wrappers.length)
-    throw new VaultError(source.wrappers.some((wrapper) => wrapper.type === "password")
-      ? "This device was set up with a password and has no backup key, so it can't make an export yet. Your household stays on this device and syncs as usual."
+    throw new VaultError(source.wrappers.some((wrapper) => wrapper.type === "password" || wrapper.type === "prf")
+      ? "Make a backup code for your account first (Security → Backup code): exports from this device open with it. Your household stays on this device and syncs as usual."
       : "Create a verified recovery path before exporting.");
   const household = await EventStore.validateArchiveParts({ parts, engine, vault });
   let included = null;
@@ -131,6 +136,34 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
     board: boardView && { view: boardView },
     check: () => assertCurrentProtection(vault), onProgress,
   });
+}
+
+/**
+ * The export root wrapper for a member's backup code (#572, PORTABILITY):
+ * an ordinary recovery-type root wrapper whose 32-byte secret is
+ * exportUnlockSecret(VK, vaultId), with the code's vault wrapper beside it
+ * (`backupCode: { householdId, memberId, wrapperId, version, wrapped }`),
+ * so the code alone opens the export, offline: code -> VK -> secret -> root.
+ * `backupCode` is `{ vaultKey, householdId, memberId, wrapper }`, the
+ * wrapper as the service sent it (wrapped key in base64url). The whole
+ * manifest is authenticated by the archive key, so the extra field can't
+ * be swapped without the export failing to open.
+ */
+export async function backupCodeExportWrapper(vault, { vaultKey, householdId, memberId, wrapper }) {
+  if (wrapper?.type !== "backup-code" || typeof wrapper.wrapped !== "string")
+    throw new VaultError("Your account's backup code couldn't be read. Try the export again.");
+  const secret = await exportUnlockSecret(vaultKey, vault.vaultId);
+  try {
+    const rootWrapper = await vault.createWrapper(secret, { type: "recovery" });
+    return { ...rootWrapper, backupCode: { householdId, memberId, wrapperId: wrapper.wrapperId, version: wrapper.version, wrapped: wrapper.wrapped } };
+  } finally {
+    secret.fill(0);
+  }
+}
+
+/** Whether a manifest (an export's) opens with an account backup code. */
+export function manifestBackupCode(manifest) {
+  return (manifest?.wrappers ?? []).find((wrapper) => wrapper?.type === "recovery" && wrapper.backupCode) ?? null;
 }
 
 /**
@@ -259,20 +292,27 @@ export async function describeHouseholdArchive(bytes, engine) {
   // Bounded first (at most 16 wrappers), so a crafted header can't make
   // file selection hash without limit.
   let labels;
+  let backupCode;
   try {
     validateManifest(header.manifest);
     labels = await manifestRecoveryLabels(header.manifest);
+    backupCode = manifestBackupCode(header.manifest) !== null;
   } catch { throw new VaultError("This file is damaged or incomplete."); }
-  if (!labels.length) throw new VaultError("This file is damaged or incomplete.");
-  return Object.freeze({ exportedAt: packageManifest.exportedAt, labels: Object.freeze(labels), packageFormatVersion: header.archiveVersion });
+  if (!labels.length && !backupCode) throw new VaultError("This file is damaged or incomplete.");
+  return Object.freeze({ exportedAt: packageManifest.exportedAt, labels: Object.freeze(labels), backupCode, packageFormatVersion: header.archiveVersion });
 }
 
 /**
- * Unlocks an export's own vault with its recovery key. A wrong key names the
- * label of the key that does open it, since after a key replacement older
- * exports still need the key their device had when they were made.
+ * Unlocks an export's own vault with its recovery key, or with the account
+ * backup code it was made for (#572). A wrong key names the label of the
+ * key that does open it, since after a key replacement older exports still
+ * need the key their device had when they were made.
  */
 export async function openArchiveVault(manifest, recoverySecret) {
+  const codeWrapper = manifestBackupCode(manifest);
+  if (codeWrapper && looksLikeBackupCode(recoverySecret)) return openWithBackupCode(manifest, codeWrapper, recoverySecret);
+  if (!manifest.wrappers.some((wrapper) => wrapper.type === "recovery" && !wrapper.backupCode))
+    throw new VaultError("This export opens with your account's backup code. Enter the code (8 groups of 7 letters and numbers).", "archive_key_mismatch");
   try {
     return await LocalVault.unlock(manifest, recoverySecret);
   } catch (error) {
@@ -285,6 +325,31 @@ export async function openArchiveVault(manifest, recoverySecret) {
       `This export opens with backup key ${labels[0]} from the device that made it, and Kin couldn't open it with the key you entered. Check that you're using that key. Saved data was not changed.`,
       "archive_key_mismatch", error,
     );
+  }
+}
+
+// code -> the code's vault wrapper -> VK -> exportUnlockSecret -> the root.
+async function openWithBackupCode(manifest, wrapper, code) {
+  const mismatch = (cause) => new VaultError(
+    "This export opens with the account backup code that was current when it was made, and Kin couldn't open it with the code you entered. Saved data was not changed.",
+    "archive_key_mismatch", cause);
+  const { householdId, memberId, wrapperId, version, wrapped } = wrapper.backupCode ?? {};
+  const codeBytes = await parseBackupCode(code);
+  let kek, vaultKey, secret;
+  try {
+    kek = await backupCodeKek(codeBytes);
+    try {
+      vaultKey = await unwrapVaultKey(fromBase64Url(String(wrapped ?? "")), kek, { householdId, memberId, type: "backup-code", wrapperId, version });
+    } catch (error) { throw mismatch(error); }
+    secret = await exportUnlockSecret(vaultKey, manifest.vaultId);
+    try {
+      return await LocalVault.unlock(manifest, secret, wrapper.id);
+    } catch (error) { throw mismatch(error); }
+  } finally {
+    codeBytes.fill(0);
+    kek?.fill(0);
+    vaultKey?.fill(0);
+    secret?.fill(0);
   }
 }
 

@@ -98,6 +98,33 @@ export const accountVaultMethods = {
     });
   },
 
+  /**
+   * Removes the wrappers `remove` names and then adds or replaces `put`
+   * (each as putAccountVaultWrapper would), in one transaction (#561):
+   * `check(wrappers)` sees the resulting set (`[{ wrapperId, type,
+   * version, params }]`) before anything commits and throws to refuse it.
+   * A vault always keeps at least one wrapper. Returns the resulting set.
+   */
+  changeAccountVaultWrappers(householdId, memberId, { put = [], remove = [] }, now, check = () => {}) {
+    this.assertAvailable();
+    return this.transaction(() => {
+      if (!this.db.prepare("SELECT 1 FROM account_vaults WHERE member_id = ? AND household_id = ?").get(memberId, householdId))
+        throw new DurableConflictError("vault_not_found", "There is no vault to add this to.");
+      for (const wrapperId of remove) {
+        const deleted = this.db.prepare("DELETE FROM account_vault_wrappers WHERE member_id = ? AND household_id = ? AND wrapper_id = ?")
+          .run(memberId, householdId, wrapperId).changes;
+        if (!deleted) throw new DurableConflictError("vault_wrapper_not_found", "That way of opening the vault was not found.");
+      }
+      for (const wrapper of put) this.putAccountVaultWrapper(householdId, memberId, wrapper, now);
+      const wrappers = this.db.prepare(`SELECT wrapper_id, type, version, params FROM account_vault_wrappers
+        WHERE member_id = ? AND household_id = ? ORDER BY wrapper_id`).all(memberId, householdId)
+        .map((row) => ({ wrapperId: row.wrapper_id, type: row.type, version: row.version, params: JSON.parse(row.params) }));
+      if (!wrappers.length) throw new DurableConflictError("vault_last_wrapper", "Keep at least one way to open your vault.");
+      check(wrappers);
+      return wrappers;
+    });
+  },
+
   /** Removes a member's vault, wrappers and password verifier (the member
    * was removed or left). Returns whether anything was there. */
   removeAccountKeys(householdId, memberId) {

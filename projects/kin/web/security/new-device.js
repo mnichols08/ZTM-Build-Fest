@@ -14,19 +14,27 @@
 //   password          the "password" wrapper, KEK = passwordKey
 //   passkey           the "passkey" wrapper for that passkey, KEK = HKDF(PRF)
 //   password-passkey  the "password-passkey" wrapper, KEK = HKDF(PRF || passwordKey)
-// The service releases only that wrapper (account-vault-service.mjs).
+//   backup-code       the "backup-code" wrapper, KEK = HKDF(code bytes) (#572)
+// The service releases only that wrapper (account-vault-service.mjs). A
+// backup-code sign-in then sets a new password (newPasswordForBackupCode).
 import {
+  backupCodeAuthKey,
+  backupCodeKek,
   combinedKek,
   derivePasswordKeys,
+  newPasswordSalt,
   openVault,
   passkeyKek,
+  PASSWORD_ITERATIONS,
   unwrapVaultKey,
   wipeVaultContents,
 } from "./account-vault.js";
-import { normalizeUsername, usernameProblem } from "./account-credentials.js";
+import { passwordChangeWrappers, wrapperChangeBody } from "./account-wrappers.js";
+import { normalizeUsername, passwordProblem, usernameProblem } from "./account-credentials.js";
+import { parseBackupCode } from "./backup-code.js";
 import { fromBase64Url, toBase64Url, VaultError } from "./local-vault.js";
 
-export const SIGN_IN_METHODS = Object.freeze(["password", "passkey", "password-passkey"]);
+export const SIGN_IN_METHODS = Object.freeze(["password", "passkey", "password-passkey", "backup-code"]);
 
 /** Posts JSON; resolves the parsed body or throws an Error with `code`. */
 export async function signInRequest(path, body = {}, { method = "POST", signal } = {}) {
@@ -66,6 +74,56 @@ export async function signInWithPassword({ username, password, request = signInR
   try {
     const view = await request("/api/account/sign-in/password", { username: name, authKey: toBase64Url(authKey) });
     return { view, passwordKey, salt, iterations: parameters.iterations, username: name };
+  } catch (error) {
+    passwordKey.fill(0);
+    throw error;
+  } finally {
+    authKey.fill(0);
+  }
+}
+
+/**
+ * Signs in with a username and the account backup code (#572). Resolves to
+ * `{ view, codeBytes, username }`; the caller zeroes codeBytes. A typed code
+ * with a typo is refused here, before anything is sent.
+ */
+export async function signInWithBackupCode({ username, code, request = signInRequest }) {
+  const name = normalizeUsername(username);
+  if (!name) throw new VaultError(usernameProblem(username), "username_invalid");
+  const codeBytes = await parseBackupCode(code);
+  const authKey = await backupCodeAuthKey(codeBytes);
+  try {
+    const view = await request("/api/account/sign-in/backup-code", { username: name, codeAuth: toBase64Url(authKey) });
+    return { view, codeBytes, username: name };
+  } catch (error) {
+    codeBytes.fill(0);
+    throw error;
+  } finally {
+    authKey.fill(0);
+  }
+}
+
+/**
+ * The new password a backup-code sign-in sets (#572), and the vault change
+ * that goes with it: password wrappers re-wrapped under it, combined
+ * password-and-passkey wrappers removed (they need the passkey too; the
+ * member turns that setting on again later). Resolves to `{ body: {
+ * newPassword, vaultChange }, passwordKey, salt, iterations }` for the
+ * device registration; the caller zeroes passwordKey. Refuses a password
+ * below the floor with plain words (code "password_rejected").
+ */
+export async function newPasswordForBackupCode({ password, username, opened, others = [], householdId, memberId }) {
+  const problem = passwordProblem(password, { username });
+  if (problem) throw new VaultError(problem, "password_rejected");
+  const salt = newPasswordSalt();
+  const iterations = PASSWORD_ITERATIONS;
+  const { authKey, passwordKey } = await derivePasswordKeys(password, salt, { iterations });
+  try {
+    const change = await passwordChangeWrappers({ vaultKey: opened.vaultKey, householdId, memberId, wrappers: others,
+      passwordKey, password: { salt, iterations } });
+    const body = { newPassword: { salt: toBase64Url(salt), iterations, authKey: toBase64Url(authKey) } };
+    if (change.put.length || change.remove.length) body.vaultChange = wrapperChangeBody(change);
+    return { body, passwordKey, salt, iterations };
   } catch (error) {
     passwordKey.fill(0);
     throw error;
@@ -125,13 +183,19 @@ export async function signInWithPasskey({ username = "", signal, request = signI
 }
 
 /** The vault and wrapper the capability releases, as bytes:
- * `{ vault: { version, ciphertext }, wrappers, certificationEndorsement }`. */
+ * `{ vault: { version, ciphertext }, wrappers, others, backupCode,
+ * certificationEndorsement }`. `others` (a backup-code sign-in only) are the
+ * account's other wrappers without their keys; `backupCode` says whether
+ * the account has a backup code, so a passkey-only sign-in asks for no
+ * per-device backup key (#572). */
 export async function downloadSignInVault({ request = signInRequest } = {}) {
   const value = await request("/api/account/sign-in/vault", {});
   if (!value.vault) throw new VaultError("Your account's vault wasn't found.", "vault_not_found");
   return {
     vault: { version: value.vault.version, ciphertext: fromBase64Url(value.vault.ciphertext) },
     wrappers: (value.wrappers ?? []).map((wrapper) => ({ ...wrapper, wrapped: fromBase64Url(wrapper.wrapped) })),
+    others: value.others ?? [],
+    backupCode: value.backupCode === true,
     certificationEndorsement: value.certificationEndorsement ?? null,
   };
 }
@@ -144,18 +208,19 @@ export async function downloadSignInVault({ request = signInRequest } = {}) {
 export function selectVaultWrapper(wrappers, { method, credentialId = null }) {
   if (!SIGN_IN_METHODS.includes(method)) return null;
   return (wrappers ?? []).find((wrapper) => wrapper?.type === method &&
-    (method === "password" || wrapper.params?.credentialId === credentialId)) ?? null;
+    (method === "password" || method === "backup-code" || wrapper.params?.credentialId === credentialId)) ?? null;
 }
 
 /** The KEK for `wrapper` from what the person gave: a fresh 32-byte array
  * the caller zeroes. */
-export async function signInKek(wrapper, { passwordKey = null, prfOutput = null }) {
+export async function signInKek(wrapper, { passwordKey = null, prfOutput = null, codeBytes = null }) {
   if (wrapper?.type === "password") {
     if (!(passwordKey instanceof Uint8Array)) throw new VaultError("Enter your password.", "password_rejected");
     return passwordKey.slice();
   }
   if (wrapper?.type === "passkey") return passkeyKek(prfOutput);
   if (wrapper?.type === "password-passkey") return combinedKek(prfOutput, passwordKey);
+  if (wrapper?.type === "backup-code") return backupCodeKek(codeBytes);
   throw new VaultError("Kin couldn't find a way to open your vault with that sign-in.", "wrapper_unavailable");
 }
 
@@ -165,10 +230,10 @@ export async function signInKek(wrapper, { passwordKey = null, prfOutput = null 
  * the caller keeps VK on the device and zeroes both when done. A wrong key
  * is `vault_unlock_failed`.
  */
-export async function openSignInVault({ download, method, credentialId = null, passwordKey = null, prfOutput = null, householdId, memberId }) {
+export async function openSignInVault({ download, method, credentialId = null, passwordKey = null, prfOutput = null, codeBytes = null, householdId, memberId }) {
   const wrapper = selectVaultWrapper(download.wrappers, { method, credentialId });
   if (!wrapper) throw new VaultError("Kin couldn't find a way to open your vault with that sign-in.", "wrapper_unavailable");
-  const kek = await signInKek(wrapper, { passwordKey, prfOutput });
+  const kek = await signInKek(wrapper, { passwordKey, prfOutput, codeBytes });
   let vaultKey;
   try {
     vaultKey = await unwrapVaultKey(wrapper.wrapped, kek, { householdId, memberId, type: wrapper.type, wrapperId: wrapper.wrapperId, version: wrapper.version });
@@ -188,6 +253,7 @@ export function wipeSignIn(opened) {
   wipeVaultContents(opened?.contents);
   opened?.passwordKey?.fill?.(0);
   opened?.prfOutput?.fill?.(0);
+  opened?.codeBytes?.fill?.(0);
 }
 
 /**

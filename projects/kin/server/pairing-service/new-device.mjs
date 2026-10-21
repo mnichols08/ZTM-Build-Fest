@@ -21,17 +21,26 @@
 // wrapper). The service decides from the wrapper types it stores, so a
 // password can't be used where the member's vault says a passkey is needed.
 //
+// A third way in (#572): the username and the member's backup code. The
+// browser sends HKDF(code, "kin/backup-auth/v1"); the service compares its
+// SHA-256 with the check value kept beside the backup-code wrapper, in
+// constant time. That capability opens the vault with the backup code, and
+// registering the device with it must set a new password in the same step
+// (the person most likely lost theirs): `registerNewDevice` refuses it
+// without one.
+//
 // Limits: every failed check is charged to the member and the client address
-// (the password limits, passwords.mjs); capabilities issued per member are
-// limited per window; at most NEW_DEVICE_OUTSTANDING_PER_MEMBER are live per
-// member and MAX_NEW_DEVICE_CAPABILITIES in all.
-import { createHmac } from "node:crypto";
+// (the password limits, passwords.mjs), whichever of the three ways it was;
+// capabilities issued per member are limited per window; at most
+// NEW_DEVICE_OUTSTANDING_PER_MEMBER are live per member and
+// MAX_NEW_DEVICE_CAPABILITIES in all.
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { validateMemberCertifiedCertificate, validateCertificationEndorsement } from "../account-certification.mjs";
 import { MAX_TRUSTED_DEVICES } from "../identity-limits.mjs";
 import { MAX_KEY_EPOCHS } from "../sync-contract.mjs";
 import { normalizeUsername, usernameProblem } from "../../web/security/account-credentials.js";
 import { validateSyncPublicKeys } from "./devices.mjs";
-import { PASSWORD_ITERATIONS_MIN, PASSWORD_WINDOW_MS, SIGN_IN_FAILED } from "./passwords.mjs";
+import { decodeAuthKey, PASSWORD_ITERATIONS_MIN, PASSWORD_WINDOW_MS, SIGN_IN_FAILED } from "./passwords.mjs";
 import { canParticipate, cleanLabel, hash, id, PairingError, token } from "./shared.mjs";
 
 export const NEW_DEVICE_TTL_MS = 10 * 60_000;
@@ -49,6 +58,7 @@ export const NEW_DEVICE_REGISTRATION_ATTEMPTS = 3;
 export const SIGN_IN_LOOKUPS = 30;
 
 const signInFailed = () => new PairingError("sign_in_failed", SIGN_IN_FAILED, 401);
+const backupCodeFailed = () => new PairingError("sign_in_failed", "That username and backup code didn't match. Check them and try again.", 401);
 const tooMany = () => new PairingError("password_rate_limited", "Too many tries. Wait a few minutes and try again.", 429);
 const expired = () => new PairingError("new_device_expired", "This sign-in expired or was already used. Sign in again.", 401);
 
@@ -130,7 +140,40 @@ export const newDeviceMethods = {
     const passkeyAdded = types.includes("passkey") || types.includes("password-passkey");
     if (types.includes("password") && !passkeyAdded) return this.issueNewDeviceCapability(member, { method: "password" });
     if (types.includes("password-passkey")) return this.issueNewDeviceCapability(member, { method: "password-passkey", needsPasskey: true });
-    throw new PairingError("passkey_required", "This account signs in on new devices with its passkey. Choose Sign in with a passkey.", 409);
+    if (types.includes("passkey"))
+      throw new PairingError("passkey_required", "This account signs in on new devices with its passkey. Choose Sign in with a passkey.", 409);
+    // Only a backup code is left (its passkey must be set up again, #572).
+    throw new PairingError("backup_code_required", "This account signs in on new devices with its backup code for now. Choose Use my backup code.", 409);
+  },
+
+  /**
+   * Signs in on a new device with a username and the backup code's authKey
+   * (#572). `backupCodeVerifier(member)` is the member's check value
+   * (account-vault-service.mjs), or null without a backup code. Charged
+   * like a password attempt (per member, or per name when there's no such
+   * member, and per address); one generic error for every mismatch.
+   * Success is a capability whose registration must set a new password.
+   */
+  signInNewDeviceWithBackupCode({ username, codeAuth, rateKey = "unknown", backupCodeVerifier }) {
+    this.newDeviceState();
+    const normalized = normalizeUsername(username);
+    const member = this.activeMemberByUsername(normalized);
+    const keys = [member ? `member:${member.id}` : `username:${normalized ?? "-"}`, `address:${rateKey}`];
+    const limits = this.passwordLimits();
+    if (keys.some((key) => !limits.allows(key))) throw tooMany();
+    const authKey = decodeAuthKey(codeAuth);
+    const stored = member ? backupCodeVerifier(member) : null;
+    const expected = stored ? Buffer.from(stored, "base64url") : Buffer.alloc(32);
+    const actual = createHash("sha256").update(authKey ?? new Uint8Array(32)).digest();
+    const matched = Boolean(stored && authKey) && expected.length === 32 && timingSafeEqual(expected, actual);
+    authKey?.fill(0);
+    if (!matched) {
+      for (const key of keys) limits.spend(key);
+      this.audit("new_device_sign_in_failed", member ? { householdId: member.householdId, memberId: member.id, method: "backup-code" } : {});
+      throw backupCodeFailed();
+    }
+    this.assertNewDeviceHousehold(member);
+    return this.issueNewDeviceCapability(member, { method: "backup-code" });
   },
 
   /**
@@ -328,9 +371,16 @@ export const newDeviceMethods = {
    * `currentEpoch`). Returns the identity with a session and device token.
    * The trusted-device limit is checked after the replaced device is
    * revoked (RECOVERY), so a full household can still replace a device.
+   * A backup-code sign-in (#572) must bring `newPassword` (a record from
+   * preparePasswordChange): it replaces the member's password in the same
+   * step, so the old password stops signing in.
    */
-  registerNewDevice({ capability, syncPublicKeys, certificate, replaceDeviceId = null, deviceLabel = "Device", vaultEpochs = [], currentEpoch = 1 }) {
+  registerNewDevice({ capability, syncPublicKeys, certificate, replaceDeviceId = null, deviceLabel = "Device", vaultEpochs = [], currentEpoch = 1, newPassword = null }) {
     const { key, record, member } = this.newDeviceCapability(capability);
+    if (record.method === "backup-code" && !newPassword)
+      throw new PairingError("new_password_required", "Choose a new password to finish signing in with your backup code.", 400);
+    if (record.method !== "backup-code" && newPassword)
+      throw new PairingError("invalid_request", "Kin could not understand that request.", 400);
     record.attempts += 1;
     if (record.attempts > NEW_DEVICE_REGISTRATION_ATTEMPTS) {
       this.newDeviceCapabilities.delete(key);
@@ -378,6 +428,10 @@ export const newDeviceMethods = {
     this.devices.set(device.id, device);
     const deviceToken = this.issueDeviceToken(device);
     household.version += 1;
+    if (newPassword) {
+      member.password = { ...newPassword, username: member.username };
+      this.audit("password_reset", { householdId: household.id, memberId: member.id, deviceId: device.id, method: "backup-code" });
+    }
     this.audit("device_trusted", { householdId: household.id, memberId: member.id, deviceId: device.id, reason: "account_sign_in", method: record.method });
     if (replaced)
       this.audit("device_replacement_completed", { householdId: household.id, memberId: member.id, lostDeviceId: replaced.id, deviceId: device.id });

@@ -718,6 +718,14 @@ async function api(request, response, url, context) {
     }));
     return;
   }
+  // The third way in (#572): username and backup code.
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/backup-code") {
+    issueNewDevice(service.signInNewDeviceWithBackupCode({
+      username: body.username, codeAuth: body.codeAuth, rateKey: context.clientKey(request),
+      backupCodeVerifier: (member) => context.accountVaultService.backupCodeVerifier(member.householdId, member.id),
+    }));
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/account/sign-in/passkey/options") {
     const rateKey = context.clientKey(request);
     let pending = null;
@@ -781,14 +789,29 @@ async function api(request, response, url, context) {
     const capability = service.spendNewDeviceDownload(newDeviceToken);
     json(response, 200, {
       ...context.accountVaultService.downloadWithCapability(capability, context.clientKey(request)),
+      // Whether the account has a backup code (#572): then a passkey-only
+      // sign-in asks for no per-device backup key.
+      backupCode: context.accountVaultService.backupCodeVerifier(capability.householdId, capability.memberId) !== null,
       certificationEndorsement: service.certificationEndorsement(capability.memberId),
     });
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/account/sign-in/device") {
+    // A backup-code sign-in (#572) sets a new password with the device, and
+    // re-wraps (or removes) the vault wrappers that depended on the old one
+    // in the same transaction. The password is hashed first (Argon2id is
+    // asynchronous); everything else happens inside the transaction.
+    const pendingMethod = service.newDeviceCapability(newDeviceToken).record.method;
+    const newPassword = pendingMethod === "backup-code" && body.newPassword ? await service.preparePasswordChange(body.newPassword) : null;
+    const vaultChange = pendingMethod === "backup-code" && body.vaultChange ? context.accountVaultService.parseChange(body.vaultChange) : null;
     const result = withTransaction(context, () => {
       const { record } = service.newDeviceCapability(newDeviceToken);
+      // The vault change goes first: it only touches the database, so a
+      // refusal rolls back cleanly before the device is registered.
+      if (vaultChange && record.method === "backup-code")
+        context.accountVaultService.applyChange({ household: { id: record.householdId }, member: { id: record.memberId } }, vaultChange);
       const registered = service.registerNewDevice({
+        newPassword: record.method === "backup-code" ? newPassword : null,
         capability: newDeviceToken,
         syncPublicKeys: body.syncPublicKeys,
         certificate: body.certificate,
@@ -1288,6 +1311,59 @@ async function api(request, response, url, context) {
   }
   if (vaultWrapper && request.method === "DELETE") {
     json(response, 200, context.accountVaultService.removeWrapper(syncService.authorize(session), vaultWrapper));
+    return;
+  }
+  // A member's own account security (ADR 0018, #560/#571). Every change
+  // needs the current password, fresh (`currentAuthKey`).
+  if (url.pathname === "/api/account/security" && request.method === "GET") {
+    const auth = service.authorize(session);
+    json(response, 200, service.accountSecurityView(auth, context.accountVaultService.summary(auth)));
+    return;
+  }
+  // Swapping how the vault opens in one step: adding a passkey, require
+  // password and passkey on or off, a new backup code (#561/#572).
+  if (url.pathname === "/api/account/vault/wrappers" && request.method === "POST") {
+    syncService.authorize(session);
+    const auth = await service.confirmAccountPassword(session, body.currentAuthKey, context.clientKey(request));
+    const { currentAuthKey: _current, ...change } = body;
+    json(response, 200, context.accountVaultService.changeWrappers(auth, change));
+    return;
+  }
+  // Adding a passkey to a password account (#561): a registration ceremony
+  // for the signed-in member, after their password.
+  if (url.pathname === "/api/account/passkeys/options" && request.method === "POST") {
+    syncService.authorize(session);
+    const auth = await service.confirmAccountPassword(session, body.currentAuthKey, context.clientKey(request));
+    const flow = createFlow({ purpose: "account-passkey", memberId: auth.member.id, deviceId: auth.device.id }, context);
+    try {
+      json(response, 200, { flow, publicKey: context.webauthn.registrationOptions(flow, { userName: auth.member.username, displayName: auth.member.username }) });
+    } catch (error) {
+      context.flows.delete(flow);
+      context.webauthn.discardFlow?.(flow);
+      throw error;
+    }
+    return;
+  }
+  if (url.pathname === "/api/account/passkeys/finish" && request.method === "POST") {
+    const flow = consumeFlow(body.flow, context);
+    const auth = service.authorize(session);
+    if (flow.purpose !== "account-passkey" || flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = webauthn.verifyRegistration(body.credential, body.flow);
+    json(response, 200, withTransaction(context, () => service.addAccountPasskey(auth, credential)));
+    return;
+  }
+  // Changing the password (#560): the new verifier and the vault wrappers
+  // that depend on the password (re-wrapped by the device, `vaultChange`)
+  // in one transaction, after the current password.
+  if (url.pathname === "/api/account/password" && request.method === "POST") {
+    syncService.authorize(session);
+    const vaultChange = body.vaultChange ? context.accountVaultService.parseChange(body.vaultChange) : null;
+    const prepared = await service.preparePasswordChange(body);
+    const auth = await service.confirmAccountPassword(session, body.currentAuthKey, context.clientKey(request));
+    json(response, 200, withTransaction(context, () => {
+      if (vaultChange) context.accountVaultService.applyChange(auth, vaultChange);
+      return service.setAccountPassword(auth, prepared);
+    }));
     return;
   }
   if (url.pathname === "/api/chat/hidden" && request.method === "GET") {

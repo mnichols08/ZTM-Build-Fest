@@ -106,3 +106,28 @@ test("passkey offers: after setup, after a backup-key unlock, and never where th
   assert.equal(passkeyOffer({ ...base, online: false, justSetUp: true }), null, "offline");
   assert.equal(passkeyOffer({ ...base, identity: false, justSetUp: true }), null, "no household identity to enrol against");
 });
+
+test("a password account's calm offers (#562/#573): a passkey after the first useful thing, a backup code after a week, each dismissible", async () => {
+  const { accountOffer, BACKUP_CODE_OFFER_AFTER_MS, dismissOffer, offerDismissed, ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY } = await import("./backup-key-entry.js");
+  const now = 10 * BACKUP_CODE_OFFER_AFTER_MS;
+  const fresh = { account: true, passkey: false, passkeyNeedsSetup: false, backupCode: false, memberSince: now - 1000 };
+  const base = { state: fresh, supported: true, online: true, hasContent: true, now };
+  assert.equal(accountOffer({ ...base, hasContent: false }), null, "never before the first useful thing, so never at sign-up");
+  assert.equal(accountOffer(base), "account-passkey");
+  assert.equal(accountOffer({ ...base, supported: false }), null, "no passkey offer where passkeys can't work; no code yet either");
+  assert.equal(accountOffer({ ...base, online: false }), null, "offline");
+  assert.equal(accountOffer({ ...base, sessionDismissed: true }), null);
+  assert.equal(accountOffer({ ...base, dismissed: { passkey: true, backupCode: false } }), null, "dismissed, and the code isn't due yet");
+  const weekOld = { ...fresh, memberSince: now - BACKUP_CODE_OFFER_AFTER_MS };
+  assert.equal(accountOffer({ ...base, state: weekOld, dismissed: { passkey: true, backupCode: false } }), "backup-code", "after the first week");
+  assert.equal(accountOffer({ ...base, state: { ...weekOld, passkey: true } }), "backup-code", "one card at a time: the passkey is done");
+  assert.equal(accountOffer({ ...base, state: { ...weekOld, passkey: true, backupCode: true } }), null);
+  assert.equal(accountOffer({ ...base, state: { ...weekOld, passkey: true }, dismissed: { passkey: false, backupCode: true } }), null);
+  assert.equal(accountOffer({ ...base, state: { ...fresh, account: false } }), null, "members without an account keep the older passkey prompt");
+  const storage = memoryStorage();
+  assert.equal(offerDismissed(ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY, storage), false);
+  dismissOffer(ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY, storage);
+  assert.equal(offerDismissed(ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY, storage), true);
+  assert.equal(offerDismissed(ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY, brokenStorage), false, "blocked storage is tolerated");
+  dismissOffer(ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY, brokenStorage);
+});

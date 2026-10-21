@@ -84,6 +84,34 @@ export function entryHint(label) {
   return label ? `Use the saved entry ending ${label}.` : "";
 }
 
+export const ACCOUNT_PASSKEY_OFFER_DISMISSED_KEY = "kin.account-passkey-offer-dismissed";
+export const BACKUP_CODE_OFFER_DISMISSED_KEY = "kin.backup-code-offer-dismissed";
+/** The backup code is offered after the first week (ADR 0018 section 7). */
+export const BACKUP_CODE_OFFER_AFTER_MS = 7 * 24 * 60 * 60_000;
+
+export function offerDismissed(key, storage = defaultStorage()) {
+  try { return storage?.getItem(key) === "1"; } catch { return false; }
+}
+
+export function dismissOffer(key, storage = defaultStorage()) {
+  try { storage?.setItem(key, "1"); } catch { /* Shown again next time; harmless. */ }
+}
+
+/**
+ * Which calm account card Today shows for a password account (#562/#573),
+ * if any: "account-passkey" (add a passkey) once the household has a first
+ * useful thing in it, or "backup-code" once the member has had Kin for a
+ * week; never both, never at sign-up, never offline, and each one gone for
+ * good on this device once dismissed. `state` is account-security.js
+ * accountState(); `hasContent` whether the household has anything yet.
+ */
+export function accountOffer({ state, supported, online, hasContent, now = Date.now(), sessionDismissed = false, dismissed = { passkey: false, backupCode: false } }) {
+  if (!state?.account || !online || sessionDismissed) return null;
+  if (supported && hasContent && !state.passkey && !state.passkeyNeedsSetup && !dismissed.passkey) return "account-passkey";
+  if (!state.backupCode && Number.isFinite(state.memberSince) && now - state.memberSince >= BACKUP_CODE_OFFER_AFTER_MS && !dismissed.backupCode) return "backup-code";
+  return null;
+}
+
 export function passkeySuggestionDismissed(storage = defaultStorage()) {
   try { return storage?.getItem(PASSKEY_SUGGESTION_DISMISSED_KEY) === "1"; } catch { return false; }
 }
