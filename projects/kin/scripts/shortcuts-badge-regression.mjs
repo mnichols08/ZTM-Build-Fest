@@ -89,10 +89,18 @@ export async function shortcutsBadgeRegressions(client, { origin, until, ready, 
     const expected = LANDINGS[url];
     await page(`(() => { const app = document.querySelector("kin-app"); app.ctx.navigation.navigate("#household"); app.main.focus(); return true; })()`);
     await page(`location.hash = ${JSON.stringify(url.slice(1))}`);
+    // Into a running Kin a page shortcut is an ordinary route change, which
+    // leaves focus where it was, as every in-app navigation does; only the
+    // Add shortcuts move focus (into Quick add).
+    const facts = async () => {
+      const result = await landed(expected);
+      if (!expected.destination) delete result.focus;
+      return result;
+    };
     try {
-      await until(async () => everyTrue(await landed(expected)));
+      await until(async () => everyTrue(await facts()));
     } catch (error) {
-      throw new Error(`${url} opened while unlocked didn't land: ${JSON.stringify(await landed(expected))}`, { cause: error });
+      throw new Error(`${url} opened while unlocked didn't land: ${JSON.stringify(await facts())}`, { cause: error });
     }
     await closeQuickAdd();
   }
