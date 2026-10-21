@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { derivePasswordKeys, PASSWORD_ITERATIONS } from "../web/security/account-vault.js";
 import { DurableStore } from "./durable-store.mjs";
-import { PASSWORD_ATTEMPTS, PairingError, PairingService, SIGN_IN_FAILED } from "./pairing-service.mjs";
+import { PASSWORD_ATTEMPTS, PairingError, PairingService, SIGN_IN_FAILED, USERNAME_CHECKS } from "./pairing-service.mjs";
 import { createKinServer } from "./server.mjs";
 
 const b64 = (bytes) => Buffer.from(bytes).toString("base64url");
@@ -270,6 +270,14 @@ test("admin-only actions take a fresh password from a member with no passkey, an
   } finally {
     await server.close();
   }
+});
+
+test("username checks are limited per client address", () => {
+  const pairing = new PairingService();
+  for (let attempt = 0; attempt < USERNAME_CHECKS; attempt += 1)
+    assert.equal(pairing.usernameAvailable(`name-${attempt}`, "address-a").available, true);
+  assert.throws(() => pairing.usernameAvailable("one-more", "address-a"), { code: "password_rate_limited" });
+  assert.equal(pairing.usernameAvailable("one-more", "address-b").available, true, "another address is unaffected");
 });
 
 test("a password-only admin counts as a usable admin, so their other device can be revoked", () => {
