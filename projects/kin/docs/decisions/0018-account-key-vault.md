@@ -1,8 +1,9 @@
 # ADR 0018 — One account on every device: password, passkey as a second step, and an encrypted key vault
 
-Status: **Proposed — awaiting owner decisions** (#547, epic #546). Nothing in
-this record is implemented. Accepting it changes four standing rules, listed
-under "Rules this changes"; each needs the owner's explicit yes.
+Status: **Accepted** (owner decisions D1–D5, 2026-10-20; #547, epic #546).
+Not yet implemented. It changes four standing rules, listed under "Rules this
+changes"; AGENTS.md and CRYPTOGRAPHY point here until the implementation
+stories update the rest of the docs.
 
 ## Context
 
@@ -56,8 +57,10 @@ vault key (VK): random 256-bit, generated on the member's first device
    |     - later: the member's private-storage key (epic #480)
    |
    +-- vault wrappers: VK wrapped by each way the member can open it
-         - password + passkey (once a passkey is added)
-         - password alone (only until a passkey is added; see decision D3)
+         - password alone (only until a passkey is added; D3)
+         - passkey alone (once a passkey is added; D4)
+         - or, if the member turns on "require password and passkey",
+           password + passkey instead of passkey alone
          - backup code
 ```
 
@@ -78,12 +81,17 @@ are compare-and-set on the version, like local `configRevision`.
     `crypto.argon2` (a standard implementation; nothing hand-written).
   - `passwordKey` = KDF(password, salt, "kin/vault-password/v1"), never sent.
   So the service can check the password without being able to open the vault.
-- **Passkey as the second step.** Once a member adds a passkey (offered later,
-  never at sign-up), signing in on a new device needs the password *and* the
-  passkey. The password + passkey wrapper's key is
-  HKDF(PRF output ‖ passwordKey, "kin/vault-2f/v1"): neither secret alone
-  opens it, and a stolen copy of the service's database can't be cracked by
-  guessing passwords, because the PRF output is 256 random bits.
+- **Adding a passkey.** Once a member adds a passkey (offered later, never at
+  sign-up), the passkey alone signs them in on a new device and opens the
+  vault (D4): its wrapper's key is HKDF(PRF output, "kin/vault-passkey/v1").
+  Adding it removes the password-only wrapper, so from then on a stolen copy
+  of the service's database can't be cracked by guessing passwords (the PRF
+  output is 256 random bits). The password keeps unlocking devices that are
+  already set up.
+- **Optional: require password and passkey.** A member who wants two factors
+  turns this on in Security; the passkey-alone wrapper is replaced by one
+  whose key is HKDF(PRF output ‖ passwordKey, "kin/vault-2f/v1"), so neither
+  secret alone opens the vault.
 - **The service releases a member's wrappers only after sign-in succeeds**
   (password check, then passkey assertion where one is registered), and
   rate-limits attempts per account and per address.
@@ -139,15 +147,15 @@ password, then Today. At most three screens. No keys, no security choices.
 Later, at calm moments: add a passkey (a dismissible card after the first
 useful action), save the backup code (after a week), name this device.
 
-## Decisions the owner needs to make
+## Owner decisions (2026-10-20)
 
-| # | Question | Recommendation |
+| # | Question | Decision |
 |---|---|---|
 | D1 | Keep members' encrypted keys on the service (a vault), reversing "no server content-key escrow"? | **Yes.** It's what makes one account on every device possible. The service still can't read anything. |
-| D2 | How the browser turns the password into keys. Web Crypto has PBKDF2 but not Argon2id; CRYPTOGRAPHY's non-negotiable rule forbids hand-written primitives. | **PBKDF2-SHA-256 via Web Crypto, 600,000 iterations** (OWASP 2023 guidance), and move to Argon2id when browsers ship it in Web Crypto. Hand-writing Argon2id in Rust (#554) would need an explicit exception to the rule; I don't recommend it. |
+| D2 | How the browser turns the password into keys. Web Crypto has PBKDF2 but not Argon2id; CRYPTOGRAPHY's non-negotiable rule forbids hand-written primitives. | **PBKDF2-SHA-256 via Web Crypto, 600,000 iterations** (OWASP 2023 guidance); move to Argon2id when browsers ship it in Web Crypto. No hand-written Argon2id (#554 closed). |
 | D3 | Can the password alone open the vault before a passkey is added? | **Yes, with a strength floor** (so the first run stays simple), with the trade-off stated: until a passkey is added, someone holding a copy of the service's database could try to guess a weak password offline. Adding a passkey removes the password-only wrapper. |
-| D4 | Allow a synced passkey alone (no password) to open the vault on a new device? | **No, not by default.** Password + passkey is the two-factor model asked for. Revisit if people find it heavy. |
-| D5 | Allow traditional username and password sign-in, reversing AGENTS.md "do not default to traditional email/password authentication"? | **Yes**, as the first-run sign-in, with passkeys offered as the second step. |
+| D4 | Allow a synced passkey alone (no password) to open the vault on a new device? | **Yes.** A passkey alone signs in on a new device. Password + passkey is an optional stricter setting. |
+| D5 | Allow traditional username and password sign-in, reversing AGENTS.md "do not default to traditional email/password authentication"? | **Yes**, as the first-run sign-in, with a passkey offered later. |
 
 ## Rules this changes (if accepted)
 
@@ -168,6 +176,7 @@ useful action), save the backup code (after a week), name this device.
 |---|---|---|
 | Stolen copy of the service's database | Ciphertext only; nothing to guess | Vault ciphertext and wrappers. With a passkey added: nothing to guess (256-bit PRF). Password-only wrapper (D3): weak passwords can be guessed offline at PBKDF2 cost; Argon2id(authKey) slows checking the password too. Old database backups keep old wrappers. |
 | Stolen password | Nothing (no password exists) | Password-only stage: full access from any browser, subject to rate limits. With a passkey added: not enough on its own. |
+| Stolen or phished passkey account (e.g. the platform account that syncs it) | Passkey signs in only on trusted devices | With passkey-alone sign-in (D4), whoever controls the synced passkey can open the vault on a new device. "Require password and passkey" closes this for members who want it; Settings says so. |
 | Stolen phone, locked | Local root wrappers; recovery key is 256-bit | Adds the local password wrapper: offline guessing at PBKDF2 cost; strength floor applies. |
 | Malicious or compromised service | Can withhold or delay; can't read | Same, plus: could serve old vault versions (rollback) or refuse sign-in. Can't read the vault. Can't create a device the household trusts without the certification key. A malicious *client build* served by a compromised service could capture the password; that's true of every web app and already in C-series limitations. |
 | Malicious Adult | Can remove a member or approve a recovery that locks them out | Unchanged; still can't open another member's vault. |
@@ -201,9 +210,8 @@ the size of their vault. It learns nothing new about household content.
   protocol cryptography by hand. Deferred; revisit if D3's risk matters.
 - **PIN-only unlock.** Too few possibilities to resist offline guessing on a
   stolen phone. Rejected.
-- **Passkey-only accounts (synced passkey opens the vault).** Easiest of all
-  for people with a synced passkey, but D4: not the two-factor model asked
-  for, and it ties access entirely to one platform account.
+- **Requiring password and passkey for everyone.** Strongest, but heavier
+  for every sign-in; kept as an option instead (D4).
 
 ## Consequences
 
@@ -215,5 +223,5 @@ the size of their vault. It learns nothing new about household content.
   PRIVACY, PORTABILITY, AGENTS.md, V1.0-COMPATIBILITY.
 - Epic #480 (member-private storage) uses the vault for its key instead of
   building a separate backup.
-- #554 (Argon2id in Rust) is paused: D2 recommends Web Crypto PBKDF2, which
-  keeps the "no hand-rolled primitives" rule.
+- #554 (Argon2id in Rust) is closed: D2 chose Web Crypto PBKDF2, which keeps
+  the "no hand-rolled primitives" rule.

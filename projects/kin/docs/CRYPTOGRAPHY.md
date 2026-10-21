@@ -116,7 +116,7 @@ agreement keys are removed and migration verification completes.
 - Existing canonical event bytes are encrypted directly. Historical placeholder identities remain byte-for-byte intact; a separate signed, encrypted identity-binding control record establishes the authenticated importing identity for v8 replay. No semantic JSON event replacement is used.
 - Tests cover roundtrip, wrong keys, metadata substitution, ciphertext/signature/nonce mutation, unsupported/truncated envelopes, nonce variation, sealed-key restore, correct/wrong recipient, expiry, signature tampering, and actual two-trusted-device opaque relay exchange.
 
-Key generation and authenticated encryption use platform Web Crypto. The implementation has no custom cipher, MAC, nonce counter, or password-derived content key.
+Key generation and authenticated encryption use platform Web Crypto. The implementation has no custom cipher, MAC, nonce counter, or password-derived content key. [ADR 0018](decisions/0018-account-key-vault.md) (accepted, not yet implemented) allows a password-derived key, from Web Crypto PBKDF2-SHA-256, to wrap a member's vault key and a device's local root; it never encrypts content directly.
 
 ## Claims boundary
 
