@@ -22,12 +22,12 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createKinServer } from "../server/server.mjs";
 import { DurableStore } from "../server/durable-store.mjs";
 
-const FOUNDER = { name: "Robin", household: "The Lees", username: "lee.founder", password: "kettle lantern meadow" };
+export const FOUNDER = { name: "Robin", household: "The Lees", username: "lee.founder", password: "kettle lantern meadow" };
 const POLL_MS = 100;
-const PARTNER = { name: "Sam", username: "lee.partner", password: "harbor pencil orchard" };
+export const PARTNER = { name: "Sam", username: "lee.partner", password: "harbor pencil orchard" };
 
 /** Waits in Node for `check()` to hold (up to `ms`). */
-async function eventually(check, label, ms = 30_000) {
+export async function eventually(check, label, ms = 30_000) {
   const deadline = Date.now() + ms;
   for (;;) {
     const value = await check();
@@ -38,7 +38,7 @@ async function eventually(check, label, ms = 30_000) {
 }
 
 /** A CDP client for one page target: send() and evaluate(). */
-async function pageClient(webSocketUrl) {
+export async function pageClient(webSocketUrl) {
   const socket = new WebSocket(webSocketUrl);
   await new Promise((done, fail) => { socket.onopen = done; socket.onerror = fail; });
   let id = 0;
@@ -70,7 +70,7 @@ async function pageClient(webSocketUrl) {
 
 /** Opens `url` in a new, isolated browser context (its own cookies and
  * storage, like a second person's phone). */
-async function isolatedPage(endpoint, browserClient, url) {
+export async function isolatedPage(endpoint, browserClient, url) {
   const { browserContextId } = await browserClient.send("Target.createBrowserContext", { disposeOnDetach: true });
   const { targetId } = await browserClient.send("Target.createTarget", { url: "about:blank", browserContextId });
   const target = await eventually(async () => (await (await fetch(`${endpoint}/json/list`)).json()).find((entry) => entry.id === targetId),
@@ -84,7 +84,7 @@ async function isolatedPage(endpoint, browserClient, url) {
 
 // ---- In-page steps (stringified and run in the browser) ---------------------
 
-async function createHousehold(founder) {
+export async function createHousehold(founder) {
   const checks = [];
   const check = (value, message) => { if (!value) throw new Error(message); checks.push(message); };
   const wait = async (condition, label, ms = 30_000) => {
@@ -149,7 +149,7 @@ async function createHousehold(founder) {
   return { checks: checks.length, ms, identity: app.household.identity };
 }
 
-async function lockAndUnlock(founder) {
+export async function lockAndUnlock(founder) {
   const checks = [];
   const check = (value, message) => { if (!value) throw new Error(message); checks.push(message); };
   const wait = async (condition, label, ms = 30_000) => {
@@ -180,7 +180,7 @@ async function lockAndUnlock(founder) {
   return checks.length;
 }
 
-async function invite() {
+export async function invite() {
   const app = document.querySelector("kin-app");
   // The panel's own load after unlocking finishes first, so the invitation
   // view isn't replaced under it.
@@ -192,7 +192,7 @@ async function invite() {
   return app.household.pairing.code;
 }
 
-async function joinByInvitation(partner, founderUsername) {
+export async function joinByInvitation(partner, founderUsername) {
   const checks = [];
   const check = (value, message) => { if (!value) throw new Error(message); checks.push(message); };
   const wait = async (condition, label, ms = 30_000) => {
@@ -227,7 +227,7 @@ async function joinByInvitation(partner, founderUsername) {
   return checks.length;
 }
 
-async function approveWithPassword(founder) {
+export async function approveWithPassword(founder) {
   const checks = [];
   const check = (value, message) => { if (!value) throw new Error(message); checks.push(message); };
   const wait = async (condition, label, ms = 30_000) => {
@@ -263,7 +263,7 @@ async function approveWithPassword(founder) {
   return checks.length;
 }
 
-async function finishJoining(partner) {
+export async function finishJoining(partner) {
   const checks = [];
   const check = (value, message) => { if (!value) throw new Error(message); checks.push(message); };
   const wait = async (condition, label, ms = 30_000) => {

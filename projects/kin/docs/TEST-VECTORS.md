@@ -347,12 +347,43 @@ holds at most 50,000 records (the next append fails with code 5). Two
 members' notes in one private log fail replay with code 4.
 
 **067 — KPRV.** An empty log is `"KPRV"`, `01 00 00 00`, 16 zero bytes,
-count 0, `01 00 00 00` (one section), `01 00 00 00` (section 1) and length
-`04 00 00 00`, then a zero note count: 44 bytes. After note 2 "two" (event 1)
+count 0, `02 00 00 00` (two sections), `01 00 00 00` (section 1) and length
+`04 00 00 00`, a zero note count, then `65 00 00 00` (section 101, the
+journal) and length `04 00 00 00` with a zero entry count: 56 bytes. After note 2 "two" (event 1)
 and note 1 "one" (event 2), the member is `01` × 16, the count 2, and the
 notes section lists note 1 (logical time 2, device `11` × 16, "one") before
 note 2. A later note for the same ID replaces it and empty text removes it,
 the latest in replay order winning.
+
+**068 — Journal entry (kind 101, #498).** Written out by hand in
+`rust/src/journal_tests.rs` and mirrored by `web/wasm/kin-private.test.mjs`:
+event 1, logical time 1, entry `5a` × 16 on 2026-10-03 titled "Park", body
+"Swings.\nThen cocoa.", one JPEG photo of sealed size 52,000 whose four
+32-byte fields are `21`, `22`, `23` and `24` repeated. Header `01 00` `65 00`,
+payload length `bb 00 00 00` (187 = 28 + 4 + 19 + 136); the payload is the
+entry ID, then `8b 28 35 01` (20261003), `04 00` (title), `01` (one photo),
+`00`, `13 00 00 00` (body), "Park", the body, then `01 00 00 00`,
+`20 cb 00 00` and the four fields. It decodes to `JOURNAL_ENTRY_CREATED` and
+re-encodes byte for byte; kinds 102–104 likewise (103 and 104 are the 16-byte
+ID alone). Code 2: a zero ID, a non-zero reserved byte, a length that doesn't
+cover the parts exactly, an impossible date, no title, body or photo, a
+201-byte title, a title with surrounding white space, a line break or a tab,
+a body with a tab or a carriage return or trailing white space, 20,001 body
+bytes, invalid UTF-8, eleven photos, photo type 0 or 4, a sealed size of 28
+or above 4 MiB + 4 KiB, a non-zero photo reserved byte, a zero key, or one
+reference named twice. Kinds 105 and 109 fail with code 3.
+
+**069 — Journal replay, KPRV section 101 and commands.** The first creation
+of an ID wins; an edit replaces the content, a delete hides the entry, a
+restore shows it again; events for an unknown entry are ignored; another
+member's event in the log fails replay with code 4. Section 101 lists live
+entries by date descending, then later-created first. `kin_private_execute`
+returns KCMT whose event equals the hand-written record; it refuses with code
+4 a used entry ID, an unchanged edit, an edit, delete or restore of the wrong
+entry, a logical time not after the log's, a reused event ID, another member,
+another household or a non-private log, and with code 3 kind 100, a
+household kind or kind 105; 10,001 live entries or more than 32 MiB of live
+text fail with code 5.
 
 ## Household chat (v1.1)
 

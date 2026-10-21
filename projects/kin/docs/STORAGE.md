@@ -357,6 +357,15 @@ check the sequence they started from. The database is created only once the
 device holds a vault key (ADR 0018); it stays on a device that leaves the
 household, sealed under keys that device keeps, like the other logs.
 
+**Private blobs (#502).** Journal photos are kept in their own database per
+member, `kin-private-blobs:<householdId>:<memberId>`, version 1
+(`web/private/private-blobs.js`): `blobs` (`{ ref, ciphertext, storedAt,
+pending }`, sealed bytes by reference, pending until the service has them)
+and `retire` (`{ ref, queuedAt }`, references to delete on the service on
+the next pass). Ciphertext only: each blob's key lives in the journal record,
+under the member key. The journal's draft is not stored: it stays in the
+unlocked page and locking discards it, like every Kin draft.
+
 ## Account key vault on the service (ADR 0018, #564)
 
 Not a device store: the service keeps each member's sealed key vault in

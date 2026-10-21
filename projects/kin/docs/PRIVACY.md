@@ -224,6 +224,15 @@ member deletes their private stream on the service; deleting the household
 deletes every member's. Copies on the member's own devices stay, as for
 household data. Household exports never include private logs.
 
+**The journal (#496).** Entries and their photos are private records: the
+service learns how many private events and photo blobs a member has, their
+sizes and times, never a word or a picture. Photos are drawn again before
+sealing, so no location or camera details are kept. Search, the month jump
+and On this day run on the member's own device over what it decrypted;
+nothing is indexed on the service, nothing reaches household search, Today,
+chat, catch-up or exports, and nothing is ever a notification. The draft
+stays in the unlocked page only.
+
 The planning design for these boundaries is documented in [Identity](IDENTITY.md), [Pairing](PAIRING.md), [Synchronization](SYNC.md), [Cryptography](CRYPTOGRAPHY.md), and the [Threat Model](THREAT-MODEL.md). These documents specify intended properties and open decisions; they do not establish implemented security guarantees.
 
 ## Data lifecycle

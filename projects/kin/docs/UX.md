@@ -1357,6 +1357,57 @@ service enforces only the switch and Chat and Fridge access.
   shows small beside the item's text in lists and large on a child's Simple
   view.
 
+## 8.13 Your journal (#496)
+
+A private place to write about the household's days, built on each member's
+private storage ([ADR 0019](decisions/0019-member-private-log.md)). Only the
+member's own devices can read it; no other member, household admins
+included, and not the service.
+
+- **Where.** Household's overview has a **Just for you** group with
+  **Journal**; the page (`#journal`) marks Household in the navigation and is
+  not a sixth destination. It isn't in Simple view. A pill under the heading
+  says **Only you can see this**.
+- **Before it opens.** The journal needs the member's Kin account on the
+  device (password sign-up keeps the vault key there, #557). Without it, one
+  calm sentence says so and links to **Set up your account** (People &
+  devices). Temporary members are told it isn't available to guests; a child
+  or teen whose household turned private storage off is told that. The first
+  save makes the member key.
+- **Write.** **New entry** opens an editor: the date (today by default), an
+  optional title, the body (plain text, line breaks kept) and photos. Focus
+  goes to the body. The draft is kept as it is typed while Kin is unlocked,
+  so closing the editor (Close or Escape) or leaving the page keeps it, and
+  **New entry** becomes **Continue your draft**; **Discard draft** drops it.
+  Like every Kin draft, locking discards it. One draft at a time. Saving
+  moves focus to the saved entry; Close returns focus to the button that
+  opened the editor.
+- **The list.** Newest first under date headings ("Saturday, 3 October
+  2026"); each entry shows its title, body and thumbnails, with **Edit** and
+  **Delete**. The empty journal explains its privacy in one sentence.
+- **Delete and Undo.** Delete offers **Undo** in a bar at the top of the
+  journal, with focus on it; it stays until the next action or until
+  dismissed (never timed). Undo puts the entry back and focuses it.
+- **Photos.** **Add photos** takes JPEG, PNG or WebP up to 4 MB each, ten an
+  entry, with the household attachment wording when one can't be added.
+  Photos are drawn again (no location or camera details) with a thumbnail.
+  Removing a photo in the editor offers Undo. A thumbnail opens the photo in
+  the same viewer as household photos, with Save file. A photo still
+  uploading from another of the member's devices says "Photo on its way".
+- **Find.** **Search your journal** matches every word in titles and bodies,
+  ignoring case and accents, on this device only; it never reaches
+  household Search. **Jump to a month** focuses that month's first day.
+  **On this day** lists entries from the same day in earlier years ("1 year
+  ago"), on the journal page only, never as a notification, and steps aside
+  while searching.
+- **Send things to it.** The share sheet into Kin offers **Add to my
+  journal**, which opens a new entry with the shared text and photos; the
+  sheet says that only you see what goes to the journal. The **New journal
+  entry** home-screen shortcut opens the editor after unlock.
+- **Never.** No streaks, prompts to write, word counts, moods or reminders
+  to journal (PRODUCT-BOUNDARIES). Entries never appear in household
+  search, Today, chat, catch-up or household exports.
+
 # 9. States every relevant screen must handle
 
 | State | User-facing behavior |

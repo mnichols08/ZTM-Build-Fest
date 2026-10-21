@@ -309,6 +309,35 @@ add their own kinds and replace it if they need to. Replay
 every event in one log must have the same author: the latest note for an ID
 in replay order wins, and empty text removes it.
 
+### The journal (#496)
+
+Kinds 101–109 are the journal's share of the private range; 101–104 are
+defined and 105–109 fail with code 3 until a later release defines them.
+Kind 100 stays reserved and decodable, but nothing writes it any more (the
+private command path refuses it). "Just for me" (#510) takes 110–119 and
+reminders and settings (#520) 120–139.
+
+| Kind | Name | Payload |
+|---|---|---|
+| 101 | `JOURNAL_ENTRY_CREATED` | entry ID, then the content: civil date, title, body, photos |
+| 102 | `JOURNAL_ENTRY_EDITED` | entry ID, then the whole new content |
+| 103 | `JOURNAL_ENTRY_DELETED` | entry ID |
+| 104 | `JOURNAL_ENTRY_RESTORED` | entry ID (Undo of a delete) |
+
+Content: a civil date, an optional title (at most 200 bytes, one line,
+trimmed), a plain-text body (at most 20,000 bytes, line feeds allowed,
+trimmed) and at most ten photos, each naming its sealed blob and thumbnail
+with the keys that open them; an entry has a title, a body or a photo.
+Replay (`rust/src/journal.rs`) never fails on a decoded journal event: the
+first creation of an ID wins, an edit replaces the content of an entry it
+knows, a delete hides a live entry and a restore shows a deleted one, and
+events for an unknown entry are ignored; the latest in replay order wins.
+Commands (`kin_private_execute`) also require an unused ID for a new entry,
+a live entry that changes for an edit, a live entry to delete and a deleted
+one to restore, and keep at most 10,000 live entries and 32 MiB of their
+text. Journal events never enter household replay, KINS, catch-up, household
+search or household exports.
+
 ## Meals
 
 Kinds 59–63 (#333, [ADR 0012](decisions/0012-meals.md)) are schema 1 events in

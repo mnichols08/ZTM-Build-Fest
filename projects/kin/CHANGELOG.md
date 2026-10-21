@@ -9,6 +9,18 @@ documentation only.
 
 ### Added
 
+- **A personal journal** (#496: #497, #501, #504, #507, [ADR 0019](docs/decisions/0019-member-private-log.md)):
+  each member can write dated entries, with an optional title, plain text and
+  up to ten photos, on a Journal page reached from Household's "Just for
+  you" and marked "Only you can see this". Entries are sealed in the
+  member's private log and sync to their own devices only; photos are sealed
+  per member as private blobs. A draft is kept while Kin is unlocked; delete
+  and photo removal offer Undo. Local search, a month jump and a quiet "On
+  this day" on the journal page only. The share sheet offers "Add to my
+  journal", and a "New journal entry" home-screen shortcut opens the editor.
+  Never in household search, Today, chat or exports; no streaks, prompts or
+  counts. Private kinds 101–104 (kind 100 reserved), `kin_private_execute`,
+  KPRV section 101, and server schema 24 (`private_blobs`).
 - **A gentle first run: your name and a password, then you're in** (#557,
   #558, #559, [ADR 0018](docs/decisions/0018-account-key-vault.md)): a new
   device asks at most three screens (start or join; your name and the
