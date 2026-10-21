@@ -182,6 +182,12 @@ export async function syncedPrefsRegressions({ endpoint, browserClient }) {
   const store = new DurableStore(":memory:");
   const kin = createKinServer({ port, host: "127.0.0.1", origin, store });
   await new Promise((done) => kin.server.listen(port, "127.0.0.1", done));
+  // The drill checks reminders and settings, not the account vault's
+  // download allowance (10 per member per 15 minutes, its own tests cover
+  // it): a sign-up, a second device signing in and both opening private
+  // storage within a minute spend about that many, so the allowance is
+  // widened for this run only.
+  kin.accountVaultService.memberDownloads.limit = 100;
   const pages = [];
   let checks = 0;
   const check = (value, message) => { assert.ok(value, message); checks += 1; };

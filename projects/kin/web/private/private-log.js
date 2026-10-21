@@ -344,8 +344,10 @@ export class PrivateLog {
       this.streamChecked = true;
       const { events } = await this.request("/api/private/status");
       if (Number.isSafeInteger(events) && events > this.streamEventsSeen) {
-        this.streamEventsSeen = events;
+        // Remembered only once read, so a refused read (a busy vault) is
+        // tried again on the next pass.
         await this.ring.load();
+        this.streamEventsSeen = events;
       }
     }
     if (this.ring.available) await this.refresh();
