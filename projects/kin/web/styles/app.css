@@ -2365,3 +2365,39 @@ kin-journal { display: grid; gap: var(--space-3); min-width: 0; }
 @media (forced-colors: active) {
   .journal-only-you, .journal-entry, .journal-editor, .journal-undo, .journal-on-this-day { border: 1px solid CanvasText; }
 }
+
+/* The public privacy policy (web/privacy.html, #541): a plain reading page
+   with no scripts, served from the offline shell cache like the app. */
+.policy-header {
+  padding: var(--space-3) 16px;
+  background: var(--header-bg);
+  color: var(--header-ink);
+}
+.policy-header p { max-width: 44rem; margin: 0 auto; }
+.policy-header a { color: var(--header-ink); font-weight: 600; }
+.policy {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: var(--space-3) 16px var(--space-4);
+  overflow-wrap: anywhere;
+}
+.policy h1 { margin: 0 0 var(--space-1); font-size: 30px; line-height: 1.2; }
+.policy h2 { margin: var(--space-4) 0 var(--space-2); font-size: 22px; line-height: 1.25; }
+.policy h3 { margin: var(--space-3) 0 var(--space-1); font-size: 18px; }
+.policy ul { padding-inline-start: 1.25em; }
+.policy li + li { margin-top: 6px; }
+.policy-meta { color: var(--ink-muted); }
+.policy-summary {
+  margin: var(--space-3) 0;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.policy-summary h2 { margin-top: var(--space-2); }
+.policy a { text-underline-offset: 3px; }
+.policy a:hover { text-decoration-thickness: 2px; }
+.policy [id] { scroll-margin-top: 16px; }
+@media (forced-colors: active) {
+  .policy-summary { border: 1px solid CanvasText; }
+}

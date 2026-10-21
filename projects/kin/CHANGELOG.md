@@ -28,6 +28,34 @@ documentation only.
   APK and App Bundle, checks the APK against the web manifest
   (`scripts/check-android-app.mjs`) and keeps both as an artifact. Signed
   release builds stay manual.
+- **A public privacy policy** (#541, epic #527): `web/privacy.html`, served
+  at `/privacy.html`, says in plain words what stays on your devices, what
+  Kin's service stores and sees (your username, a check value for your
+  password, membership, device keys, timing, counts and sizes, IP addresses
+  for rate limits, push addresses if notifications are on), what Kin never
+  does (ads, selling, analytics, reading content, AI), how to delete your
+  account or household and how long things are kept. It opens offline and
+  is linked from Household › Privacy & recovery and the README. Its contact
+  address, `privacy@journeytocode.io`, is a placeholder to confirm.
+- **Google Play listing and Data safety drafts** (#540, #541):
+  [PLAY-LISTING](docs/PLAY-LISTING.md) has the name, descriptions, category,
+  contacts, each Data safety answer with its reason and the open questions
+  for the owner, a content rating draft and the target-audience (Families
+  policy) choice.
+- **Play graphics** (#540): `scripts/render-play-graphics.mjs` draws the
+  1024 × 500 feature graphic, `play/feature-graphic.png`, from the icon
+  geometry (with `--check`); `scripts/play-screenshots.mjs` captures Today,
+  Shopping, This week, Chat and the journal of a made-up household at phone
+  and 7- and 10-inch tablet sizes. The Kin verification workflow runs it
+  only on **Run workflow** (`play-screenshots` job) and uploads
+  `kin-play-screenshots`. The PNG reader in `scripts/render-icons.mjs` now
+  reads every row filter and the encoder writes RGB as well as RGBA.
+- **A Play release runbook** (#545): [PLAY-RELEASE](docs/PLAY-RELEASE.md)
+  covers the one-time setup (developer account, app creation, Play App
+  Signing, asset-links fingerprints, app content, listing), the 14-day
+  closed test with 12+ testers, production submission, when a change needs a
+  Play release rather than a web deploy, version codes, staged rollout and
+  rollback. Linked from [RELEASES](docs/RELEASES.md).
 
 ### Fixed
 
