@@ -8,7 +8,7 @@ const events = [];
 const pushed = [];
 let hash = "#today";
 Object.defineProperty(globalThis, "location", { configurable: true, value: { get hash() { return hash; }, pathname: "/" } });
-globalThis.history = { pushState: (_state, _title, url) => { pushed.push(url); hash = url; } };
+globalThis.history = { pushState: (_state, _title, url) => { pushed.push(url); hash = url; }, replaceState: (_state, _title, url) => { hash = url; } };
 globalThis.window = { scrollY: 0, scrollTo() {}, dispatchEvent: (event) => { events.push(event); return true; } };
 globalThis.document = { title: "" };
 globalThis.requestAnimationFrame = () => 0;
@@ -16,6 +16,7 @@ globalThis.CustomEvent = class { constructor(type, init = {}) { this.type = type
 
 const { NavigationController } = await import("./navigation.js");
 const { ROUTE_CHANGE_EVENT } = await import("../../routes.js");
+const { FeaturesController } = await import("./features.js");
 
 function controller() {
   const section = () => ({ hidden: false });
@@ -29,9 +30,11 @@ function controller() {
     routines: {},
     search: {},
   };
-  const ctx = { app, detail: { closeItemDetail() {}, mountDetail() {} } };
+  const statuses = [];
+  const ctx = { app, detail: { closeItemDetail() {}, mountDetail() {} }, status: { setStatus: (text) => statuses.push(text) } };
+  ctx.features = new FeaturesController(ctx);
   ctx.navigation = new NavigationController(ctx);
-  return { app, navigation: ctx.navigation };
+  return { app, navigation: ctx.navigation, features: ctx.features, statuses };
 }
 
 test("navigating to another page announces the route change once", () => {
@@ -66,4 +69,22 @@ test("a segment change within a page is a route change too", () => {
   navigation.navigate("#lists/shopping");
   assert.equal(events.length, 1);
   assert.deepEqual(events[0].detail, { from: "lists/todo", to: "lists/shopping" });
+});
+
+test("a route into a switched-off feature opens Today with a calm line (#625)", () => {
+  hash = "#today";
+  const { app, navigation, features, statuses } = controller();
+  navigation.showPageFromLocation();
+  features.receive({ off: 2 ** 3 | 2 ** 5, revision: 1, admin: false });
+  for (const target of ["#routines", "#routines/checklists", "#week"]) {
+    navigation.navigate(target);
+    assert.equal(app.route.canonical, "today", target);
+    assert.equal(hash, "#today", "the address follows");
+  }
+  assert.equal(statuses.at(-1), "This week is turned off in your household, so Kin opened Today.");
+  navigation.navigate("#lists/shopping");
+  assert.equal(app.route.canonical, "lists/shopping", "always-on pages still open");
+  features.receive({ off: 0, revision: 2, admin: false });
+  navigation.navigate("#week");
+  assert.equal(app.route.canonical, "week", "back on, it opens again");
 });

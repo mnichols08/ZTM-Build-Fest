@@ -366,6 +366,7 @@ class KinRoutines extends HTMLElement {
       }
       const turns = this.rotationControls.get(record.routineId) ?? document.createElement("kin-rotation");
       turns.className = "routine-rotation";
+      turns.dataset.feature = "turns";
       this.rotationControls.set(record.routineId, turns);
       content.append(turns);
       turns.disabled = this.isDisabled;

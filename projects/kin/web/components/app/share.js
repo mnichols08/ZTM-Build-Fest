@@ -4,6 +4,7 @@
 // the controllers.
 import { captureLaunchAction, consumeLaunchAction, consumeShare, sharedText, shortcutLanding } from "../../share-target.js";
 import { routeHash } from "../../routes.js";
+import { shareDestinations, unavailableLine } from "../../features.js";
 
 export class ShareController {
   constructor(ctx) {
@@ -39,9 +40,16 @@ export class ShareController {
    * title (share-target.js shortcutLanding). A Temporary member stays where
    * the shortcut took them rather than being moved to For you. */
   land(action) {
-    const landing = shortcutLanding(action, { simpleView: this.app.simpleView });
+    const landing = shortcutLanding(action, { simpleView: this.app.simpleView, available: (route) => this.ctx.features.routeAvailable(route) });
     if (!landing) return;
     this.app.sitterLanded = true;
+    // A shortcut into a switched-off feature (#625) lands on Today.
+    if (landing.unavailable) {
+      this.ctx.navigation.navigate("#today");
+      this.app.pages?.get("today")?.querySelector("h1")?.focus();
+      this.ctx.status.setStatus(unavailableLine(this.ctx.features.blocking(landing.unavailable)));
+      return;
+    }
     // "New journal entry" (#509): the journal's editor, after unlock.
     if (landing.journal) {
       void this.ctx.journal?.openNewEntry();
@@ -69,7 +77,8 @@ export class ShareController {
     // The journal (#508) only where it opens on this device: private, so
     // nothing shared there touches household data.
     const journalOpen = this.ctx.journal?.status() === "ready";
-    const allowed = new Set(["todo", "shopping", "note", "handoff", ...(chatOpen ? ["chat"] : []), ...(journalOpen ? ["journal"] : [])]);
+    // Destinations of switched-off features leave the sheet (#625).
+    const allowed = shareDestinations(["todo", "shopping", "note", "handoff", ...(chatOpen ? ["chat"] : []), ...(journalOpen ? ["journal"] : [])], this.ctx.features.off);
     const sheet = this.app.shareSheet;
     if (!sheet) return;
     const kind = await sheet.choose({ text, link, files, allowed });

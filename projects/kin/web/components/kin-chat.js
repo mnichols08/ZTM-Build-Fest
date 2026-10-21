@@ -220,6 +220,8 @@ class KinChat extends HTMLElement {
     this.topicsToggle = document.createElement("button");
     this.topicsToggle.type = "button";
     this.topicsToggle.className = "chat-topics-toggle";
+    // To talk about is Talk later's (#625).
+    this.topicsToggle.dataset.feature = "talk";
     this.topicsToggle.setAttribute("aria-expanded", "false");
     this.topicsToggle.setAttribute("aria-controls", "chat-topics");
     this.topicsToggle.addEventListener("click", () => this.toggleTopics());
@@ -233,6 +235,7 @@ class KinChat extends HTMLElement {
     this.topicsPanel = document.createElement("section");
     this.topicsPanel.id = "chat-topics";
     this.topicsPanel.className = "chat-topics";
+    this.topicsPanel.dataset.feature = "talk";
     this.topicsPanel.setAttribute("aria-labelledby", "chat-topics-heading");
     const topicsHeading = document.createElement("h3");
     topicsHeading.id = "chat-topics-heading";
@@ -2499,6 +2502,13 @@ class KinChat extends HTMLElement {
   }
 
   actionsFor(message, room) {
+    // Actions of switched-off features (#625): Talk later's, Save as a note.
+    const hidden = this.hiddenActions;
+    if (hidden?.size) return this.allActionsFor(message, room).filter((action) => !hidden.has(action));
+    return this.allActionsFor(message, room);
+  }
+
+  allActionsFor(message, room) {
     // Anyone can delete any message for themselves; a deleted one too.
     if (!visible(message)) return ["hide"];
     const own = message.authorId === room.identity.memberId;
