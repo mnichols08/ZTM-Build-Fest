@@ -253,7 +253,7 @@ test("settings follow the member unless this device uses its own", async (t) => 
   assert.equal(s.controller.scope, "synced");
 });
 
-test("the first device to open makes the member key, so private storage is on from the start", async (t) => {
+test("the member key is made on the first private change, not before", async (t) => {
   const s = setup();
   t.after(s.restore);
   const log = fakeLog();
@@ -263,12 +263,25 @@ test("the first device to open makes the member key, so private storage is on fr
   log.enable = async () => { enabled += 1; log.active = true; log.reason = "ready"; log.notify(); return "ready"; };
   s.controller.attach(log, s.session);
   await s.settle();
-  assert.equal(enabled, 1);
-  assert.equal(s.controller.scope, "synced");
-  // A log that already has its key isn't asked again.
-  s.controller.attach(log, s.session);
+  assert.equal(enabled, 0, "nothing to bring: no key yet");
+  assert.equal(s.controller.scope, "synced", "but reminders and settings will follow the member");
+  const set = await s.controller.setReminder({ id: A, title: "Milk", at: s.clock.now + HOUR });
   await s.settle();
+  assert.deepEqual(set, { result: "granted", synced: true });
   assert.equal(enabled, 1);
+  assert.ok(log.reminders.has(A));
+  // A device with its own reminder to bring makes the key when it opens.
+  const other = setup();
+
+  await other.controller.setReminder({ id: B, title: "Bread", at: other.clock.now + HOUR });
+  const fresh = fakeLog();
+  fresh.active = false;
+  fresh.reason = "no_member_key";
+  fresh.enable = async () => { fresh.active = true; fresh.reason = "ready"; fresh.notify(); return "ready"; };
+  other.controller.attach(fresh, other.session);
+  await other.settle();
+  assert.ok(fresh.reminders.has(B), "moved in once the key exists");
+  other.restore();
 });
 
 test("with no private storage, everything stays on this device and says so", async (t) => {

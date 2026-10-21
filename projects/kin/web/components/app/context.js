@@ -266,7 +266,7 @@ export function initializeAppState(app) {
     app.onPlaybookIntent = (event) => app.ctx.routines.handlePlaybookIntent(event);
     app.onLocalReminder = (event) => app.ctx.records.handleLocalReminder(event.detail);
     app.onCancelLocalReminder = (event) => {
-      const synced = app.ctx.privatePrefs.active;
+      const synced = app.ctx.privatePrefs.available;
       void app.ctx.privatePrefs.endReminder(event.detail.id, "canceled").catch(() => {}).then(() => app.ctx.records.renderReminders());
       app.ctx.records.renderReminders();
       app.ctx.status.setStatus(synced ? "Reminder canceled on all your devices." : "Reminder canceled on this device.");

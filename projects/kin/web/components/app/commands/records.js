@@ -162,7 +162,7 @@ export class RecordCommands {
       // permission prompt can outlast the session: nothing is kept or
       // reported into a locked or different household.
       let result, synced = false;
-      if (this.ctx.privatePrefs.active) ({ result, synced } = await this.ctx.privatePrefs.setReminder({ id, title, at }));
+      if (this.ctx.privatePrefs.available) ({ result, synced } = await this.ctx.privatePrefs.setReminder({ id, title, at }));
       else {
         const target = this.reminderTarget(id, session);
         const token = Symbol(id);
@@ -206,7 +206,7 @@ export class RecordCommands {
   // Synced reminders (#522) where private storage is on, else this device's.
   renderReminders() {
     const reminders = this.ctx.privatePrefs.reminderView();
-    const scope = this.ctx.privatePrefs.active ? "devices" : "device";
+    const scope = this.ctx.privatePrefs.available ? "devices" : "device";
     const Reminder = customElements.get("kin-reminder");
     if (Reminder) Reminder.scope = scope;
     for (const control of this.app.querySelectorAll("kin-reminder")) control.scope = scope;

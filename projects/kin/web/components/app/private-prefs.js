@@ -49,9 +49,18 @@ export class PrivatePrefsController {
     this.queued = false;
   }
 
-  /** Whether reminders and settings follow the member from this device. */
+  /** Whether reminders and settings follow the member from this device:
+   * private storage is on and the member key is here. */
   get active() {
     return Boolean(this.log?.active) && this.current();
+  }
+
+  /** Whether they can: also while the member has no key yet, which the
+   * first private change makes (ADR 0019: the member key is made on first
+   * use; a device that opened before another made it adopts it, private-log.js
+   * ensureKeys). */
+  get available() {
+    return this.active || (this.log?.reason === "no_member_key" && this.current());
   }
 
   /** Whether this device keeps its own settings ("Use different settings on
@@ -64,7 +73,7 @@ export class PrivatePrefsController {
    * "off" (the household turned private storage off for this member), or
    * "device" (no private storage here: no account yet, or not ready). */
   get scope() {
-    if (this.active) return this.deviceOnly ? "device-only" : "synced";
+    if (this.available) return this.deviceOnly ? "device-only" : "synced";
     if (this.log && this.log.reason === "off") return "off";
     return "device";
   }
@@ -79,11 +88,6 @@ export class PrivatePrefsController {
     this.session = session;
     this.seeded = false;
     this.unsubscribe = log.subscribe(() => void this.refresh());
-    // Reminders and settings are private things the member uses from the
-    // start (ADR 0019 makes the member key on first use): the first device
-    // to open makes it, and a device opening later adopts it from the
-    // member's vault (member-key.js create reads the vault first).
-    if (log.reason === "no_member_key") void this.enqueue(() => log.enable()).catch(() => {});
     void this.refresh();
   }
 
@@ -127,7 +131,11 @@ export class PrivatePrefsController {
    * already so and is not an error. Resolves to whether it was written. */
   async tryChange(command) {
     const log = this.log;
-    if (!log?.active || !this.current()) return false;
+    if (!log || !this.current()) return false;
+    // The member's first private change makes the member key, or adopts the
+    // one another device made (member-key.js create reads the vault first).
+    if (!log.active && log.reason === "no_member_key") await log.enable();
+    if (!log.active || !this.current()) return false;
     try {
       await log.execute(command);
       return true;
@@ -145,6 +153,18 @@ export class PrivatePrefsController {
 
   async reconcile() {
     const log = this.log;
+    if (log && this.current() && !log.active && log.reason === "no_member_key") {
+      // No member key yet: nothing private to read. Make it only when this
+      // device has something to bring (its own reminders, or settings it
+      // changed); the pass after that moves them in.
+      const own = [...this.app.localReminders.entries].filter(([id]) => !this.armedFromSync.has(id))
+        .map(([id, entry]) => [id, { at: entry.at }]);
+      const bringing = migrationPlan(new Map(own), [], Date.now()).length > 0 ||
+        (!this.deviceOnly && this.app.personalAppearance && settingsPlan(this.localSettings(), {}).seed.length > 0);
+      if (bringing) { try { await log.enable(); } catch { /* the next pass tries again */ } }
+      this.render();
+      return;
+    }
     if (!log?.active || !this.current()) { this.render(); return; }
     let projection;
     try { projection = log.projection(); } catch { return; }
@@ -228,10 +248,9 @@ export class PrivatePrefsController {
    * app icon count, <kin-personal-settings>): the log follows unless this
    * device keeps its own settings. */
   settingsChanged(keys) {
-    if (!this.active || this.deviceOnly) return Promise.resolve();
+    if (!this.available || this.deviceOnly) return Promise.resolve();
     return this.enqueue(async () => {
-      if (!this.projection) return;
-      for (const { key, value } of changedSettings(this.localSettings(), this.projection.settings, keys))
+      for (const { key, value } of changedSettings(this.localSettings(), this.projection?.settings ?? {}, keys))
         await this.tryChange({ type: "set-setting", key, value });
     }).catch(() => {
       if (this.current()) this.ctx.status.setStatus("Kin kept that setting on this device; your other devices will get it once private storage is reachable.");
@@ -321,7 +340,7 @@ export class PrivatePrefsController {
    * while the browser asked for permission), and whether it was synced.
    */
   async setReminder({ id, title, at }) {
-    if (!this.active) {
+    if (!this.available) {
       const session = this.ctx.session.captureSession();
       const target = this.ctx.records.reminderTarget(id, session);
       const token = Symbol(id);
@@ -350,7 +369,7 @@ export class PrivatePrefsController {
    */
   endReminder(id, reason, at = undefined) {
     if (reason !== "dismissed") this.app.localReminders.cancel(id);
-    if (!this.active) return Promise.resolve(false);
+    if (!this.available) return Promise.resolve(false);
     return this.enqueue(async () => {
       const synced = this.projection?.reminders.find((reminder) => reminder.reminderId === id);
       if (!synced) return false;
@@ -361,7 +380,7 @@ export class PrivatePrefsController {
   /** Reminders to show beside their items and routines: { id → { at,
    * scope, where } }. */
   reminderView() {
-    if (this.active) {
+    if (this.available) {
       return new Map([...this.visible].map(([id, reminder]) => [id, { at: reminder.at, scope: "devices", where: describeSyncedReminder(reminder).where }]));
     }
     return new Map([...this.app.localReminders.entries].map(([id, entry]) => [id, { at: entry.at, scope: "device", where: "" }]));

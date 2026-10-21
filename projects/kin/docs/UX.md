@@ -1500,7 +1500,9 @@ no other member, admin or the service can read them.
   reminder set on it before (they lived only in that tab) moves into the
   member's private storage once, without duplicates, and settings it changed
   from the defaults become the member's where nothing synced yet. A device
-  opening later takes the member's settings.
+  opening later takes the member's settings. The member key is made on the
+  first private change; a device that was already open picks it up on its
+  next sync.
 - **Text size** scales the whole page as browser zoom does (Large 112.5%,
   Larger 125%): lines reflow, nothing scrolls sideways, and it composes with
   the browser's own zoom up to 200%. Text size and reduced motion are kept

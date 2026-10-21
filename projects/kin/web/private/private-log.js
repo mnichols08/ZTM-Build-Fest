@@ -101,6 +101,7 @@ export class PrivateLog {
     this.syncError = null;
     this.keyError = null;
     this.streamChecked = false;
+    this.streamEventsSeen = 0;
     this.revocationMark = 0;
     // Whether the service lets this member have private storage: "write"
     // or "none" (Temporary, or Limited while the household turned it off).
@@ -328,18 +329,24 @@ export class PrivateLog {
   }
 
   /** Makes sure this device holds the member key if the member has one:
-   * after a failed read, and once per unlock when the stream holds events
-   * this device can't read yet (another device created the key). */
+   * after a failed read, and when the stream holds events this device can't
+   * read yet (another device created the key): checked once per unlock, and
+   * again on each pass while the member has no key here, reading the vault
+   * only when the stream has grown since the last look (#520: a reminder
+   * set on another device after this one opened). */
   async ensureKeys() {
     if (this.ring.available) return true;
     if (SETTLED.has(this.ring.status)) return false;
     if (this.keyError) {
       this.keyError = null;
       try { await this.ring.load(); } catch (error) { this.keyError = error; throw error; }
-    } else if (!this.streamChecked) {
+    } else if (!this.streamChecked || this.ring.status === "no_member_key") {
       this.streamChecked = true;
       const { events } = await this.request("/api/private/status");
-      if (Number.isSafeInteger(events) && events > 0) await this.ring.load();
+      if (Number.isSafeInteger(events) && events > this.streamEventsSeen) {
+        this.streamEventsSeen = events;
+        await this.ring.load();
+      }
     }
     if (this.ring.available) await this.refresh();
     return this.ring.available;

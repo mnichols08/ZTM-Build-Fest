@@ -237,9 +237,11 @@ already on the child's devices. Temporary members have none. Removing a
 member deletes their private stream on the service; deleting the household
 deletes every member's. Copies on the member's own devices stay, as for
 household data. Household exports never include private logs. Reminders and
-settings that follow a member (#520) make the member key on their first
-device to open with private storage, so the service learns that a member
-with an account uses private storage from their first day.
+settings that follow a member (#520) make the member key on the member's
+first private change: a reminder, or a setting changed from Kin's default
+(a device that already has some brings them the first time it opens with
+private storage). From then on the service learns that the member uses
+private storage.
 
 **Just for me (#510).** Private to-dos, notes on them and the member's
 "show on my Today" setting are private-log records (kinds 110–118): sealed

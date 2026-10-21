@@ -62,7 +62,7 @@ async function pageSetReminderAndTheme(inMs) {
   const step = 25; // ms between looks at the page's state
   const app = document.querySelector("kin-app");
   const prefs = app.ctx.privatePrefs;
-  if (!prefs.active) throw new Error("Private storage isn't on: " + prefs.scope);
+  if (!prefs.available) throw new Error("Private storage isn't on: " + prefs.scope);
   const item = app.state.items.find((entry) => entry.text === "Milk" && entry.status === "active");
   const id = `item:${item.itemId}`;
   const at = Math.ceil((Date.now() + inMs) / 1000) * 1000;
@@ -203,7 +203,7 @@ export async function syncedPrefsRegressions({ endpoint, browserClient }) {
       const result = await run(phone, pageSync);
       return result.scope === "synced" ? result : null;
     }, "private storage on the phone", 60_000);
-    check(phoneSync.privateLog, "the phone opens the member's private log and makes the member key on first use");
+    check(phoneSync.privateLog, "the phone opens the member's private log; the member key comes with the first private change");
 
     // The laptop, in Paris: the same member, signed in with the password,
     // once the phone has endorsed the member's certification key and filled
