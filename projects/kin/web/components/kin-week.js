@@ -5,7 +5,9 @@
 // reopen with the ordinary commands (Undo applies) and move to another day
 // with "Move to…"; routines complete for the current period only.
 import { assigneeLabel } from "./shared/assignee-label.js";
-import { formatCivilDate, nextCivilDate } from "../today-view.js";
+import { describePlanningDate, formatCivilDate, nextCivilDate } from "../today-view.js";
+import { mergePrivateIntoWeek } from "../private-items.js";
+import { privateItemRow } from "./shared/private-marker.js";
 
 const CADENCE = { daily: "Every day", weekdays: "Weekdays", weekly: "Every week", biweekly: "Every two weeks", monthly: "Every month" };
 
@@ -41,10 +43,12 @@ class KinWeek extends HTMLElement {
     this.render();
   }
 
-  /** `{ days, today, state, context }`: the week from Rust, today's civil
-   * date, the projection (for text) and the responsibility context. */
-  update({ days, today, state, context }) {
-    this.days = days ?? [];
+  /** `{ days, today, state, context, privateItems }`: the week from Rust,
+   * today's civil date, the projection (for text), the responsibility
+   * context and this member's private items for This week (#514; none in
+   * Simple view or with their setting off). */
+  update({ days, today, state, context, privateItems = [] }) {
+    this.days = mergePrivateIntoWeek(days ?? [], privateItems);
     this.today = today;
     this.state = state;
     this.context = context ?? {};
@@ -91,6 +95,15 @@ class KinWeek extends HTMLElement {
       for (const entry of day.items) {
         const item = items.get(entry.itemId);
         if (item) list.append(this.itemRow(item, entry, day.date));
+      }
+      // Just for me (#514): only this member's, marked "Private".
+      for (const item of day.privateItems ?? []) {
+        list.append(privateItemRow(item, {
+          className: "week-row week-private",
+          disabled: this.isDisabled,
+          meta: item.date < day.date ? describePlanningDate(item.date, this.today) : null,
+          onToggle: (itemId, completed) => this.emit("kin:toggle-private-item", { itemId, completed }),
+        }));
       }
       for (const entry of day.routines) {
         const routine = routines.get(entry.routineId);
