@@ -154,7 +154,15 @@ export class ShellBuilder {
     this.app.retryButton.className = "retry-button";
     this.app.retryButton.textContent = "Try again";
     this.app.retryButton.hidden = true;
-    feedback.append(this.app.status, this.app.alert, this.app.retryButton);
+    // "Report a problem" beside every error message, and after an
+    // unexpected error (ADR 0021 §3).
+    this.app.reportButton = document.createElement("button");
+    this.app.reportButton.type = "button";
+    this.app.reportButton.className = "report-button secondary";
+    this.app.reportButton.textContent = "Report a problem";
+    this.app.reportButton.hidden = true;
+    this.app.reportButton.addEventListener("click", () => this.ctx.report.open("problem", { opener: this.app.reportButton }));
+    feedback.append(this.app.status, this.app.alert, this.app.retryButton, this.app.reportButton);
     this.ctx.undo.buildToast(feedback);
     this.app.feedback = feedback;
 
@@ -234,6 +242,7 @@ export class ShellBuilder {
     // Bring a list into Kin (#452).
     this.app.importer = document.createElement("kin-import");
     this.app.append(this.app.importer);
+    this.ctx.report.element();
     this.app.attachmentInput = this.ctx.attachments.buildAttachmentInput();
     this.app.append(this.app.attachmentInput);
     this.ctx.navigation.showPageFromLocation();

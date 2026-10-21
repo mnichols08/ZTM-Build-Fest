@@ -161,7 +161,14 @@ export class SyncController {
   }
   handleSyncState(value) {
     if (!this.app.vault || this.app.vault.locked) return;
+    const wasReady = this.app.syncState?.state === "ready";
     if (value.state) { this.app.syncState = value; this.updateSyncChip(); }
+    if (value.state === "ready") {
+      // For a report's diagnostics; and reports waiting to be sent go out
+      // once sync is back (ADR 0021 §3).
+      this.app.lastSyncAt = Date.now();
+      if (!wasReady) void this.ctx.report?.flush();
+    }
     if (value.state === "ready") void this.settlePendingShares();
     // Names typed at first run are recorded once sync is ready (#557).
     if (value.state === "ready" && this.app.pendingProfile) void this.ctx.firstRun?.applyProfile();

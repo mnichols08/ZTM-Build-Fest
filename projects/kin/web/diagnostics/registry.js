@@ -94,7 +94,7 @@ export const DIAGNOSTIC_CODES = Object.freeze({
 });
 
 /** Largest number a field keeps; beyond it the value is clamped. */
-export const MAX_FIELD_NUMBER = 2 ** 40;
+export const MAX_FIELD_NUMBER = 2 ** 48;
 
 /** The value a list field takes, or "other". */
 function listValue(list, value) {

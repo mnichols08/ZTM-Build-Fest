@@ -101,7 +101,7 @@ bothStores("reports are refused when malformed, too large, or with a bad screens
     assert.throws(() => feedback.submit({ auth, body }), (error) => error instanceof PairingError && error.status === 400, JSON.stringify(body));
   assert.throws(() => feedback.submit({ auth, body: problem({ text: { happened: "x".repeat(4001) } }) }), rejects("feedback_too_large", 413));
   feedback.submit({ auth, body: problem({ text: { happened: "x".repeat(4000), expected: "y".repeat(4000) } }) });
-  assert.throws(() => feedback.submit({ auth, body: problem({ text: { happened: "é".repeat(4000), expected: "ü".repeat(4000) } }) }),
+  assert.throws(() => feedback.submit({ auth, body: problem({ text: { happened: "中".repeat(4000), expected: "文".repeat(4000) } }) }),
     rejects("feedback_too_large", 413), "the stored body is at most 16 KiB");
   const screenshot = (type, bytes) => problem({ screenshot: { type, data: bytes.toString("base64") } });
   for (const body of [screenshot("image/png", JPEG), screenshot("image/jpeg", PNG), screenshot("image/gif", PNG),

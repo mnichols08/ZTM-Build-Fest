@@ -1,6 +1,7 @@
 // Unlock, open, lock and auto-lock of the household session.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { clearAttachmentProgress } from "../../attachments/attachment-progress.js";
+import { recordDiagnostic } from "../../diagnostics/ring-buffer.js";
 import { AttachmentPreviewCache } from "../../attachments/attachment-preview.js";
 import { loadKinEngine } from "../../wasm/kin-engine.js";
 import { releaseQrCodec } from "../../wasm/kin-qr.js";
@@ -112,6 +113,7 @@ export class SessionController {
     }
   }
   async openUnlockedHousehold(vault) {
+    const unlockStarted = performance.now();
     // Re-opening without a lock still ends the previous session's timers;
     // initialize() resumes them only if this is the same vault.
     this.app.localReminders.suspendAll(this.app.vault?.vaultId ?? null);
@@ -153,6 +155,7 @@ export class SessionController {
     void this.ctx.share.afterUnlock().catch(() => {});
     // Seal this unlock for a refresh of this tab; a lock meanwhile undoes it.
     void this.app.reloadResume?.arm(vault).then(() => this.app.reloadResume.sweep()).catch(() => {});
+    recordDiagnostic("unlocked", { ms: performance.now() - unlockStarted });
   }
   lockHousehold(broadcast = true, { preserveSecurityOperation = false, endSession = false, keepReloadResume = false, keepBadge = false } = {}) {
     // Every lock but the one on page unload ends refresh-resume (#351).
@@ -202,6 +205,11 @@ export class SessionController {
     this.ctx.attachments.revokeOpenedAttachments();
     this.ctx.detail.closeItemDetail({ restoreFocus: false });
     this.app.commandPalette?.dismiss();
+    // A report's draft and screenshot go with the lock (ADR 0021 §3).
+    this.ctx.report?.dismiss();
+    if (this.app.reportButton) this.app.reportButton.hidden = true;
+    this.app.householdAdmin = false;
+    this.app.lastSyncAt = null;
     this.app.commandGeneration = null;
     this.ctx.bulk.clearBulkOutcome();
     this.ctx.undo.clear();

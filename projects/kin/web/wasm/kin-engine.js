@@ -15,6 +15,8 @@ import {
   ROUTINE_CADENCES,
   strictTextDecoder,
 } from "./wire.js";
+import { recordDiagnostic } from "../diagnostics/ring-buffer.js";
+import { errorName } from "../diagnostics/global.js";
 import { decodeAttachmentBindings, decodeProjection } from "./projection-decode.js";
 import { HistoryMirror } from "./history-mirror.js";
 import { BOARD_COMMANDS, BOARD_EVENT_KINDS, MAX_BOARD_EVENT_COUNT, BoardFormatError, decodeBoard, encodeBoardIntent } from "./kin-board.js";
@@ -72,15 +74,24 @@ let sharedCodec = null;
 export async function loadKinEngine(
   wasmUrl = new URL("./kin_engine.wasm", import.meta.url),
 ) {
-  const response = await fetch(wasmUrl);
+  let response;
+  try { response = await fetch(wasmUrl); } catch (error) {
+    recordDiagnostic("engine_load_failed", { stage: "load", name: errorName(error) });
+    throw error;
+  }
   if (!response.ok) {
+    recordDiagnostic("engine_load_failed", { stage: "load", status: response.status });
     throw new KinEngineError(
       6,
       "Kin could not load its household engine. Check the local WASM build and try again.",
     );
   }
   const bytes = await response.arrayBuffer();
-  const { instance } = await WebAssembly.instantiate(bytes, {});
+  let instance;
+  try { ({ instance } = await WebAssembly.instantiate(bytes, {})); } catch (error) {
+    recordDiagnostic("engine_load_failed", { stage: "instantiate", name: errorName(error) });
+    throw error;
+  }
   return createEngine(instance.exports);
 }
 

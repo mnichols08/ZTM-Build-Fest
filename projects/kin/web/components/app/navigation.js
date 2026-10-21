@@ -1,6 +1,8 @@
 // Routes, keyboard shortcuts and search-result navigation.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { projectionContext } from "../../browser-time.js";
+import { recordDiagnostic } from "../../diagnostics/ring-buffer.js";
+import { errorName } from "../../diagnostics/global.js";
 import { listSegmentForClassification, resolveRoute, ROUTE_CHANGE_EVENT, routeHash } from "../../routes.js";
 import { isTypingContext, shortcutForKey } from "../../keyboard-commands.js";
 
@@ -23,6 +25,14 @@ export class NavigationController {
     this.ctx.navigation.showPageFromLocation();
   }
   showPageFromLocation() {
+    // A failure here is noted in the diagnostic ring buffer (#631), as the
+    // page's route name and the error's kind only.
+    try { return this.showRoute(); } catch (error) {
+      recordDiagnostic("route_failed", { page: this.app.route?.page, name: errorName(error) });
+      throw error;
+    }
+  }
+  showRoute() {
     if (!this.app.pages || !this.app.navLinks) return;
     let route = this.routeFor({ hash: location.hash, pathname: location.pathname });
     // Without chat access (#123) Chat isn't there: its links, and the old
