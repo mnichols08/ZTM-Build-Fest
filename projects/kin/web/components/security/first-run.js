@@ -13,9 +13,16 @@
 // the account vault (household/account.js), while Today is already shown.
 // "Set up with a passkey instead" keeps the earlier passkey and backup-key
 // setup for people who prefer it.
+//
+// Set up by someone else (#615): a prepared invitation's link carries the
+// key to its card, so it opens on "Hi Rose — your family set this up for
+// you", then a password (with Show password; the username is chosen from her
+// name), then the wait for the helper's approval, saying who to call.
 // Part of <kin-security>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-security.js lists them).
 import { prepareSignUp, wipeSignUp } from "../../security/account-setup.js";
+import { applyStoredDisplayPrefs, EASY_MODE_KEY, writeDisplayPref } from "../../appearance/display-prefs.js";
+import { openCard, randomDigits, suggestUsername } from "../../security/prepared-card.js";
 import {
   normalizeUsername,
   PASSWORD_GUIDANCE,
@@ -24,7 +31,7 @@ import {
   usernameProblem,
 } from "../../security/account-credentials.js";
 import { LocalVault, toBase64Url } from "../../security/local-vault.js";
-import { cleanCode, consumeInvitationCode, PAIR_PATH } from "../../pairing-link.js";
+import { cleanCode, consumeInvitationCode, consumeInvitationKey, PAIR_PATH } from "../../pairing-link.js";
 import { currentPlatform, installHelp } from "../../platform.js";
 import { EventStore } from "../../storage/event-store.js";
 import { installHelpCard } from "../shared/dom.js";
@@ -74,10 +81,53 @@ export class SecurityFirstRun {
   reset() {
     const joining = location.pathname === PAIR_PATH;
     const code = joining ? consumeInvitationCode() : "";
+    // A prepared invitation's link (#615) also carries the key to its card.
+    const key = joining ? consumeInvitationKey() : "";
     // Kept across re-renders (an error re-renders the panel), so nothing
     // typed is lost; the password lives only in memory, only until setup.
-    this.state = { step: joining ? "about" : "welcome", mode: joining ? "join" : null,
-      draft: { name: "", household: "", code, username: "", password: "" }, problems: {} };
+    this.state = { step: joining ? (code && key ? "opening" : "about") : "welcome", mode: joining ? "join" : null,
+      draft: { name: "", household: "", code, username: "", password: "" }, problems: {}, prepared: null, showPassword: false };
+    if (this.state.step === "opening") void this.openPrepared(this.state, key);
+  }
+
+  /**
+   * Opens a prepared invitation (#615): asks the service about the code, and
+   * opens the card with the link's key. With the card: "Hi Rose", then the
+   * password. Without it (an ordinary or unreadable invitation): the usual
+   * join screen, with the code filled in. Either way a prepared invitation
+   * that asks for easy mode turns it on here, so setup is already easy.
+   */
+  async openPrepared(state, key) {
+    const answer = await this.ask("/api/account/invitation", { code: cleanCode(state.draft.code) });
+    if (this.state !== state) return;
+    if (!answer) { state.step = "about"; return this.host.render(); }
+    if (!answer.ok) {
+      state.step = "about";
+      state.problems = { code: `${answer.message} Ask the person who gave it to you to make a new one.` };
+      return this.host.render();
+    }
+    const prepared = answer.value.prepared ?? null;
+    if (prepared?.easyMode) this.turnOnEasyMode();
+    const card = prepared ? await openCard(prepared.card, key) : null;
+    if (this.state !== state) return;
+    if (!card) { state.step = "about"; return this.host.render(); }
+    state.prepared = { ...card, easyMode: Boolean(prepared.easyMode), memberKind: prepared.memberKind, expiresAt: prepared.expiresAt };
+    state.draft.name = card.name;
+    state.draft.username = suggestUsername(card.name, randomDigits());
+    state.suggested = state.draft.username;
+    state.step = "hello";
+    this.host.render();
+  }
+
+  /** Easy mode from a prepared invitation: on this device at once (the
+   * synced setting follows once the member's private storage opens,
+   * app/private-prefs.js seeds it from this device). */
+  turnOnEasyMode() {
+    writeDisplayPref(EASY_MODE_KEY, "on");
+    applyStoredDisplayPrefs();
+    // The app's own easy mode (its marker and trimmed navigation), which is
+    // already built behind this screen.
+    this.host.closest?.("kin-app")?.ctx?.easy?.apply?.();
   }
 
   go(step, mode = this.state.mode) {
@@ -91,9 +141,49 @@ export class SecurityFirstRun {
     if (!this.state) this.reset();
     const { step } = this.state;
     this.host.dataset.firstRunStep = step;
+    if (step === "opening") return this.renderOpening();
+    if (step === "hello") return this.renderHello();
     if (step === "about") return this.renderAbout();
     if (step === "account") return this.renderAccount();
     return this.renderWelcome();
+  }
+
+  renderOpening() {
+    this.host.heading.textContent = "Opening your invitation";
+    const line = this.host.text("One moment…");
+    line.setAttribute("role", "status");
+  }
+
+  /** "Hi Rose — your family set this up for you" (#615). */
+  renderHello() {
+    const { prepared } = this.state;
+    this.host.heading.textContent = `Hi ${prepared.name} — your family set this up for you`;
+    this.progress(1);
+    this.host.text(`${prepared.helper} made Kin ready for you. Kin is where your family keeps lists, plans and messages. All you need to do is choose a password.`);
+    if (prepared.note) {
+      const note = this.host.text(`“${prepared.note}” — ${prepared.helper}`);
+      note.className = "first-run-note";
+    }
+    const row = document.createElement("div");
+    row.className = "first-run-actions";
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "primary-action";
+    go.textContent = "Continue";
+    go.addEventListener("click", () => this.go("account"));
+    row.append(go);
+    this.host.append(row);
+    this.callLine();
+    queueMicrotask(() => go.focus());
+  }
+
+  /** "If you get stuck, call Mikey." on every prepared screen. */
+  callLine() {
+    const helper = this.state?.prepared?.helper;
+    if (!helper) return null;
+    const line = this.host.text(`If you get stuck, call ${helper}.`);
+    line.className = "first-run-call";
+    return line;
   }
 
   renderWelcome() {
@@ -147,19 +237,46 @@ export class SecurityFirstRun {
 
   renderAccount() {
     const create = this.state.mode === "create";
-    this.host.heading.textContent = "Choose how you'll sign in";
+    const prepared = this.state.prepared;
+    this.host.heading.textContent = prepared ? "Choose a password" : "Choose how you'll sign in";
     this.progress(2);
-    this.host.text("You'll use these to open Kin, here and on your other devices.");
+    this.host.text(prepared
+      ? "Your username is below; Kin chose it from your name, and you can change it. With your password, it opens Kin on another phone or computer."
+      : "You'll use these to open Kin, here and on your other devices.");
     const form = this.form(() => this.submit());
     this.field(form, { key: "username", label: "Username", autocomplete: "username", hint: `${USERNAME_GUIDANCE}`, spellcheck: false, autocapitalize: "none" });
-    this.field(form, { key: "password", label: "Password", type: "password", autocomplete: "new-password", hint: PASSWORD_GUIDANCE });
+    this.field(form, { key: "password", label: "Password", type: this.state.showPassword ? "text" : "password", autocomplete: "new-password",
+      hint: prepared ? `${PASSWORD_GUIDANCE} Write it down and keep it somewhere safe.` : PASSWORD_GUIDANCE,
+      after: (input) => this.showPasswordToggle(input) });
     const tradeOff = document.createElement("p");
     tradeOff.className = "security-note";
     tradeOff.textContent = PASSWORD_TRADE_OFF;
     form.append(tradeOff);
-    this.actions(form, create ? "Create household" : "Join household");
+    this.actions(form, create ? "Create household" : prepared ? "Continue" : "Join household");
     this.host.append(form);
+    this.callLine();
     this.focusFirst(form);
+  }
+
+  /** "Show password" (#615): a pressed button that shows what was typed, so
+   * nobody has to type it twice; kept while the screen re-renders. */
+  showPasswordToggle(input) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "secondary show-password";
+    toggle.setAttribute("aria-controls", input.id);
+    const update = () => {
+      toggle.textContent = this.state.showPassword ? "Hide password" : "Show password";
+      toggle.setAttribute("aria-pressed", String(this.state.showPassword));
+      input.type = this.state.showPassword ? "text" : "password";
+    };
+    toggle.addEventListener("click", () => {
+      this.state.showPassword = !this.state.showPassword;
+      update();
+      input.focus();
+    });
+    update();
+    return toggle;
   }
 
   progress(index) {
@@ -179,7 +296,7 @@ export class SecurityFirstRun {
     return form;
   }
 
-  field(form, { key, label, type = "text", autocomplete, hint = "", maxLength = null, spellcheck = null, autocapitalize = null }) {
+  field(form, { key, label, type = "text", autocomplete, hint = "", maxLength = null, spellcheck = null, autocapitalize = null, after = null }) {
     const id = `first-run-${key}`;
     const wrapper = document.createElement("div");
     wrapper.className = "first-run-field";
@@ -198,14 +315,16 @@ export class SecurityFirstRun {
     if (key !== "household") input.required = true;
     input.addEventListener("input", () => { this.state.draft[key] = input.value; });
     const described = [];
+    // A control that belongs right after the field (Show password).
+    const extra = after ? [after(input)] : [];
     if (hint) {
       const help = document.createElement("p");
       help.id = `${id}-hint`;
       help.className = "security-note";
       help.textContent = hint;
       described.push(help.id);
-      wrapper.append(caption, input, help);
-    } else wrapper.append(caption, input);
+      wrapper.append(caption, input, ...extra, help);
+    } else wrapper.append(caption, input, ...extra);
     const problem = this.state.problems[key];
     if (problem) {
       const error = document.createElement("p");
@@ -232,7 +351,7 @@ export class SecurityFirstRun {
     back.type = "button";
     back.className = "secondary";
     back.textContent = "Back";
-    back.addEventListener("click", () => this.go(this.state.step === "account" ? "about" : "welcome"));
+    back.addEventListener("click", () => this.go(this.state.step === "account" ? (this.state.prepared ? "hello" : "about") : "welcome"));
     row.append(submit, back);
     form.append(row);
   }
@@ -258,6 +377,9 @@ export class SecurityFirstRun {
       if (!answer.ok) return this.showProblems({ code: answer.message });
       if (answer.value.purpose !== "adult")
         return this.showProblems({ code: "This code adds a device to an existing member. Go back and choose Set up with a passkey instead." });
+      // A prepared invitation typed by hand (no card key): its easy mode
+      // still applies (#615).
+      if (answer.value.prepared?.easyMode) this.turnOnEasyMode();
     }
     this.go("account");
   }
@@ -280,7 +402,14 @@ export class SecurityFirstRun {
     const problems = firstRunProblems("account", this.state.mode, this.state.draft);
     if (Object.keys(problems).length) return this.showProblems(problems);
     if (this.host.busy) return;
-    const available = await this.ask("/api/account/username", { username: this.state.draft.username });
+    let available = await this.ask("/api/account/username", { username: this.state.draft.username });
+    // The username Kin chose from their name (#615) is chosen again, quietly,
+    // if someone already has it.
+    for (let tries = 0; this.state.prepared && available?.ok && !available.value.available &&
+        this.state.draft.username === this.state.suggested && tries < 3; tries += 1) {
+      this.state.draft.username = this.state.suggested = suggestUsername(this.state.prepared.name, randomDigits());
+      available = await this.ask("/api/account/username", { username: this.state.draft.username });
+    }
     if (!available) return;
     if (!available.ok) return this.showProblems({ username: available.message });
     if (!available.value.available) return this.showProblems({ username: "That username is taken. Try another." });
@@ -318,6 +447,9 @@ export class SecurityFirstRun {
       householdName: draft.household.trim(),
       code: mode === "join" ? cleanCode(draft.code) : null,
       signUp,
+      // Set up by someone else (#615): their name, for the waiting screen
+      // and "who to call".
+      prepared: this.state.prepared ? { name: this.state.prepared.name, helper: this.state.prepared.helper } : null,
     };
     // The typed password is no longer needed: its keys are.
     draft.password = "";

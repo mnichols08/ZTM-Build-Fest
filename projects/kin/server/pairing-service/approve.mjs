@@ -178,7 +178,7 @@ export const approveMethods = {
       pairing.terminalAt = this.now();
       pairing.expiresAt = this.now() + CLAIM_TTL_MS;
       pairing.version += 1;
-      this.codeIndex.delete(pairing.verifier);
+      this.retireCode(pairing);
       this.audit("device_pairing_confirmed", {
         householdId: household.id,
         pairingId,
@@ -269,7 +269,7 @@ export const approveMethods = {
     pairing.terminalAt = this.now();
     pairing.expiresAt = this.now() + CLAIM_TTL_MS;
     pairing.version += 1;
-    this.codeIndex.delete(pairing.verifier);
+    this.retireCode(pairing);
     this.audit("pairing_confirmed", {
       householdId: household.id,
       pairingId,
@@ -302,7 +302,7 @@ export const approveMethods = {
     pairing.state = "Revoked";
     pairing.terminalAt = this.now();
     pairing.version += 1;
-    this.codeIndex.delete(pairing.verifier);
+    this.retireCode(pairing);
     this.audit("pairing_revoked", { householdId: household.id, pairingId });
     return this.pairingView(pairing);
   },
@@ -369,6 +369,15 @@ export const approveMethods = {
       confirmedMemberId: pairing.confirmedMemberId,
       confirmedDeviceId: pairing.confirmedDeviceId,
       lostDeviceId: pairing.lostDeviceId,
+      // A prepared invitation (#613): whether it starts the person in easy
+      // mode and when the invitation itself ends (`expiresAt` is the claim's
+      // approval window once claimed). Its sealed card goes only to whoever
+      // holds the code (checkPairingCode).
+      ...(pairing.prepared ? {
+        prepared: true,
+        easyMode: pairing.prepared.easyMode,
+        invitationExpiresAt: pairing.prepared.invitationExpiresAt,
+      } : {}),
     };
   },
 };

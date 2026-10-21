@@ -27,6 +27,8 @@ const SHELL = [
   "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js", "/security/archive-stream.js", "/security/key-label.js", "/security/backup-key-entry.js", "/security/reload-resume.js", "/security/account-vault.js", "/security/account-vault-sync.js", "/security/account-credentials.js", "/security/account-setup.js", "/security/device-certification.js", "/security/new-device.js",
   "/security/backup-code.js", "/security/account-wrappers.js", "/security/account-passkey.js", "/security/account-security.js",
   "/security/account-migration.js", "/security/start-over.js", "/private/private-export.js",
+  // Set up Kin for someone (#613, #615).
+  "/security/prepared-card.js", "/components/household/prepared.js",
   "/private/member-key.js", "/private/private-envelope.js", "/private/private-log-store.js", "/private/private-log.js", "/private/synced-prefs.js", "/private/private-blobs.js", "/private/journal.js", "/private/journal-view.js",
   // Household features (#625, ADR 0021).
   "/features.js", "/features-cache.js", "/components/app/features.js", "/components/kin-household-features.js",

@@ -2976,8 +2976,8 @@ section 1; accessibility details in
   last change wins, and "Use different settings on this device" keeps a
   shared tablet its own. Without private storage it stays on the device.
   Like text size it is kept on the device unencrypted (`kin.easy-mode`), so
-  the lock screen opens the same way. Setting it for someone at setup
-  (#612) is a later story.
+  the lock screen opens the same way. A family member who sets Kin up for
+  someone (#612, § 42) turns it on for them from the invitation.
 - **What changes.** The whole page scales by 125% (with Large 137.5%,
   Larger 150%): base text 20 px, buttons, tabs and navigation links at
   least 56 px, more space between things. The tick on a row says
@@ -3007,9 +3007,14 @@ section 1; accessibility details in
   copy of everything."). Kin's own words — sync, archive, passkey, backup
   key, household, admin, handoff, routine, staple and others — each have
   one plain sentence in the glossary (`web/help/glossary.js`); Help lists
-  the ones its screen uses under **Words on this page**. A unit test fails
-  if a screen's fixed words use a listed term that its Help doesn't
-  explain, or if the tips or the setting use one at all.
+  the ones its screen uses under **Words on this page**: its fixed words
+  and, since #639, the words the page shows at that moment (outside the
+  household's own records). A unit test fails if a screen's fixed words use
+  a listed term that its Help doesn't explain, or if the tips or the setting
+  use one at all; the easy-mode sweep (§ 42) checks every page as shown.
+- **Every control is big enough.** In easy mode every button, menu, field
+  and disclosure is at least the tap size (60 px after the zoom), whatever a
+  component sets in the regular layout.
 
 ## Help on every screen (#621, #622)
 
@@ -3046,3 +3051,86 @@ it**. A tip that was dismissed or used never comes back, and only one is
 dealt with per unlock, so they never queue up. None in Simple view. Kept on
 the device: when Kin was first opened (`kin.first-seen`) and the tips done
 (`kin.tips-done`), nothing about the household.
+
+# 42. Set up Kin for someone (#612–#615)
+
+A family member gets Kin ready for someone who rarely uses apps — a
+grandmother, say — so all she does is open it and choose a password
+([ADR 0021](decisions/0021-kin-for-everyone.md) §4; security in
+[PAIRING](PAIRING.md#set-up-kin-for-someone-612615) and
+[THREAT-MODEL](THREAT-MODEL.md#prepared-invitations-a-printed-sheet-is-an-invitation-613-adr-0021-4)).
+
+## The helper's side (#613, #614)
+
+- **Where.** Household → People & devices, for household admins: **Set up
+  Kin for someone** ("prepare it with their name and easy mode, and print a
+  sheet that shows them how to open it. They only choose a password.").
+- **The form.** **Their name** ("Kin greets them by it, and your household
+  sees it."); **Who they are**: A grown-up in the household, A child or
+  teenager, A babysitter, carer or guest, for a while (then **Their access
+  ends**); **Start in easy mode** (ticked); **Your name** (filled in: "Shown
+  to them as the person to call if they get stuck."); **A note for them
+  (optional)**; **The invitation works for** 1 day, 3 days or 7 days ("Long
+  enough to post the sheet. It works once."); **Make the invitation**.
+  Problems are said on their field in plain words.
+- **Ready.** "Rose's invitation is ready — Give Rose the setup sheet, or send
+  the link. It works once, until Tuesday 28 October." with the QR code, the
+  code, **Print the setup sheet**, **Share the link** and **Cancel this
+  invitation**.
+- **The sheet** ("How to open Kin", one page, large type): "For Rose, from
+  Mikey", a large QR code, three numbered steps — (1) open the camera, point
+  it at the square code and tap the link; (2) Kin says hello and asks for a
+  password: write it down and keep it safe; (3) wait for Mikey to say yes,
+  then Kin opens — the link for someone without a camera, the address and
+  code to type, Mikey's note, **If you get stuck, call Mikey.** and "This
+  sheet works once, until …. Keep it private: anyone with it can ask to
+  join." **Print** prints only the sheet (print stylesheet); **Back**
+  returns to the invitation.
+- **Later.** People & devices lists **Invitations you set up** ("For Rose,
+  until …" → **Open**; "Rose is asking to join" → **Check and say yes**).
+  Kin doesn't keep the code, so once Kin has closed or locked the sheet
+  can't be printed again: cancel and set it up again.
+- **Saying yes.** "Rose is joining — Safari on iPhone is waiting for you to
+  say yes." "If you're with Rose, look at both screens: their screen shows a
+  code. Say yes only if it matches this one." (or call and ask her to read
+  it). Tick **The codes match on both screens**, then **Yes, let Rose in**
+  with your passkey or password. Then: "Rose is in — One last step on
+  Rose's screen: it asks whether its code matches this one. Show them, or
+  read it to them." with your code, and **Done**.
+
+## Her side (#615)
+
+1. **Hello.** Opening the link or scanning the QR code shows one screen,
+   already in easy mode: "**Hi Rose — your family set this up for you**",
+   "Mikey made Kin ready for you. Kin is where your family keeps lists,
+   plans and messages. All you need to do is choose a password.", Mikey's
+   note, **Continue**, and "If you get stuck, call Mikey."
+2. **Password.** "Choose a password": her username, chosen from her name
+   (`rose.4821`, which she can change), and a password with **Show
+   password** (a toggle), "Use at least 10 characters. A few unrelated words
+   works well. Write it down and keep it somewhere safe.", the strength floor
+   (#557) and the one-line trade-off, **Continue** and **Back**.
+3. **Waiting.** "Almost there, Rose — Waiting for Mikey to say yes." with
+   her device's code: "Mikey will check that the code below matches the one
+   on their screen. If you're not together, they may call and ask you to
+   read it." "You can leave this screen open. Kin goes on by itself once
+   they say yes."
+4. **Do these match?** "Mikey said yes — Last step: does this code match
+   the one on Mikey's screen?" with Mikey's code, **Yes, they match — open
+   Kin** and **No, they're different** ("Don't go on. Call Mikey and tell
+   them the codes are different.").
+5. **Today** in easy mode, with Help beside the heading; her name is set and
+   easy mode is in her synced settings.
+
+Every screen, and the card shown if sending the request fails, ends with
+"If you get stuck, call Mikey." A code typed by hand (without the link)
+opens the usual join screen, which asks for her name; easy mode still turns
+on.
+
+## The easy-mode sweep (#639)
+
+A browser regression (`scripts/easy-sweep-regression.mjs`) walks every page
+and tab in easy mode at 320 px and on a desktop, with Fridge, Meals and
+Journal switched off, and fails on: a page without Help, a control under
+56 px, a glossary word on screen that Help doesn't explain, a switched-off
+feature still shown or linked, or sideways scrolling.

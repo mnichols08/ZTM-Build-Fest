@@ -115,6 +115,14 @@ export class PairingService {
     this.bootstrapBuckets = new Map();
     this.householdPolicy = householdPolicy;
     this.events = [];
+    // Prepared invitations (#613) are the one kind of pairing a restart
+    // keeps, so a printed sheet still works; only for households still in
+    // use (deletion purges them anyway).
+    const prepared = store?.loadPreparedInvitations?.(now()) ?? [];
+    this.restorePreparedPairings(prepared.filter((row) => {
+      const household = this.households.get(row.householdId);
+      return household && (household.lifecycleState ?? "active") === "active";
+    }));
   }
 
   verifier(code) {
@@ -140,7 +148,7 @@ export class PairingService {
       pairing.state = "Expired";
       pairing.terminalAt = this.now();
       pairing.version += 1;
-      this.codeIndex.delete(pairing.verifier);
+      this.retireCode(pairing);
       this.audit("pairing_expired", {
         householdId: pairing.householdId,
         pairingId: pairing.id,

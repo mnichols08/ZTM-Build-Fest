@@ -9,6 +9,11 @@ import {
 import {
   canParticipate,
   codeValue,
+  MAX_PREPARED_INVITATIONS,
+  PREPARED_DAY_MS,
+  PREPARED_INVITATION_MAX_DAYS,
+  preparedVerifier,
+  validPreparedCard,
   id,
   isHouseholdAdmin,
   normalizeMemberKind,
@@ -43,9 +48,9 @@ export const createMethods = {
     }).length;
   },
 
-  createPairing(sessionToken, { kind = "adult", expiresAt } = {}) {
-    const { member, household, device } = this.authorize(sessionToken);
-    this.requireManagementAuthority(member, household, "invite a new household member");
+  /** The checks every new-member invitation makes: a supported kind, an
+   * expiry exactly for Temporary access, and room in the household. */
+  checkAdmission(household, kind, expiresAt) {
     if (! ["adult", "limited", "temporary"].includes(kind))
       throw new PairingError("member_kind_invalid", "Choose a supported member type.");
     if (kind === "temporary" && (!Number.isSafeInteger(expiresAt) || expiresAt <= this.now()))
@@ -61,19 +66,44 @@ export const createMethods = {
         "This household has reached its member limit.",
         409,
       );
+  },
+
+  /** A fresh code whose verifier is unused in either form (ordinary codes
+   * use the process secret, prepared ones a stable hash). */
+  freshCode() {
+    for (;;) {
+      const code = codeValue();
+      if (!this.codeIndex.has(this.verifier(code)) && !this.codeIndex.has(preparedVerifier(code))) return code;
+    }
+  },
+
+  /** The pairing a typed or scanned code names, or undefined. */
+  pairingByCode(code) {
+    return this.pairings.get(this.codeIndex.get(this.verifier(code)) ?? this.codeIndex.get(preparedVerifier(code)));
+  },
+
+  /** A code stops working (claimed and approved, revoked, expired, ended
+   * with the household): it leaves the index and, for a prepared
+   * invitation, the service's database, so a restart can't bring it back. */
+  retireCode(pairing) {
+    this.codeIndex.delete(pairing.verifier);
+    if (pairing.prepared) this.store?.deletePreparedInvitation?.(pairing.id);
+  },
+
+  createPairing(sessionToken, { kind = "adult", expiresAt } = {}) {
+    const { member, household, device } = this.authorize(sessionToken);
+    this.requireManagementAuthority(member, household, "invite a new household member");
+    this.checkAdmission(household, kind, expiresAt);
     for (const pairing of this.pairings.values()) {
       if (
         pairing.householdId === household.id &&
+        !pairing.prepared &&
         ["Pending", "Claimed"].includes(this.state(pairing))
       )
         this.revokePairing(sessionToken, pairing.id);
     }
-    let code;
-    let verifier;
-    do {
-      code = codeValue();
-      verifier = this.verifier(code);
-    } while (this.codeIndex.has(verifier));
+    const code = this.freshCode();
+    const verifier = this.verifier(code);
     const pairing = {
       id: id(),
       householdId: household.id,
@@ -113,6 +143,104 @@ export const createMethods = {
     };
   },
 
+  /**
+   * "Set up Kin for someone" (#613): an invitation an admin prepares for one
+   * person, to hand over or post on a printed sheet. Like any new-member
+   * invitation it is single-use and the inviter still approves the claim
+   * after comparing fingerprints; it differs in lasting `days` (1 to 7),
+   * surviving a restart, not ending other invitations, and carrying
+   * `easyMode` (shown to whoever holds the code, who then starts in easy
+   * mode) and `card`, sealed on the admin's device (the person's name, the
+   * helper's name and a note) under a key that only the link's fragment
+   * carries, so the service stores it but can't read it.
+   */
+  createPreparedPairing(sessionToken, { kind = "adult", expiresAt, easyMode = true, card = null, days = PREPARED_INVITATION_MAX_DAYS } = {}) {
+    const { member, household, device } = this.authorize(sessionToken);
+    this.requireManagementAuthority(member, household, "set up Kin for someone");
+    if (!Number.isSafeInteger(days) || days < 1 || days > PREPARED_INVITATION_MAX_DAYS)
+      throw new PairingError("prepared_expiry_invalid", `A prepared invitation lasts 1 to ${PREPARED_INVITATION_MAX_DAYS} days.`);
+    if (typeof easyMode !== "boolean")
+      throw new PairingError("prepared_invalid", "That invitation is invalid.");
+    if (!validPreparedCard(card))
+      throw new PairingError("prepared_card_invalid", "That invitation's details are invalid.");
+    this.checkAdmission(household, kind, expiresAt);
+    const waiting = [...this.pairings.values()].filter((pairing) => pairing.prepared &&
+      pairing.householdId === household.id && ["Pending", "Claimed"].includes(this.state(pairing))).length;
+    if (waiting >= MAX_PREPARED_INVITATIONS)
+      throw new PairingError("prepared_limit", `At most ${MAX_PREPARED_INVITATIONS} prepared invitations can wait at once. Cancel one first.`, 409);
+    const code = this.freshCode();
+    const createdAt = this.now();
+    const invitationExpiresAt = createdAt + days * PREPARED_DAY_MS;
+    const pairing = {
+      id: id(),
+      householdId: household.id,
+      inviterId: member.id,
+      admissionKind: kind,
+      ...(kind === "temporary" ? { admissionExpiresAt: expiresAt } : {}),
+      inviterDeviceId: device.id,
+      inviterKeyFingerprint: device.syncKeyFingerprint,
+      verifier: preparedVerifier(code),
+      prepared: { easyMode, card, invitationExpiresAt },
+      createdAt,
+      expiresAt: invitationExpiresAt,
+      state: "Pending",
+      version: 1,
+      attempts: 0,
+      claimant: null,
+      confirmedMemberId: null,
+    };
+    this.store?.insertPreparedInvitation?.(preparedRow(pairing));
+    this.pairings.set(pairing.id, pairing);
+    this.codeIndex.set(pairing.verifier, pairing.id);
+    this.audit("prepared_invitation_created", {
+      householdId: household.id,
+      pairingId: pairing.id,
+      inviterDeviceId: device.id,
+      days,
+    });
+    return { ...this.pairingView(pairing), code };
+  },
+
+  /** The prepared invitations this member made that still wait (#613). */
+  preparedPairings(sessionToken) {
+    const { member, household } = this.authorize(sessionToken);
+    requireTrustAuthority(member, "review a household invitation");
+    this.prunePairingCapabilities();
+    return [...this.pairings.values()]
+      .filter((pairing) => pairing.prepared && pairing.householdId === household.id && pairing.inviterId === member.id &&
+        ["Pending", "Claimed"].includes(this.state(pairing)))
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((pairing) => this.pairingView(pairing));
+  },
+
+  /** Prepared invitations kept by the service, back in memory after a
+   * restart. Claims are not kept (they are process-local, like every
+   * pairing ceremony), so one that was claimed is Pending again. */
+  restorePreparedPairings(rows) {
+    for (const row of rows) {
+      if (row.expiresAt <= this.now() || this.pairings.has(row.id) || this.codeIndex.has(row.verifier)) continue;
+      this.pairings.set(row.id, {
+        id: row.id,
+        householdId: row.householdId,
+        inviterId: row.inviterMemberId,
+        admissionKind: row.memberKind,
+        ...(row.memberKind === "temporary" ? { admissionExpiresAt: row.memberExpiresAt } : {}),
+        inviterDeviceId: row.inviterDeviceId,
+        inviterKeyFingerprint: row.inviterKeyFingerprint,
+        verifier: row.verifier,
+        prepared: { easyMode: row.easyMode, card: row.card, invitationExpiresAt: row.expiresAt },
+        createdAt: row.createdAt,
+        expiresAt: row.expiresAt,
+        state: "Pending",
+        version: 1,
+        attempts: 0,
+        claimant: null,
+        confirmedMemberId: null,
+      });
+      this.codeIndex.set(row.verifier, row.id);
+    }
+  },
+
   createDevicePairing(sessionToken) {
     const { member, household, device } = this.authorize(sessionToken);
     requireTrustAuthority(member, "manage this device");
@@ -126,16 +254,13 @@ export const createMethods = {
     for (const pairing of this.pairings.values()) {
       if (
         pairing.householdId === household.id &&
+        !pairing.prepared &&
         ["Pending", "Claimed"].includes(this.state(pairing))
       )
         this.revokePairing(sessionToken, pairing.id);
     }
-    let code;
-    let verifier;
-    do {
-      code = codeValue();
-      verifier = this.verifier(code);
-    } while (this.codeIndex.has(verifier));
+    const code = this.freshCode();
+    const verifier = this.verifier(code);
     const pairing = {
       id: id(),
       purpose: "device",
@@ -195,15 +320,12 @@ export const createMethods = {
     for (const pairing of this.pairings.values())
       if (
         pairing.householdId === household.id &&
+        !pairing.prepared &&
         ["Pending", "Claimed"].includes(this.state(pairing))
       )
         this.revokePairing(sessionToken, pairing.id);
-    let code;
-    let verifier;
-    do {
-      code = codeValue();
-      verifier = this.verifier(code);
-    } while (this.codeIndex.has(verifier));
+    const code = this.freshCode();
+    const verifier = this.verifier(code);
     const pairing = {
       id: id(),
       purpose: "replacement",
@@ -265,15 +387,12 @@ export const createMethods = {
     for (const pairing of this.pairings.values())
       if (
         pairing.householdId === household.id &&
+        !pairing.prepared &&
         ["Pending", "Claimed"].includes(this.state(pairing))
       )
         this.revokePairing(sessionToken, pairing.id);
-    let code;
-    let verifier;
-    do {
-      code = codeValue();
-      verifier = this.verifier(code);
-    } while (this.codeIndex.has(verifier));
+    const code = this.freshCode();
+    const verifier = this.verifier(code);
     const pairing = {
       id: id(),
       purpose: "member-recovery",
@@ -314,10 +433,28 @@ export const createMethods = {
   expireHouseholdPairings(householdId) {
     for (const [pairingId, pairing] of this.pairings)
       if (pairing.householdId === householdId) {
-        this.codeIndex.delete(pairing.verifier);
+        this.retireCode(pairing);
         for (const [claimHash, storedPairingId] of this.claimTokens)
           if (storedPairingId === pairingId) this.claimTokens.delete(claimHash);
         this.pairings.delete(pairingId);
       }
   },
 };
+
+/** The durable row for a prepared invitation (durable-store/prepared-invitations.mjs). */
+export function preparedRow(pairing) {
+  return {
+    id: pairing.id,
+    householdId: pairing.householdId,
+    inviterMemberId: pairing.inviterId,
+    inviterDeviceId: pairing.inviterDeviceId,
+    inviterKeyFingerprint: pairing.inviterKeyFingerprint ?? null,
+    verifier: pairing.verifier,
+    memberKind: pairing.admissionKind,
+    memberExpiresAt: pairing.admissionExpiresAt ?? null,
+    easyMode: pairing.prepared.easyMode,
+    card: pairing.prepared.card,
+    createdAt: pairing.createdAt,
+    expiresAt: pairing.prepared.invitationExpiresAt,
+  };
+}

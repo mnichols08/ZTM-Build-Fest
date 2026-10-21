@@ -120,6 +120,51 @@ wait in an outbox and send later. A reference number is shown.
   planned → won't do) when forwarding is on, and is shown in the sender's
   "What I've sent".
 
+### 4. Setting Kin up for someone (#612–#615)
+
+A family member prepares Kin so that all the person has to do is open it
+and choose a password.
+
+- **Prepared invitation.** From People & devices, a household admin chooses
+  "Set up Kin for someone": the person's name, who they are (Adult, Limited
+  or Temporary, with the usual limits and a Temporary end), easy mode (on by
+  default), the helper's name (their own, filled in) and an optional note.
+  The service keeps it as a **prepared invitation** (server schema 27):
+  single-use, lasting 1, 3 or 7 days (the service allows 1 to 7) so a sheet
+  can be posted, surviving a restart, not ending the household's other
+  invitations, at most three waiting at once.
+- **What it carries.** The member kind and the easy-mode choice in the
+  open; the names and the note in a **card** sealed on the admin's device
+  (AES-GCM, `web/security/prepared-card.js`) under a fresh key carried only
+  in the link's fragment beside the code (`/pair#code=…&k=…`). The service
+  stores the card and can't read it. A code typed by hand works too, without
+  the card: the person then types their name, and easy mode still applies.
+- **Printable sheet.** "How to open Kin": the QR code (large), the link, the
+  code to type, three numbered steps in plain words, "If you get stuck, call
+  Mikey" and when it ends, with a print stylesheet that prints only the
+  sheet. The code and key stay in the admin's open page only, so the sheet
+  can be printed again until Kin closes or locks.
+- **One-screen welcome.** Opening the link: "Hi Rose — your family set this
+  up for you" (in easy mode already), then a password with Show password,
+  plain guidance and the strength floor (#557), with a username chosen from
+  her name that she can change; then the wait for approval in plain words
+  naming the helper; then Today in easy mode with Help on the page. Every
+  screen, and the failure card, says who to call. Her name is recorded as
+  any member's (event 51) and easy mode is written to her synced settings.
+- **Approval (decided).** The inviter's approval with fingerprint
+  comparison stays exactly as for every invitation, and its claim waits up
+  to a day for it. The in-person path is the same comparison on two screens
+  side by side: the helper's device shows Rose's code and approves only when
+  they match; Rose's device then asks "Do these match?" against the
+  helper's. **Unattended pre-approval is not offered**: it can't be bound to
+  Rose's device key before that key exists, and bound only to the code it
+  would make the paper sheet a bearer credential for membership and the
+  household's keys (THREAT-MODEL, "Prepared invitations").
+- **Not in this slice.** Choosing per-person which features they'll see
+  (the story's "features they'll see"): household features are a household
+  setting (§2), and easy mode already trims navigation to what the person
+  uses; a per-member set waits for a later story.
+
 ## Consequences
 
 - A diagnostic ring buffer and error codes at existing error sites.

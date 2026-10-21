@@ -5,6 +5,7 @@ import { currentPlatform, householdDeviceName } from "../../platform.js";
 import { invitationCode, invitationLink } from "../../pairing-link.js";
 import { consumeOpenedSignInLink } from "../../device-link.js";
 import { CODE_ARRIVAL_COPY, intentConflict, inviterPathCopy, joinerPathCopy } from "./pairing-path.js";
+import { printingSheet } from "./prepared.js";
 import "../kin-qr.js";
 import "../kin-qr-scanner.js";
 
@@ -55,6 +56,8 @@ export class HouseholdViews {
     // started before it stops writing once it sees a newer generation.
     this.host.viewGeneration = (this.host.viewGeneration ?? 0) + 1;
     clearInterval(this.host.timer);
+    // Leaving a setup sheet (#614): printing is the whole page again.
+    printingSheet(false);
     this.host.replaceChildren();
     const heading = document.createElement("h2");
     heading.textContent =
@@ -217,7 +220,95 @@ export class HouseholdViews {
       (!this.claimConflict() || Boolean(this.host.acknowledgedPathConflict));
   }
 
+  /**
+   * The joiner's side of a prepared invitation (#615), in plain words:
+   * waiting for the helper to say yes, then "Do these match?". The checks
+   * are the ones every claim makes (the helper compares this device's code
+   * before approving; this device compares the helper's before finishing).
+   */
+  /** A fingerprint paragraph shown larger, for the plain-words screens. */
+  markFingerprint(paragraph) {
+    if (paragraph) paragraph.className += " setup-fingerprint";
+    return paragraph;
+  }
+
+  renderPreparedJoin() {
+    const claim = this.host.claim;
+    const welcome = this.host.preparedWelcome ?? null;
+    const helper = welcome?.helper || "the person who set this up";
+    const Helper = welcome?.helper || "The person who set this up";
+    const heading = document.createElement("h3");
+    heading.className = "pairing-path";
+    const status = document.createElement("p");
+    status.className = "pairing-state";
+    status.setAttribute("role", "status");
+    this.host.append(heading, status);
+    const call = () => {
+      if (!welcome?.helper) return;
+      const line = this.host.text(`If you get stuck, call ${welcome.helper}.`);
+      line.className = "first-run-call";
+    };
+    if (!this.host.localFingerprint || claim.syncKeyFingerprint !== this.host.localFingerprint) {
+      heading.textContent = "Something isn't right";
+      status.textContent = "This phone or computer changed while you waited.";
+      this.host.message(`Don't go on. Call ${helper} and ask for a new invitation.`, true);
+      return;
+    }
+    if (claim.state === "Claimed") {
+      heading.textContent = welcome?.name ? `Almost there, ${welcome.name}` : "Almost there";
+      status.textContent = `Waiting for ${helper} to say yes.`;
+      this.host.text(`${Helper} will check that the code below matches the one on their screen. If you're not together, they may call and ask you to read it.`);
+      this.markFingerprint(this.host.showFingerprint("Your code", this.host.localFingerprint));
+      this.host.text("You can leave this screen open. Kin goes on by itself once they say yes.");
+      call();
+      return;
+    }
+    heading.textContent = `${Helper} said yes`;
+    status.textContent = `Last step: does this code match the one on ${helper === "the person who set this up" ? "their" : `${helper}'s`} screen?`;
+    this.markFingerprint(this.host.showFingerprint(`${welcome?.helper ? `${welcome.helper}'s` : "Their"} code`, claim.inviterKeyFingerprint));
+    let passwordInput = null;
+    const fields = [];
+    if (claim.signIn === "password" && !this.ctx.account.pendingSignUp) {
+      passwordInput = document.createElement("input");
+      passwordInput.type = "password";
+      passwordInput.id = "claim-password";
+      passwordInput.autocomplete = "current-password";
+      passwordInput.required = true;
+      const label = document.createElement("label");
+      label.htmlFor = passwordInput.id;
+      label.textContent = "Your password";
+      const account = document.createElement("input");
+      account.type = "text";
+      account.autocomplete = "username";
+      account.value = this.ctx.account.wrapper()?.username ?? "";
+      account.tabIndex = -1;
+      account.className = "visually-hidden";
+      account.setAttribute("aria-hidden", "true");
+      fields.push(account, label, passwordInput);
+    }
+    const actions = document.createElement("div");
+    actions.className = "pairing-actions setup-match-actions";
+    const yes = this.host.makeButton("Yes, they match — open Kin", () => {
+      if (passwordInput && !passwordInput.value) return this.host.message("Enter your password to finish.", true);
+      const password = passwordInput?.value ?? null;
+      if (passwordInput) passwordInput.value = "";
+      this.host.verifiedInviterFingerprint = true;
+      if (claim.signIn !== "password") return this.host.activateClaim();
+      return this.ctx.account.activate(password).catch(() => {});
+    }, "primary-action");
+    const no = this.host.makeButton("No, they're different", () => {
+      this.host.verifiedInviterFingerprint = false;
+      this.host.message(`Don't go on. Call ${helper} and tell them the codes are different.`, true);
+    }, "secondary");
+    actions.append(yes, no);
+    this.host.append(...fields, actions);
+    call();
+  }
+
   renderJoin() {
+    // Set up by someone else (#615): the same checks, in plain words.
+    if (this.host.claim?.prepared && ["Claimed", "Confirmed"].includes(this.host.claim.state))
+      return this.renderPreparedJoin();
     if (this.host.claim?.state === "Claimed") {
       const path = joinerPathCopy(this.host.claim.purpose);
       this.showPath(path);
@@ -431,6 +522,8 @@ export class HouseholdViews {
   renderMember() {
     // Add a computer (#101) takes the panel while it is open.
     if (this.ctx.linkApproval?.open) return this.ctx.linkApproval.render();
+    // A prepared invitation (#613) has its own plain-words view.
+    if (this.host.pairing?.prepared) return this.ctx.prepared.renderPairing();
     this.host.text("This device belongs to an authenticated household member.");
     if (this.host.syncStatus?.memberKind === "temporary" && this.host.syncStatus.memberExpiresAt)
       this.host.text(`Temporary household access · ends ${new Date(this.host.syncStatus.memberExpiresAt).toLocaleString()}`);

@@ -18,6 +18,35 @@ export const SESSION_TTL_MS = 12 * 60 * 60_000;
 
 export const TERMINAL_PAIRING_RETENTION_MS = 24 * 60 * 60_000;
 
+/** Prepared invitations (#613, "Set up Kin for someone"): an invitation an
+ * admin makes for one person, which can be printed and posted. It lasts 1 to
+ * 7 days (still single-use), survives a restart (server schema 27), and once
+ * claimed waits up to a day for the inviter's approval. At most three wait
+ * per household at a time. */
+export const PREPARED_INVITATION_MAX_DAYS = 7;
+export const PREPARED_DAY_MS = 24 * 60 * 60_000;
+export const PREPARED_CLAIM_TTL_MS = 24 * 60 * 60_000;
+export const MAX_PREPARED_INVITATIONS = 3;
+/** The sealed card (the person's name, the helper's name and a note,
+ * encrypted on the admin's device under a key that stays in the link's
+ * fragment): base64url, at most this many characters. */
+export const MAX_PREPARED_CARD_CHARS = 2048;
+const PREPARED_CARD = /^[A-Za-z0-9_-]{40,2048}$/;
+
+export function validPreparedCard(card) {
+  return card === null || (typeof card === "string" && PREPARED_CARD.test(card));
+}
+
+/** The verifier kept for a prepared invitation's code. Unlike the process
+ * secret behind ordinary codes (which a restart replaces), it must still
+ * match after a restart, so it is a plain domain-separated SHA-256: the
+ * stored value proves nothing to anyone who doesn't hold the code, and a
+ * stolen database copy that is brute-forced still meets the inviter's
+ * approval (THREAT-MODEL, "Prepared invitations"). */
+export function preparedVerifier(code) {
+  return createHash("sha256").update(`kin-prepared-invitation-v1|${normalizeCode(code)}`).digest("hex");
+}
+
 export const PAIRING_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 
 export class PairingError extends Error {

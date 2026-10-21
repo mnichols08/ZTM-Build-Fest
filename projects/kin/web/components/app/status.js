@@ -400,6 +400,13 @@ export class StatusController {
       void this.ctx.firstRun.retry(fix === "username" ? { username: value.toLowerCase() } : fix === "code" ? { code: value } : {});
     });
     card.append(heading, intro, form);
+    // Set up by someone else (#615): who to call.
+    if (pending.prepared?.helper) {
+      const call = document.createElement("p");
+      call.className = "first-run-call";
+      call.textContent = `If you get stuck, call ${pending.prepared.helper}.`;
+      card.append(call);
+    }
     card.hidden = false;
   }
 

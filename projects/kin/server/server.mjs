@@ -1013,6 +1013,23 @@ async function api(request, response, url, context) {
     }));
     return;
   }
+  // "Set up Kin for someone" (#613): a prepared invitation, and the ones
+  // this member made that still wait.
+  if (request.method === "POST" && url.pathname === "/api/pairings/prepared") {
+    if (!body || typeof body !== "object") throw badRequest();
+    json(response, 201, service.createPreparedPairing(session, {
+      kind: body.kind ?? "adult",
+      ...(Object.hasOwn(body, "expiresAt") ? { expiresAt: body.expiresAt } : {}),
+      easyMode: body.easyMode ?? true,
+      card: body.card ?? null,
+      days: body.days ?? undefined,
+    }));
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/pairings/prepared") {
+    json(response, 200, { invitations: service.preparedPairings(session) });
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/devices/pairings") {
     json(response, 201, service.createDevicePairing(session));
     return;

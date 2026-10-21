@@ -19,7 +19,7 @@
 //   away for good once dismissed or used, and at most one dealt with per
 //   unlock so they never queue up.
 import { EASY_MODE_KEY, prefersReducedMotion, readDisplayPref } from "../../appearance/display-prefs.js";
-import { HELP_COPY, helpKey, helpTopic } from "../../help/help-content.js";
+import { HELP_COPY, helpKey, helpTopic, screenText } from "../../help/help-content.js";
 import { TIP_COPY, firstSeen, markTipDone, nextTip, readTipsDone } from "../../help/tips.js";
 import { routeHash } from "../../routes.js";
 import { helpButton } from "../shared/help-button.js";
@@ -27,6 +27,24 @@ import { helpButton } from "../shared/help-button.js";
 export const REPORT_PROBLEM_EVENT = "kin:report-problem";
 const HIGHLIGHT_MS = 8_000;
 const FOCUSABLE = "a[href], button, input, select, textarea, summary, [tabindex]";
+/** Where the household's own words are (records, notes, messages): never
+ * read for Help's words. */
+const RECORDS = "kin-item, [data-item-id], [data-record-id], .item-text, .note-body, .chat-row, .handoff-text, .help-dialog";
+
+/** The text of `root` a person can see now, outside the household's records,
+ * as one string per text node. */
+export function visibleText(root) {
+  const parts = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.nodeValue.trim();
+    const parent = node.parentElement;
+    if (!text || !parent || parent.closest(RECORDS) || parent.closest("[hidden], template, script, style")) continue;
+    if (!parent.getClientRects().length) continue;
+    parts.push(text);
+  }
+  return parts;
+}
 
 export class HelpController {
   constructor(ctx) {
@@ -70,7 +88,9 @@ export class HelpController {
     this.clearHighlight();
     const key = this.key(topic);
     this.lastKey = key;
-    const found = helpTopic(key);
+    // "Words on this page" covers the words the page shows right now as
+    // well as its fixed ones (#639), so no harder word goes unexplained.
+    const found = helpTopic(key, [...screenText(key), ...(topic ? [] : this.pageWords())]);
     // A switched-off feature's steps aren't offered.
     const shown = { ...found, actions: found.actions.filter((entry) => this.featureOn(entry.feature)) };
     panel.show(shown, {
@@ -80,6 +100,15 @@ export class HelpController {
       report: this.reportAvailable(),
       easy: this.ctx.easy?.on ?? false,
     });
+  }
+
+  /** The text the page on screen shows, apart from the household's own
+   * records, for finding its harder words. Only glossary entries are ever
+   * shown from it (help/glossary.js jargonIn), never the text itself. */
+  pageWords() {
+    const section = this.app.pages?.get(this.app.route?.page);
+    if (!section) return [];
+    return visibleText(section);
   }
 
   /** The first control on screen that matches `selector`, if any. */

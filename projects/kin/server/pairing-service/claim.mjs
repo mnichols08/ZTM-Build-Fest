@@ -9,6 +9,7 @@ import {
   id,
   MAX_CODE_ATTEMPTS,
   PairingError,
+  PREPARED_CLAIM_TTL_MS,
   terminalPairingError,
   token,
 } from "./shared.mjs";
@@ -19,14 +20,26 @@ export const claimMethods = {
   },
 
   checkPairingCode(code) {
-    const pairing = this.pairings.get(this.codeIndex.get(this.verifier(code)));
+    const pairing = this.pairingByCode(code);
     if (!pairing) {
       this.audit("pairing_failed_attempt");
       throw genericCodeError();
     }
     const state = this.state(pairing);
     if (state !== "Pending") throw terminalPairingError(state);
-    return { valid: true, purpose: pairing.purpose ?? "adult" };
+    // A prepared invitation (#613) also tells whoever holds its code how to
+    // start: in easy mode or not, and its sealed card, which only the key in
+    // the link's fragment opens.
+    return {
+      valid: true,
+      purpose: pairing.purpose ?? "adult",
+      ...(pairing.prepared ? { prepared: {
+        memberKind: pairing.admissionKind ?? "adult",
+        easyMode: pairing.prepared.easyMode,
+        card: pairing.prepared.card,
+        expiresAt: pairing.prepared.invitationExpiresAt,
+      } } : {}),
+    };
   },
 
   claimPairing({
@@ -48,8 +61,7 @@ export const claimMethods = {
    * passkey: those devices join an identity that already exists.
    */
   claimPairingCode({ code, credential, password, deviceLabel, syncPublicKeys }) {
-    const verifier = this.verifier(code);
-    const pairing = this.pairings.get(this.codeIndex.get(verifier));
+    const pairing = this.pairingByCode(code);
     if (!pairing) {
       this.audit("pairing_failed_attempt");
       throw genericCodeError();
@@ -64,6 +76,7 @@ export const claimMethods = {
       pairing.state = "Revoked";
       pairing.terminalAt = this.now();
       pairing.version += 1;
+      if (pairing.prepared) this.retireCode(pairing);
       this.audit("pairing_revoked", {
         pairingId: pairing.id,
         reason: "attempt_limit",
@@ -73,7 +86,9 @@ export const claimMethods = {
     const claimToken = token();
     const deviceToken = token();
     const claimedAt = this.now();
-    pairing.expiresAt = claimedAt + CLAIM_TTL_MS;
+    // A prepared invitation's helper may not be at hand when the person
+    // opens it, so its claim waits up to a day for approval (#613).
+    pairing.expiresAt = claimedAt + (pairing.prepared ? PREPARED_CLAIM_TTL_MS : CLAIM_TTL_MS);
     pairing.claimant = {
       credential: password ? null : credential,
       ...(password ? { password } : {}),
