@@ -45,6 +45,9 @@ test("where each shortcut lands: Quick add on the right list, or Today in Simple
   assert.deepEqual(shortcutLanding("quick-add"), { hash: "#lists/todo", quickAdd: true });
   assert.deepEqual(shortcutLanding("add-shopping", { simpleView: true }), { hash: "#today", quickAdd: false });
   assert.deepEqual(shortcutLanding("quick-add", { simpleView: true }), { hash: "#today", quickAdd: false });
+  // "New journal entry" (#509): the journal editor; Simple view has no journal.
+  assert.deepEqual(shortcutLanding("new-journal-entry"), { hash: "#journal", quickAdd: false, journal: true });
+  assert.deepEqual(shortcutLanding("new-journal-entry", { simpleView: true }), { hash: "#today", quickAdd: false });
   assert.equal(shortcutLanding(""), null);
   assert.equal(shortcutLanding("delete-everything"), null);
 });

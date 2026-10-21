@@ -42,6 +42,11 @@ export class ShareController {
     const landing = shortcutLanding(action, { simpleView: this.app.simpleView });
     if (!landing) return;
     this.app.sitterLanded = true;
+    // "New journal entry" (#509): the journal's editor, after unlock.
+    if (landing.journal) {
+      void this.ctx.journal?.openNewEntry();
+      return;
+    }
     this.ctx.navigation.navigate(landing.hash);
     if (landing.quickAdd) {
       this.ctx.append.runWorkspaceCommand("quick-add");
@@ -61,12 +66,19 @@ export class ShareController {
     }
     const chat = this.app.chat;
     const chatOpen = this.app.chatAccess !== "none" && chat?.chatRoom && (chat.chatRoom.access ?? "write") === "write";
-    const allowed = new Set(["todo", "shopping", "note", "handoff", ...(chatOpen ? ["chat"] : [])]);
+    // The journal (#508) only where it opens on this device: private, so
+    // nothing shared there touches household data.
+    const journalOpen = this.ctx.journal?.status() === "ready";
+    const allowed = new Set(["todo", "shopping", "note", "handoff", ...(chatOpen ? ["chat"] : []), ...(journalOpen ? ["journal"] : [])]);
     const sheet = this.app.shareSheet;
     if (!sheet) return;
     const kind = await sheet.choose({ text, link, files, allowed });
     if (!kind) {
       this.ctx.status.setStatus("Nothing was added.");
+      return;
+    }
+    if (kind === "journal") {
+      await this.ctx.journal.openNewEntry({ text: body, files: (shared.files ?? []).filter((file) => file.type?.startsWith("image/")) });
       return;
     }
     if (kind === "chat") {
