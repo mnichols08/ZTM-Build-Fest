@@ -1316,10 +1316,13 @@ try {
     await ready(client);
     return client;
   }
-  // The tab's load trace, one CI annotation line each (the "FAIL" prefix is
-  // what the workflow's failure report picks up), #594.
+  // The tab's load trace (#594). In GitHub Actions each line is a warning
+  // annotation, so it is readable even when the retry passes.
   function printLoadTrace(client) {
-    for (const line of client.loadTrace()) console.error(`FAIL load trace: ${line}`);
+    for (const line of client.loadTrace()) {
+      if (process.env.GITHUB_ACTIONS) console.log(`::warning title=Kin load trace (#594)::${line.replace(/%/g, "%25")}`);
+      else console.error(`load trace: ${line}`);
+    }
   }
   // What a tab was doing, so a slow start can be told from a stuck one (#327).
   function tabFacts(client) {
