@@ -130,7 +130,7 @@ class KinSecurity extends HTMLElement {
     // again, so the lock screen never offers a way in that's gone.
     const shown = this.manifest;
     void EventStore.securityStatus().then((manifest) => {
-      if (this.phase !== "locked" || this.busy || this.manifest !== shown || !manifest) return;
+      if (this.phase !== "locked" || this.busy || !manifest) return;
       if ((manifest.configRevision ?? 0) === (shown?.configRevision ?? 0) && manifest.vaultId === shown?.vaultId) return;
       this.manifest = manifest;
       this.render();

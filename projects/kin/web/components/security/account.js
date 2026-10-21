@@ -559,7 +559,13 @@ export class SecurityAccount {
   }
 
   async saveManifest(manifest, vault) {
-    await EventStore.updateSecurityManifest(manifest, vault);
-    this.host.manifest = await EventStore.securityStatus();
+    try {
+      await EventStore.updateSecurityManifest(manifest, vault);
+    } finally {
+      // Removing an unlock path locks Kin (the security epoch moves on); the
+      // lock screen then shows what this device unlocks with now.
+      this.host.manifest = await EventStore.securityStatus().catch(() => this.host.manifest);
+      if (this.host.phase === "locked" && !this.host.passwordChange) this.host.render();
+    }
   }
 }
