@@ -84,7 +84,8 @@ export async function easyModeRegressions(client, { until }) {
       const section = app.pages.get(app.route.page);
       const button = section.querySelector(".page-intro .help-button");
       if (!button) return { key: app.route.canonical, missing: true };
-      const box = button.getBoundingClientRect();
+      // Layout size: the page's arrival animation may still be running.
+      const box = { width: button.offsetWidth, height: button.offsetHeight };
       button.click();
       await frame();
       const panel = app.helpPanel;

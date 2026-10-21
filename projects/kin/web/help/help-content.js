@@ -6,7 +6,9 @@
 //
 // An action's `show` is a CSS selector for the control it describes; "Show
 // me" highlights the first one on screen (app/help.js). An action whose
-// control isn't on screen just has no "Show me".
+// control isn't on screen just has no "Show me". An action's `feature` is
+// the household feature it needs (web/features.js); while an admin has
+// switched that feature off, Help leaves the action out.
 import { glossFor, jargonIn } from "./glossary.js";
 import { PRIMARY_DESTINATIONS, SEGMENTS, resolveRoute } from "../routes.js";
 import { DESTINATION_DESCRIPTIONS, HOUSEHOLD_HUB_LINKS } from "../components/app/constants.js";
@@ -31,7 +33,7 @@ export const HELP_COPY = Object.freeze({
 const EVERYONE = "Everyone in your household.";
 const ONLY_YOU = "Only you. Nobody else in your household can see it.";
 
-const action = (text, show = null) => Object.freeze(show ? { text, show } : { text });
+const action = (text, show = null, feature = null) => Object.freeze({ text, ...(show ? { show } : {}), ...(feature ? { feature } : {}) });
 const topic = (title, about, actions, who) => Object.freeze({ title, about, actions: Object.freeze(actions), who });
 
 export const HELP_TOPICS = Object.freeze({
@@ -40,7 +42,7 @@ export const HELP_TOPICS = Object.freeze({
     [
       action("Write something down in the box at the top and press Add.", "kin-compose input, kin-compose textarea"),
       action("Press Complete when something is done. A line at the bottom lets you undo it.", ".complete-control"),
-      action("Open This week to see the next seven days.", "a[href=\"#week\"]"),
+      action("Open This week to see the next seven days.", "a[href=\"#week\"]", "week"),
     ], EVERYONE),
   week: topic("This week",
     "The next seven days: things planned for each day, routines that are due, dinners and jobs around the home.",
@@ -119,7 +121,7 @@ export const HELP_TOPICS = Object.freeze({
     [
       action("Type a message in the box at the bottom and press Send.", "#chat-text"),
       action("Put @ before a name to make sure that person sees it."),
-      action("Open To talk about to save a bigger topic for a calm moment."),
+      action("Open To talk about to save a bigger topic for a calm moment.", null, "talk"),
     ], "Everyone in your household who can use Chat."),
   "household/hub": topic("Household",
     "Everything about your household that isn't a list or a message.",

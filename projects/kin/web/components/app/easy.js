@@ -56,10 +56,13 @@ export class EasyController {
     const route = this.app.route ?? null;
     const { pages, segments } = easyNavigation(readRecent(), Date.now(), route ? { page: route.page, segment: route.segment } : null);
     if (route?.destination) pages.add(route.destination);
-    for (const [id, link] of this.app.navLinks ?? []) link.toggleAttribute("data-easy-hidden", !pages.has(id));
+    // A household feature an admin switched off (ADR 0021 §2) stays out of
+    // easy mode's navigation too, whatever was used before.
+    const available = (target) => this.ctx.features?.routeAvailable?.(target) !== false;
+    for (const [id, link] of this.app.navLinks ?? []) link.toggleAttribute("data-easy-hidden", !pages.has(id) || !available(id));
     for (const [page, nav] of this.app.segmentNavs ?? []) {
       const kept = segments[page] ?? new Set();
-      nav.easyHidden = (SEGMENTS[page] ?? []).filter((entry) => !kept.has(entry.id)).map((entry) => entry.id);
+      nav.easyHidden = (SEGMENTS[page] ?? []).filter((entry) => !kept.has(entry.id) || !available(`${page}/${entry.id}`)).map((entry) => entry.id);
     }
   }
 }

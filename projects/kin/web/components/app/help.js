@@ -59,13 +59,22 @@ export class HelpController {
     return topic ?? helpKey(this.app.route ?? { page: "today" });
   }
 
+  /** Whether household feature `id` is on (ADR 0021 §2; web/features.js
+   * through app/features.js). Without that controller, everything is. */
+  featureOn(id) {
+    return !id || this.ctx.features?.isOn?.(id) !== false;
+  }
+
   open({ topic = null, opener = null } = {}) {
     const panel = this.app.helpPanel;
     if (!panel) return;
     this.clearHighlight();
     const key = this.key(topic);
     this.lastKey = key;
-    panel.show(helpTopic(key), {
+    const found = helpTopic(key);
+    // A switched-off feature's steps aren't offered.
+    const shown = { ...found, actions: found.actions.filter((entry) => this.featureOn(entry.feature)) };
+    panel.show(shown, {
       opener,
       available: (selector) => Boolean(this.findTarget(selector)),
       admin: this.canMessageAdmin(),
@@ -130,6 +139,7 @@ export class HelpController {
 
   /** Whether Chat is where an admin can be messaged from here. */
   chatOn() {
+    if (!this.featureOn("chat")) return false;
     if (this.app.simpleView) return Boolean(this.ctx.simple?.access?.().chat);
     return this.app.chatAccess !== "none" && Boolean(this.app.chat?.room);
   }

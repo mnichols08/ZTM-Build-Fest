@@ -213,6 +213,8 @@ export class ViewBuilder {
     {
       const item = document.createElement("li");
       item.className = "easy-only";
+      // Hidden with Routines when an admin switches it off (ADR 0021 §2).
+      item.dataset.feature = "routines";
       const link = document.createElement("a");
       link.className = "hub-link";
       link.href = routeHash("routines");
