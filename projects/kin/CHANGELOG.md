@@ -9,6 +9,19 @@ documentation only.
 
 ### Added
 
+- **Sign in on a new device: add it, or replace an old one** (#568, #569,
+  #570, [ADR 0018](docs/decisions/0018-account-key-vault.md)): on a phone or
+  browser with no Kin on it, `Sign in` with your username and password (or a
+  passkey, once your account has one) and say whether this is a new device or
+  replaces one of yours (that device is signed out for good, with a clear
+  warning). No other device needs to be there: the browser gets a
+  ten-minute, single-use new-device permission (never a session), opens your
+  account vault, certifies its own keys with your certification key from the
+  vault, and installs the household's keys, then lands on Today. Your
+  devices endorse your certification key automatically, and the household's
+  devices accept a device it certified, pinning that key per member. Losing
+  every device is now recoverable with your password. Pairing from another
+  device still works. No server schema change.
 - **Just for me: a private list on all your devices** (#510, #511, #514,
   #517): Lists › Just for me holds private to-dos and short notes only you
   can see, with an optional date, complete and reopen, and delete with

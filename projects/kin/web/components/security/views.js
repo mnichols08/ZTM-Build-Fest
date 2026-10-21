@@ -85,7 +85,9 @@ export class SecurityViews {
     if (this.host.phase === "unlocked") return this.renderSettings();
     // A new device starts with the first run (#557); the passkey and
     // backup-key setup stays one tap away.
-    if (!this.host.manifest) return this.host.legacySetup ? this.renderWelcome() : this.ctx.firstRun.render();
+    // Signing in on a new device (#568) is one choice on that first screen.
+    if (!this.host.manifest)
+      return this.host.legacySetup ? this.renderWelcome() : this.host.signingIn ? this.ctx.signIn.render() : this.ctx.firstRun.render();
     this.renderLocked();
   }
 

@@ -55,6 +55,7 @@ import { syncStorageRegressions } from "./sync-storage-regression.mjs";
 import { eventArenaPeerRegressions } from "./event-arena-regression.mjs";
 import { incrementalRenderPeerRegressions } from "./incremental-render-regression.mjs";
 import { firstRunRegressions } from "./first-run-regression.mjs";
+import { newDeviceRegressions } from "./new-device-regression.mjs";
 import { justForMeRegressions } from "./just-for-me-regression.mjs";
 import { journalRegressions } from "./journal-regression.mjs";
 import { spawn } from "node:child_process";
@@ -2982,6 +2983,8 @@ try {
   // runs its own on another origin, in isolated browser contexts; its pages
   // are not part of the same-origin and console checks above.
   if (REGRESSION_PART !== "1") console.log(await firstRunRegressions({ endpoint, browserClient }));
+  // Signing in on a new device (#568), on its own service too.
+  if (REGRESSION_PART !== "1") console.log(await newDeviceRegressions({ endpoint, browserClient }));
   // Just for me (#510) needs private storage, which opens after a password
   // sign-up (#557): like the first run, it runs its own service and context.
   if (REGRESSION_PART !== "1") console.log(await justForMeRegressions({ endpoint, browserClient }));

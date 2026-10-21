@@ -5,6 +5,7 @@ import { OperationGuard } from "./shared/operation.js";
 import { SecurityArchive } from "./security/archive.js";
 import { SecurityFirstRun } from "./security/first-run.js";
 import { SecurityProtection } from "./security/protection.js";
+import { SecuritySignIn } from "./security/sign-in.js";
 import { SecurityUnlock } from "./security/unlock.js";
 import { SecurityViews } from "./security/views.js";
 
@@ -22,6 +23,7 @@ const PARTS = {
   unlock: SecurityUnlock,
   archive: SecurityArchive,
   firstRun: SecurityFirstRun,
+  signIn: SecuritySignIn,
 };
 
 class KinSecurity extends HTMLElement {
@@ -59,6 +61,8 @@ class KinSecurity extends HTMLElement {
     // Presentation only: the person chose "Set up with a passkey instead"
     // on the first run (#557), so the earlier backup-key setup shows.
     this.legacySetup = false;
+    // Presentation only: the person chose "Sign in" on the first run (#568).
+    this.signingIn = false;
   }
 
   get busy() { return this.operations.busy; }
@@ -134,6 +138,7 @@ class KinSecurity extends HTMLElement {
   unlockPasskey(...args) { return this.ctx.unlock.unlockPasskey(...args); }
   unlockPassword(...args) { return this.ctx.unlock.unlockPassword(...args); }
   get firstRun() { return this.ctx.firstRun; }
+  get signIn() { return this.ctx.signIn; }
   unlockRecovery(...args) { return this.ctx.unlock.unlockRecovery(...args); }
   render(...args) { return this.ctx.views.render(...args); }
 }

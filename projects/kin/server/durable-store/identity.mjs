@@ -235,11 +235,26 @@ export const identityMethods = {
       }
       for (const device of devices.values()) {
         const certificate = device.deviceAuthorizationCertificate;
+        // A version 2 certificate's issuer is the device that endorsed the
+        // member's certification key (#568): the same member's device.
+        const issuer = certificate?.version === 2
+          ? devices.get(certificate.endorsement.issuerDeviceId)
+          : devices.get(certificate?.issuerDeviceId);
         if (
           certificate &&
-          devices.get(certificate.issuerDeviceId)?.householdId !== device.householdId
+          (issuer?.householdId !== device.householdId ||
+            (certificate.version === 2 && issuer.memberId !== device.memberId))
         )
           throw new DurableStoreError("Kin server device data is invalid.");
+      }
+      // At most one endorsed certification key per member.
+      const endorsed = new Map();
+      for (const device of devices.values()) {
+        const fingerprint = device.certificationEndorsement?.fingerprint;
+        if (!fingerprint) continue;
+        if (endorsed.has(device.memberId) && endorsed.get(device.memberId) !== fingerprint)
+          throw new DurableStoreError("Kin server device data is invalid.");
+        endorsed.set(device.memberId, fingerprint);
       }
       for (const member of members.values())
         for (const credentialId of member.credentials)

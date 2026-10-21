@@ -9,6 +9,7 @@
 import { DEFAULT_HOUSEHOLD_BRAND, DEFAULT_HOUSEHOLD_NAME } from "../../appearance/household.js";
 import { DEFAULT_APPEARANCE } from "../../appearance/store.js";
 import { wipeSignUp } from "../../security/account-setup.js";
+import { wipeSignIn } from "../../security/new-device.js";
 import { normalizeUsername, usernameProblem } from "../../security/account-credentials.js";
 import { EventStore } from "../../storage/event-store.js";
 
@@ -28,7 +29,14 @@ export class FirstRunController {
     this.ctx.status.renderOnboarding();
     try {
       const household = await this.household(session);
-      if (pending.mode === "create") {
+      if (pending.mode === "sign-in") {
+        // Signed in on a new device (#568): register it, install the
+        // household's keys from the vault, then Today. The keys are wiped
+        // once the device has them; a failure keeps them for "Try again".
+        await household.account.provisionNewDevice(pending.signIn);
+        wipeSignIn(pending.signIn.opened);
+        this.ctx.navigation.navigate("#today");
+      } else if (pending.mode === "create") {
         await household.account.createHousehold(pending.signUp);
         wipeSignUp(pending.signUp);
         app.pendingProfile = { displayName: pending.displayName, householdName: pending.householdName };

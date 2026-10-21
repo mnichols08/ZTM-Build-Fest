@@ -12,9 +12,10 @@
 // their trusted devices (the same authorization as sync; a removed member,
 // a revoked device or no session is refused). Every route addresses the
 // session's own member, so no request can name another member's vault.
-// Downloads are also rate-limited per member and per client address: once
-// wrappers are released to a sign-in without a device (#568), a download is
-// what an offline guesser wants, so it's bounded from the start.
+// Downloads are also rate-limited per member and per client address: a
+// sign-in without a trusted device (#568) also downloads, behind a
+// new-device capability (downloadWithCapability), and a download is what an
+// offline guesser wants, so it's bounded.
 //
 // Failed unlocks are never reported to the service (it can't see them); a
 // device counts its own.
@@ -144,14 +145,38 @@ export class AccountVaultService {
   }
 
   /**
-   * Download for a sign-in on a device with no cookie (ADR 0018 section 4),
-   * behind a short-lived capability the password/passkey sign-in will issue.
-   * TODO(#568): the no-cookie sign-in story issues and checks that
-   * capability. Until then nothing issues one and no route calls this, so it
-   * refuses everything.
+   * Download for a sign-in on a device with no cookie (ADR 0018 section 4,
+   * #568). `capability` is what PairingService.spendNewDeviceDownload
+   * returns for a checked, unexpired new-device capability:
+   * `{ householdId, memberId, method, credentialId }`. Only the wrappers that
+   * sign-in method opens are released (a password sign-in gets the password
+   * wrapper; a passkey sign-in the wrapper for the passkey it asserted; both,
+   * the password-and-passkey wrapper for that passkey), so a sign-in never
+   * hands out more offline-guessing material than it needs. The same member
+   * and address limits as `download` apply.
    */
-  downloadWithCapability(_capability, _clientKey) {
-    throw new PairingError("vault_capability_unavailable", "Signing in without a trusted device is not available yet.", 403);
+  downloadWithCapability(capability, clientKey) {
+    const { householdId, memberId, method, credentialId } = capability ?? {};
+    if (!householdId || !memberId || !["password", "passkey", "password-passkey"].includes(method))
+      throw new PairingError("new_device_expired", "This sign-in expired or was already used. Sign in again.", 401);
+    if (!this.addressDownloads.allows(`address:${clientKey}`) || !this.memberDownloads.allows(memberId))
+      throw rateLimited();
+    this.addressDownloads.spend(`address:${clientKey}`);
+    this.memberDownloads.spend(memberId);
+    const row = this.storage.accountVault(householdId, memberId);
+    const opens = (wrapper) => wrapper.type === method && (method === "password" || wrapper.params.credentialId === credentialId);
+    const wrappers = row?.wrappers.filter(opens) ?? [];
+    if (!row || !wrappers.length)
+      throw new PairingError("vault_not_found", "Kin couldn't find a way to open your vault with that sign-in.", 404);
+    return present({ ...row, wrappers });
+  }
+
+  /** The member's wrappers without their wrapped keys (`type`, `params`),
+   * or null without a vault: what decides how they may sign in on a new
+   * device (pairing-service/new-device.mjs). */
+  wrapperSummary(householdId, memberId) {
+    const row = this.storage.accountVault(householdId, memberId);
+    return row ? row.wrappers.map(({ wrapperId, type, params }) => ({ wrapperId, type, params: structuredClone(params) })) : null;
   }
 
   /**

@@ -167,15 +167,16 @@ Trust boundaries include the browser UI ↔ Rust/WASM engine, local browser stor
 | Another member, a removed member or a revoked device | Refused by the routes: only the session's own member, on a trusted device, reads or writes their vault. |
 
 The ADR's full table (stolen password, phished passkey account, phishing)
-applies as password and passkey sign-in arrive (#557 now, #568 later).
+applies now that password sign-in (#557) and new-device sign-in (#568) are in;
+the new-device rows are below.
 
 ### Password sign-in (#557, #558)
 
 | Threat | With password sign-in |
 | --- | --- |
-| Stolen password, no device | Not enough yet: signing in needs a trusted device's cookie (the no-cookie sign-in is #568). Joining as a new member still needs an invitation code and the inviter's approval after comparing devices. |
+| Stolen password, no device | Since #568, **enough to sign in as that member on a new device while they have no passkey in their vault** (ADR 0018 D3, the owner's accepted trade-off): see "New-device sign-in" below. Joining as a new member still needs an invitation code and the inviter's approval. |
 | Stolen password and an unlocked or stolen trusted device | The password unlocks that device's local copy offline and signs it in. Same as a stolen backup key today, except a password can be guessed: at a full PBKDF2 (600,000 iterations) per guess against the device, and the strength floor (10 characters, not one of ~200 very common passwords, not the username) only stops the first guesses. |
-| Online guessing against the service | Only from a trusted device's cookie; failures are limited to 10 per 15 minutes per member, per device and per address, and past that even the right password waits. One message and the same Argon2id work for every failure, so neither says whether a username exists. |
+| Online guessing against the service | From a trusted device's cookie, or (#568) from any browser through the new-device sign-in; failures are limited to 10 per 15 minutes per member, per device and per address, and past that even the right password waits. One message and the same Argon2id work for every failure, so neither says whether a username exists. |
 | A **fresh password** instead of a fresh passkey | Weaker than a passkey until one is added. For a member with no passkey, admin-only and trust actions (approving a device or a member, signing in a computer, revoking a device, removing a member, household admins, Simple view, chat and fridge access, deleting the household or cancelling that) accept a password re-entry. Anyone who has the member's password *and* one of their trusted devices (or an open session on one) can do those things; with a passkey, they'd also need the passkey's device or account. A member who has a passkey always confirms with it, and an `authKey` is no substitute. |
 | Usernames can be listed | Whether a username is free is answered at sign-up, as on every sign-up page, limited to 30 checks per client address in 15 minutes. A claim waiting for approval holds its username. |
 | Forgotten password, one device, no other way in | The household can't be opened on that device (RECOVERY, "Members who signed up with a password"). No backup key exists to fall back to until the backup code (#571); the first run says so in one line. |
@@ -184,6 +185,29 @@ applies as password and passkey sign-in arrive (#557 now, #568 later).
 Nothing in the vault, the verifier or the local wrapper lets the service
 read household content: it sees `authKey` (from which the password-derived
 keys can't be computed) and stores only its Argon2id hash.
+
+### New-device sign-in (#568, #569, #570)
+
+A browser with no trusted-device cookie signs in with a password or passkey
+and gets a **new-device capability**, not a session.
+
+| Threat | What Kin does |
+| --- | --- |
+| **What a stolen password allows before a passkey exists** | Everything the member can do from a new device: sign in, open the vault (password wrapper, D3), certify a new device of theirs that the household trusts, read the household, and replace (revoke) one of their devices. The owner accepted this for the first run (ADR 0018 D3); the member sees the new device in their device list and the audit log records it (`new_device_sign_in`, `device_trusted` with reason `account_sign_in`). Admin-only actions still need a fresh confirmation, which for a member without a passkey is the same password (see above). Adding a passkey closes this: the password alone then signs in nowhere new. |
+| Capability theft | It is a random 256-bit token in an HttpOnly, SameSite=Strict cookie (`kin_new_device`), never in a URL or a response body, kept on the service only as a hash and only in memory. It lasts 10 minutes, is bound to one member and one pre-assigned device ID, downloads the vault at most 3 times, and is spent by the first registration (3 failed registration attempts spend it too). A thief still needs the password or passkey to use the vault it downloads. |
+| Capability replay | Single use: registration deletes it before trusting the device, in the same transaction; any later download or registration with it is `new_device_expired`. A restart cancels every capability. |
+| Online guessing | The password check is the existing one: Argon2id work for every attempt (also for unknown usernames), one generic answer, 10 failures per 15 minutes per member (or per unknown name) and per address, after which even the right password waits. Passkey failures are charged to the same limits. Capabilities issued per member: 6 per 15 minutes, at most 2 live per member, 256 in all. Username parameter lookups: 30 per address per 15 minutes; an unknown name gets a stable made-up salt and a made-up passkey, so neither answer says whether an account exists. |
+| A member's device count | No per-member cap beyond the household's 16 trusted devices (the replaced device's place is freed first). A thief with the password could fill the household's remaining places (a denial of service the members see in their device lists); the issuance limit slows it. |
+| A revoked device coming back | It can't with its own keys, cookie or sessions (all refused as before). Signing in again needs the password or passkey and always makes a **new** device with new keys and a new certificate; "This replaces …" revokes the old record in the same step as trusting the new one, and the household rotates its key so the replaced device gets nothing new. |
+| A service minting a device the household trusts | Not possible without the member's certification key, which exists only inside their vault: other devices accept a version 2 certificate only when it is signed by the certification key that one of the member's own trusted devices endorsed, and they pin that key per member. A colluding service plus a stolen **device** key of that member could endorse a different certification key; devices that already pinned the member's key refuse it, devices that never saw one could accept it (the same exposure as that stolen device key approving a device today). |
+| A service lying to the new device | It can't make the new device trust another certification key or extra anchors: the endorsement must be the vault's own key and signed by it. It can withhold the vault, the endorsement or the directory (the sign-in then stops), or serve an older vault version (the new device may start without the newest household key and waits for another device to provision it). |
+| Passkey-alone sign-in (D4) and require-both | The service lets the password sign in on a new device only while the vault has a password wrapper and no passkey wrapper; with a passkey wrapper, only the passkey (WebAuthn with user verification, then its PRF output opens the wrapper); with "require password and passkey", the password step leaves the capability pending until the passkey assertion completes it, and only the combined wrapper is released. Whoever controls a synced passkey can sign in on a new device unless require-both is on (ADR 0018). |
+
+Deferred (not claimed): rotating a member's certification key; showing the
+member a notice on their other devices when a new device signs in;
+creating passkey vault wrappers (the passkey second step, a later story), so
+the passkey paths are implemented and tested on the service and in the
+browser library but no member has a passkey wrapper yet.
 
 ## Private storage per member (ADR 0019, #489)
 

@@ -162,8 +162,7 @@ Web Crypto in the browser and Node's built-in `crypto` on the service.
 their first device as soon as the service knows them (after creating the
 household, or after their invitation is approved): a fresh VK, the household
 and chat epoch keys the device holds (none yet, at first), and a new
-certification key (generated and kept in the vault for the new-device story,
-#568; not yet certified or used), sealed as version 1 with one password
+certification key (see "Certification key chain" below), sealed as version 1 with one password
 wrapper (KEK = passwordKey; parameters `{ kdf, iterations, salt }`) and
 uploaded compare-and-set from version 0. The device keeps VK in its bound
 device record in the key database, sealed under the local root like its
@@ -185,8 +184,8 @@ u16 M, then M bytes: private-storage key (reserved, epic #480; M = 0 or 32)
 ```
 
 Integers are big-endian; a decoder refuses unsorted, repeated or trailing
-bytes. The certification key is generated (`generateCertificationKey`) but
-certifying it and signing with it are a later story.
+bytes. The certification key is generated (`generateCertificationKey`),
+endorsed by a trusted device and used by new devices (#568, below).
 
 **Vault contents, format 2** (ADR 0019, #487): format 1 with the reserved
 slot replaced by the member's member-key epochs:
@@ -288,8 +287,72 @@ passkey's credential ID and PRF salt; and the 61 wrapped bytes) and
 serve only the session's own member on a trusted device; a vault is created
 with its first wrapper and can never lose its last; downloads are limited
 to 10 per member and 30 per address in 15 minutes. A download for a device
-without a cookie (#568) is a stub that refuses. The service never learns
+without a cookie (#568) goes through a new-device capability (below) and
+releases only the one wrapper that sign-in opens: the password wrapper for a
+password sign-in, the asserted passkey's wrapper for a passkey sign-in, its
+password-passkey wrapper when both were required. The service never learns
 whether a device's unlock attempt failed; devices count their own.
+
+## Certification key chain (ADR 0018 section 3, #568/#570)
+
+Implemented in `web/security/device-certification.js` (browser) and
+`server/account-certification.mjs` (the service's checks). ECDSA P-256 with
+SHA-256 and raw (IEEE P1363) signatures over canonical JSON (keys sorted),
+like device approval certificates.
+
+```text
+trusted device X of member M
+   └─ endorsement (signed by X's device key AND by C):
+        { version 1, purpose "kin.account.certification-key.v1",
+          householdId, memberId, publicKey (C, {kty,crv,x,y}),
+          fingerprint = SHA-256(canonical publicKey),
+          issuerDeviceId X, issuerFingerprint (X's key),
+          anchors [{ deviceId, fingerprint }]  (X and the devices X had pinned) }
+member certification key C (private half only inside M's vault)
+   └─ device certificate, version 2 (signed by C):
+        { version 2, householdId, memberId, deviceId, publicKeys, fingerprint,
+          certificationFingerprint, endorsement }
+```
+
+- **Endorsing (#570).** A trusted device that holds VK opens the vault,
+  takes C, signs the endorsement with its own device key and with C, and
+  sends it (`PUT /api/account/certification`). The service checks both
+  signatures, that the signer is the session's own device with its current
+  key, and keeps it on that device's record; a member has at most one, and a
+  different C later is refused (`certification_key_conflict`). Devices do
+  this right after creating the vault at first run, and, for a member whose
+  vault predates this, whenever a device of theirs with VK opens the
+  household panel.
+- **A new device certifying itself.** After opening the vault it derives C's
+  public key from the PKCS8 bytes and requires the service's endorsement to
+  be exactly that key with a valid signature by C (`verifyOwnEndorsement`):
+  the service can't hand it an endorsement of another key. It signs its own
+  version 2 certificate with C. The service checks it against the stored
+  endorsement and C before trusting the device, but couldn't make one: it
+  never holds C.
+- **Other household devices accept it** (`SyncCoordinator.loadDeviceDirectory`)
+  when the endorsing device X verifies for them (pinned, or by its own
+  approval chain, as before), X is the **same member's** device, X's
+  signature on the endorsement verifies with X's key at `issuerFingerprint`
+  (from X's verified key history), C's signature on the certificate
+  verifies, and C matches the key they pinned for that member. The first
+  time, they pin C per member (in the trusted-device store, under
+  `<household>:certification:<member>`); a device certified by a different
+  C for that member afterwards is refused, as a changed device key is.
+- **The new device's own trust anchors.** It trusts the endorsement because
+  C signed it, and C came from the vault the member's password (or passkey)
+  opened. It pins the anchors the endorsement lists (X and the devices X had
+  pinned, at the keys listed), then verifies the rest of the directory by
+  the usual chains. So the new device starts from what the member's own
+  device trusted, with no fingerprint comparison, and the service can't
+  insert an anchor (it can't sign with C). A device X had trusted only by a
+  later manual "Verify device" isn't an anchor; it must chain to one.
+
+What this does **not** give: anyone who can open the member's vault (their
+password before a passkey is added, D3) can certify devices the household
+accepts as that member's; that is the accepted trade-off of ADR 0018. C
+isn't rotated yet; a member whose vault leaks has no way to replace C short
+of removal and re-invitation (deferred).
 
 ## Member key and private envelopes (ADR 0019)
 
