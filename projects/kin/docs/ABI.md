@@ -39,7 +39,7 @@ kin_private_history_reset() -> status   empty the member's private log (#489)
 kin_private_history_append(ptr, len)    append a private record batch to the private log
 kin_private_history_truncate(count) -> status   keep the private log's first `count`
 kin_private_state(ptr, len)          replay the private log: KINE context -> KPRV
-kin_private_execute(ptr, len)        validate a private command: u32 length, KCMD, KINE context -> KCMT
+kin_private_execute(ptr, len)        private command: length + KCMD (100–199) + KINE context -> KCMT
 kin_execute(ptr, len)                command: length + KCMD + KINE context -> KCMT
 kin_encode_command(ptr, len)         KCMD -> canonical event bytes
 kin_event_metadata(ptr, len)         one canonical event -> KMET
@@ -139,16 +139,20 @@ refuses a private record with code 4; the private log refuses every other
 kind the same way. It holds up to 50,000 records and 64 MiB, and every record
 in it must have the same header actor (the member): a second author fails
 replay with code 4. `kin_private_state` takes a record-less KINE context and
-publishes KPRV (side formats below). `kin_private_execute` (#498) takes a u32
-intent length, a KCMD whose kind is a private story kind (the journal's
-101–104) and whose text is the event's exact payload (entity ID, date,
-option and expiry fields zero; at most 64 KiB of text), then a record-less
-KINE context; it checks the command against the replayed private log (the
-log's member, strictly later than every event held, an unused event ID, the
-story's rules) and publishes KCMT with an empty projection. The log is not
-changed: the host seals and stores the event, then appends it. The
-placeholder kind 100 is refused (code 3). `kin_clear` empties the private
-log with the others.
+publishes KPRV (side formats below). `kin_private_execute` (#511,
+`private_command.rs`) makes a new private event the way `kin_board_execute`
+makes a fridge one: a u32 command length, a KCMD whose action is a private
+kind (100–199) and whose text is the event's exact payload (zero entity ID,
+date, option and expiry), then a record-less KINE context. It is validated
+against the private log only (code 4: a full log, a logical time not after
+the log's latest, a known event ID, a household other than the log's or the
+context's target, an author other than the log's member, or the kind's own
+rules, such as `PrivateItems::check_command` for 110–118 and
+`JournalState::check_command` for the journal's 101–104) and publishes KCMT
+with an empty projection; the log is not changed until the host appends the
+stored event. `web/wasm/kin-private.js` encodes the packets
+(`encodePrivateIntent`) and `PrivateLog.execute` runs them under the
+member's write lock. `kin_clear` empties the private log with the others.
 
 Records stay where they were appended: the history keeps one buffer and an
 `(offset, length)` span per record, and reads them as `EventView`s
@@ -286,7 +290,7 @@ N  payload
 | 68 | ROUTINE_ROTATION_SET (#429) | routine ID [16] (non-zero), member count u8 (0, or 2–12), current index u8 (below the count; 0 when the count is 0), reserved u16, then each member ID [16] (non-zero, no repeats): 20 + 16 × count bytes. An empty list ends the rotation |
 | 69 | ROUTINE_TURN_SET (#429) | routine ID [16] (non-zero), member ID [16] (non-zero): 32 bytes |
 | 70 | SITTER_PAGE_SET (#442) | entry count u16 (0–30), reserved u16, then each entry: kind u8 (1 note, 2 reference record, 3 routine), 3 reserved, record ID [16] (non-zero; no entry twice); then the intro (u16 length + UTF-8; trimmed, 0–500 bytes, no controls but newline) |
-| 100 | PRIVATE_NOTE_SET (#489, private log) | note ID [16] (non-zero), text length u32 (0 removes the note; at most 2,048 bytes), UTF-8 text (no control characters except line feed). Reserved: still decoded, never written (`kin_private_execute` refuses it). Kinds without a definition in 100–199 fail with code 3 |
+| 100 | PRIVATE_NOTE_SET (#489, private log) | note ID [16] (non-zero), text length u32 (0 removes the note; at most 2,048 bytes), UTF-8 text (no control characters except line feed). Reserved: still decoded; no surface writes it. Kinds without a definition in 100–199 fail with code 3 |
 | 101 | JOURNAL_ENTRY_CREATED (#498, private log) | entry ID [16] (non-zero), civil date u32 (YYYYMMDD, a real date), title length u16 (≤ 200), photo count u8 (≤ 10), reserved u8, body length u32 (≤ 20,000), title (UTF-8, no controls, trimmed), body (UTF-8, no controls but line feed, trimmed), then each photo (136 bytes): type u8 (1 JPEG, 2 PNG, 3 WebP), reserved [3], sealed size u32 (29 to 4 MiB + 4 KiB), blob reference [32], key [32], thumbnail reference [32], thumbnail key [32] (all non-zero; no reference twice in an entry). Title, body or a photo is required |
 | 102 | JOURNAL_ENTRY_EDITED (#498, private log) | as 101: the whole new content |
 | 103 | JOURNAL_ENTRY_DELETED (#498, private log) | entry ID [16] (non-zero): 16 bytes |
@@ -532,13 +536,19 @@ tuned for printed codes under heavy blur.
   once, and a reader skips codes it doesn't know: later stories extend KPRV by
   adding sections. Section 1 (notes, the placeholder kind 100): note count
   u32, then each note in ascending ID order: ID [16], logical time u64,
-  device ID [16], text length u32, text. Each story's section is numbered
-  after the first kind of its share. Section 101 (the journal, #498): entry
-  count u32, then each live entry newest first (date descending, then
+  device ID [16], text length u32, text. Section 11 ("Just for me", #510,
+  `private_items.rs`), present once the member has a private item or has
+  set the Today setting: flags u32 (bit 0: dated items stay off Today and
+  This week; other bits zero), live item count u32 (at most 2,000), then
+  each live item in ascending ID order: ID [16], added timestamp i64, last
+  change logical time u64, date u32 (0 none), status u8 (0 open, 1 done), 3
+  zero bytes, text length u32, note length u32, text, note. Deleted items
+  are left out. Section 101 (the journal, #498), present once the member
+  has written an entry: entry count u32, then each live entry newest first (date descending, then
   later-created first, then ID): ID [16], created logical time u64, updated
   logical time u64, device ID [16] (of the latest change), date u32, title
   length u16, photo count u8, reserved u8, body length u32, title, body, then
-  the photos as in kind 101. `web/wasm/kin-private.js` decodes it.
+  the photos as in kind 101. `web/wasm/kin-private.js` decodes them all.
 - **KBRD v1** (the fridge, `kin_board_state`, #317, [ADR 0011](decisions/0011-family-fridge.md)):
   `"KBRD"`, version 1, reserved u16, visible stroke count u32, visible magnet
   count u32, open-clear flag u8 + 3 reserved, open clear ID (16 bytes, zero

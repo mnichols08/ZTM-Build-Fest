@@ -18,6 +18,8 @@ export const SEGMENTS = Object.freeze({
     Object.freeze({ id: "shopping", label: "Shopping", classification: "shopping" }),
     Object.freeze({ id: "staples", label: "Staples", classification: "staple" }),
     Object.freeze({ id: "meals", label: "Meals" }),
+    // Just for me (#510): this member's private list; only they see it.
+    Object.freeze({ id: "mine", label: "Just for me" }),
   ]),
   routines: Object.freeze([
     Object.freeze({ id: "all", label: "Routines" }),

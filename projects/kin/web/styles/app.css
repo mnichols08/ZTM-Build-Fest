@@ -2225,6 +2225,46 @@ kin-rotation > button { justify-self: start; }
 .rotation-draft li span { margin-right: 8px; }
 .rotation-draft button { min-width: var(--tap); min-height: var(--tap); }
 
+/* Just for me (#510, #514, #517): the member's private list, and private
+   items beside household ones on their own Today and This week. */
+kin-just-for-me { display: block; }
+.private-badge { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 6px; padding: 4px 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-secondary); font-weight: 650; }
+.private-marker { display: inline-flex; align-items: center; gap: 3px; flex: none; padding: 1px 8px; border-radius: 999px; background: var(--surface-secondary); color: var(--ink); font-size: 13px; font-weight: 650; }
+.private-badge .private-marker { padding: 0; background: none; }
+.private-marker-icon { display: inline-flex; width: 15px; height: 15px; }
+.private-marker-icon svg { width: 100%; height: 100%; }
+.just-for-me-unavailable { margin: 8px 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); }
+.just-for-me-add { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 12px; margin: 12px 0; }
+.just-for-me-field { display: grid; gap: 4px; flex: 1 1 14em; min-width: 0; }
+.just-for-me-field input, .just-for-me-field textarea { width: 100%; min-height: var(--tap); box-sizing: border-box; }
+.just-for-me-date { flex: 0 1 11em; }
+.just-for-me-add button { min-height: var(--tap); }
+.just-for-me-feedback { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.just-for-me-feedback p { margin: 0; }
+.just-for-me-feedback button { min-height: var(--tap); }
+.private-list { list-style: none; margin: 0; padding: 0; }
+.private-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: var(--tap); padding: 6px 0; border-top: 1px solid var(--line); }
+.private-row:first-child { border-top: 0; }
+.private-check { display: inline-flex; align-items: center; gap: 10px; flex: 1 1 14em; min-width: 0; cursor: pointer; }
+.private-check input { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+.private-text { overflow-wrap: anywhere; }
+.private-check input:checked ~ .private-text { color: var(--ink-muted); text-decoration: line-through; }
+.private-meta { color: var(--ink-muted); font-size: 13px; }
+.private-note { flex-basis: 100%; margin: 0 0 0 32px; color: var(--ink-muted); white-space: pre-line; overflow-wrap: anywhere; }
+.private-more { flex-basis: 100%; margin-left: 32px; }
+.private-more > summary { display: inline-flex; align-items: center; min-height: var(--tap); cursor: pointer; }
+.private-more-body { display: grid; gap: 10px; padding: 4px 0 8px; }
+.private-more-row { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.private-more-row button { min-height: var(--tap); }
+.danger-action { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+.just-for-me-setting { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
+.just-for-me-setting label { display: flex; align-items: center; gap: 10px; min-height: var(--tap); }
+.just-for-me-setting input { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+.today-private-list { margin-top: 6px; }
+.private-share-dialog p { overflow-wrap: anywhere; }
+@media (max-width: 420px) { .private-note, .private-more { margin-left: 0; } }
+@media (forced-colors: active) { .private-marker, .private-badge { border: 1px solid CanvasText; } }
+
 /* A member's journal (#497, #501, #504): private, on Household's "Just for you". */
 .hub-personal-heading { margin: var(--space-3) 0 var(--space-1); font-size: 17px; }
 kin-journal { display: grid; gap: var(--space-3); min-width: 0; }

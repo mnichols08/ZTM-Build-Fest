@@ -1,6 +1,6 @@
 // The journal (#496, #497, #501): kinds 101–104 in a member's private log,
 // their strict payloads, replay, the KPRV journal section (101) and the
-// private command path (`kin_private_execute`). Wire records and commands
+// private command path (`kin_private_execute`, private_command.rs). Wire records and commands
 // are written out by hand; they never come from the encoders.
 use crate::codec::encode_event;
 use crate::error::KinError;
@@ -8,7 +8,8 @@ use crate::event::*;
 use crate::event_decode::decode_event;
 use crate::history::History;
 use crate::journal::*;
-use crate::private::{execute, is_private_code, SECTION_JOURNAL, SECTION_NOTES};
+use crate::private::{is_private_code, SECTION_JOURNAL, SECTION_NOTES};
+use crate::private_command::execute;
 use crate::request::decode_context;
 use crate::test_support::*;
 
@@ -117,15 +118,25 @@ fn u32_at(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
 }
 
-/// The KPRV journal section's bytes (after its 8-byte section header).
+/// The KPRV journal section's bytes (after its 8-byte section header), or
+/// None when KPRV has none.
+fn find_journal_section(bytes: &[u8]) -> Option<&[u8]> {
+    let count = u16_at(bytes, 28);
+    let mut at = 32;
+    let mut found = None;
+    for _ in 0..count {
+        let length = u32_at(bytes, at + 4) as usize;
+        if u16_at(bytes, at) == SECTION_JOURNAL {
+            found = Some(&bytes[at + 8..at + 8 + length]);
+        }
+        at += 8 + length;
+    }
+    assert_eq!(at, bytes.len());
+    found
+}
+
 fn journal_section(bytes: &[u8]) -> &[u8] {
-    // Section 1 (notes) first, then section 101.
-    let notes_length = u32_at(bytes, 36) as usize;
-    let at = 40 + notes_length;
-    assert_eq!(u16_at(bytes, at), SECTION_JOURNAL);
-    let length = u32_at(bytes, at + 4) as usize;
-    assert_eq!(at + 8 + length, bytes.len());
-    &bytes[at + 8..]
+    find_journal_section(bytes).expect("a journal section")
 }
 
 /// The entry IDs (first byte) in a journal section, in order.
@@ -473,12 +484,18 @@ fn replay_order_decides_and_a_fresh_replay_matches_the_checkpoint() {
 
 #[test]
 fn kprv_lists_live_entries_newest_first_in_section_101() {
+    // No journal section until the member writes an entry.
     let mut empty = History::private();
     let bytes = kprv(&mut empty);
-    assert_eq!(u16_at(&bytes, 28), 2, "notes and journal sections");
+    assert_eq!(u16_at(&bytes, 28), 1, "the notes section alone");
     assert_eq!(u16_at(&bytes, 32), SECTION_NOTES);
-    assert_eq!(journal_section(&bytes), &[0, 0, 0, 0]);
-    assert_eq!(bytes.len(), 56);
+    assert!(find_journal_section(&bytes).is_none());
+    // A deleted entry still keeps the (empty) section: there is a journal.
+    let mut gone = log_of(&[
+        created(1, 1, 20261001, b"x"),
+        by_id(JOURNAL_ENTRY_DELETED, 2, 1),
+    ]);
+    assert_eq!(journal_section(&kprv(&mut gone)), &[0, 0, 0, 0]);
 
     let mut log = log_of(&[
         created(1, 1, 20261001, b"oldest day"),
@@ -673,18 +690,7 @@ fn private_commands_follow_the_log() {
         .map(|_| ()),
         invalid
     );
-    // Not the placeholder note, and nothing outside the private range.
-    let mut note = [1u8; 16].to_vec();
-    note.extend_from_slice(&1u32.to_le_bytes());
-    note.push(b'x');
-    assert_eq!(
-        run(
-            &mut log,
-            &command(crate::private::PRIVATE_NOTE_SET, 9, 9, SAM, &note)
-        )
-        .map(|_| ()),
-        Err(KinError::UnsupportedVersion)
-    );
+    // Nothing outside the private range, nor a journal kind not defined yet.
     assert_eq!(
         run(&mut log, &command(1, 9, 9, SAM, b"x")).map(|_| ()),
         Err(KinError::UnsupportedVersion)

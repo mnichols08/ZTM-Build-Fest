@@ -7,6 +7,7 @@ import "./kin-chat-share.js";
 import "./kin-share-sheet.js";
 import "./kin-shopping-mode.js";
 import "./kin-week.js";
+import "./kin-just-for-me.js";
 import "./kin-sitter-editor.js";
 import "./kin-journal.js";
 import "./kin-import.js";
@@ -69,6 +70,7 @@ const ELEMENT_EVENTS = [
   ["kin:retry-attachments", "onRetryAttachments"], ["kin:change-responsibility", "onChangeResponsibility"], ["kin:simple-done", "onSimpleDone"], ["kin:set-item-emoji", "onSetItemEmoji"],
   ["kin:replenish-staple", "onReplenishStaple"], ["kin:complete-item", "onCompleteItem"], ["kin:start-shopping", "onStartShopping"], ["kin:save-sitter-page", "onSaveSitterPage"], ["kin:set-routine-rotation", "onSetRoutineRotation"], ["kin:set-routine-turn", "onSetRoutineTurn"], ["kin:set-item-section", "onSetItemSection"], ["kin:save-shopping-sections", "onSaveShoppingSections"], ["kin:import-list", "onImportList"],
   ["kin:reopen-item", "onReopenItem"], ["kin:archive-item", "onArchiveItem"],
+  ["kin:toggle-private-item", "onTogglePrivateItem"], ["kin:make-item-private", "onMakeItemPrivate"],
   ["kin:add-item-step", "onAddItemStep"], ["kin:complete-item-step", "onCompleteItemStep"],
   ["kin:reopen-item-step", "onReopenItemStep"], ["kin:archive-item-step", "onArchiveItemStep"],
   ["kin:change-item-area", "onItemAreaChange"], ["kin:set-item-planning-date", "onItemPlanningDateChange"],

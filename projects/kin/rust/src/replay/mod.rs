@@ -326,7 +326,7 @@ impl Replay {
                 crate::store_sections::apply(&mut self.store_sections, event)?
             }
             K::SitterPageSet { .. } => crate::sitter::apply(&mut self.sitter_page, event)?,
-            K::PrivateNoteSet { .. } | K::Journal(_) => {
+            K::PrivateNoteSet { .. } | K::PrivateItem(_) | K::Journal(_) => {
                 crate::private::apply(&mut self.private, event)?
             }
         }

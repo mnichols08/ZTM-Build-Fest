@@ -347,9 +347,8 @@ holds at most 50,000 records (the next append fails with code 5). Two
 members' notes in one private log fail replay with code 4.
 
 **067 — KPRV.** An empty log is `"KPRV"`, `01 00 00 00`, 16 zero bytes,
-count 0, `02 00 00 00` (two sections), `01 00 00 00` (section 1) and length
-`04 00 00 00`, a zero note count, then `65 00 00 00` (section 101, the
-journal) and length `04 00 00 00` with a zero entry count: 56 bytes. After note 2 "two" (event 1)
+count 0, `01 00 00 00` (one section), `01 00 00 00` (section 1) and length
+`04 00 00 00`, then a zero note count: 44 bytes. After note 2 "two" (event 1)
 and note 1 "one" (event 2), the member is `01` × 16, the count 2, and the
 notes section lists note 1 (logical time 2, device `11` × 16, "one") before
 note 2. A later note for the same ID replaces it and empty text removes it,
@@ -373,7 +372,8 @@ bytes, invalid UTF-8, eleven photos, photo type 0 or 4, a sealed size of 28
 or above 4 MiB + 4 KiB, a non-zero photo reserved byte, a zero key, or one
 reference named twice. Kinds 105 and 109 fail with code 3.
 
-**069 — Journal replay, KPRV section 101 and commands.** The first creation
+**069 — Journal replay, KPRV section 101 and commands.** KPRV has no
+section 101 until the member writes an entry (a deleted one keeps it). The first creation
 of an ID wins; an edit replaces the content, a delete hides the entry, a
 restore shows it again; events for an unknown entry are ignored; another
 member's event in the log fails replay with code 4. Section 101 lists live
@@ -381,9 +381,64 @@ entries by date descending, then later-created first. `kin_private_execute`
 returns KCMT whose event equals the hand-written record; it refuses with code
 4 a used entry ID, an unchanged edit, an edit, delete or restore of the wrong
 entry, a logical time not after the log's, a reused event ID, another member,
-another household or a non-private log, and with code 3 kind 100, a
-household kind or kind 105; 10,001 live entries or more than 32 MiB of live
+another household or a non-private log, and with code 3 a household kind
+or kind 105; 10,001 live entries or more than 32 MiB of live
 text fail with code 5.
+
+### Just for me (#510)
+
+Numbered 090–094, apart from the journal's vectors added alongside. Written
+out by hand in `rust/src/private_item_tests.rs` with the same household,
+member, device, IDs and timestamps as 065–067; `web/wasm/kin-private.test.mjs`
+mirrors 092 and 093.
+
+**090 — Private item added (kind 110).** Event 1, logical time 1, item
+`5b` × 16, date 20261005, text "Dentist": header `01 00` `6e 00`, payload
+length `1f 00 00 00` (16 + 4 + 4 + 7), then `5b` × 16, the date
+`8d 28 35 01`, `07 00 00 00` and "Dentist" (119 bytes in all). It decodes to
+`PRIVATE_ITEM_ADDED` and re-encodes byte for byte, as does every kind
+110–118. A zero ID, an invalid date (20261332), empty text, a line feed or
+other control character in the text, invalid UTF-8, 4,097 bytes of text,
+trailing bytes, a tab in a note or a 2,049-byte note, a setting byte other
+than 0 or 1 or a non-zero reserved byte fail with code 2; 4,096 bytes of
+text, a note with line feeds and an empty note decode. Kind 119 fails with
+code 3. Every other log and a KINE request refuse kind 110 with code 4.
+
+**091 — Replay.** Items 1 (undated) and 2 (dated 20261010) are added; item 1
+is edited and dated 20261003; item 2 is completed, reopened and completed,
+and gets the note "A book"; a second add of item 1, a completion of unknown
+item 9, and item 3 added then deleted twice follow. Expected: two live items;
+item 1 "Call the dentist (Tue)" dated 20261003, open, changed at logical
+time 4 (the second add changed nothing); item 2 done with its note; item 3 a
+tombstone. Restoring item 3 brings it back as it was; the setting set off
+reads off. With 2,000 live items, a further add is ignored, and after one
+delete an add and a restore compete for the place: the earlier in replay
+order wins. Two members' items in one log fail replay with code 4.
+
+**092 — KPRV section 11.** With no item and no setting, KPRV is exactly 067
+(44 bytes, one section). After item 2 "two" dated 20261003 (event 1), item 1
+"one" (event 2), the note "n" on item 1 (event 3), item 2 completed (event
+4) and item 3 added and deleted (events 5–6): the section count is 2; section
+1 is the empty notes section; section 11 has flags 0 and count 2, then item
+1 (added at timestamp + 2, changed at 3, no date, open, text 3 and note 1,
+"one" "n") and item 2 (changed at 4, date 20261003, done, "two"). A log
+holding only the setting set off has section 11 with flags 1 and no items
+(60 bytes in all).
+
+**093 — Private commands.** `kin_private_execute` with KCMD action 110,
+event `numbered_id(1)`, logical time 1 and the 090 payload, on an empty
+private log, returns `KCMT` v1 with the 090 record, its KMET and an empty
+projection, and leaves the log empty. The KCMD has `6e 00` at offset 8,
+zeros at 92–123 and payload length `1f 00 00 00` at 124.
+
+**094 — Command refusals (code 4).** Adding a known or deleted ID, untrimmed
+text or notes, edits, completions, reopenings, dates, notes and settings
+that change nothing, changes to unknown or deleted items, deleting a deleted
+item, restoring a live one, a logical time not after the log's latest, a
+known event ID, another member, another household, any other log, and an
+add or restore with 2,000 live items. A household action fails with code 3;
+an entity ID in the header or a payload length that doesn't match fails
+with code 2.
 
 ## Household chat (v1.1)
 

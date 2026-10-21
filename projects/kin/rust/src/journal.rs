@@ -39,7 +39,7 @@
 //! replay order wins. A deleted entry's content stays in the log, as every
 //! event does; KPRV leaves it out.
 //!
-//! **Commands** (`kin_private_execute`, private.rs) enforce the rest with
+//! **Commands** (`kin_private_execute`, private_command.rs) enforce the rest with
 //! code 4: a new entry's ID is unused; an edit names a live entry and changes
 //! something; a delete names a live entry; a restore names a deleted one.
 //! Live entries are bounded (10,000 and 32 MiB of title and body text, code
@@ -378,6 +378,11 @@ impl JournalState {
                 .then(left_id.cmp(right_id))
         });
         live
+    }
+
+    /// Whether no entry was ever written (deleted ones count).
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     pub fn live_count(&self) -> usize {

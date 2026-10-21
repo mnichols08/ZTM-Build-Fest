@@ -50,6 +50,9 @@ export class DetailController {
       emoji: this.app.itemEmojis?.get(this.app.selection.itemId) ?? null,
       // Unknown kind on a synced device: not until the status says Adult.
       canSetPicture: (this.app.householdStatus?.memberKind ?? (this.app.hasLocalSyncBinding ? null : "adult")) === "adult",
+      // Just for me (#517): something this member added, with private
+      // storage working here.
+      canMakePrivate: this.ctx.privateItems.canMakePrivate(item),
       item,
     });
   }

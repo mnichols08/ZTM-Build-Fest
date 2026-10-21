@@ -9,6 +9,17 @@ documentation only.
 
 ### Added
 
+- **Just for me: a private list on all your devices** (#510, #511, #514,
+  #517): Lists › Just for me holds private to-dos and short notes only you
+  can see, with an optional date, complete and reopen, and delete with
+  Undo; it works offline and syncs between your devices through your
+  private stream. Dated ones show on your own Today and This week, marked
+  "Private" (a setting, on by default; never in Simple view or household
+  search). **Share with the household…** moves an item to To do after a
+  confirmation naming who will see it; **Make private** moves something you
+  added into your list, with Undo. Both are safe to retry after a failure.
+  Engine: private kinds 110–118, KPRV section 11 and the
+  `kin_private_execute` export.
 - **A personal journal** (#496: #497, #501, #504, #507, [ADR 0019](docs/decisions/0019-member-private-log.md)):
   each member can write dated entries, with an optional title, plain text and
   up to ten photos, on a Journal page reached from Household's "Just for
@@ -19,7 +30,7 @@ documentation only.
   this day" on the journal page only. The share sheet offers "Add to my
   journal", and a "New journal entry" home-screen shortcut opens the editor.
   Never in household search, Today, chat or exports; no streaks, prompts or
-  counts. Private kinds 101–104 (kind 100 reserved), `kin_private_execute`,
+  counts. Private kinds 101–104 (kind 100 reserved) through `kin_private_execute`,
   KPRV section 101, and server schema 24 (`private_blobs`).
 - **A gentle first run: your name and a password, then you're in** (#557,
   #558, #559, [ADR 0018](docs/decisions/0018-account-key-vault.md)): a new

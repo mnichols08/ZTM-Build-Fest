@@ -27,6 +27,13 @@ function fakeLog({ reason = "ready", entries = [] } = {}) {
     notify() { for (const listener of listeners) listener(log); },
     async enable() { log.enabled += 1; log.reason = "ready"; return "ready"; },
     async append(bytes) { log.appended.push(JSON.parse(decoder.decode(bytes))); log.logical += 1n; log.notify(); },
+    // As PrivateLog.execute does: name the event here, then store it.
+    async execute(command) {
+      const { encodedEvent } = fakeEngine().executePrivateCommand(command, {
+        eventId: "0b".repeat(16), householdId: HOUSEHOLD, actorId: MEMBER, deviceId: DEVICE, timestamp: 1_791_475_200_000, logicalTime: log.logical,
+      }, log.records.view(), 0, 20261003, log.syncIdentity());
+      await log.append(encodedEvent);
+    },
     projection: () => ({ journal: entries }),
   };
   return log;
@@ -64,7 +71,7 @@ async function blobsOn(service, indexedDB = fakeIndexedDB()) {
 
 test("writing an entry goes through the engine's private path with clean content", async () => {
   const log = fakeLog();
-  const journal = new Journal({ log, engine: fakeEngine(), blobs: null, now: () => 1_791_475_200_000 });
+  const journal = new Journal({ log, engine: fakeEngine(), blobs: null });
   const id = await journal.create({ date: "2026-10-03", title: "  Park\nday ", body: "\r\nSwings.\r\nThen cocoa.\t\n", photos: [] });
   assert.match(id, /^[a-f0-9]{32}$/);
   const [{ command, identity }] = log.appended;

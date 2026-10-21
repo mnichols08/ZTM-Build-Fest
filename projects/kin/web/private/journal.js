@@ -4,16 +4,16 @@
 // - Reading: the private log's KPRV projection (kin-private.js), journal
 //   section, newest first. Nothing here is household state: it never
 //   reaches the household projection, search, Today, chat or exports.
-// - Writing: a journal command goes through the engine's private command
-//   path (`executePrivateCommand`, Rust checks it against the replayed log),
-//   then the private log seals and stores the event (private-log.js). The
+// - Writing: a journal command goes through the private log's `execute`
+//   (private-log.js): the engine's `kin_private_execute` checks it against
+//   the replayed log under the member's write lock, then the log seals and
+//   stores the event. The
 //   member key is made on the member's first write, if their vault has none
 //   yet (ADR 0019).
 // - Photos: drawn again (no EXIF, GPS or camera details), with a JPEG
 //   thumbnail, each sealed under its own key and kept as a private blob
 //   (private-blobs.js) that uploads on the next private pass. A photo's
 //   keys travel only inside the entry's record.
-import { projectionContext } from "../browser-time.js";
 import { attachmentMetaProblem } from "../attachments/attachment-lifecycle.js";
 import { PHOTO_TYPES, preparePhoto, safeAttachmentName, sniffPhotoType } from "../chat/chat-attachments.js";
 import { journalTextProblem, MAX_JOURNAL_PHOTO_BYTES, MAX_JOURNAL_PHOTOS, normalizeJournalBody, normalizeJournalTitle } from "../wasm/kin-private.js";
@@ -70,28 +70,16 @@ export class Journal {
     return this.entries().find((entry) => entry.id === entryId) ?? null;
   }
 
-  /** Runs one journal command and stores its event. */
+  /** Runs one journal command and stores its event: the private log's
+   * `execute` validates it in the engine (`kin_private_execute`) under the
+   * member's write lock, then seals and stores it. */
   async write(command) {
     if (this.reason === "no_member_key") {
-      const status = await this.log.enable();
-      if (status !== "ready" && !this.log.active)
+      await this.log.enable();
+      if (!this.log.active)
         throw new JournalError("Your journal needs your Kin account on this device.", "journal_unavailable");
     }
-    const { asOf, civilDate } = projectionContext(this.now());
-    const identity = {
-      eventId: newPrivateId(),
-      householdId: this.log.identity.householdId,
-      actorId: this.log.identity.memberId,
-      deviceId: this.log.identity.deviceId,
-      timestamp: this.now(),
-      logicalTime: this.log.nextLogicalTime(),
-    };
-    const { encodedEvent } = this.engine.executePrivateCommand(command, identity, this.log.records.view(), asOf, civilDate, this.log.syncIdentity());
-    try {
-      await this.log.append(encodedEvent);
-    } finally {
-      encodedEvent.fill(0);
-    }
+    await this.log.execute(command);
     this.cache = null;
   }
 

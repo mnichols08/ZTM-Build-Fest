@@ -21,6 +21,8 @@ export class TodayFocus {
           itemId: control.dataset.itemId ?? control.dataset.routineId,
           action: control.dataset.itemAction ?? control.dataset.action,
           summary: control.dataset.summary,
+          // A private item's checkbox (#514), found again by its key.
+          privateKey: control.closest(".private-row") ? control.dataset.focusKey ?? null : null,
           index: row ? [...this.host.querySelectorAll("kin-item")].indexOf(row) : -1,
           section: section?.dataset.section ?? null,
           sectionIndex: row && section ? [...section.querySelectorAll("kin-item")].indexOf(row) : -1,
@@ -64,6 +66,13 @@ export class TodayFocus {
     if (isVisible(focus.control)) {
       revealWithin(focus.control, this.host);
       focus.control.focus();
+      return;
+    }
+    if (focus.privateKey) {
+      // Done moves it to Completed; elsewhere, its section's heading.
+      const same = [...this.host.querySelectorAll("[data-focus-key]")].find((node) => node.dataset.focusKey === focus.privateKey);
+      if (isVisible(same)) { revealWithin(same, this.host); same.focus(); }
+      else (this.host.querySelector(`[data-section="${focus.section ?? "today"}"] h2`) ?? this.host.querySelector('[data-section="today"] h2'))?.focus();
       return;
     }
     if (focus.summary) {

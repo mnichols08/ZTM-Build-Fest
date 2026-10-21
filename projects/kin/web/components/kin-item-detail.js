@@ -279,6 +279,8 @@ defineProps(KinItemDetail, {
   // Item picture (#347): the item's emoji, and whether this member sets one.
   emoji: { field: "emojiValue", coerce: (value) => value || null },
   canSetPicture: { field: "pictureAllowed", coerce: Boolean },
+  // Just for me (#517): whether this member may make the item private.
+  canMakePrivate: { field: "makePrivateAllowed", coerce: Boolean },
 });
 
 customElements.define("kin-item-detail", KinItemDetail);
