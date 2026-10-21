@@ -168,7 +168,19 @@ async function showScreen({ hash }, isReady) {
   scrollTo(0, 0);
   for (const scroller of document.querySelectorAll(".chat-scroll")) scroller.scrollTop = scroller.scrollHeight;
   await new Promise((r) => setTimeout(() => setTimeout(r, 0), 0));
-  return location.hash;
+  if (app.security?.phase !== "unlocked") throw new Error(`Kin is ${app.security?.phase} on ${hash}`);
+  // What the picture shows, in words, for the log: the text on screen.
+  const seen = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node && seen.join(" | ").length < 400; node = walker.nextNode()) {
+    const text = node.textContent.trim();
+    const rect = node.parentElement?.getBoundingClientRect();
+    if (!text || !rect || !rect.width || rect.bottom <= 0 || rect.top >= innerHeight || rect.right <= 0 || rect.left >= innerWidth) continue;
+    if (node.parentElement.closest("[hidden], .visually-hidden, .skip-link")) continue;
+    if (getComputedStyle(node.parentElement).visibility === "hidden") continue;
+    seen.push(text.replace(/\s+/g, " ").slice(0, 60));
+  }
+  return seen.join(" | ");
 }
 
 // ---- Capture ----------------------------------------------------------------------
@@ -244,16 +256,22 @@ export async function playScreenshots({ endpoint, browserClient, outDir }) {
     for (const device of DEVICES) {
       const { name, pixels, ...metrics } = device;
       await setViewport(robin, metrics);
+      const seen = [];
       for (const [index, screen] of SCREENS.entries()) {
-        await robin.evaluate(`(${showScreen.toString()})(${JSON.stringify(screen)}, (app) => ${screen.ready})`);
+        const text = await robin.evaluate(`(${showScreen.toString()})(${JSON.stringify(screen)}, (app) => ${screen.ready})`);
         // Let layout and fonts finish for the new size before capturing.
         await delay(150);
         const { data } = await robin.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
         const file = join(outDir, `${name}-${index + 1}-${screen.name}.png`);
         await writeFile(file, playPng(Buffer.from(data, "base64"), pixels));
         written.push(file);
+        seen.push(`${screen.name}: ${text}`);
       }
-      console.log(`${name}: ${SCREENS.length} screenshots at ${pixels.join(" × ")}`);
+      console.log(`${name}: ${SCREENS.length} screenshots at ${pixels.join(" × ")}\n  ${seen.join("\n  ")}`);
+      // In CI, what each picture shows also goes into a notice the checks
+      // API returns, since the job log and artifacts may not be readable.
+      if (process.env.GITHUB_ACTIONS)
+        console.log(`::notice title=Play screenshots (${name})::${seen.join("\n").replace(/%/g, "%25").replace(/\r?\n/g, "%0A").slice(0, 3800)}`);
     }
     return written;
   } finally {

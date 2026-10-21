@@ -166,3 +166,14 @@ pushed release tag (v0.10.3 was the last); none of those tags has a GitHub
 Release. Whether to add Releases for them is item G8 in
 [V1.0_REVIEW_GATES](audits/V1.0_REVIEW_GATES.md); the recommendation is not
 to.
+
+## Google Play
+
+Kin's Play app (epic #527) is a thin wrapper that opens the production site,
+so a Kin release normally reaches it with no Play release. When the wrapper
+itself changes, or the service starts collecting something new, follow
+[PLAY-RELEASE](PLAY-RELEASE.md): the one-time Play setup, the closed test,
+production submission, web release versus Play release, version codes,
+staged rollout, the asset-links fingerprints on the server, and rollback. The
+listing text, graphics and Data safety answers are in
+[PLAY-LISTING](PLAY-LISTING.md).

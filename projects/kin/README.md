@@ -261,6 +261,7 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [Development workflow](docs/DEVELOPMENT.md)
 - [Code style](docs/CODE-STYLE.md)
 - [Release process](docs/RELEASES.md)
+- [Google Play listing and Data safety](docs/PLAY-LISTING.md) and [releasing on Google Play](docs/PLAY-RELEASE.md)
 - [Debugging and diagnostics](docs/DEBUGGING.md)
 - [Implementation preflight](docs/PREFLIGHT.md)
 - [Requirement traceability](docs/TRACEABILITY.md)
