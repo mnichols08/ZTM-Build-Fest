@@ -44,6 +44,20 @@ export async function createHouseholdEpochKey({
   }
 }
 
+/**
+ * An epoch key taken from the member's account vault (ADR 0018, #570), in
+ * the shape saveEpoch stores: usable key, bytes sealed to this device's keys,
+ * fingerprint. `householdId` is the key family label ("<id>" or "chat:<id>").
+ * The caller zeroes `rawKey`.
+ */
+export async function importVaultEpochKey({ rawKey, householdId, keyEpoch, deviceKeys }) {
+  if (!(rawKey instanceof Uint8Array) || rawKey.length !== 32)
+    throw new SyncCryptoError("provisioning_key_invalid", "The household key could not be provisioned.");
+  const householdKey = await crypto.subtle.importKey("raw", rawKey, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  const sealed = await sealKeyBytes({ rawKey, householdId, keyEpoch, deviceKeys });
+  return { householdKey, sealed, fingerprint: await fingerprintKey(rawKey) };
+}
+
 export async function createProvisionedHouseholdEpoch({
   householdId,
   keyEpoch,

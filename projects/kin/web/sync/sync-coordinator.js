@@ -14,6 +14,7 @@ import {
   unwrapEpochKey,
   verifyDeviceAuthorizationCertificate,
 } from "./crypto.js";
+import { verifyMemberCertificate } from "../security/device-certification.js";
 import { SyncKeyStore } from "./key-store.js";
 import { LIVE_TYPE, LiveChannel, liveUrl } from "./live-channel.js";
 import { QUARANTINE_MESSAGE, quarantineMessage } from "../storage/quarantine.js";
@@ -948,6 +949,31 @@ export class SyncCoordinator {
         return;
       }
       const certificate = device.certificate;
+      if (certificate?.version === 2) {
+        // Signed by the member's certification key (ADR 0018, #568): valid
+        // when the device that endorsed that key is the same member's and
+        // verifies here, and the key matches the one pinned for the member.
+        const endorser = byId.get(certificate.endorsement?.issuerDeviceId);
+        if (!endorser || endorser.memberId !== device.memberId)
+          throw new Error("A device certified by its member's account has no verifiable endorsement.");
+        checking.add(deviceId);
+        await verify(endorser.deviceId);
+        const endorserKey = endorser.verifiedKeyHistory.find(entry => entry.fingerprint === certificate.endorsement.issuerFingerprint);
+        if (!endorserKey) throw new Error("The certification key's endorsing device key is not in its verified history.");
+        const certificationFingerprint = await verifyMemberCertificate({
+          certificate,
+          device: { ...device, ...keyHistory[0] },
+          issuerPublicKeys: endorserKey.publicKeys,
+          issuerMemberId: endorser.memberId,
+        });
+        const pinned = await this.keyStore.getPinnedCertificationKey(this.identity.householdId, device.memberId);
+        if (pinned && pinned.fingerprint !== certificationFingerprint)
+          throw new Error("A member's certification key changed after it was trusted.");
+        if (!pinned) await this.keyStore.pinCertificationKey({ householdId: this.identity.householdId, memberId: device.memberId, fingerprint: certificationFingerprint });
+        checking.delete(deviceId);
+        verified.add(deviceId);
+        return;
+      }
       const issuer = byId.get(certificate?.issuerDeviceId);
       if (!certificate || !issuer)
         throw new Error(

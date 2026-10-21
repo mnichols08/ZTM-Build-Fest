@@ -3,9 +3,10 @@
 Status: **Accepted** (owner decisions D1–D5, 2026-10-20; #547, epic #546).
 Partly implemented: the vault (#564–#567) and the first run with a username
 and password (#557–#559: sign-up, the local password wrapper, creating the
-vault, sign-in on a trusted device, fresh password confirmations) are in;
-the no-cookie sign-in (#568), the passkey second step and the backup code
-(#571) are not. It changes four standing rules, listed under "Rules this
+vault, sign-in on a trusted device, fresh password confirmations) and the
+no-cookie sign-in with the certification key chain (#568–#570) are in; the
+passkey second step (adding passkey wrappers) and the backup code (#571) are
+not. It changes four standing rules, listed under "Rules this
 changes"; AGENTS.md and CRYPTOGRAPHY point here until the implementation
 stories update the rest of the docs.
 

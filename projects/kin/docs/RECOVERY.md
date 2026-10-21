@@ -79,10 +79,58 @@ cannot distinguish a coerced or dishonest approval from a legitimate one.
 
 ## Honest failure boundary
 
-Kin has no hidden server content-key escrow. If every trusted device, every
-usable local archive/recovery secret, and every valid credential/recovery
-authority is gone, encrypted household content is unrecoverable. This is safer
-than silently granting authority from stale server state.
+Kin has no server-*readable* content keys. A member with an account vault
+(ADR 0018) can lose **every** device and still get back in: they sign in on a
+new device with their password (or passkey), the vault opens on that device,
+and the household's keys come from it (see "Signing in on a new device"
+below). If every trusted device, every usable local archive/recovery secret,
+every valid credential/recovery authority **and** every way to open the
+member's vault (password, passkey, backup code) is gone, encrypted household
+content is unrecoverable. This is safer than silently granting authority from
+stale server state.
+
+## Signing in on a new device (#568)
+
+A member on a new phone, or a browser whose Kin data was cleared, chooses
+**Sign in** on the first screen and enters their username and password (or
+uses "Sign in with a passkey" once they've added one). No other device has to
+be present.
+
+1. The service checks the password (or passkey) exactly as for any sign-in,
+   with the same limits and the same generic answer, and issues a
+   **new-device capability**: a ten-minute, single-use permission bound to
+   that member, never a session (THREAT-MODEL, "New-device sign-in").
+2. With it the browser downloads the member's vault and the one wrapper its
+   sign-in opens, and opens the vault on the device.
+3. **"Which device is this?"** lists the member's trusted devices:
+   - **Add this as a new device**, or
+   - **This replaces &lt;device&gt;**: that device is revoked in the same step
+     as this one is trusted, with a clear warning that it is signed out for
+     good. Use it for a lost, broken or wiped device.
+4. The device gets its own keys, certifies them with the member's
+   certification key from the vault (CRYPTOGRAPHY, "Certification key
+   chain"), and is registered; its storage is protected by the password (a
+   passkey-only sign-in uses that passkey plus a backup key shown once). It
+   installs the household's keys from the vault, pins the devices the
+   member's account trusts, and syncs. The member lands on Today.
+
+**The trusted-device limit** counts after a replacement's revocation, as for
+a replacement pairing: a household at its limit can still replace a device,
+but not add one.
+
+**A revoked device can't use this to come back.** Revocation is of a device
+record and its keys; signing in again makes a new device with new keys (a
+new ID and certificate), and only after the password or passkey check. A
+revoked device's own keys, cookie and sessions stay refused.
+
+**Before this works for a member** their certification key must be endorsed
+by one of their trusted devices. Kin does it automatically: right after the
+vault is created at first run, and, for members whose vault came before
+this, the next time one of their devices that holds the vault key opens the
+household panel. Until then the sign-in says so and points to pairing.
+
+Pairing from another trusted device stays available, unchanged, for people
+who prefer it or have no account vault yet.
 
 ## Members who signed up with a password (#557, #558)
 
@@ -115,8 +163,10 @@ sees it, only a key derived from it. Until the member adds a passkey or a
 backup code (later stories, #571), or has another trusted device, **a
 forgotten password on a member's only device means that household can't be
 opened on it**: the local data stays encrypted, and with no other device
-there is nobody to pair a new one. The account vault doesn't change this yet:
-opening it on a new device is the new-device sign-in story (#568). With
+there is nobody to pair a new one. The account vault doesn't help with a
+*forgotten* password (it opens with the same password); it helps with a
+*lost device*: with the password remembered, the member signs in on a new
+device (#568, above). With
 another trusted device of theirs, the member pairs a new device as before;
 another adult can authorize member recovery as before. The first run says
 this in one line where the password is chosen; the lock screen's "Forgot
