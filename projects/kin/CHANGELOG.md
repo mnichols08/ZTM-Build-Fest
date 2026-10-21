@@ -9,6 +9,10 @@ documentation only.
 
 ### Added
 
+- **App link for a Google Play app** (#532): the service serves
+  `/.well-known/assetlinks.json` when `KIN_ANDROID_PACKAGE` and
+  `KIN_ANDROID_CERT_SHA256` are set, so a Play Store wrapper can open Kin
+  without an address bar. Off (404) by default.
 - **Move to an account, without starting over** (#574, #575, #576, [ADR
   0018](docs/decisions/0018-account-key-vault.md) "Migration"): if you set
   Kin up with a passkey and a backup key, Today now calmly invites you, once,

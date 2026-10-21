@@ -1,4 +1,5 @@
 import { createReadStream, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { parseAssetLinks, serveAssetLinks } from "./asset-links.mjs";
 import { extname, join, relative, resolve } from "node:path";
 import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
@@ -59,6 +60,11 @@ export function createKinServer(options = {}) {
     maxHouseholds: options.maxHouseholds ?? process.env.KIN_MAX_HOUSEHOLDS,
   };
   const householdPolicy = parseHouseholdPolicy(householdSettings);
+  // Google Play app link (#532): null unless both settings are given.
+  const assetLinks = parseAssetLinks({
+    packageName: options.androidPackage ?? process.env.KIN_ANDROID_PACKAGE,
+    fingerprints: options.androidCertSha256 ?? process.env.KIN_ANDROID_CERT_SHA256,
+  });
   // A passed-in service keeps its own policy unless a setting is given here.
   const householdPolicyConfigured = [householdSettings.allowNewHouseholds, householdSettings.maxHouseholds]
     .some((value) => value !== undefined && value !== null && value !== "");
@@ -191,6 +197,10 @@ export function createKinServer(options = {}) {
         return;
       }
       if (request.method === "GET" || request.method === "HEAD") {
+        if (url.pathname === "/.well-known/assetlinks.json") {
+          serveAssetLinks(request, response, assetLinks);
+          return;
+        }
         if (url.pathname === "/manifest.webmanifest") {
           serveManifest(request, response, context);
           return;
