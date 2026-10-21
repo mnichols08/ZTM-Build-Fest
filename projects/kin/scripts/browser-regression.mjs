@@ -3147,6 +3147,12 @@ try {
   // origin: private storage opens with the vault key sign-up keeps.
   if (REGRESSION_PART !== "1") console.log(await journalRegressions({ endpoint, browserClient }));
 } catch (error) {
+  // The whole failure as an annotation, so an attempt that a passing retry
+  // hides can still be read in CI (#594).
+  if (process.env.GITHUB_ACTIONS) {
+    const text = `${error?.stack ?? error}`.slice(0, 3500).replace(/%/g, "%25").replace(/\r?\n/g, "%0A");
+    console.log(`::warning title=Kin browser regression attempt failed::${text}`);
+  }
   // Before the browser closes: what each page showed (#328).
   await captureFailure("browser regression");
   throw error;
