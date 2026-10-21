@@ -51,8 +51,8 @@ export const DEVICES = Object.freeze([
 ]);
 
 export const SCREENS = Object.freeze([
-  { name: "today", hash: "#today", ready: "!app.pages.get('today').hidden" },
-  { name: "shopping", hash: "#lists/shopping", ready: "!app.pages.get('lists').hidden" },
+  { name: "today", hash: "#today", ready: "!app.pages.get('today').hidden", anchor: "app.today" },
+  { name: "shopping", hash: "#lists/shopping", ready: "!app.pages.get('lists').hidden && app.shopping.textContent.includes('Bananas')", anchor: "app.shopping" },
   { name: "week", hash: "#week", ready: "!app.pages.get('week').hidden && app.week.querySelectorAll('.week-day').length === 7" },
   { name: "chat", hash: "#updates/chat", ready: "!app.pages.get('updates').hidden && app.chat.querySelectorAll('.chat-text').length >= 4" },
   { name: "journal", hash: "#journal", ready: "!app.pages.get('journal').hidden && app.journal.querySelectorAll('.journal-entry').length >= 2" },
@@ -96,7 +96,9 @@ async function fillHousehold() {
 }
 
 /** One chat message from this page's member, then waits until the room
- * holds `expected` messages (so the two members' messages interleave). */
+ * holds `expected` messages. It first waits for the `expected - 1` before
+ * it, so each message reaches the relay after the previous one and the
+ * conversation keeps its order. */
 async function sendChat({ text, expected }) {
   const app = document.querySelector("kin-app");
   const wait = async (condition, label, ms = 60_000) => {
@@ -109,6 +111,7 @@ async function sendChat({ text, expected }) {
   };
   await wait(() => app.chat?.room, "the chat room opens");
   const room = app.chat.room;
+  await wait(() => room.page({ limit: 50 }).total >= expected - 1, `${expected - 1} earlier messages`);
   if (text) {
     await room.send(text);
     void app.syncCoordinator?.syncNow();
@@ -148,13 +151,16 @@ async function writeJournal() {
 }
 
 /** Shows one screen, calm: no one-time offers, toasts or focus rings. */
-async function showScreen({ hash }, isReady) {
+async function showScreen({ hash }, isReady, anchorOf) {
   const app = document.querySelector("kin-app");
   app.passkeyPromptDismissed = true;
   app.ctx.navigation.navigate(hash);
+  // Settled, and the header says "Up to date" rather than "Syncing…".
+  const synced = () => !document.querySelector("kin-sync-status") || document.querySelector("kin-sync-status").state === "ready";
   for (let i = 0; i < 2400; i++) {
-    if (!app.busy && !app.refreshing && !app.pendingRefresh && isReady(app)) break;
-    if (i === 2399) throw new Error(`${hash} didn't settle`);
+    if (!app.busy && !app.refreshing && !app.pendingRefresh && isReady(app) && synced()) break;
+    if (i === 2399) throw new Error(`${hash} didn't settle; sync=${document.querySelector("kin-sync-status")?.state}`);
+    if (i % 80 === 40) void app.syncCoordinator?.syncNow();
     await new Promise((r) => setTimeout(r, 25));
   }
   // One-time cards (a passkey suggestion, a catch-up summary) and toasts are
@@ -164,15 +170,21 @@ async function showScreen({ hash }, isReady) {
   if (app.onboarding) app.onboarding.hidden = true;
   app.ctx.undo?.clear?.();
   if (app.status) app.status.textContent = "";
+  for (const composer of document.querySelectorAll("kin-compose")) composer.clearResult?.();
+  for (const details of document.querySelectorAll("details.list-actions")) details.open = false;
   document.activeElement?.blur?.();
   scrollTo(0, 0);
+  // When the screen's main content starts below the middle (Today's
+  // composer comes first on a phone), scroll it up under the header.
+  const anchor = anchorOf(app);
+  if (anchor && anchor.getBoundingClientRect().top > innerHeight * 0.45) anchor.scrollIntoView({ block: "start" });
   for (const scroller of document.querySelectorAll(".chat-scroll")) scroller.scrollTop = scroller.scrollHeight;
   await new Promise((r) => setTimeout(() => setTimeout(r, 0), 0));
   if (app.security?.phase !== "unlocked") throw new Error(`Kin is ${app.security?.phase} on ${hash}`);
   // What the picture shows, in words, for the log: the text on screen.
   const seen = [];
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  for (let node = walker.nextNode(); node && seen.join(" | ").length < 400; node = walker.nextNode()) {
+  const walker = document.createTreeWalker(document.querySelector("main") ?? document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node && seen.join(" | ").length < 700; node = walker.nextNode()) {
     const text = node.textContent.trim();
     const rect = node.parentElement?.getBoundingClientRect();
     if (!text || !rect || !rect.width || rect.bottom <= 0 || rect.top >= innerHeight || rect.right <= 0 || rect.left >= innerWidth) continue;
@@ -258,7 +270,7 @@ export async function playScreenshots({ endpoint, browserClient, outDir }) {
       await setViewport(robin, metrics);
       const seen = [];
       for (const [index, screen] of SCREENS.entries()) {
-        const text = await robin.evaluate(`(${showScreen.toString()})(${JSON.stringify(screen)}, (app) => ${screen.ready})`);
+        const text = await robin.evaluate(`(${showScreen.toString()})(${JSON.stringify(screen)}, (app) => ${screen.ready}, (app) => ${screen.anchor ?? "null"})`);
         // Let layout and fonts finish for the new size before capturing.
         await delay(150);
         const { data } = await robin.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });

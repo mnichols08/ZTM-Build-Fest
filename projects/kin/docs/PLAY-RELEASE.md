@@ -112,7 +112,7 @@ screenshots of what was submitted.
 ### 1.6 Store listing (Grow → Store presence → Main store listing)
 
 - [ ] Name, short and full description from PLAY-LISTING.
-- [ ] App icon: `web/icons/icon-512.png`.
+- [ ] App icon: `web/icons/icon-maskable-512.png` (full-bleed; Play applies the rounded shape).
 - [ ] Feature graphic: `play/feature-graphic.png`.
 - [ ] Screenshots: run **Kin verification → Run workflow** on the release
   commit, download **kin-play-screenshots**, look at every image, then upload

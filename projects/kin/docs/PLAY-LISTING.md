@@ -29,7 +29,7 @@ leaves the device, update all four, then the Play Console answers.
 | Website | `https://kin.journeytocode.io` | optional |
 | Phone | none | optional |
 | Privacy policy URL | `https://kin.journeytocode.io/privacy.html` | required |
-| App icon | `web/icons/icon-512.png` (512 × 512, from `scripts/render-icons.mjs`) | 512 × 512, 32-bit PNG |
+| App icon | `web/icons/icon-maskable-512.png` (512 × 512, full-bleed square from `scripts/render-icons.mjs`; Play rounds the corners itself, so not `icon-512.png`, whose corners are already transparent) | 512 × 512, 32-bit PNG |
 | Feature graphic | `play/feature-graphic.png` (1024 × 500, 24-bit) | 1024 × 500, no alpha |
 | Phone screenshots | `phone-*.png` from the [screenshot job](#screenshots) (1080 × 1920) | 2–8, 9:16 or 16:9 |
 | 7-inch tablet screenshots | `tablet7-*.png` (1080 × 1920) | up to 8 |
