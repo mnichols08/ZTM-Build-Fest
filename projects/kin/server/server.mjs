@@ -12,12 +12,14 @@ import { PushService } from "./push-service.mjs";
 import { ChatBlobService } from "./chat-blob-service.mjs";
 import { ChatRelayService } from "./chat-relay-service.mjs";
 import { BoardRelayService } from "./board-relay-service.mjs";
+import { AccountVaultService } from "./account-vault-service.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
   DurableConflictError,
   DurableStore,
   DurableStoreError,
+  MAX_ACCOUNT_VAULT_BYTES,
   MAX_ATTACHMENT_BYTES,
   MAX_CHAT_HIDDEN_RECORD_BYTES,
   MAX_CHAT_RECEIPT_BYTES,
@@ -97,6 +99,8 @@ export function createKinServer(options = {}) {
   // The fridge's relay (#317): board events in a third encrypted stream.
   const boardRelayService = new BoardRelayService({ syncService, store });
   syncService.boardRelayService = boardRelayService;
+  // Members' encrypted key vaults (ADR 0018, #564).
+  const accountVaultService = options.accountVaultService ?? new AccountVaultService({ store, now: options.now ?? (() => Date.now()) });
   const webauthn =
     options.webauthn ??
     new WebAuthn({
@@ -114,6 +118,7 @@ export function createKinServer(options = {}) {
     chatBlobService,
     chatRelayService,
     boardRelayService,
+    accountVaultService,
     store,
     webauthn,
     flows: new Map(),
@@ -272,6 +277,7 @@ export function createKinServer(options = {}) {
     chatBlobService,
     chatRelayService,
     boardRelayService,
+    accountVaultService,
     liveService,
     webauthn,
     store,
@@ -423,6 +429,8 @@ async function api(request, response, url, context) {
     ? await readJsonBody(request, response, MAX_CHAT_HIDDEN_RECORD_BYTES + 1024)
     : request.method === "PUT" && url.pathname === "/api/chat/receipts"
     ? await readJsonBody(request, response, MAX_CHAT_RECEIPT_BYTES + 1024)
+    : request.method === "PUT" && url.pathname.startsWith("/api/account/vault")
+    ? await readJsonBody(request, response, MAX_ACCOUNT_VAULT_BODY_BYTES)
     : ["POST", "PUT", "DELETE"].includes(request.method)
     ? await readJsonBody(request, response, MAX_JSON_BODY_BYTES)
     : {};
@@ -1031,6 +1039,26 @@ async function api(request, response, url, context) {
   if (url.pathname === "/api/chat/events" && request.method === "POST") {
     const auth = syncService.authorize(session);
     json(response, 200, withTransaction(context, () => context.chatRelayService.push(auth, body, { chatEpoch: Number(request.headers["x-kin-chat-epoch"] ?? 0) })));
+    return;
+  }
+  // The member's encrypted key vault (ADR 0018, #564). Only the session's
+  // own member, from one of their trusted devices; no route names a member.
+  if (url.pathname === "/api/account/vault" && request.method === "GET") {
+    const auth = service.authorize(session);
+    json(response, 200, context.accountVaultService.download(auth, context.clientKey(request)));
+    return;
+  }
+  if (url.pathname === "/api/account/vault" && request.method === "PUT") {
+    json(response, 200, context.accountVaultService.upload(syncService.authorize(session), body));
+    return;
+  }
+  const vaultWrapper = ACCOUNT_VAULT_WRAPPER_ROUTE.exec({ pathname: url.pathname })?.pathname.groups.id ?? null;
+  if (vaultWrapper && request.method === "PUT") {
+    json(response, 200, context.accountVaultService.putWrapper(syncService.authorize(session), vaultWrapper, body));
+    return;
+  }
+  if (vaultWrapper && request.method === "DELETE") {
+    json(response, 200, context.accountVaultService.removeWrapper(syncService.authorize(session), vaultWrapper));
     return;
   }
   if (url.pathname === "/api/chat/hidden" && request.method === "GET") {
@@ -1680,6 +1708,8 @@ function cookies(request) {
 // JSON request bodies are small control messages; attachments and settings
 // are binary and bounded by the attachment limit (http-body.mjs).
 const MAX_JSON_BODY_BYTES = 256_000;
+// A sealed vault in base64url plus its first wrappers and JSON framing.
+const MAX_ACCOUNT_VAULT_BODY_BYTES = Math.ceil(MAX_ACCOUNT_VAULT_BYTES * 4 / 3) + 16_384;
 // Four base64url PNGs of at most 512 KB each, plus the names.
 const MAX_INSTALL_IDENTITY_BODY_BYTES = 2_850_000;
 
@@ -1784,6 +1814,7 @@ export function fingerprintedShell(html, fingerprint) {
 // New routes match with URLPattern (#106) rather than hand-written parsing.
 const INSTALL_ICON_ROUTE = new URLPattern({ pathname: "/install-icon/:file([a-z0-9\\-]+[.]png)" });
 const CHAT_BLOB_ROUTE = new URLPattern({ pathname: "/api/chat/blobs/:ref([a-f0-9]{64})" });
+const ACCOUNT_VAULT_WRAPPER_ROUTE = new URLPattern({ pathname: "/api/account/vault/wrappers/:id([a-f0-9]{32})" });
 
 // The install identity (#78) a trusted device's kin_device cookie resolves
 // to, or the built-in Kin manifest and icon. Always private to the browser
