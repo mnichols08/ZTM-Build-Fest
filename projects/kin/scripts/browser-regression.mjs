@@ -152,7 +152,7 @@ async function until(check, { attempts = 200 } = {}) {
     await delay(50);
   }
   // Name the condition, so a CI annotation says which wait ran out (#469).
-  const condition = String(check).replace(/\s+/g, " ").slice(0, 240);
+  const condition = String(check.label ?? check).replace(/\s+/g, " ").slice(0, 240);
   throw new Error(`Timed out waiting for browser state: ${condition}`);
 }
 
@@ -1615,8 +1615,9 @@ try {
   assert.equal(backgroundResponsibilityFocus, true, "Background responsibility reconciliation leaves Today capture enabled and focused");
   // #351: a refresh keeps Kin unlocked in the same tab; Lock, the setting and
   // a non-refresh navigation still leave it locked.
-  if (heavy) {
-    const safely = (expression) => async () => { try { return await first.evaluate(expression); } catch { return false; } };
+  if (heavy) try {
+    // Each condition carries its expression as a label, so a timeout names it.
+    const safely = (expression) => Object.assign(async () => { try { return await first.evaluate(expression); } catch { return false; } }, { label: expression });
     const settled = safely('(()=>{const app=document.querySelector("kin-app");return Boolean(app?.security?.heading)&&!app.busy&&(app.security.phase!=="unlocked"||Boolean(app.store))&&!app.starting})()');
     const phase = () => first.evaluate('document.querySelector("kin-app").security.phase');
     const armed = safely('Boolean(document.querySelector("kin-app")?.reloadResume?.armed)');
@@ -1652,6 +1653,13 @@ try {
     await ready(first);
     await first.evaluate('location.hash="#today"');
     console.log("PASS refresh keeps Kin unlocked in the same tab; Lock, navigation and the setting still lock (#351)");
+  } catch (error) {
+    // Where the tab was when a #351 wait ran out (#469).
+    const resume = await first.evaluate(`({ navigation: performance.getEntriesByType("navigation")[0]?.type ?? null,
+      ticket: Boolean(sessionStorage.getItem("kin.reload-resume")), armed: Boolean(document.querySelector("kin-app")?.reloadResume?.armed),
+      preference: localStorage.getItem("kin.reload-resume-enabled") })`).catch((reason) => ({ unreadable: String(reason?.message ?? reason) }));
+    error.message += ` — tab state ${JSON.stringify(await tabFacts(first))}; resume ${JSON.stringify(resume)}`;
+    throw error;
   }
   // Home-screen shortcuts and the app icon count (#471): each shortcut loads
   // Kin locked, then lands after unlock; it ends unlocked on Today.
