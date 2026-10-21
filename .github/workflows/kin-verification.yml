@@ -224,3 +224,80 @@ jobs:
           path: ${{ runner.temp }}/kin-diagnostics
           if-no-files-found: ignore
           retention-days: 14
+
+  # The Google Play wrapper (ADR 0020, docs/ANDROID.md): an unsigned debug
+  # build on every run, checked against the web manifest, so a change to the
+  # manifest, the icons or the Android project can't break it unnoticed. The
+  # runner image has the Android SDK; Google's Maven repository provides the
+  # Android Gradle Plugin and androidbrowserhelper. Signed builds for Play are
+  # made by hand with the owner's upload key, never here. No other job waits
+  # for this one (docs/ANDROID.md "CI").
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: projects/kin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      # No Gradle wrapper is committed; this installs the pinned Gradle.
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          gradle-version: 8.14.3
+          cache-provider: basic
+          add-job-summary: on-failure
+      - name: Check the Android pictures match the renderer
+        run: node scripts/render-icons.mjs --check
+      - name: Build the debug app (APK and App Bundle)
+        # As in the other jobs, on failure the failing lines and the end of
+        # the output become annotations the checks API can return (#164).
+        run: |
+          set -o pipefail
+          status=0
+          gradle --no-daemon --stacktrace -p android assembleDebug bundleDebug 2>&1 | tee "$RUNNER_TEMP/kin-android.txt" || status=$?
+          if [ "$status" -ne 0 ]; then
+            set +e +o pipefail
+            report() {
+              title="$1"; chunk=""; part=1
+              while IFS= read -r line; do
+                line="${line:0:1500}"
+                if [ $(( ${#chunk} + ${#line} )) -gt 3800 ]; then
+                  printf '::error title=%s (%s)::%s\n' "$title" "$part" "$(printf '%s' "$chunk" | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')"
+                  chunk=""; part=$((part + 1))
+                fi
+                chunk="${chunk}${line}"$'\n'
+              done
+              [ -n "$chunk" ] && printf '::error title=%s (%s)::%s\n' "$title" "$part" "$(printf '%s' "$chunk" | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')"
+            }
+            grep -E -A4 'What went wrong|error:|ERROR|^e: |FAILED' "$RUNNER_TEMP/kin-android.txt" | head -n 60 | report "Kin Android build failed - failing lines"
+            tail -n 40 "$RUNNER_TEMP/kin-android.txt" | report "Kin Android build failed - last lines"
+          fi
+          exit "$status"
+      - name: Check the built app against the web manifest
+        run: |
+          set -o pipefail
+          status=0
+          node scripts/check-android-app.mjs android/app/build/outputs/apk/debug/app-debug.apk 2>&1 | tee "$RUNNER_TEMP/kin-android-check.txt" || status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -E 'FAIL' "$RUNNER_TEMP/kin-android-check.txt" | head -n 20 | while IFS= read -r line; do printf '::error title=Kin Android app check failed::%s\n' "${line:0:1500}"; done
+          fi
+          exit "$status"
+      - name: Keep the debug app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kin-android-debug
+          path: |
+            projects/kin/android/app/build/outputs/apk/debug/app-debug.apk
+            projects/kin/android/app/build/outputs/bundle/debug/app-debug.aab
+          if-no-files-found: error
+          retention-days: 14
