@@ -101,7 +101,7 @@ async function fillHousehold() {
  * conversation keeps its order. */
 async function sendChat({ text, expected }) {
   const app = document.querySelector("kin-app");
-  const wait = async (condition, label, ms = 60_000) => {
+  const wait = async (condition, label, ms = 120_000) => {
     for (let i = 0, step = 50; i < ms / step; i++) {
       if (await condition()) return;
       if (i % 20 === 0) void app.syncCoordinator?.syncNow();
@@ -252,8 +252,10 @@ export async function playScreenshots({ endpoint, browserClient, outDir }) {
       [robin, "Her swim cap. The old one finally split."],
       [sam, "Got it. Home by 6."],
     ];
-    for (const [index, [client, text]] of conversation.entries())
+    for (const [index, [client, text]] of conversation.entries()) {
+      await client.send("Page.bringToFront").catch(() => {});
       await client.evaluate(`(${sendChat.toString()})(${JSON.stringify({ text, expected: index + 1 })})`);
+    }
     await robin.evaluate(`(${sendChat.toString()})(${JSON.stringify({ text: "", expected: conversation.length })})`);
     console.log(`Journal entries: ${await robin.evaluate(`(${writeJournal.toString()})()`)}`);
 
@@ -305,7 +307,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   assert.ok(executable && (outAt < 0 || args[outAt + 1]), "Usage: node scripts/play-screenshots.mjs <browser executable> [--out <directory>]");
   const profile = await mkdtemp(join(tmpdir(), "kin-play-"));
   const browser = spawn(executable, ["--headless=new", "--disable-gpu", "--disable-extensions", "--no-first-run",
-    "--no-default-browser-check", "--hide-scrollbars", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], BROWSER_STDIO);
+    "--no-default-browser-check", "--hide-scrollbars",
+    // Two members' pages take turns; neither may be throttled as a background tab.
+    "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], BROWSER_STDIO);
   let browserClient;
   let failed = false;
   try {
