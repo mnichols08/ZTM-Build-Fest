@@ -300,7 +300,17 @@ class KinJournal extends HTMLElement {
     }
     this.empty.hidden = !this.empty.textContent;
     if (searching) this.announce(shown.length === 1 ? "1 entry matches." : `${shown.length} entries match.`);
+    // A sync pass may redraw the list under the member: focus stays on the
+    // same entry, heading, thumbnail or button.
+    const active = this.list.contains(document.activeElement) ? document.activeElement : null;
+    const key = active && (active.id || (active.dataset.photoRef ? `photo:${active.dataset.photoRef}` : null) ||
+      (active.getAttribute("aria-label") ? `label:${active.getAttribute("aria-label")}` : null));
     this.list.replaceChildren(...groupByDate(shown).map((group) => this.renderDay(group)));
+    if (key) {
+      const next = [...this.list.querySelectorAll("[id], [data-photo-ref], [aria-label]")].find((node) =>
+        node.id === key || `photo:${node.dataset.photoRef}` === key || `label:${node.getAttribute("aria-label")}` === key);
+      next?.focus({ preventScroll: true });
+    }
   }
 
   renderDay({ date, entries }) {
@@ -320,6 +330,7 @@ class KinJournal extends HTMLElement {
     const article = document.createElement("article");
     article.className = "journal-entry";
     article.dataset.entryId = entry.id;
+    article.id = `journal-card-${entry.id}`;
     article.tabIndex = -1;
     const heading = document.createElement("h3");
     heading.id = `journal-entry-${entry.id}`;

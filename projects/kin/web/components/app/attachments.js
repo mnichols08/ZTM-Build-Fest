@@ -294,7 +294,12 @@ export class AttachmentController {
     if (opener?.isConnected) { opener.focus(); return; }
     // The row that opened the viewer may have been rebuilt meanwhile (a sync
     // tick, a progress update); return focus to the equivalent control.
-    const { attachmentId, action } = opener?.dataset ?? {};
+    const { attachmentId, action, photoRef } = opener?.dataset ?? {};
+    // A journal thumbnail (#503), redrawn by a private sync pass meanwhile.
+    if (photoRef) {
+      [...this.app.querySelectorAll(".journal-thumb[data-photo-ref]")].find((node) => node.dataset.photoRef === photoRef)?.focus();
+      return;
+    }
     if (!attachmentId) return;
     const matches = (root) => [...(root?.querySelectorAll?.("[data-attachment-id]") ?? [])]
       .find((node) => node.dataset.attachmentId === attachmentId && node.dataset.action === action &&

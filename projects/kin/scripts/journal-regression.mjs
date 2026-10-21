@@ -145,7 +145,7 @@ async function writeInJournal() {
   await wait(() => app.viewer.open && app.viewer.viewerImage.src.startsWith("blob:"), "the photo opens in the viewer");
   app.viewer.querySelector(".attachment-viewer-close").click();
   await frame();
-  check(!app.viewer.open && document.activeElement === thumb, "closing the viewer returns focus to the thumbnail");
+  check(!app.viewer.open && document.activeElement?.classList.contains("journal-thumb") && document.activeElement.dataset.photoRef === thumb.dataset.photoRef, "closing the viewer returns focus to the thumbnail");
 
   // Search and the month jump.
   typeInto(page.search, "COCOA cafe");
@@ -175,7 +175,7 @@ async function writeInJournal() {
   check(page.draftNote.hidden, "discarding leaves no draft");
 
   // Never household data: not in the projection, Today or household search.
-  const household = JSON.stringify(app.state);
+  const household = JSON.stringify(app.state, (_key, value) => (typeof value === "bigint" ? String(value) : value));
   check(!household.includes("cocoa") && !household.includes("apple tree") && !household.includes("garden"), "nothing of the journal is in household state");
   check(!app.pages.get("today").textContent.includes("cocoa"), "nothing of the journal is on Today");
   check(fits(), "still no sideways scrolling");
@@ -211,7 +211,7 @@ async function otherMembersJournal({ photoRef }) {
   return {
     ready: app.ctx.journal.status() === "ready",
     entries: app.ctx.journal.entries().length,
-    leaks: ["cocoa", "apple tree", "garden"].filter((word) => text.includes(word) || JSON.stringify(app.state).includes(word)),
+    leaks: ["cocoa", "apple tree", "garden"].filter((word) => text.includes(word) || JSON.stringify(app.state, (_key, value) => (typeof value === "bigint" ? String(value) : value)).includes(word)),
     photoStatus: response.status,
   };
 }
