@@ -18,6 +18,21 @@ documentation only.
   store and sync pass on the device. Nothing visible yet: the pass stays off
   until the vault key is kept on the device (#557) and the journal, list and
   reminder stories add the first private records.
+- **Home-screen shortcuts, finished** (#471, #472): long-press the installed
+  icon for **Add to shopping**, **Add a task**, **This week**, Shopping, Chat
+  and Today. The Add shortcuts open Quick add on Shopping or To do with the
+  title field focused. A locked Kin unlocks first, then lands; a shortcut
+  used while Kin is open lands at once. Simple view lands on Today, and a
+  Temporary member stays where the shortcut took them. Each shortcut has
+  its own 96 and 192 px PNG icon (Android ignores SVG-only ones), and the
+  app now has 192 and 512 px PNG icons and a maskable 512 px icon, all drawn
+  by `scripts/render-icons.mjs` with Node built-ins only and cached for
+  offline use.
+- **Count on the app icon** (#476): an optional number on the installed
+  app's icon, set per device under Notifications: Off (the default), Unread
+  messages, or Unread messages and my things today. Never shows content;
+  Lock and sign-out clear it.
+
 - **Encrypted key vault on the service, groundwork** (#564, [ADR 0018](docs/decisions/0018-account-key-vault.md)):
   the vault and wrapper formats, password/passkey/backup-code key
   derivations, server schema 21 with the vault routes (own member, trusted
@@ -133,6 +148,12 @@ documentation only.
   on Android (K-7F3A)"), the unlock form asks for that entry and names it
   under the field, older "Kin recovery key" entries still match, and after a
   backup-key unlock a one-time suggestion offers passkey unlock (#579).
+- **The unread chat count on the app icon is now opt-in** (#476): it used to
+  appear wherever the browser supported it; now it shows only after a member
+  chooses it under Notifications. The "Quick add" shortcut is now "Add a
+  task" and opens To do (its address is unchanged, so existing installs keep
+  working). A household's published install identity no longer puts its own
+  icon on every shortcut; each keeps Kin's shortcut icon.
 
 ## v1.3.0 — Member Names and Clearer Setup
 

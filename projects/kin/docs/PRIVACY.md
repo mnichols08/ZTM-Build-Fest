@@ -143,6 +143,16 @@ Mozilla, Apple or Microsoft) sees its own endpoint and when pushes arrive.
 Revocation, removal and household deletion delete subscriptions. See
 [Push notifications](PUSH.md).
 
+Count on the app icon (#476): off by default, per device. When a member
+turns it on, the installed app's icon shows a number (unread messages, and
+optionally their own things today), worked out on the device from decrypted
+state; nothing about it is sent to the service. The number is shown
+**outside the lock**: anyone who can see the device's home screen, dock or
+taskbar sees it, including after Kin is closed, and it tells them how much
+is waiting (never what). Locking Kin and signing out clear it; turning the
+setting off clears it at once. The browser and operating system receive only
+the number.
+
 Published install identity (v1.1, #78): off by default. If a household admin
 turns on "Show our name and icon on home screens", the service stores the
 household name, a short name, an optional description and the icons without

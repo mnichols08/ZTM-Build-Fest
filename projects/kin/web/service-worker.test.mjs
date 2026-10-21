@@ -92,6 +92,24 @@ test('the manifest and install icons are never cached and always come from the n
   }
 });
 
+test('every manifest icon is in the offline shell, and every shortcut opens offline (#473)', async () => {
+  const manifest = JSON.parse(await readFile(new URL('./manifest.webmanifest', import.meta.url), 'utf8'));
+  const { listeners, stored } = await worker(); let install;
+  listeners.get('install')({ waitUntil(value) { install = value; } }); await install;
+  const cached = stored.get('kin-static-v0.38.2');
+  const icons = [...manifest.icons, ...manifest.shortcuts.flatMap((shortcut) => shortcut.icons)].map((icon) => icon.src);
+  assert.ok(icons.length > 10);
+  for (const src of icons) assert.ok(cached.has(src), `${src} is cached`);
+  const offline = await worker({ offline: true });
+  const shell = new Response('offline-shell');
+  offline.stored.set('kin-static-v0.38.2', new Map([['/index.html', shell]]));
+  for (const { url } of manifest.shortcuts) {
+    let response;
+    offline.listeners.get('fetch')({ request: { method: 'GET', url: new URL(url, 'https://kin.test').href, mode: 'navigate' }, respondWith(value) { response = value; } });
+    assert.equal(await response, shell, `${url} opens the shell offline`);
+  }
+});
+
 test('a push always shows one content-free notification and never touches caches or keys (#85)', async () => {
   const listeners = new Map(); const shown = []; const fetched = [];
   const self = {

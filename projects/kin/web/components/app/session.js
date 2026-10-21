@@ -76,7 +76,7 @@ export class SessionController {
       await this.ctx.appearance.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
       // The household and security panels go in place first, then Simple
       // view (#345, ADR 0013) applies the cached layout before anything shows.
-      this.app.peoplePage.append(this.app.household, this.app.notifications, this.app.chatSettings);
+      this.app.peoplePage.append(this.app.household, this.app.notifications, this.app.appBadge, this.app.chatSettings);
       this.app.privacyPage.append(this.app.security);
       await this.ctx.simple.restore(snapshot.syncIdentity, session);
       this.assertCurrentSession(session);
@@ -151,9 +151,13 @@ export class SessionController {
     // Seal this unlock for a refresh of this tab; a lock meanwhile undoes it.
     void this.app.reloadResume?.arm(vault).then(() => this.app.reloadResume.sweep()).catch(() => {});
   }
-  lockHousehold(broadcast = true, { preserveSecurityOperation = false, endSession = false, keepReloadResume = false } = {}) {
+  lockHousehold(broadcast = true, { preserveSecurityOperation = false, endSession = false, keepReloadResume = false, keepBadge = false } = {}) {
     // Every lock but the one on page unload ends refresh-resume (#351).
     if (!keepReloadResume) void this.app.reloadResume?.disarm();
+    // Every lock but closing Kin clears the app icon count (#476); sign-out
+    // is a lock that ends the session. The unread count goes with the room.
+    if (!keepBadge) this.ctx.badge?.clear();
+    this.app.chatUnread = null;
     if (broadcast) {
       // A protected read holds a native transaction while crypto runs. Notify
       // peers before the epoch write queues behind that read, so they abort it
