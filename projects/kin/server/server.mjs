@@ -12,6 +12,7 @@ import { PushService } from "./push-service.mjs";
 import { ChatBlobService } from "./chat-blob-service.mjs";
 import { ChatRelayService } from "./chat-relay-service.mjs";
 import { BoardRelayService } from "./board-relay-service.mjs";
+import { PrivateRelayService } from "./private-relay-service.mjs";
 import { AccountVaultService } from "./account-vault-service.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
@@ -99,6 +100,12 @@ export function createKinServer(options = {}) {
   // The fridge's relay (#317): board events in a third encrypted stream.
   const boardRelayService = new BoardRelayService({ syncService, store });
   syncService.boardRelayService = boardRelayService;
+  // Each member's private relay (#491, ADR 0019): a stream keyed by member.
+  const privateRelayService = new PrivateRelayService({ syncService, store });
+  syncService.privateRelayService = privateRelayService;
+  // Removing a member purges their private stream, in the removal's own
+  // transaction (removeMembership runs inside withTransaction).
+  service.onMemberRemoved = (_householdId, memberId) => privateRelayService.forgetMember(memberId);
   // Members' encrypted key vaults (ADR 0018, #564).
   const accountVaultService = options.accountVaultService ?? new AccountVaultService({ store, now: options.now ?? (() => Date.now()) });
   // A removed member's account vault and password verifier go with them.
@@ -120,6 +127,7 @@ export function createKinServer(options = {}) {
     chatBlobService,
     chatRelayService,
     boardRelayService,
+    privateRelayService,
     accountVaultService,
     store,
     webauthn,
@@ -279,6 +287,7 @@ export function createKinServer(options = {}) {
     chatBlobService,
     chatRelayService,
     boardRelayService,
+    privateRelayService,
     accountVaultService,
     liveService,
     webauthn,
@@ -420,7 +429,8 @@ async function api(request, response, url, context) {
     (request.method === "PUT" && url.pathname === "/api/household/settings");
   // Event envelopes travel as binary batches (web/sync/envelope-wire.js).
   const envelopePush = request.method === "POST" &&
-    (url.pathname === "/api/sync/events" || url.pathname === "/api/chat/events" || url.pathname === "/api/board/events");
+    (url.pathname === "/api/sync/events" || url.pathname === "/api/chat/events" || url.pathname === "/api/board/events" ||
+      url.pathname === "/api/private/events");
   const body = envelopePush
     ? await readEnvelopeBatch(request, response)
     : binaryUpload
@@ -1201,6 +1211,29 @@ async function api(request, response, url, context) {
     }
     return;
   }
+  // A member's private stream (#491, ADR 0019): always the session's own
+  // member's; no route names a member.
+  if (url.pathname === "/api/private/events" && request.method === "POST") {
+    const auth = syncService.authorize(session);
+    json(response, 200, withTransaction(context, () => context.privateRelayService.push(auth, body)));
+    return;
+  }
+  if (url.pathname === "/api/private/status" && request.method === "GET") {
+    json(response, 200, context.privateRelayService.status(syncService.authorize(session)));
+    return;
+  }
+  if (url.pathname === "/api/private/events" && request.method === "GET") {
+    const auth = syncService.authorize(session);
+    try {
+      binary(response, encodeEventPage(context.privateRelayService.pull(auth, url.searchParams.get("cursor") ?? "", url.searchParams.get("limit") ?? undefined)));
+    } catch (error) {
+      if (!(error instanceof EnvelopeWireError) &&
+          !(error instanceof DurableStoreError && error.code === "sync_store_invalid")) throw error;
+      console.error(JSON.stringify({ event: "private_store_invalid" }));
+      throw new PairingError("sync_store_invalid", "Kin's stored private history is invalid.", 500);
+    }
+    return;
+  }
   if (url.pathname === "/api/chat/status" && request.method === "GET") {
     json(response, 200, context.chatRelayService.status(syncService.authorize(session)));
     return;
@@ -1611,6 +1644,34 @@ async function api(request, response, url, context) {
     });
     const result = withTransaction(context, () =>
       service.setBoardPolicy(session, { limited: flow.limited, temporary: flow.temporary }, auth.member.id),
+    );
+    if (result.changed) syncService.hintHousehold(auth.household.id);
+    json(response, 200, result);
+    return;
+  }
+  // Private storage for Limited members (ADR 0019): the chat policy's flow,
+  // its own purpose.
+  if (request.method === "POST" && url.pathname === "/api/household/private-policy/options") {
+    const change = service.privatePolicyContext(session);
+    if (typeof body?.limited !== "boolean") throw badRequest();
+    json(response, 200, issueAuthenticationFlow(
+      { purpose: "set-private-policy", limited: body.limited, memberId: change.memberId, deviceId: change.deviceId },
+      change.credentialIds,
+      context,
+    ));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/household/private-policy/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "set-private-policy") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = service.credentials.get(body.credential?.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const result = withTransaction(context, () =>
+      service.setPrivatePolicy(session, { limited: flow.limited }, auth.member.id),
     );
     if (result.changed) syncService.hintHousehold(auth.household.id);
     json(response, 200, result);

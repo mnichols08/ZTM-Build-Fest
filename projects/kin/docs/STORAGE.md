@@ -325,6 +325,38 @@ renumber pending events check the sequence they started from, so two tabs
 can't take the same sequence even without Web Locks. Deleting the log with the household, like the blob database,
 is still to come.
 
+## Private log (#489)
+
+A member's private log is kept apart from every other store, in its own
+database per member, `kin-private-log:<householdId>:<memberId>`, version 1
+(`web/private/private-log-store.js`, modelled on the board log):
+
+- `events`: `{ order, eventId, envelope }`, every private event as the signed
+  envelope it travelled in, sealed under a member-key epoch. Only the member's
+  account vault holds the member key, so the log needs no sealing of its own
+  and root rotation doesn't touch it. Signatures are checked once, when an
+  event arrives; reopening the log only decrypts.
+- `ids`: `{ eventId, order }`, so each event is stored once even when two
+  tabs store it together.
+- `outbox`: `{ deviceSequence, eventId }`, this device's private events the
+  relay hasn't accepted yet.
+- `meta`: `{ key: "state", nextOrder, cursor, deviceSequence, provisional,
+  refused, vault }`: the relay position read up to, this device's last
+  private sequence ([SYNC](SYNC.md#private-relay-489)), the last 100 relay
+  events skipped because they failed authentication, and `vault`, the last
+  sealed account vault seen (`{ version, ciphertext }`, ciphertext under the
+  vault key exactly as the service stores it) so an offline unlock can still
+  open the member key. A cached version newer than the service's is preferred.
+
+While Kin is unlocked the decrypted log is held in memory
+(`web/chat/chat-records.js`, as the fridge does) for the engine's private log
+to mirror, and the member key's epochs are held as non-extractable
+CryptoKeys; locking zeroes and drops both. Writing and renumbering take a Web
+Lock per member, and the store writes that add or renumber pending events
+check the sequence they started from. The database is created only once the
+device holds a vault key (ADR 0018); it stays on a device that leaves the
+household, sealed under keys that device keeps, like the other logs.
+
 ## Account key vault on the service (ADR 0018, #564)
 
 Not a device store: the service keeps each member's sealed key vault in
@@ -332,8 +364,8 @@ server schema 21 (`account_vaults`, `account_vault_wrappers`,
 `account_passwords`), with a forward migration from 20, purged with the
 household. The vault holds the member's household and chat epoch keys (read
 from this device's `epochs` store, opened with the device key), the member's
-certification key and a reserved private-storage key, sealed by the member's
-device. No IndexedDB database or record format changes; the key database
+certification key and, once they use private storage, their member-key
+epochs (contents format 2, ADR 0019), sealed by the member's device. No IndexedDB database or record format changes; the key database
 stays at version 6. Formats and parameters: [CRYPTOGRAPHY](CRYPTOGRAPHY.md#account-key-vault-adr-0018).
 
 ## Handoff storage

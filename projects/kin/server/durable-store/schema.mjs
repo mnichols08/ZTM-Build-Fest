@@ -852,6 +852,59 @@ export const schemaMethods = {
     if (sqlitePragma(this.db, "user_version", { simple: true }) === 21) {
       try {
         this.transaction(() => {
+          // ADR 0019 (#491): each member's private relay stream, keyed by
+          // member, laid out like the chat and board relays; and "private
+          // storage for Limited members" (on by default), plaintext
+          // authorization metadata the service enforces like the chat and
+          // fridge policies. The household column lets a household's
+          // deletion purge the streams; there is no foreign key to members,
+          // so a stream outlives an authority restore (removal purges it).
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN private_limited INTEGER NOT NULL DEFAULT 1
+              CHECK (private_limited IN (0, 1));
+            ALTER TABLE households ADD COLUMN private_policy_revision INTEGER NOT NULL DEFAULT 0
+              CHECK (private_policy_revision >= 0);
+            CREATE TABLE private_relay_state (
+              member_id TEXT PRIMARY KEY CHECK (length(member_id) = 32),
+              household_id TEXT NOT NULL REFERENCES households(id),
+              next_sequence INTEGER NOT NULL CHECK (next_sequence >= 1),
+              max_logical_time TEXT NOT NULL
+            );
+            CREATE INDEX private_relay_state_by_household ON private_relay_state(household_id);
+            CREATE TABLE private_events (
+              member_id TEXT NOT NULL CHECK (length(member_id) = 32),
+              household_id TEXT NOT NULL REFERENCES households(id),
+              relay_sequence INTEGER NOT NULL CHECK (relay_sequence >= 1),
+              event_id TEXT NOT NULL,
+              device_id TEXT NOT NULL,
+              device_sequence INTEGER NOT NULL CHECK (device_sequence >= 1),
+              key_epoch INTEGER NOT NULL CHECK (key_epoch BETWEEN 1 AND 128),
+              canonical_envelope TEXT NOT NULL,
+              PRIMARY KEY (member_id, relay_sequence),
+              UNIQUE (member_id, event_id)
+            );
+            CREATE INDEX private_events_by_household ON private_events(household_id);
+            CREATE TABLE private_device_sequences (
+              member_id TEXT NOT NULL CHECK (length(member_id) = 32),
+              household_id TEXT NOT NULL REFERENCES households(id),
+              device_id TEXT NOT NULL,
+              last_sequence INTEGER NOT NULL CHECK (last_sequence >= 1),
+              PRIMARY KEY (member_id, device_id)
+            );
+            CREATE INDEX private_device_sequences_by_household ON private_device_sequences(household_id);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(22, Date.now());
+          sqlitePragma(this.db, "user_version = 22");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the private storage migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 22) {
+      try {
+        this.transaction(() => {
           // #558 (ADR 0018): a member's username for password sign-in, in its
           // normalized form (web/security/account-credentials.js). Unique on
           // the service among active members, so a removed member's name can
@@ -862,8 +915,8 @@ export const schemaMethods = {
             CREATE UNIQUE INDEX members_active_username ON members(username)
               WHERE username IS NOT NULL AND active = 1;
           `);
-          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(22, Date.now());
-          sqlitePragma(this.db, "user_version = 22");
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(23, Date.now());
+          sqlitePragma(this.db, "user_version = 23");
         });
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;

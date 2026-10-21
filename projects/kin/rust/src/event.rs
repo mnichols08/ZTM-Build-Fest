@@ -40,6 +40,8 @@ id_type!(BoardId);
 id_type!(RecipeId);
 // A Shopping store section, such as "Dairy" (#411, store_sections.rs).
 id_type!(StoreSectionId);
+// A record in a member's private log (#489, private.rs).
+id_type!(PrivateRecordId);
 
 /// What a chat message's content blob holds (#109).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -466,6 +468,12 @@ pub enum EventKind {
         intro: String,
         entries: Vec<crate::sitter::SitterEntry>,
     },
+    /// A member's private log (#489, private.rs): the placeholder private
+    /// note, set to `text`; empty text removes it.
+    PrivateNoteSet {
+        note_id: PrivateRecordId,
+        text: String,
+    },
 }
 
 impl EventKind {
@@ -483,6 +491,12 @@ impl EventKind {
                 | EventKind::ChatPollClosed { .. }
                 | EventKind::ChatTopicSet { .. }
         )
+    }
+
+    /// Whether this is a private event (#489, ADR 0019), which only a
+    /// member's private log holds.
+    pub const fn is_private(&self) -> bool {
+        matches!(self, EventKind::PrivateNoteSet { .. })
     }
 
     /// Whether this is a fridge event (#317), which only the board log holds.

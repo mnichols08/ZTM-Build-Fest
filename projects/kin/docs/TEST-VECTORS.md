@@ -326,6 +326,34 @@ record 2, note 1 with intro "Hi": `"KSIT"`, `01 00`, `00 00`, count 3, then
 then `02 00` "Hi". An empty history is `"KSIT"`, `01 00 00 00`, a zero count
 and a zero intro length.
 
+## A member's private log (#489)
+
+Written out by hand in `rust/src/private_tests.rs`: household `aa` × 16,
+member Sam `01` × 16 on device `11` × 16, event IDs `numbered_id(n)`, the
+timestamp 1,791,475,200,000 + n. `web/wasm/kin-private.test.mjs` mirrors 067.
+
+**065 — Private note (kind 100).** Event 1, logical time 1, note `5a` × 16
+with text "Call Mum": header `01 00` `64 00`, then the IDs, timestamp and
+logical time, payload length `1c 00 00 00` (20 + 8), then `5a` × 16,
+`08 00 00 00` and "Call Mum" (116 bytes in all). It decodes to
+`PRIVATE_NOTE_SET` and re-encodes byte for byte. A zero note ID, a length
+that doesn't cover the text exactly, a payload under 20 bytes, a tab, invalid
+UTF-8 or 2,049 bytes fail with code 2; a line feed, 2,048 bytes and empty
+text (removal) decode. Kinds 101, 150 and 199 fail with code 3.
+
+**066 — Logs.** The household, chat and board logs and a KINE request refuse
+the note with code 4; the private log refuses an item record with code 4 and
+holds at most 50,000 records (the next append fails with code 5). Two
+members' notes in one private log fail replay with code 4.
+
+**067 — KPRV.** An empty log is `"KPRV"`, `01 00 00 00`, 16 zero bytes,
+count 0, `01 00 00 00` (one section), `01 00 00 00` (section 1) and length
+`04 00 00 00`, then a zero note count: 44 bytes. After note 2 "two" (event 1)
+and note 1 "one" (event 2), the member is `01` × 16, the count 2, and the
+notes section lists note 1 (logical time 2, device `11` × 16, "one") before
+note 2. A later note for the same ID replaces it and empty text removes it,
+the latest in replay order winning.
+
 ## Household chat (v1.1)
 
 Chat records are written out by hand in `rust/src/chat_tests.rs`; IDs, blob

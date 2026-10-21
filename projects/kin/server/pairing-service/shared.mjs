@@ -103,6 +103,27 @@ export function boardAccess(member, household, now = Date.now()) {
   return kind === "limited" ? policy.limited : policy.temporary;
 }
 
+/** Private storage for Limited members (ADR 0019): on unless a household
+ * admin turned it off. Adults always have it; Temporary members never do. */
+export function privatePolicyOf(household) {
+  const policy = household?.privatePolicy;
+  return {
+    limited: policy?.limited !== false,
+    revision: Number.isSafeInteger(policy?.revision) && policy.revision >= 0 ? policy.revision : 0,
+  };
+}
+
+/** Whether a member may use their private stream: "write" or "none". The
+ * stream is always the member's own; this only says whether they may have
+ * one at all. */
+export function privateAccess(member, household, now = Date.now()) {
+  if (!canParticipate(member, now)) return "none";
+  const kind = normalizeMemberKind(member.kind);
+  if (kind === "adult") return "write";
+  if (kind === "limited") return privatePolicyOf(household).limited ? "write" : "none";
+  return "none";
+}
+
 export function chatAccess(member, household, now = Date.now()) {
   if (!canParticipate(member, now)) return "none";
   const kind = normalizeMemberKind(member.kind);

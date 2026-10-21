@@ -185,6 +185,16 @@ Nothing in the vault, the verifier or the local wrapper lets the service
 read household content: it sees `authKey` (from which the password-derived
 keys can't be computed) and stores only its Argon2id hash.
 
+## Private storage per member (ADR 0019, #489)
+
+| Threat | With private storage |
+| --- | --- |
+| Another member, an Adult or a household admin, wants to read someone's private things | Can't: private envelopes are sealed under that member's member key, which lives only in their vault (sealed under their vault key) and on their unlocked devices. No route names a member, so another member's device reaches only its own private stream, and a device refuses a private event signed by anyone else's device. An admin can turn private storage off for children and teens, which stops the relay, and can remove a member, which purges their stream; neither reveals anything. |
+| Malicious or compromised service | Sees only ciphertext, sizes, times, the sending device and the member-key epoch number of each private envelope, per member; can withhold or delay them, or serve an older vault version (a device prefers a newer one it has cached). Can't read them, move one into another member's stream (the member is in the AAD), or forge one (device signatures). |
+| A revoked device of the member | Loses its session, so it reaches nothing. It keeps what it already had, including member-key epochs it held. The member's remaining devices start a new epoch once they see the revocation, and new private envelopes use it; an envelope claiming that device under a later epoch is refused. |
+| Lost every device | Not a loss: signing in on a new device (ADR 0018) opens the vault, which holds every member-key epoch, and the private stream is pulled again. |
+| Timing and volume | The service and anyone watching it can see when and how much a member writes privately. Live hints go only to that member's own devices, so other members' devices don't learn it. |
+
 ## v0.9.x threat assessment (historical; local lock added above)
 
 | Threat                                            | Protected                                                                                                           | Partially protected                                                                                                        | Not protected                                                                  |

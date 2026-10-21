@@ -18,9 +18,18 @@ documentation only.
   a username and an Argon2id verifier of a key derived from the password.
   The member's encrypted account vault is created on their first device and
   kept current. Joining still needs the inviter's approval. A member with no
-  passkey yet confirms admin actions with a fresh password. Server schema 22
+  passkey yet confirms admin actions with a fresh password. Server schema 23
   (`members.username`). The passkey and backup-key setup stays available as
   "Set up with a passkey instead".
+- **Private storage for each member, groundwork** (#485, #489, [ADR 0019](docs/decisions/0019-member-private-log.md)):
+  a member key kept only in the member's account vault (vault contents
+  format 2) and rotated when one of their devices is revoked; a private log
+  in the engine (kinds from 100, KPRV), a private relay stream on the service
+  keyed by member (server schema 22, the admin's "private storage for
+  children and teens" setting, purge on member removal), and a private log
+  store and sync pass on the device. Nothing visible yet: the pass stays off
+  until the vault key is kept on the device (#557) and the journal, list and
+  reminder stories add the first private records.
 - **Home-screen shortcuts, finished** (#471, #472): long-press the installed
   icon for **Add to shopping**, **Add a task**, **This week**, Shopping, Chat
   and Today. The Add shortcuts open Quick add on Shopping or To do with the

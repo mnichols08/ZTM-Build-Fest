@@ -279,3 +279,12 @@ pub fn board_state(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinEr
     let context = decode_context(input)?;
     crate::board::encode_board(history.replay(&context)?.board())
 }
+
+/// A member's private projection (`kin_private_state`, #489): the
+/// record-less KINE context against the private log; publishes KPRV
+/// (private.rs).
+pub fn private_state(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(input)?;
+    let count = history.len();
+    crate::private::encode_private(history.replay(&context)?.private(), count)
+}

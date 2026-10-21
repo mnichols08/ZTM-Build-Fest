@@ -92,7 +92,7 @@ instead").
 
 - **Usernames** are unique among the service's active members,
   case-insensitive, and stored in normalized form with the member
-  (`members.username`, server schema 22): NFKC, trimmed, lower-cased, 3 to 32
+  (`members.username`, server schema 23): NFKC, trimmed, lower-cased, 3 to 32
   ASCII letters, digits, dots, dashes or underscores
   (`web/security/account-credentials.js`, used by both the browser and the
   service). A removed member's username can be chosen again. A claim waiting

@@ -6,6 +6,7 @@ import {
   canParticipate,
   boardPolicyOf,
   chatPolicyOf,
+  privatePolicyOf,
   isHouseholdAdmin,
   normalizeMemberKind,
   PairingError,
@@ -291,6 +292,34 @@ export const membershipMethods = {
     return { ...household.boardPolicy, changed: true };
   },
 
+  // Private storage for Limited members (ADR 0019): admin only, fresh
+  // passkey, like the chat policy. Off means the service refuses Limited
+  // members' private streams; nobody can read them either way.
+  privatePolicyContext(sessionToken) {
+    const { member, household, device } = this.authorize(sessionToken);
+    requireHouseholdAdmin(member, "change private storage for children and teens", this.now());
+    return { memberId: member.id, deviceId: device.id, householdId: household.id, credentialIds: [...member.credentials] };
+  },
+
+  setPrivatePolicy(sessionToken, policy, reauthenticatedMemberId) {
+    if (typeof policy?.limited !== "boolean")
+      throw new PairingError("private_policy_invalid", "Choose whether children and teens have private storage.");
+    const context = this.privatePolicyContext(sessionToken);
+    if (reauthenticatedMemberId !== context.memberId)
+      throw new PairingError("fresh_auth_required", "Authenticate with your passkey again before changing private storage.", 401);
+    const household = this.households.get(context.householdId);
+    const current = privatePolicyOf(household);
+    if (current.limited === policy.limited) return { ...current, changed: false };
+    household.privatePolicy = { limited: policy.limited, revision: current.revision + 1 };
+    household.version += 1;
+    this.audit("private_policy_changed", {
+      householdId: household.id, actorId: context.memberId,
+      limited: policy.limited, revision: household.privatePolicy.revision,
+    });
+    this.persistHousehold(household.id);
+    return { ...household.privatePolicy, changed: true };
+  },
+
   hasUsableTrustedDevice(memberId) {
     return [...this.devices.values()].some((device) =>
       device.memberId === memberId && !device.revokedAt,
@@ -369,6 +398,9 @@ export const membershipMethods = {
     delete target.password;
     this.onAccountRemoved?.(household.id, memberId);
     this.persistHousehold(household.id);
+    // Their private stream goes with them (ADR 0019); copies on their own
+    // devices stay, as for household data.
+    this.onMemberRemoved?.(household.id, memberId);
     return { memberId, removed: true };
   },
 };
