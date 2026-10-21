@@ -168,6 +168,7 @@ async function connect(url) {
   // Requests the page has started and not finished, so a stalled load can
   // say what it waits for (#469).
   const inFlight = new Map();
+  const failedRequests = [];
   socket.onmessage = ({ data }) => {
     const message = JSON.parse(data);
     if (message.method)
@@ -191,6 +192,11 @@ async function connect(url) {
       const request = inFlight.get(message.params.requestId);
       if (request) Object.assign(request, { status: message.params.response.status, sw: Boolean(message.params.response.fromServiceWorker) });
     } else if (message.method === "Network.loadingFinished" || message.method === "Network.loadingFailed") {
+      const request = inFlight.get(message.params.requestId);
+      if (message.method === "Network.loadingFailed" && request)
+        failedRequests.push({ path: request.url.replace(/^https?:\/\/[^/]+/, "").slice(0, 120), type: request.type,
+          error: message.params.errorText, canceled: Boolean(message.params.canceled), at: Date.now() });
+      if (failedRequests.length > 20) failedRequests.shift();
       inFlight.delete(message.params.requestId);
     }
   };
@@ -248,6 +254,11 @@ async function connect(url) {
       const now = Date.now();
       return [...inFlight.values()].sort((a, b) => a.at - b.at).slice(0, limit)
         .map(({ url, type, status, sw, at }) => ({ path: url.replace(/^https?:\/\/[^/]+/, "").slice(0, 120), type, status, sw, ageMs: now - at }));
+    },
+    // The most recent requests that failed (cancelled ones included).
+    failed(limit = 6) {
+      const now = Date.now();
+      return failedRequests.slice(-limit).map(({ at, ...rest }) => ({ ...rest, ageMs: now - at }));
     },
     close: () => socket.close(),
   };
@@ -1242,6 +1253,8 @@ try {
       defined: Boolean(customElements.get("kin-app")), controlled: Boolean(navigator.serviceWorker?.controller),
       worker: navigator.serviceWorker?.controller?.state ?? null,
       modules: performance.getEntriesByType("resource").filter((entry) => entry.name.endsWith(".js")).length,
+      lastModules: performance.getEntriesByType("resource").filter((entry) => entry.name.endsWith(".js")).slice(-3).map((entry) => new URL(entry.name).pathname),
+      navigation: performance.getEntriesByType("navigation")[0]?.type ?? null,
       security: Boolean(document.querySelector("kin-app")?.security), phase: document.querySelector("kin-app")?.security?.phase ?? null,
       starting: Boolean(document.querySelector("kin-app")?.starting), busy: document.querySelector("kin-app")?.busy ?? null,
       status: document.querySelector("kin-app")?.status?.textContent ?? null, body: document.body?.innerText?.slice(0, 200) ?? null,
@@ -1253,7 +1266,7 @@ try {
       await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.security?.heading)'), { attempts: 600 });
     } catch (error) {
       const state = await tabFacts(client);
-      error.message += ` — tab state ${JSON.stringify(state)}; unfinished requests ${JSON.stringify(client.unfinished())}; recent problems ${JSON.stringify(problems.slice(-5)).slice(0, 2000)}`;
+      error.message += ` — tab state ${JSON.stringify(state)}; unfinished requests ${JSON.stringify(client.unfinished())}; failed requests ${JSON.stringify(client.failed())}; recent problems ${JSON.stringify(problems.slice(-5)).slice(0, 2000)}`;
       throw error;
     }
     const locked = await client.evaluate('document.querySelector("kin-app").security.phase !== "unlocked"');
@@ -1674,7 +1687,7 @@ try {
     const resume = await first.evaluate(`({ navigation: performance.getEntriesByType("navigation")[0]?.type ?? null,
       ticket: Boolean(sessionStorage.getItem("kin.reload-resume")), armed: Boolean(document.querySelector("kin-app")?.reloadResume?.armed),
       preference: localStorage.getItem("kin.reload-resume-enabled") })`).catch((reason) => ({ unreadable: String(reason?.message ?? reason) }));
-    error.message += ` — tab state ${JSON.stringify(await tabFacts(first))}; resume ${JSON.stringify(resume)}; unfinished requests ${JSON.stringify(first.unfinished())}; recent problems ${JSON.stringify(problems.slice(-3)).slice(0, 800)}`;
+    error.message += ` — tab state ${JSON.stringify(await tabFacts(first))}; resume ${JSON.stringify(resume)}; unfinished requests ${JSON.stringify(first.unfinished())}; failed requests ${JSON.stringify(first.failed())}; recent problems ${JSON.stringify(problems.slice(-3)).slice(0, 800)}`;
     throw error;
   }
   // Home-screen shortcuts and the app icon count (#471): each shortcut loads
@@ -1682,7 +1695,7 @@ try {
   try {
     console.log(await shortcutsBadgeRegressions(first, { origin, until, ready, recovery: recoverySecret }));
   } catch (error) {
-    error.message += ` — tab state ${JSON.stringify(await tabFacts(first))}; unfinished requests ${JSON.stringify(first.unfinished())}`;
+    error.message += ` — tab state ${JSON.stringify(await tabFacts(first))}; unfinished requests ${JSON.stringify(first.unfinished())}; failed requests ${JSON.stringify(first.failed())}`;
     throw error;
   }
   if (heavy) console.log(await fridgeRegressions(first, until));
