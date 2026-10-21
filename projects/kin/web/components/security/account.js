@@ -432,7 +432,7 @@ export class SecurityAccount {
     const nextInput = this.passwordField(form, { id: "account-new-password", label: "New password", autocomplete: "new-password", hint: PASSWORD_GUIDANCE });
     const againInput = this.passwordField(form, { id: "account-new-password-again", label: "New password again", autocomplete: "new-password" });
     if (this.state().requireBoth) this.note(form, "Your account asks for your password and your passkey, so you'll use your passkey too.");
-    this.note(form, "Your other devices keep unlocking with your old password until Kin asks you to sign in there again; your new password takes over from then.");
+    this.note(form, "Your other devices ask for the new password the next time they unlock with a connection; until then, offline, they still open with the old one.");
     this.actions(form, "Change password");
     section.append(form);
   }

@@ -67,7 +67,7 @@ The [changelog](CHANGELOG.md) has every version, newest first, and marks the one
 
 ## Install, build, and run
 
-Requirements: Rust/Cargo with the `wasm32-unknown-unknown` target, Node.js 24.16.0 or later, npm, and a modern browser with WebAssembly, Web Crypto, Web Locks, ES modules, Custom Elements and IndexedDB. Passkeys are needed for server identity/pairing. Where the passkey supports the PRF extension, it becomes the everyday unlock on that device; the user-held recovery key remains the explicit backup unlock and the only unlock while offline. Use HTTPS outside localhost.
+Requirements: Rust/Cargo with the `wasm32-unknown-unknown` target, Node.js 24.16.0 or later, npm, and a modern browser with WebAssembly, Web Crypto, Web Locks, ES modules, Custom Elements and IndexedDB. Passkeys are needed for server identity/pairing. Where the passkey supports the PRF extension, it becomes the everyday unlock on that device, online and offline; a password (for an account) or the user-held recovery key remains the backup unlock. Use HTTPS outside localhost.
 
 From the repository root in PowerShell:
 

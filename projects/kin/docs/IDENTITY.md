@@ -188,6 +188,30 @@ and is one request (`server/pairing-service/account.mjs`, `server.mjs`):
 | `POST /api/account/passkeys/options` `{ currentAuthKey }` / `…/finish` `{ flow, credential }` | Registers a passkey for the signed-in member (WebAuthn registration with user verification; the passkey is named for the username). From then on the member's admin-only actions ask for a passkey, not the password. |
 | `POST /api/account/vault/wrappers` `{ currentAuthKey, put, remove }` | Removes and adds vault wrappers in one transaction, if the resulting set keeps the wrapper-set rules (`vault_wrapper_rules`; CRYPTOGRAPHY). Adding a passkey's wrapper removes the password-only one; "require password and passkey" swaps the passkey wrapper for a combined one and back; a new backup code replaces the old. |
 | `POST /api/account/password` `{ currentAuthKey, salt, iterations, authKey, vaultChange? }` | A new password: the new Argon2id verifier and the re-wrapped password wrappers in one transaction (`password_changed` in the audit log). |
+| `POST /api/account/passkeys/remove` `{ currentAuthKey, credentialId, vaultChange? }` | Removes one of the member's passkeys (#592 follow-up): the vault wrappers that named it (and, for the last passkey, a password wrapper back) and the service's record of it, in one transaction (`passkey_removed`). Never the last way in: a member without a password keeps one passkey (`last_way_in`), and the vault keeps a wrapper a password or passkey opens. |
+| `PUT` / `DELETE /api/account/vault/wrappers/<id>` | One wrapper at a time, after the same fresh confirmation: `currentAuthKey`, or `{ flow, credential }` from `POST /api/account/confirm/options` (a fresh assertion of the member's own passkey); otherwise `fresh_auth_required` (401). |
+| `POST /api/account/migrate/options` / `…/finish` `{ flow, credential, username, salt, iterations, authKey }` | Moves a member set up the old way to an account (#575): a fresh assertion of their own passkey, then their username and password (`account_migrated`). Refused once they have a password (`account_exists`) and for Temporary members (`account_unavailable`). |
+
+**Moving an existing member to an account** (#574/#575): a member who set
+Kin up with a passkey and a per-device backup key, before accounts, is
+invited on the next unlock (a calm Today card, and **Your account** under
+Security; never forced) to choose a username and password. One touch of
+their passkey confirms it and, where the passkey supports PRF, gives the
+vault its passkey wrapper, so they never have a password-only one and their
+next device signs in with the passkey alone; without PRF, the password
+opens the vault. The device then makes the vault from the household and
+chat keys it holds and a new certification key, endorses that key, and
+adds a password unlock beside its passkey and backup key. A device of a
+member who moved on another device offers **Use my account here**: the
+password (and, if the vault only opens with a passkey, one touch of it)
+gives this device the vault key too. Every step resumes after an
+interruption. Members who decline keep using Kin exactly as before. The
+per-device backup keys keep working; once the member has a backup code,
+Security says they're no longer needed (#576).
+
+**Removing a passkey** (#592 follow-up): under Security, each passkey has
+**Remove this passkey**, after the password; the last one's going puts the
+account back in the password-only stage.
 
 **Adding a passkey** (#561): after the password, the browser registers the
 passkey, takes two PRF outputs from it (from the registration where the
