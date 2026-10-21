@@ -279,6 +279,23 @@ export class PrivateLog {
     return eventId;
   }
 
+  /**
+   * Makes and stores one private change from an intent (kin-prefs.js
+   * PREFS_COMMANDS, #520): the engine checks it against the log as it
+   * stands (a change that changes nothing fails with engine code 4).
+   * Resolves with its event ID.
+   */
+  async change(command) {
+    this.assertActive();
+    await this.refresh();
+    const { asOf, civilDate } = projectionContext(this.now());
+    const { encodedEvent } = this.engine.executePrivateCommand(command, {
+      eventId: newPrivateId(), householdId: this.identity.householdId, actorId: this.identity.memberId,
+      deviceId: this.identity.deviceId, timestamp: this.now(), logicalTime: this.nextLogicalTime(),
+    }, this.records.view(), asOf, civilDate, this.syncIdentity());
+    return this.append(encodedEvent);
+  }
+
   /** Runs `work` while no tab of this member is writing privately. */
   exclusive(work) {
     return this.locks?.request ? this.locks.request(`kin-private-send:${this.identity.householdId}:${this.identity.memberId}`, work) : work();

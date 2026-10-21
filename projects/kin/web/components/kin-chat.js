@@ -43,6 +43,7 @@ import { activeMention, mentionOptions, splitMentions, resolveMentions } from ".
 import "./kin-emoji-picker.js";
 import "./kin-chat-search.js";
 import { fitChat } from "../chat/chat-layout.js";
+import { prefersReducedMotion } from "../appearance/display-prefs.js";
 
 /** Rows rendered at first and added per page. */
 const PAGE = 60;
@@ -1908,7 +1909,7 @@ class KinChat extends HTMLElement {
     this.highlighted = original.messageId;
     this.reconcile();
     row = this.rowFor(original.messageId);
-    const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const calm = prefersReducedMotion();
     row.tabIndex = -1;
     row.scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
     row.focus({ preventScroll: true });

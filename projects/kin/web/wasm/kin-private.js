@@ -2,16 +2,21 @@
 // (rust/src/private.rs) owns the records and their replay; this module only
 // names the kinds and reads the KPRV projection Rust returns.
 //
-// Kinds 100–199 are reserved for private records. The only kind so far is
-// the placeholder PRIVATE_NOTE_SET (100); the journal, "Just for me" and
-// reminders/settings stories add theirs, and their own KPRV sections.
+// Kinds 100–199 are reserved for private records: the placeholder
+// PRIVATE_NOTE_SET (100), and reminders and settings (120, 121, 130;
+// kin-prefs.js) with KPRV sections 12 and 13. The journal and "Just for me"
+// stories add theirs, and their own KPRV sections.
+import { decodeReminders, decodeSettings, PREFS_KIND_CODES, SECTION_REMINDERS, SECTION_SETTINGS } from "./kin-prefs.js";
 
 export const FIRST_PRIVATE_KIND = 100;
 export const LAST_PRIVATE_KIND = 199;
 export const MAX_PRIVATE_EVENT_COUNT = 50_000;
 export const MAX_PRIVATE_NOTE_BYTES = 2048;
-/** Event kinds from 100, in order. */
-export const PRIVATE_EVENT_KINDS = Object.freeze(["PRIVATE_NOTE_SET"]);
+/** Private event kinds by code (codes in 100–199 may be unassigned). */
+export const PRIVATE_KIND_CODES = Object.freeze({ PRIVATE_NOTE_SET: 100, ...PREFS_KIND_CODES });
+/** Private event kinds, in code order. */
+export const PRIVATE_EVENT_KINDS = Object.freeze(Object.keys(PRIVATE_KIND_CODES)
+  .sort((left, right) => PRIVATE_KIND_CODES[left] - PRIVATE_KIND_CODES[right]));
 
 const SECTION_NOTES = 1;
 const strictDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -36,7 +41,9 @@ function toHex(bytes) {
 
 /**
  * Reads KPRV v1 (private.rs `encode_private`): `{ memberId, recordCount,
- * notes: [{ id, logicalTime, deviceId, text }] }`. `memberId` is null while
+ * notes: [{ id, logicalTime, deviceId, text }], reminders (section 12,
+ * kin-prefs.js decodeReminders), settings (section 13, decodeSettings) }`.
+ * `memberId` is null while
  * the log is empty. Sections this release doesn't know are skipped, so a
  * later engine's additions never break an older reader.
  */
@@ -52,6 +59,8 @@ export function decodePrivate(bytes) {
     memberId: member.every((byte) => byte === 0) ? null : toHex(member),
     recordCount: view.getUint32(24, true),
     notes: [],
+    reminders: [],
+    settings: {},
   };
   const sections = view.getUint16(28, true);
   let at = 32, previous = 0;
@@ -61,7 +70,12 @@ export function decodePrivate(bytes) {
     const length = view.getUint32(at + 4, true);
     if (code <= previous || view.getUint16(at + 2, true) !== 0 || at + 8 + length > bytes.length) throw invalid();
     previous = code;
-    if (code === SECTION_NOTES) result.notes = decodeNotes(bytes.subarray(at + 8, at + 8 + length));
+    const body = bytes.subarray(at + 8, at + 8 + length);
+    try {
+      if (code === SECTION_NOTES) result.notes = decodeNotes(body);
+      else if (code === SECTION_REMINDERS) result.reminders = decodeReminders(body);
+      else if (code === SECTION_SETTINGS) result.settings = decodeSettings(body);
+    } catch { throw invalid(); }
     at += 8 + length;
   }
   if (at !== bytes.length) throw invalid();

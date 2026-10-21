@@ -106,6 +106,16 @@ export class SyncController {
         try { return await this.app.household?.syncKeyStore?.accountVaultKey(identity.householdId) ?? null; }
         catch { return null; }
       },
+      // The member's private log (#489): reminders and settings that follow
+      // them (#520, app/private-prefs.js). Null when it closes.
+      onPrivateLog: (log) => {
+        if (!log) {
+          if (this.ctx.privatePrefs.log && this.app.syncCoordinator === coordinator) this.ctx.privatePrefs.detach();
+          return;
+        }
+        if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
+        this.ctx.privatePrefs.attach(log, session);
+      },
       // Simple view (#343, ADR 0013): the layout this member's admin chose.
       onSimpleView: (on, options) => {
         if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;

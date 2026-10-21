@@ -10,10 +10,11 @@
 //!
 //! Kinds 100–199 are reserved for private records. The journal (#496), the
 //! "Just for me" list (#510) and reminders and settings that follow a member
-//! (#520) add their own kinds here and their own sections to KPRV. Until
-//! then the log has one placeholder kind, `PRIVATE_NOTE_SET` (100): a short
-//! private note by ID, enough to prove the log end to end. It is unreleased
-//! and the first of those stories may replace it.
+//! (#520) add their own kinds here and their own sections to KPRV. Reminders
+//! (120–129) and settings (130–139) live in private_prefs.rs. The log also
+//! has one placeholder kind, `PRIVATE_NOTE_SET` (100): a short private note
+//! by ID, enough to prove the log end to end. It is unreleased and the
+//! journal or list story may replace it.
 //!
 //! Replay rules (replay never fails on a decoded private event, beyond the
 //! checks every log makes):
@@ -65,6 +66,9 @@ pub fn encode_payload(kind: &EventKind) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(text.as_bytes());
             Ok(payload)
         }
+        kind @ (EventKind::ReminderSet { .. }
+        | EventKind::ReminderCleared { .. }
+        | EventKind::SettingSet { .. }) => crate::private_prefs::encode_payload(kind),
         _ => Err(KinError::InvalidEvent),
     }
 }
@@ -91,6 +95,10 @@ pub fn decode_payload(code: u16, payload: &[u8]) -> Result<EventKind, KinError> 
                 note_id,
                 text: text.to_owned(),
             })
+        }
+        // Reminders and settings (#520): private_prefs.rs.
+        code if crate::private_prefs::is_prefs_code(code) => {
+            crate::private_prefs::decode_payload(code, payload)
         }
         _ => Err(KinError::UnsupportedVersion),
     }
@@ -120,6 +128,8 @@ pub struct PrivateNote {
 pub struct PrivateState {
     member: Option<ActorId>,
     notes: BTreeMap<PrivateRecordId, PrivateNote>,
+    /// Reminders and settings (#520, private_prefs.rs).
+    prefs: Arc<crate::private_prefs::PrefsState>,
 }
 
 impl PrivateState {
@@ -135,6 +145,30 @@ impl PrivateState {
 
     pub fn note(&self, id: &PrivateRecordId) -> Option<&PrivateNote> {
         self.notes.get(id)
+    }
+
+    /// Reminders and settings (#520).
+    pub fn prefs(&self) -> &crate::private_prefs::PrefsState {
+        &self.prefs
+    }
+}
+
+/// Command rules for a private event (`kin_private_execute`): every event
+/// in the log has the same author, and each kind's own rules.
+pub fn check_command(
+    state: &PrivateState,
+    kind: &EventKind,
+    actor: ActorId,
+) -> Result<(), KinError> {
+    if actor.0 == [0; 16] || state.member.is_some_and(|member| member != actor) {
+        return Err(KinError::InvalidEvent);
+    }
+    match kind {
+        EventKind::PrivateNoteSet { .. } => Ok(()),
+        EventKind::ReminderSet { .. }
+        | EventKind::ReminderCleared { .. }
+        | EventKind::SettingSet { .. } => crate::private_prefs::check_command(&state.prefs, kind),
+        _ => Err(KinError::InvalidEvent),
     }
 }
 
@@ -164,6 +198,9 @@ pub fn apply(state: &mut Arc<PrivateState>, event: &EventEnvelope) -> Result<(),
             }
             Ok(())
         }
+        EventKind::ReminderSet { .. }
+        | EventKind::ReminderCleared { .. }
+        | EventKind::SettingSet { .. } => crate::private_prefs::apply(&mut state.prefs, event),
         _ => Err(KinError::InvalidEvent),
     }
 }
@@ -181,6 +218,9 @@ pub fn apply(state: &mut Arc<PrivateState>, event: &EventEnvelope) -> Result<(),
 /// Section 1, notes (the placeholder kind): note count u32, then each note
 /// in ascending ID order: ID [16], logical time u64, device ID [16], text
 /// length u32, text.
+///
+/// Section 12, reminders, and section 13, settings (#520): see
+/// private_prefs.rs `encode_reminders` and `encode_settings`.
 pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u8>, KinError> {
     let mut notes = Vec::new();
     notes.extend_from_slice(&(state.notes.len() as u32).to_le_bytes());
@@ -191,7 +231,23 @@ pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u
         notes.extend_from_slice(&(note.text.len() as u32).to_le_bytes());
         notes.extend_from_slice(note.text.as_bytes());
     }
-    let size = 32 + 8 + notes.len();
+    // Ascending section codes, each once.
+    let sections: [(u16, Vec<u8>); 3] = [
+        (SECTION_NOTES, notes),
+        (
+            crate::private_prefs::SECTION_REMINDERS,
+            crate::private_prefs::encode_reminders(&state.prefs),
+        ),
+        (
+            crate::private_prefs::SECTION_SETTINGS,
+            crate::private_prefs::encode_settings(&state.prefs),
+        ),
+    ];
+    let size = 32
+        + sections
+            .iter()
+            .map(|(_, bytes)| 8 + bytes.len())
+            .sum::<usize>();
     if size > MAX_PROTOCOL_BYTES {
         return Err(KinError::SizeLimit);
     }
@@ -204,11 +260,13 @@ pub fn encode_private(state: &PrivateState, record_count: usize) -> Result<Vec<u
     out.extend_from_slice(&[0; 2]);
     out.extend_from_slice(&state.member.map_or([0; 16], |member| member.0));
     out.extend_from_slice(&record_count.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&(sections.len() as u16).to_le_bytes());
     out.extend_from_slice(&[0; 2]);
-    out.extend_from_slice(&SECTION_NOTES.to_le_bytes());
-    out.extend_from_slice(&[0; 2]);
-    out.extend_from_slice(&(notes.len() as u32).to_le_bytes());
-    out.extend_from_slice(&notes);
+    for (code, bytes) in &sections {
+        out.extend_from_slice(&code.to_le_bytes());
+        out.extend_from_slice(&[0; 2]);
+        out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        out.extend_from_slice(bytes);
+    }
     Ok(out)
 }

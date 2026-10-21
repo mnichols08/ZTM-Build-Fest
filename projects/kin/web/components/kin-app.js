@@ -32,11 +32,13 @@ import "./kin-notifications.js";
 import "./kin-app-badge.js";
 import "./kin-security.js";
 import "./kin-appearance.js";
+import "./kin-personal-settings.js";
 import "./kin-household-defaults.js";
 import { createAppContext, initializeAppState } from "./app/context.js";
 import { captureInvitationCode } from "../pairing-link.js";
 import { takeSignInLink } from "../device-link.js";
 import { captureLaunchAction, captureShare } from "../share-target.js";
+import { applyStoredDisplayPrefs } from "../appearance/display-prefs.js";
 
 // An invitation link (/pair#code=…) hands over its code before any route is
 // resolved, and the address bar drops it at once (#97). A computer's sign-in
@@ -48,6 +50,9 @@ takeSignInLink();
 // out of the address the same way, and offered once Kin is unlocked.
 captureShare();
 captureLaunchAction();
+// Text size and motion (#524) apply before anything shows, the lock screen
+// included: they are this device's, kept unencrypted (display-prefs.js).
+applyStoredDisplayPrefs();
 
 // The application root. It owns lifecycle, event wiring and the state the
 // controllers in ./app/ share; each behavior lives in one of those controllers.
@@ -84,7 +89,8 @@ const ELEMENT_EVENTS = [
   ["kin:set-pulse", "onSetPulse"], ["kin:clear-pulse", "onClearPulse"],
   ["kin:caught-up", "onCaughtUp"], ["kin:sync-enabled", "onSyncEnabled"],
   ["kin:sync-now", "onSyncNow"], ["kin:sync-stop", "onSyncStop"],
-  ["kin:lock", "onLockRequest"], ["kin:app-badge-choice", "onAppBadgeChoice"], ["kin:appearance-preview", "onAppearancePreview"],
+  ["kin:lock", "onLockRequest"], ["kin:app-badge-choice", "onAppBadgeChoice"],
+  ["kin:personal-setting", "onPersonalSetting"], ["kin:settings-this-device", "onSettingsThisDevice"], ["kin:appearance-preview", "onAppearancePreview"],
   ["kin:save-appearance", "onSaveAppearance"], ["kin:use-household-appearance", "onUseHouseholdAppearance"],
   ["kin:inherit-appearance-property", "onInheritAppearanceProperty"], ["kin:household-defaults-preview", "onHouseholdDefaultsPreview"],
   ["kin:household-defaults-cancel", "onHouseholdDefaultsCancel"], ["kin:save-household-defaults", "onSaveHouseholdDefaults"],

@@ -243,7 +243,8 @@ export class ItemDetailSections {
   }
 
   createReminder(record) {
-    const group = this.group("Reminder on this device");
+    // Synced reminders (#522) are the member's on every device.
+    const group = this.group(customElements.get("kin-reminder")?.scope === "devices" ? "Reminder" : "Reminder on this device");
     // The control is kept across re-renders of the same item so an open
     // reminder editor (and its typed date/time) survives a background refresh.
     const id = `item:${record.itemId}`;

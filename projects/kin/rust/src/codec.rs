@@ -77,6 +77,9 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::RoutineTurnSet { .. } => crate::rotations::ROUTINE_TURN_SET,
         EventKind::SitterPageSet { .. } => crate::sitter::SITTER_PAGE_SET,
         EventKind::PrivateNoteSet { .. } => crate::private::PRIVATE_NOTE_SET,
+        EventKind::ReminderSet { .. } => crate::private_prefs::REMINDER_SET,
+        EventKind::ReminderCleared { .. } => crate::private_prefs::REMINDER_CLEARED,
+        EventKind::SettingSet { .. } => crate::private_prefs::SETTING_SET,
     }
 }
 
@@ -490,7 +493,10 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             payload = crate::sitter::encode_payload(kind)?;
         }
         // A member's private log (#489): private.rs owns the payloads.
-        kind @ EventKind::PrivateNoteSet { .. } => {
+        kind @ (EventKind::PrivateNoteSet { .. }
+        | EventKind::ReminderSet { .. }
+        | EventKind::ReminderCleared { .. }
+        | EventKind::SettingSet { .. }) => {
             payload = crate::private::encode_payload(kind)?;
         }
     }

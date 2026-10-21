@@ -474,6 +474,28 @@ pub enum EventKind {
         note_id: PrivateRecordId,
         text: String,
     },
+    /// A reminder that follows its member (#522, private_prefs.rs): set or moved
+    /// to the absolute instant `at`, with the setter's UTC offset and time
+    /// zone at that instant.
+    ReminderSet {
+        target: crate::private_prefs::ReminderTarget,
+        at: i64,
+        utc_offset_minutes: i16,
+        time_zone: String,
+    },
+    /// A reminder canceled, done or dismissed (#522, private_prefs.rs). Done and
+    /// dismissed clear only the reminder still set for `at`.
+    ReminderCleared {
+        target: crate::private_prefs::ReminderTarget,
+        reason: crate::private_prefs::ReminderClearReason,
+        at: i64,
+    },
+    /// One personal setting that follows its member (#525, private_prefs.rs); an
+    /// empty value unsets it.
+    SettingSet {
+        key: u16,
+        value: String,
+    },
 }
 
 impl EventKind {
@@ -496,7 +518,13 @@ impl EventKind {
     /// Whether this is a private event (#489, ADR 0019), which only a
     /// member's private log holds.
     pub const fn is_private(&self) -> bool {
-        matches!(self, EventKind::PrivateNoteSet { .. })
+        matches!(
+            self,
+            EventKind::PrivateNoteSet { .. }
+                | EventKind::ReminderSet { .. }
+                | EventKind::ReminderCleared { .. }
+                | EventKind::SettingSet { .. }
+        )
     }
 
     /// Whether this is a fridge event (#317), which only the board log holds.

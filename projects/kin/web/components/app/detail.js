@@ -44,7 +44,7 @@ export class DetailController {
       pinLimitReached: (this.app.state?.pins ?? []).length >= 10,
       attachments: this.app.attachmentRows,
       responsibilityContext: this.responsibilityContext(),
-      reminder: this.app.localReminders.entries.get(`item:${this.app.selection.itemId}`) ?? null,
+      reminder: this.ctx.privatePrefs.reminderView().get(`item:${this.app.selection.itemId}`) ?? null,
       // Item picture (#347): Adults set it; on a device without sync the
       // person is the household's only member.
       emoji: this.app.itemEmojis?.get(this.app.selection.itemId) ?? null,

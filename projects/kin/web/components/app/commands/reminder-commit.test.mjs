@@ -34,6 +34,9 @@ function commonContext(appendCommand) {
     render: { renderState() {} },
     peers: { broadcastEventChange() {}, flushPeerRefresh() {} },
     navigation: { currentCivilDate: () => 20261016 },
+    // app/private-prefs.js endReminder: this device's timer stops at once
+    // (and, with private storage, the member's other devices follow).
+    privatePrefs: { endReminder: (id) => { app.localReminders.cancel(id); return Promise.resolve(false); } },
   };
   return { app, ctx, cancellations };
 }

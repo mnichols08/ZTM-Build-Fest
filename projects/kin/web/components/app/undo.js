@@ -133,8 +133,8 @@ export class UndoController {
         this.ctx.session.assertCurrentSession(session);
       }
       // Undoing an add archives it: its reminder goes too, as on Archive.
-      if (entry.kind === "item-added") this.app.localReminders?.cancel?.(`item:${entry.itemId}`);
-      if (entry.kind === "routine-created") this.app.localReminders?.cancel?.(`routine:${entry.routineId}`);
+      if (entry.kind === "item-added") void this.ctx.privatePrefs?.endReminder(`item:${entry.itemId}`, "canceled").catch(() => {});
+      if (entry.kind === "routine-created") void this.ctx.privatePrefs?.endReminder(`routine:${entry.routineId}`, "canceled").catch(() => {});
       this.ctx.render.renderState();
       this.ctx.peers.broadcastEventChange();
       const inverse = inverseEntry(entry, before, this.app.state);

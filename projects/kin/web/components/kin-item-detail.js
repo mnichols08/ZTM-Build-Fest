@@ -75,7 +75,7 @@ class KinItemDetail extends HTMLElement {
 
   get itemId() { return this.record?.itemId ?? this.requestedId; }
 
-  set reminder(value) { this.reminderRecord = value?.at ? { at: value.at } : null; if (this.reminderControl) this.reminderControl.reminder = this.reminderRecord; }
+  set reminder(value) { this.reminderRecord = value?.at ? { at: value.at, scope: value.scope, where: value.where } : null; if (this.reminderControl) this.reminderControl.reminder = this.reminderRecord; }
 
   set disabled(value) {
     this.isDisabled = Boolean(value);

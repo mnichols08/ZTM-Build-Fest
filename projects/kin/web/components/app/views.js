@@ -329,7 +329,10 @@ export class ViewBuilder {
     this.app.chatPolicy = document.createElement("kin-chat-policy");
     // Who can use the fridge (#323), beside who can chat.
     this.app.boardPolicy = document.createElement("kin-board-policy");
-    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance);
+    // Text size, motion and reminder alerts, and where they live (#524).
+    this.app.personalSettings = document.createElement("kin-personal-settings");
+    this.app.personalSettings.update(this.ctx.privatePrefs.settingsView());
+    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance, this.app.personalSettings);
 
     // For the sitter (#441, ADR 0017).
     const sitterPage = document.createElement("section");

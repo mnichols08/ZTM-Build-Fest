@@ -1936,6 +1936,104 @@ pub fn execute_board_history(
     command_result(execute_with(&command, context, &mut held)?)
 }
 
+/// A private command (#520, private.rs): a KCMD whose action is a private
+/// kind (100–199) and whose text is that event's exact payload, with a zero
+/// entity ID and no option, date or expiry, as for the fridge.
+pub fn decode_private_command(bytes: &[u8]) -> Result<(EventKind, CommandContext), KinError> {
+    if bytes.len() < 128 || &bytes[..4] != b"KCMD" {
+        return Err(KinError::MalformedProtocol);
+    }
+    if u16::from_le_bytes(field(bytes, 4)?) != 1 {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if bytes[6..8] != [0; 2] || bytes[10..12] != [0; 2] || bytes[113..116] != [0; 3] {
+        return Err(KinError::MalformedProtocol);
+    }
+    let kind = u16::from_le_bytes(field(bytes, 8)?);
+    let text_length = u32::from_le_bytes(field(bytes, 124)?) as usize;
+    if !crate::private::is_private_code(kind)
+        || bytes[92..108] != [0; 16]
+        || bytes[108..112] != [0; 4]
+        || bytes[112] != 0
+        || bytes[116..124] != [0; 8]
+        || bytes.len() != 128 + text_length
+    {
+        return Err(KinError::MalformedProtocol);
+    }
+    let event_kind = crate::private::decode_payload(kind, &bytes[128..])?;
+    Ok((event_kind, command_context(bytes)?))
+}
+
+/// KCMT with no projection: the new event and its metadata (the fridge and
+/// private commands).
+pub(crate) fn event_result(canonical_bytes: &[u8]) -> Result<Vec<u8>, KinError> {
+    let metadata = encode_metadata(canonical_bytes)?;
+    let length = 20 + canonical_bytes.len() + metadata.len();
+    if length > MAX_PROTOCOL_BYTES {
+        return Err(KinError::SizeLimit);
+    }
+    let mut output = Vec::with_capacity(length);
+    output.extend_from_slice(b"KCMT\x01\0\0\0");
+    output.extend_from_slice(&(canonical_bytes.len() as u32).to_le_bytes());
+    output.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
+    output.extend_from_slice(&0u32.to_le_bytes());
+    output.extend_from_slice(canonical_bytes);
+    output.extend_from_slice(&metadata);
+    Ok(output)
+}
+
+/// A private command against the instance's private log (#520,
+/// `kin_private_execute`): u32 command length, the KCMD, then a record-less
+/// KINE context. Publishes KCMT with an empty projection; the log is not
+/// changed (the host appends the event once it is stored).
+pub fn execute_private_history(
+    bytes: &[u8],
+    history: &mut crate::history::History,
+) -> Result<Vec<u8>, KinError> {
+    if bytes.len() > MAX_PROTOCOL_BYTES {
+        return Err(KinError::SizeLimit);
+    }
+    let command_length = u32::from_le_bytes(field(bytes, 0)?) as usize;
+    let end = 4usize
+        .checked_add(command_length)
+        .ok_or(KinError::MalformedProtocol)?;
+    let (kind, context) =
+        decode_private_command(bytes.get(4..end).ok_or(KinError::MalformedProtocol)?)?;
+    let replay_context =
+        crate::request::decode_context(bytes.get(end..).ok_or(KinError::MalformedProtocol)?)?;
+    if history.log() != crate::history::Log::Private || history.len() >= history.limit() {
+        return Err(KinError::InvalidEvent);
+    }
+    let replay = history.replay(&replay_context)?;
+    if !valid_timestamp(context.timestamp)
+        || context.logical_time == 0
+        || context.logical_time > crate::state::MAX_LOGICAL_TIME
+        || context.logical_time <= replay.last_logical_time()
+        || replay.contains_event(context.event_id)
+        || replay
+            .household_id()
+            .is_some_and(|household| household != context.household_id)
+        || replay_context
+            .target_household_id
+            .is_some_and(|household| household != context.household_id)
+    {
+        return Err(KinError::InvalidEvent);
+    }
+    crate::private::check_command(replay.private(), &kind, context.actor_id)?;
+    let event = EventEnvelope {
+        event_id: context.event_id,
+        household_id: context.household_id,
+        actor_id: context.actor_id,
+        device_id: context.device_id,
+        timestamp: context.timestamp,
+        logical_time: context.logical_time,
+        event_version: 1,
+        kind,
+        canonical_bytes: Vec::new(),
+    };
+    event_result(&encode_event(&event)?)
+}
+
 pub fn encode_command(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
     let (command, context) = decode_command(bytes)?;
     Ok(create_event(&command, context)?.canonical_bytes)

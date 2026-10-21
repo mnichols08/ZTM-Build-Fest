@@ -171,7 +171,7 @@ export class ItemCommands {
       await this.ctx.append.appendCommand({ type, itemId: submittedItemId });
       this.ctx.session.assertCurrentSession(session);
       if (["complete", "archive"].includes(type))
-        this.app.localReminders.cancel(`item:${submittedItemId}`);
+        void this.ctx.privatePrefs.endReminder(`item:${submittedItemId}`, "done").catch(() => {});
       this.ctx.render.renderState();
       // Name the item and say how far the change has gone (#267); with sync,
       // "Sent to your household." follows once the relay accepts it.
@@ -282,7 +282,7 @@ export class ItemCommands {
         planningDate: detail.planningDate,
       });
       this.ctx.session.assertCurrentSession(session);
-      this.app.localReminders.cancel(`item:${detail.itemId}`);
+      void this.ctx.privatePrefs.endReminder(`item:${detail.itemId}`, "canceled").catch(() => {});
       this.ctx.render.renderState();
       this.ctx.peers.broadcastEventChange();
       this.app.detail.clearFeedback(detail.itemId);

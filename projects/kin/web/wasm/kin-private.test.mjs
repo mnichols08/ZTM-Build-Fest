@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { decodePrivate, FIRST_PRIVATE_KIND, isPrivateKind, PRIVATE_EVENT_KINDS, PrivateFormatError } from "./kin-private.js";
+import { decodePrivate, FIRST_PRIVATE_KIND, isPrivateKind, PRIVATE_EVENT_KINDS, PRIVATE_KIND_CODES, PrivateFormatError } from "./kin-private.js";
 
 const encoder = new TextEncoder();
 
@@ -47,7 +47,7 @@ function kprv({ member = new Uint8Array(16), count = 0, notes = [], extra = [] }
 }
 
 test("an empty private log reads as no member and no notes", () => {
-  assert.deepEqual(decodePrivate(kprv()), { memberId: null, recordCount: 0, notes: [] });
+  assert.deepEqual(decodePrivate(kprv()), { memberId: null, recordCount: 0, notes: [], reminders: [], settings: {} });
 });
 
 test("notes read in the order Rust wrote them", () => {
@@ -84,7 +84,8 @@ test("damaged projections are refused", () => {
 
 test("private kinds start at 100", () => {
   assert.equal(FIRST_PRIVATE_KIND, 100);
-  assert.deepEqual(PRIVATE_EVENT_KINDS, ["PRIVATE_NOTE_SET"]);
-  assert.ok(isPrivateKind("PRIVATE_NOTE_SET"));
+  assert.deepEqual(PRIVATE_EVENT_KINDS, ["PRIVATE_NOTE_SET", "REMINDER_SET", "REMINDER_CLEARED", "SETTING_SET"]);
+  assert.deepEqual(PRIVATE_KIND_CODES, { PRIVATE_NOTE_SET: 100, REMINDER_SET: 120, REMINDER_CLEARED: 121, SETTING_SET: 130 });
+  assert.ok(isPrivateKind("PRIVATE_NOTE_SET") && isPrivateKind("SETTING_SET"));
   assert.ok(!isPrivateKind("BOARD_STROKE_ADDED"));
 });
