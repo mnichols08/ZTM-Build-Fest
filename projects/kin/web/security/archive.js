@@ -21,7 +21,7 @@ import {
 } from "../chat/chat-archive.js";
 import { appendBoardEvents, boardEventsView, discardBoardSection, importBoardSection, MAX_ARCHIVE_BOARD_EVENTS, openBoardSection, validateBoardSection } from "../board/board-archive.js";
 
-const KIN_VERSION = "1.4.0";
+const KIN_VERSION = "1.5.0";
 const PACKAGE_FORMAT = 3;
 const MAX_ARCHIVE_BYTES = 160 * 1024 * 1024;
 const MAX_EVENT_COUNT = 10_000;

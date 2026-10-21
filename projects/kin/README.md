@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Current implementation line: `v1.4.0` — Fridge, Meals and Household Helpers.** Released as `kin-v1.4.0` on 2026-10-20, this minor release adds a shared family fridge to draw on, Meals for planning the week's dinners, a calmer Simple view for children, Talk later in Chat, undo and redo, and everyday helpers: share into Kin from other apps, shopping mode with store sections, bringing a list in from elsewhere, This week, a page for the sitter, and taking turns on routines. It builds on v1.3.0 (member names) and adds server schemas 18–20 as forward migrations; see the [changelog](CHANGELOG.md) for the compatibility notes. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
+**Current implementation line: `v1.5.0` — One Account and Private Spaces.** Released as `kin-v1.5.0` on 2026-10-21, this minor release gives each member one account across their devices: a username and password at first run, an optional passkey and a backup code, signing in on a new phone or browser without another device present, and moving an existing household to accounts without starting over. Each member also gets private space only they can see: a journal, a Just for me list, and reminders and settings that follow them to every device, with an export of their own. It builds on v1.4.0 (the fridge, Meals and household helpers) and adds server schemas 21–24 as forward migrations; see the [changelog](CHANGELOG.md) for the compatibility notes. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -42,6 +42,10 @@ AI runtime features, gamification, surveillance, and enterprise workflows stay o
 
 ## Release history
 
+- `v1.5.0` — One Account and Private Spaces: accounts with a username and
+  password, passkey and backup code, new-device sign-in, a private journal,
+  Just for me, and reminders and settings that follow each member. Released
+  2026-10-21 (`kin-v1.5.0`).
 - `v1.4.0` — Fridge, Meals and Household Helpers: the family fridge, Meals,
   Simple view, Talk later, undo and redo, share into Kin, shopping mode and
   store sections, list import, This week, the sitter page and taking turns on

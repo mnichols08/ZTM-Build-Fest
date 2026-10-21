@@ -1,6 +1,6 @@
 # Identity and Trusted Devices
 
-**Status:** Current as of v1.4.0. Server member/passkey/device authorization remains distinct from the local encryption unlock. The service persists identity and device-token verifiers; raw tokens and sessions remain ephemeral. Household deletion is a separate lifecycle and an encrypted local archive restores local history, not an authenticated server household.
+**Status:** Current as of v1.5.0. Server member/passkey/device authorization remains distinct from the local encryption unlock. The service persists identity and device-token verifiers; raw tokens and sessions remain ephemeral. Household deletion is a separate lifecycle and an encrypted local archive restores local history, not an authenticated server household.
 
 ## Placeholder identities and bindings
 
