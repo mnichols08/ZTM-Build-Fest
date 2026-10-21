@@ -1,7 +1,8 @@
 # Roadmap
 
-Current release: `v1.3.0 — Member Names and Clearer Setup`, released
-2026-10-19 as `kin-v1.3.0`. The release before it was `v1.2.0 — Household Chat`.
+Current release: `v1.4.0 — Fridge, Meals and Household Helpers`, released
+2026-10-20 as `kin-v1.4.0`. The release before it was `v1.3.0 — Member Names
+and Clearer Setup`.
 The work between v0.10.3 and v1.0.0 shipped per the owner's
 [review-gate decisions](audits/V1.0_REVIEW_GATES.md); this page records how Kin
 got there and continues through v1.1. Work after v1.0 is tracked as GitHub
@@ -464,4 +465,8 @@ release. It was completed on `kin-testing` and merged into `kin-development`
 through the v1.2.0 release PR. Each new capability is a minor release with the
 stabilization patches described above. v1.3.0 closes the member identity and
 device pairing epic (#218) and starts the usability epic (#261), whose tester
-sessions (#262, #269) remain open.
+sessions (#262, #269) remain open. v1.4.0 adds the family fridge (#317), Meals
+(#333), Simple view (#341), Talk later (#312), undo and redo (#315) and the
+household helpers: share into Kin (#389), shopping mode (#403), store sections
+(#411), list import (#452), This week (#416), the sitter page (#441) and taking
+turns on routines (#428).

@@ -7,6 +7,14 @@ documentation only.
 
 ## Unreleased
 
+## v1.4.0 — Fridge, Meals and Household Helpers
+
+Released 2026-10-20 as `kin-v1.4.0`. This minor release adds the family fridge,
+Meals, Simple view for children, Talk later in Chat, undo and redo, and a set of
+everyday household helpers: share into Kin, shopping mode with store sections,
+bringing a list into Kin, This week, the sitter page and taking turns on
+routines.
+
 ### Added
 
 - **Taking turns on routines** (#428, [ADR 0016](docs/decisions/0016-routine-rotations.md)):
@@ -108,6 +116,21 @@ documentation only.
 
 - The page no longer triggers the browser's pull-to-refresh where the browser
   allows turning it off (#353).
+
+### Compatibility
+
+- Adds household event kinds 59–64 and 66–70 (Meals, item pictures, store
+  sections, taking turns, the sitter page), chat event kind 65 (Talk later),
+  and the fridge's own board log with kinds 52–58, all schema 1 with replay
+  protocol still 24. Each is listed in
+  [V1.0-COMPATIBILITY](docs/V1.0-COMPATIBILITY.md) under v1.4.0; v1.0–v1.3
+  formats are unchanged.
+- Server schemas 18–20 (fridge relay, fridge access policy, Simple view) are
+  forward migrations; an earlier server refuses the newer database, so keep a
+  pre-upgrade backup if you might roll back. The key database goes to version 6.
+- A device on an earlier release that receives one of the new household kinds
+  pauses sync with "update Kin" and keeps its data until it updates. An export
+  that includes the fridge can't be imported by an earlier release.
 
 ## v1.3.0 — Member Names and Clearer Setup
 
