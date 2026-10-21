@@ -71,9 +71,14 @@ export async function fetchShared(id, { worker = globalThis.navigator?.serviceWo
   });
 }
 
-/** Home-screen shortcuts (#399) that run an action rather than open a page:
- * `#kin-action=<name>`. Taken from the address like a share id. */
-export const LAUNCH_ACTIONS = Object.freeze(["quick-add"]);
+/** Home-screen shortcuts (#399, #472) that run an action rather than open a
+ * page: `#kin-action=<name>`. Taken from the address like a share id, so it
+ * never stays in the address or history; being a fragment, it never reaches
+ * the server either. "quick-add" is the "Add a task" shortcut (its address
+ * is kept so shortcuts on existing installs still work). Shortcuts that only
+ * open a page (`#week`, `#lists/shopping`, …) are ordinary routes, which a
+ * lock leaves in the address until unlock. */
+export const LAUNCH_ACTIONS = Object.freeze(["quick-add", "add-shopping"]);
 export function takeLaunchAction(where = globalThis.location, past = globalThis.history) {
   const hash = String(where?.hash ?? "").replace(/^#/, "").toLowerCase();
   if (!hash.startsWith("kin-action=")) return "";
@@ -82,10 +87,22 @@ export function takeLaunchAction(where = globalThis.location, past = globalThis.
   return LAUNCH_ACTIONS.includes(action) ? action : "";
 }
 
+/** Where a shortcut action lands (pure): the page to show and whether Quick
+ * add opens there, its destination following the page (To do or Shopping).
+ * Simple view has no Quick add (#345), so it lands on Today instead. Unknown
+ * actions land nowhere (null). */
+export function shortcutLanding(action, { simpleView = false } = {}) {
+  if (!LAUNCH_ACTIONS.includes(action)) return null;
+  if (simpleView) return { hash: "#today", quickAdd: false };
+  return { hash: action === "add-shopping" ? "#lists/shopping" : "#lists/todo", quickAdd: true };
+}
+
 let pending = null;
 let pendingAction = "";
 
-/** As the app loads: a shortcut's action, kept until Kin is unlocked. */
+/** As the app loads, or when the address changes while it runs: a
+ * shortcut's action, kept until Kin is unlocked. A newer shortcut replaces
+ * one still waiting. */
 export function captureLaunchAction(where, past) {
   const action = takeLaunchAction(where, past);
   if (action) pendingAction = action;

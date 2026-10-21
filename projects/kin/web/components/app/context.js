@@ -31,6 +31,7 @@ import { AppearanceController } from "./appearance.js";
 import { MealsController } from "./meals.js";
 import { SimpleController } from "./simple.js";
 import { ShareController } from "./share.js";
+import { BadgeController } from "./badge.js";
 import { WeekController } from "./week.js";
 import { SitterController } from "./sitter.js";
 import { RotationsController } from "./rotations.js";
@@ -78,6 +79,7 @@ export function createAppContext(app) {
   ctx.attachments = new AttachmentController(ctx);
   ctx.chatShare = new ChatShareController(ctx);
   ctx.share = new ShareController(ctx);
+  ctx.badge = new BadgeController(ctx);
   ctx.week = new WeekController(ctx);
   ctx.sitter = new SitterController(ctx);
   ctx.rotations = new RotationsController(ctx);
@@ -272,6 +274,9 @@ export function initializeAppState(app) {
       // A same-page jump to an invitation link (/pair#code=…) takes its code
       // first, so it never lingers in the address bar or history (#97).
       if (captureInvitationCode()) app.household?.offerInvitationCode?.();
+      // A home-screen shortcut opened into a running Kin (#472) lands
+      // itself (or waits for unlock); its address is already cleared.
+      if (app.ctx.share.handleLaunchAddress()) return;
       app.ctx.navigation.showPageFromLocation();
     };
     app.onNavigationClick = (event) => {
@@ -364,6 +369,9 @@ export function initializeAppState(app) {
       void app.ctx.sync.checkHouseholdAuthorization();
     };
     app.onPeerMessage = (event) => app.ctx.peers.handlePeerMessage(event);
+    // Count on the app icon (#476): <kin-app-badge> asks; the answer says
+    // whether the choice could be kept on this device.
+    app.onAppBadgeChoice = (event) => { event.detail.kept = app.ctx.badge.setChoice(event.detail.value); };
     // Logout and leaving the household end the session for good; a plain
     // lock request only suspends it.
     app.onLockRequest = (event) => app.ctx.session.lockHousehold(true, { endSession: event?.detail?.endSession === true });
@@ -385,7 +393,9 @@ export function initializeAppState(app) {
       const autoLockAt = app.autoLockMinutes && app.lastActivityAt !== null
         ? app.lastActivityAt + app.autoLockMinutes * 60_000 : null;
       app.reloadResume.write({ vault: app.vault, autoLockAt });
-      app.ctx.session.lockHousehold(false, { keepReloadResume: true });
+      // Closing Kin leaves the app icon count as it was (#476): that is what
+      // the member chose it for. Lock and sign-out clear it.
+      app.ctx.session.lockHousehold(false, { keepReloadResume: true, keepBadge: true });
     };
     // Coming back from the back/forward cache is navigating, not a refresh.
     app.onPageShow = (event) => { if (event?.persisted) void app.reloadResume.disarm(); };

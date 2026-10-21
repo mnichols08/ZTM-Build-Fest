@@ -147,10 +147,9 @@ export function publishedManifest(householdId, identity) {
       { src: installIconUrl("512.png", identity), sizes: "512x512", type: "image/png", purpose: "any" },
       { src: installIconUrl("maskable-512.png", identity), sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
-    shortcuts: (base.shortcuts ?? []).map((shortcut) => ({
-      ...shortcut,
-      icons: [{ src: icon192, sizes: "192x192", type: "image/png" }],
-    })),
+    // Shortcuts keep Kin's own PNG icons (#473): each shows what the
+    // shortcut does (a bag, a ticked box, a calendar), which the household's
+    // icon on every one of them couldn't.
   };
   // The ETag covers the household, the published content and Kin's own
   // manifest, whose colours and shortcuts the published one carries over.

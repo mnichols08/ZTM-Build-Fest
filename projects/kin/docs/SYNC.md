@@ -726,7 +726,8 @@ of messages from others, not deleted or hidden, after the position, over the
 newest 100 messages (`99+` past that); the "New messages" divider above the
 first of them, placed when the chat is opened or returned to and not moved
 while reading; the count on **Updates → Chat**; and the installed app's
-badge through `navigator.setAppBadge`. No count is sent to the service. The service sees each position change as a
+badge through `navigator.setAppBadge` when the member turned that on (#476,
+off by default). No count is sent to the service. The service sees each position change as a
 new revision of the record, so it can tell when a member reads, though not
 what; with no position yet (a new device, or before the first sync) every
 message from others counts until the chat is opened.

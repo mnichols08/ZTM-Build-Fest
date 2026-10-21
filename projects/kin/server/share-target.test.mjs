@@ -18,7 +18,16 @@ test("the manifest offers sharing into Kin and the shortcuts", async (t) => {
   const manifest = await (await fetch(`${url}/manifest.webmanifest`)).json();
   assert.deepEqual({ action: manifest.share_target.action, method: manifest.share_target.method, enctype: manifest.share_target.enctype },
     { action: "/share", method: "POST", enctype: "multipart/form-data" });
-  assert.deepEqual(manifest.shortcuts.map((shortcut) => shortcut.url), ["/#kin-action=quick-add", "/#lists/shopping", "/#updates/chat", "/#today"]);
+  assert.deepEqual(manifest.shortcuts.map((shortcut) => shortcut.url),
+    ["/#kin-action=add-shopping", "/#kin-action=quick-add", "/#week", "/#lists/shopping", "/#updates/chat", "/#today"]);
+  // Android ignores SVG-only shortcut icons (#473): each has PNGs, served as PNG.
+  for (const shortcut of manifest.shortcuts) {
+    const icon = shortcut.icons.find((entry) => entry.sizes === "96x96");
+    const response = await fetch(`${url}${icon.src}`);
+    assert.equal(response.status, 200, icon.src);
+    assert.equal(response.headers.get("content-type"), "image/png");
+    assert.deepEqual([...new Uint8Array(await response.arrayBuffer()).subarray(1, 4)], [0x50, 0x4e, 0x47]);
+  }
 });
 
 test("a share POSTed to the server opens the app without keeping anything", async (t) => {

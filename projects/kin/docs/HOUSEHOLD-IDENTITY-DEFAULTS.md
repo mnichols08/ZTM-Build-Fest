@@ -75,11 +75,13 @@ unlocked header continues to use the encrypted name and icon.
   There is no public URL. The manifest's `id`, `start_url`, `scope` and
   `display` never change, so installed apps update in place. The manifest is
   `private, no-cache` with an ETag of the household, the published content and
-  Kin's own manifest (whose colours and shortcuts it carries over). The icon
+  Kin's own manifest (whose colours and shortcuts it carries over; each
+  shortcut keeps Kin's own PNG icon for what it does, #473). The icon
   URLs in the manifest carry the content hash and are immutable. The
   `apple-touch-icon` link in the app shell is unversioned and revalidated,
   because the shell is the same for everyone; with nothing published it
-  returns 404, so iOS keeps its own behaviour (Kin has no PNG icon). The
+  returns 404, so iOS keeps its own behaviour (Kin's own PNG icons, #473,
+  have no 180 px size). The
   service worker caches neither. A browser still running the previous
   service worker can serve its cached Kin manifest until the v1.1 worker takes
   over, once every Kin tab has closed or the update is accepted.

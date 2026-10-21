@@ -1,6 +1,5 @@
 // Building the destination pages and their components.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
-import { setAppBadge } from "../../chat/chat-badge.js";
 import { routeHash, SEGMENTS } from "../../routes.js";
 import { DESTINATION_DESCRIPTIONS } from "./constants.js";
 import { currentPlatform, installHelp } from "../../platform.js";
@@ -148,15 +147,13 @@ export class ViewBuilder {
     handoffPanel.append(this.app.talksStandalone);
     chatPanel.append(this.app.chat);
     this.ctx.views.placeTalks();
-    // The unread count (#133) from the chat view: on the Chat link and, where
-    // the browser supports it, on the installed app's icon. Both are set from
-    // what this device decrypted; no count is sent anywhere. A locked
-    // household has no chat room, so the count and the icon badge clear
-    // when Kin locks (docs/UX.md).
+    // The unread count (#133) from the chat view: on the Chat link and, if
+    // the member chose it (#476), on the installed app's icon. Both are set
+    // from what this device decrypted; no count is sent anywhere.
     this.app.chat.addEventListener("kin:chat-unread", (event) => {
       this.app.chatUnread = event.detail;
       this.ctx.render.renderUpdatesNav();
-      setAppBadge(event.detail.count);
+      this.ctx.badge.update();
     });
     // The admin's chat policy (#123): with no access, Chat leaves Updates.
     this.app.chat.addEventListener("kin:chat-access", (event) => {
@@ -306,6 +303,8 @@ export class ViewBuilder {
     // Per-device notification settings (#85), shown once this browser is a
     // trusted household device.
     this.app.notifications = document.createElement("kin-notifications");
+    // The count on the app icon (#476): this device's choice, under it.
+    this.app.appBadge = document.createElement("kin-app-badge");
     // Read receipts and typing (#120): per member, so shown with the room.
     this.app.chatSettings = document.createElement("kin-chat-settings");
     this.app.chatSettings.hidden = true;
