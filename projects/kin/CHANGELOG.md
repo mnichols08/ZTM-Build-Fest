@@ -9,6 +9,13 @@ documentation only.
 
 ### Added
 
+- **Encrypted key vault on the service, groundwork** (#564, [ADR 0018](docs/decisions/0018-account-key-vault.md)):
+  the vault and wrapper formats, password/passkey/backup-code key
+  derivations, server schema 21 with the vault routes (own member, trusted
+  device, compare-and-set, rate-limited downloads) and the Argon2id password
+  verifier helper, and re-sealing a member's vault when a device installs a
+  new epoch key. Nothing visible yet: no vault is created until the first-run
+  story.
 - **Taking turns on routines** (#428, [ADR 0016](docs/decisions/0016-routine-rotations.md)):
   people take turns at a routine in an order you choose; the turn passes when
   it's done, with Skip to next and Give this turn to…, and Today shows whose

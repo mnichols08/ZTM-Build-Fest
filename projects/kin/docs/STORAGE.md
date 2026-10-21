@@ -315,6 +315,17 @@ renumber pending events check the sequence they started from, so two tabs
 can't take the same sequence even without Web Locks. Deleting the log with the household, like the blob database,
 is still to come.
 
+## Account key vault on the service (ADR 0018, #564)
+
+Not a device store: the service keeps each member's sealed key vault in
+server schema 21 (`account_vaults`, `account_vault_wrappers`,
+`account_passwords`), with a forward migration from 20, purged with the
+household. The vault holds the member's household and chat epoch keys (read
+from this device's `epochs` store, opened with the device key), the member's
+certification key and a reserved private-storage key, sealed by the member's
+device. No IndexedDB database or record format changes; the key database
+stays at version 6. Formats and parameters: [CRYPTOGRAPHY](CRYPTOGRAPHY.md#account-key-vault-adr-0018).
+
 ## Handoff storage
 
 The independent draft key is `kin.handoff.draft`; it is best-effort, tab-scoped, and cleared only if successful submitted text still matches. Handoff shares atomic append/counter transactions and content-free invalidation.

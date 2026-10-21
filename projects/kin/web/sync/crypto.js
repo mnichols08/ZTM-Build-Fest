@@ -124,6 +124,22 @@ export async function verifyStoredHouseholdEpoch({ record, deviceKeys }) {
   } finally { rawKey.fill(0); }
 }
 
+/**
+ * The raw bytes of a stored epoch key, checked against its fingerprint, for
+ * the member's account vault (ADR 0018, web/security/account-vault.js). The
+ * caller zeroes them as soon as they are sealed into the vault.
+ */
+export async function exportStoredEpochKey({ record, deviceKeys }) {
+  if (record?.sealed?.householdId !== record.householdId || record?.sealed?.keyEpoch !== record.keyEpoch)
+    throw new SyncCryptoError("stored_key_mismatch", "The epoch metadata does not match its sealed key.");
+  const rawKey = await openSealedKey({ sealed: record.sealed, deviceKeys });
+  if (rawKey.length !== 32 || await fingerprintKey(rawKey) !== record.fingerprint) {
+    rawKey.fill(0);
+    throw new SyncCryptoError("stored_key_mismatch", "The epoch fingerprint does not match its sealed key.");
+  }
+  return rawKey;
+}
+
 export async function wrapEpochKey({
   rawKey,
   householdId,

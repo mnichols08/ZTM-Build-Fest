@@ -1,6 +1,7 @@
 import {
   deviceKeyFingerprint,
   exportDevicePublicKeys,
+  exportStoredEpochKey,
   generateProtectedDeviceKeys,
   importProtectedDeviceKeys,
   createDeviceKeyTransition,
@@ -36,6 +37,28 @@ const HOUSEHOLD_SETTINGS_STORE = "household_settings";
 const MEMBER_VIEW_STORE = "member_view";
 const PENDING_DEVICE_ID = "pending";
 const MAX_KEY_EPOCHS = 128;
+
+// Listeners told when this device installs a household or chat epoch key it
+// didn't have (ADR 0018, #567): the account vault keeper re-seals the
+// member's vault with it. Told after the key is committed; a listener's
+// failure never fails the install.
+const epochInstalledListeners = new Set();
+
+/** Calls `listener({ householdId, keyEpoch })` after each newly installed
+ * epoch key; `householdId` is the key family label ("<id>" or "chat:<id>").
+ * Returns a function that removes the listener. */
+export function onEpochInstalled(listener) {
+  epochInstalledListeners.add(listener);
+  return () => epochInstalledListeners.delete(listener);
+}
+
+function announceEpochInstalled(householdId, keyEpoch) {
+  for (const listener of epochInstalledListeners) {
+    try {
+      Promise.resolve(listener({ householdId, keyEpoch })).catch(() => {});
+    } catch { /* Installing the key already succeeded. */ }
+  }
+}
 
 export class SyncKeyStoreError extends Error {
   constructor(message, cause) {
@@ -285,6 +308,7 @@ export class SyncKeyStore {
     const store = transaction.objectStore(EPOCH_STORE);
     const key = `${householdId}:${keyEpoch}`;
     const request = store.get(key);
+    let added = false;
     return transactionResult(transaction, (finish) => {
       request.onsuccess = () => {
         const existing = request.result;
@@ -308,6 +332,7 @@ export class SyncKeyStore {
           sealed,
           fingerprint,
         });
+        added = true;
         finish({
           key,
           householdId,
@@ -317,7 +342,48 @@ export class SyncKeyStore {
         });
       };
       request.onerror = () => abortWith(transaction, request.error);
-    }).then(record => ({ ...record, householdKey }));
+    }).then(record => {
+      if (added) announceEpochInstalled(householdId, keyEpoch);
+      return { ...record, householdKey };
+    });
+  }
+
+  /**
+   * Every epoch key this device holds for `householdId`, household and chat
+   * families, as raw bytes for the member's account vault (ADR 0018):
+   * `[{ family: "household" | "chat", epoch, key }]`. The caller zeroes the
+   * keys once they are sealed. A key this device can't open is left out
+   * (another device's vault update carries it).
+   */
+  async vaultEpochKeys(householdId) {
+    this.vault.assertUnlocked();
+    const deviceTx = this.database.transaction(DEVICE_STORE, "readonly");
+    const deviceRequest = deviceTx.objectStore(DEVICE_STORE).getAll();
+    const stored = await transactionResult(deviceTx, finish => { deviceRequest.onsuccess = () => finish(deviceRequest.result); });
+    const devices = [];
+    for (const record of stored)
+      if (record.deviceId !== PENDING_DEVICE_ID && record.householdId === householdId) devices.push(await hydrateDevice(record, this.vault));
+    const entries = [];
+    for (const [family, label] of [["household", householdId], ["chat", `chat:${householdId}`]]) {
+      const tx = this.database.transaction(EPOCH_STORE, "readonly");
+      const request = tx.objectStore(EPOCH_STORE).index("household_id").getAll(label);
+      const records = await transactionResult(tx, finish => {
+        request.onsuccess = () => finish(request.result);
+        request.onerror = () => abortWith(tx, request.error);
+      });
+      for (const record of records) {
+        for (const device of devices) {
+          try {
+            entries.push({ family, epoch: record.keyEpoch, key: await exportStoredEpochKey({ record, deviceKeys: device.keys }) });
+            break;
+          } catch (error) {
+            if (!["stored_key_invalid", "stored_key_mismatch"].includes(error.code)) throw error;
+          }
+        }
+      }
+    }
+    this.vault.assertUnlocked();
+    return entries;
   }
 
   getEpoch(householdId, keyEpoch) {

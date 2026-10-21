@@ -168,6 +168,16 @@ contain them until they are rotated out, and restoring one brings them back
 until the next start resets them again. See
 [Identity](IDENTITY.md#device-names).
 
+Account key vaults (ADR 0018, #564): a member's device may store the
+member's keys on the service, sealed so the service can't read them. The
+service learns that the member has a vault, its size, its version and when
+it changes (which hints at key rotations), how many ways it can be opened
+and of which kind (password, passkey, both, backup code), and the public
+parameters for those (a password salt, a passkey's credential ID). It never
+receives the vault key, a password, a passkey's PRF output or a backup
+code. Deleting the household deletes the vaults; backups keep old copies.
+See [Cryptography](CRYPTOGRAPHY.md#account-key-vault-adr-0018).
+
 The planning design for these boundaries is documented in [Identity](IDENTITY.md), [Pairing](PAIRING.md), [Synchronization](SYNC.md), [Cryptography](CRYPTOGRAPHY.md), and the [Threat Model](THREAT-MODEL.md). These documents specify intended properties and open decisions; they do not establish implemented security guarantees.
 
 ## Data lifecycle
