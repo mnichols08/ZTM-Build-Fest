@@ -2107,13 +2107,15 @@ and receive a short ID suffix in selection/management labels until renamed.
   mention you. Limitation: a mention is highlighted by its current label, so
   a member renamed later no longer matches the old "@Name" text, which then
   shows as plain text. Push notifications stay generic ([ADR 0008](decisions/0008-household-chat.md)).
-- Where the browser supports the Badging API, the installed app's icon shows
-  the same count, set on the device from decrypted state.
+- The installed app's icon shows this count only if the member turns on
+  "Count on the app icon" (§40, #476); it is off by default.
 - **Decision: the home-screen badge clears when Kin locks.** The badge is only
   a number, but a number on a locked app still tells anyone who sees the
   screen that the household is active. Locking stops the chat room, which
   clears the count and the badge; unlocking brings both back from the saved
   position. Messages that arrive while locked are counted at the next unlock.
+  Since #476, closing Kin (rather than locking it) leaves the last count on
+  the icon for a member who turned the count on; see §40.
 
 # 24. Pinned chat messages (#131)
 
@@ -2349,11 +2351,35 @@ tried them.
   page's memory until unlock. Nothing is written to storage or the cache. A
   share that reaches the server (no service worker yet) is discarded unread
   and the app simply opens. Simple view doesn't take shares.
-- **Shortcuts.** A long press on the home-screen icon offers Quick add,
-  Shopping, Chat and Today. Quick add opens after unlock.
-- Support: Android and desktop Chrome/Edge support share targets for
-  installed apps; Safari on iOS doesn't offer installed web apps in the share
-  sheet yet. Shortcuts work where the platform supports manifest shortcuts.
+- **Shortcuts** (#472). A long press on the home-screen icon (right-click on
+  a desktop dock or taskbar) offers **Add to shopping**, **Add a task**,
+  **This week**, **Shopping**, **Chat** and **Today**, each with its own icon
+  (a bag with a plus, a ticked box, a calendar, a bag, a speech bubble, a
+  sun). Launchers show as many as they have room for, in that order.
+  - **Add to shopping** and **Add a task** open Shopping or To do with Quick
+    add open on that list ("Adds to Shopping." / "Adds to To do.") and focus
+    in the title field: type, Enter, done. The action is taken out of the
+    address as Kin starts (`#kin-action=…`, which never reaches the server),
+    so Back or a refresh doesn't repeat it; an unknown or stale action does
+    nothing.
+  - **This week**, **Shopping**, **Chat** and **Today** are ordinary pages
+    (`#week`, `#lists/shopping`, `#updates/chat`, `#today`).
+  - **The lock always comes first.** A shortcut never skips unlocking: a
+    locked Kin shows the unlock screen, holds the shortcut in memory, and
+    lands on it after unlock, focus in the title field for the Add
+    shortcuts and at the start of the page for the others. A shortcut used
+    while Kin is already open and unlocked lands at once.
+  - **Simple view** has no Quick add, so an Add shortcut opens Today (focus
+    on its heading) and says "Adding things isn't available in Simple view,
+    so Kin opened Today."; page shortcuts open Today, or Chat where it's
+    open to the member. A **Temporary member** lands where the shortcut
+    says, not on For you; the Today shortcut still takes them to For you.
+- Support: Android and desktop Chrome/Edge support share targets and
+  shortcuts for installed apps; Safari on iOS doesn't offer installed web apps
+  in the share sheet yet, and iPhone home-screen apps have no shortcuts, so
+  the long press shows nothing extra there. The icons are PNGs (Android
+  ignores SVG-only shortcut icons) and are cached with the app, so shortcuts
+  open offline too.
 
 # 35. Shopping mode (#403)
 
@@ -2455,3 +2481,30 @@ tried them.
   device agrees. With fewer than two people left, the routine says taking
   turns is paused.
 - **No scores.** Kin never counts turns per person or shows who did more.
+
+# 40. Count on the app icon (#476)
+
+- **Where.** Household → People & devices, right under "Notifications on
+  this device": **Count on the app icon**, a choice for this device only
+  (kept in this browser's local storage as `kin.app-badge`, like the
+  auto-lock time). **Off** (the default), **Unread messages**, or **Unread
+  messages and my things today**. Choosing says what the icon now shows in a
+  status line. The section isn't shown where the browser has no Badging API
+  (for example Firefox, or Safari outside a home-screen app).
+- **The number.** Unread messages are Chat's own unread count (§23). "My
+  things today" adds the items planned for today and the routines due today
+  ("every day", "every weekday", still open) that the member is responsible
+  for, including a routine whose turn is theirs; unassigned things and
+  other people's don't count, and routines don't count while the household
+  is paused. The count is worked out on the device from decrypted state and
+  updates on every change: sync, reading, completing, adding.
+- **Never content.** Only a number, never what the messages or things are.
+  The hint says so, and that anyone who can see the screen can see it.
+- **Lock and sign-out clear it.** Locking (the Lock button, auto-lock,
+  another tab locking) and signing out clear the icon. Closing Kin leaves
+  the last count on the icon: that is what the member asked for. Nothing
+  updates it while Kin is closed or locked (no background decryption), so it
+  can be out of date until Kin is next unlocked. Turning the setting Off
+  clears the icon at once.
+- **Not a nag.** Off by default, no prompt to turn it on, and no counting
+  of anyone else's things (PRODUCT-BOUNDARIES).

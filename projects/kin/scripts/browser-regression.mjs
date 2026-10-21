@@ -34,6 +34,7 @@ import { keyboardCommandRegressions } from "./keyboard-commands-regression.mjs";
 import { bulkActionRegressions } from "./bulk-actions-regression.mjs";
 import { undoRegressions } from "./undo-regression.mjs";
 import { shareRegressions } from "./share-regression.mjs";
+import { shortcutsBadgeRegressions } from "./shortcuts-badge-regression.mjs";
 import { shoppingModeRegressions } from "./shopping-mode-regression.mjs";
 import { weekRegressions } from "./week-regression.mjs";
 import { importRegressions } from "./import-regression.mjs";
@@ -1632,6 +1633,9 @@ try {
     await first.evaluate('location.hash="#today"');
     console.log("PASS refresh keeps Kin unlocked in the same tab; Lock, navigation and the setting still lock (#351)");
   }
+  // Home-screen shortcuts and the app icon count (#471): each shortcut loads
+  // Kin locked, then lands after unlock; it ends unlocked on Today.
+  console.log(await shortcutsBadgeRegressions(first, { origin, until, ready, recovery: recoverySecret }));
   if (heavy) console.log(await fridgeRegressions(first, until));
   console.log(await simpleRegressions(first, { until, ready }));
   await first.evaluate(

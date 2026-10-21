@@ -148,6 +148,8 @@ export class RenderController {
     this.ctx.status.updateOnboardingDensity();
     this.updateCalendarExportButton();
     this.ctx.refresh.schedulePulseRefresh();
+    // The app icon count (#476) follows every change: sync, completion, adds.
+    this.ctx.badge?.update();
   }
   updateCalendarExportButton() {
     if (!this.app.calendarExportButton) return;
