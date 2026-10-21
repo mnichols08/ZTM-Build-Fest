@@ -429,6 +429,11 @@ content. Kin renders household text with text APIs, never as HTML.
 
 **Planned.** Send the full policy as a header and add Trusted Types.
 
+`img-src` allows `data:` images (beside `'self'` and `blob:`) so a report's
+screenshot (ADR 0021 §3) can draw Kin's own page as an SVG image in browsers
+that won't read a `blob:` one back. Images can't run script, and
+`connect-src` still stops a data image from reaching any other origin.
+
 ### C5: the recovery key can linger in memory and on the clipboard
 
 **What it is.** JavaScript can't wipe a string, so the recovery key text
