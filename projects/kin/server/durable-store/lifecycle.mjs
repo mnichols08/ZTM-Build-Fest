@@ -43,6 +43,8 @@ export function purgeHouseholdData(database, householdId) {
   }
   // Problem reports and suggestions its members sent (ADR 0021 §3).
   purgeHouseholdFeedback(database, householdId);
+  // Invitations an admin prepared and may have printed (#613).
+  database.prepare("DELETE FROM prepared_invitations WHERE household_id = ?").run(householdId);
   database
     .prepare("DELETE FROM provisioning_grants WHERE household_id = ?")
     .run(householdId);

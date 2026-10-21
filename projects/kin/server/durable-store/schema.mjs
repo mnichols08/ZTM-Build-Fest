@@ -14,6 +14,7 @@ import {
   sqlitePragma,
 } from "./shared.mjs";
 import { FEEDBACK_TABLES_SQL } from "./feedback.mjs";
+import { PREPARED_INVITATIONS_SQL } from "./prepared-invitations.mjs";
 
 export const schemaMethods = {
   migrate(migrationFault) {
@@ -992,6 +993,23 @@ export const schemaMethods = {
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;
         throw new DurableStoreError("Kin could not complete the feedback migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 26) {
+      try {
+        this.transaction(() => {
+          // #613 "Set up Kin for someone": prepared invitations, the one kind
+          // of pairing kept across a restart (durable-store/
+          // prepared-invitations.mjs). A code verifier, never the code; the
+          // person's details only as a card sealed on the admin's device.
+          this.db.exec(PREPARED_INVITATIONS_SQL);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(27, Date.now());
+          sqlitePragma(this.db, "user_version = 27");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the prepared invitation migration.", { cause: error });
       }
     }
   },

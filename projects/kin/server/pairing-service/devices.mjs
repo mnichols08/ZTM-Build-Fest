@@ -195,7 +195,7 @@ export const deviceMethods = {
       pairing.state = "Revoked";
       pairing.terminalAt = this.now();
       pairing.version += 1;
-      this.codeIndex.delete(pairing.verifier);
+      this.retireCode(pairing);
       for (const [claimHash, storedPairingId] of this.claimTokens)
         if (storedPairingId === pairing.id) this.claimTokens.delete(claimHash);
       this.audit("pairing_revoked", {

@@ -9,6 +9,7 @@ import { HouseholdLink } from "./household/link.js";
 import { HouseholdLinkApproval } from "./household/link-approval.js";
 import { HouseholdMembership } from "./household/membership.js";
 import { HouseholdPairing } from "./household/pairing.js";
+import { HouseholdPrepared } from "./household/prepared.js";
 import { HouseholdViews } from "./household/views.js";
 import { consumeInvitationCode, takeInvitationCode } from "../pairing-link.js";
 
@@ -19,6 +20,7 @@ const PARTS = {
   auth: HouseholdAuth,
   account: HouseholdAccount,
   pairing: HouseholdPairing,
+  prepared: HouseholdPrepared,
   link: HouseholdLink,
   linkApproval: HouseholdLinkApproval,
   membership: HouseholdMembership,
@@ -170,6 +172,7 @@ class KinHousehold extends HTMLElement {
   // Called from outside the element (regression scripts, <kin-app>);
   // each delegates to its part.
   get account() { return this.ctx.account; }
+  get prepared() { return this.ctx.prepared; }
   activateClaim(...args) { return this.ctx.pairing.activateClaim(...args); }
   api(...args) { return this.ctx.api.api(...args); }
   assertConnection(...args) { return this.ctx.api.assertConnection(...args); }

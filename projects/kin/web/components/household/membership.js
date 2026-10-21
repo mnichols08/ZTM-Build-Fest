@@ -337,6 +337,15 @@ export class HouseholdMembership {
         // this entry point never silently creates an Adult invitation (#297).
         inviteCopy.textContent = "Invite another person: choose their Adult, Limited, or Temporary role before creating an invitation. They get their own household member identity and role-based access.";
         actions.append(inviteCopy, this.host.makeButton("Invite another person", () => this.host.showHousehold()));
+        // "Set up Kin for someone" (#613): a prepared invitation with their
+        // name, easy mode and a printable sheet.
+        const setupCopy = document.createElement("p");
+        setupCopy.textContent = "Set up Kin for someone: prepare it with their name and easy mode, and print a sheet that shows them how to open it. They only choose a password.";
+        const setup = this.host.makeButton("Set up Kin for someone", () => this.ctx.prepared.start(), "secondary setup-for-someone");
+        actions.append(setupCopy, setup);
+        const waiting = await this.ctx.prepared.waitingList();
+        if (superseded()) return;
+        if (waiting) actions.append(waiting);
       }
       const deviceCopy = document.createElement("p");
       deviceCopy.textContent = "Add my device: connect your own phone or computer under this same member identity. Your other devices will not notify you about your own changes.";

@@ -43,7 +43,9 @@ export class FirstRunController {
         this.ctx.navigation.navigate("#today");
       } else {
         // The keys stay with the household panel until the approved claim
-        // is finished (it wipes them then).
+        // is finished (it wipes them then). Set up by someone else (#615):
+        // the panel's waiting screen names them and the helper.
+        household.preparedWelcome = pending.prepared ?? null;
         await household.account.joinHousehold(pending.signUp, pending.code);
         app.pendingProfile = { displayName: pending.displayName, householdName: "" };
         this.ctx.navigation.navigate("#household/people");

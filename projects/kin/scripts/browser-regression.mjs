@@ -23,6 +23,8 @@ import { mealsRegressions } from "./meals-regression.mjs";
 import { mealsAcceptanceRegressions } from "./meals-acceptance-regression.mjs";
 import { simpleRegressions } from "./simple-regression.mjs";
 import { easyModeRegressions } from "./easy-mode-regression.mjs";
+import { easySweepRegressions } from "./easy-sweep-regression.mjs";
+import { setupForSomeoneRegressions } from "./setup-for-someone-regression.mjs";
 import { planningDateRegressions } from "./planning-date-regression.mjs";
 import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
 import { fridgeRegressions } from "./fridge-regression.mjs";
@@ -1799,6 +1801,8 @@ try {
   // Easy mode and Help on every screen (#616, #620), before Simple view
   // reloads into the full layout.
   if (heavy) console.log(await easyModeRegressions(first, { until }));
+  // The easy-mode sweep (#639): every page in easy mode at 320px and desktop.
+  if (heavy) console.log(await easySweepRegressions(first, { until }));
   console.log(await simpleRegressions(first, { until, ready }));
   await first.evaluate(
     'sessionStorage.setItem("kin.test.expectedState", JSON.stringify(document.querySelector("kin-app").state))',
@@ -3166,6 +3170,11 @@ try {
   // being offline, and from the lock screen; an admin's suggestion; and What
   // I've sent with a status the operator set. On its own service too.
   if (REGRESSION_PART !== "1") console.log(await reportProblemRegressions({ endpoint, browserClient }));
+  // Set up Kin for someone (#612–#615): an admin prepares an invitation for
+  // Rose with easy mode and prints its sheet; Rose opens the link in a fresh
+  // browser, sets a password, the admin approves, and she lands on Today in
+  // easy mode with her name. On its own service too.
+  if (REGRESSION_PART !== "1") console.log(await setupForSomeoneRegressions({ endpoint, browserClient }));
 } catch (error) {
   // The whole failure as an annotation, so an attempt that a passing retry
   // hides can still be read in CI (#594).

@@ -12,9 +12,11 @@
 export const PAIR_PATH = "/pair";
 const CODE_LENGTH = 9;
 
-/** The invitation link for `code` on `origin`. */
-export function invitationLink(origin, code) {
-  return `${origin}${PAIR_PATH}#code=${encodeURIComponent(code)}`;
+/** The invitation link for `code` on `origin`. A prepared invitation (#613)
+ * also carries `key`, which opens its sealed card (security/prepared-card.js);
+ * it rides in the fragment too, so it never reaches the service. */
+export function invitationLink(origin, code, key = null) {
+  return `${origin}${PAIR_PATH}#code=${encodeURIComponent(code)}${key ? `&k=${encodeURIComponent(key)}` : ""}`;
 }
 
 /** A pairing code as typed or read: trimmed and cut to the field's length.
@@ -48,17 +50,32 @@ export function takeInvitationCode(where = globalThis.location, past = globalThi
 
 /** The value of a `code` parameter, in any letter case, or null. The router
  * lower-cases fragments, so `#CODE=` reaches /pair as well. */
-function codeParameter(text) {
-  for (const [name, value] of new URLSearchParams(text)) if (name.toLowerCase() === "code") return value;
+function codeParameter(text, wanted = "code") {
+  for (const [name, value] of new URLSearchParams(text)) if (name.toLowerCase() === wanted) return value;
   return null;
 }
 
-let captured = "";
+/** The card key (`k`) in the current /pair address's fragment, or "". Read
+ * before takeInvitationCode resets the address. The key is case-sensitive,
+ * so only an exact-case `k` value counts. */
+export function invitationKey(where = globalThis.location) {
+  if (!where || where.pathname !== PAIR_PATH) return "";
+  const value = codeParameter(String(where.hash ?? "").replace(/^#/, ""), "k");
+  return typeof value === "string" && /^[A-Za-z0-9_-]{22}$/.test(value) ? value : "";
+}
 
-/** Takes the code from the address as the app loads (kin-app.js). */
-export function captureInvitationCode(where, past) {
+let captured = "";
+let capturedKey = "";
+
+/** Takes the code (and a prepared invitation's card key) from the address
+ * as the app loads (kin-app.js). */
+export function captureInvitationCode(where = globalThis.location, past) {
+  const key = invitationKey(where);
   const code = takeInvitationCode(where, past);
-  if (code) captured = code;
+  if (code) {
+    captured = code;
+    capturedKey = key;
+  }
   return code;
 }
 
@@ -67,4 +84,11 @@ export function consumeInvitationCode() {
   const code = captured;
   captured = "";
   return code;
+}
+
+/** The captured card key, once (the first run opens the card with it). */
+export function consumeInvitationKey() {
+  const key = capturedKey;
+  capturedKey = "";
+  return key;
 }

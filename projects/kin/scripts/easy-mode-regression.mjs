@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { setViewport } from "./cdp-viewport.mjs";
 
 // Every page and tab Help covers (help/help-content.js has a topic for each).
-const ROUTES = [
+export const ROUTES = [
   "today", "week", "search", "journal",
   "lists/todo", "lists/shopping", "lists/staples", "lists/meals", "lists/mine",
   "routines/all", "routines/checklists", "updates/handoffs", "updates/chat",
