@@ -1,6 +1,6 @@
 # Support
 
-Kin's current release is v1.5.0 — One Account and Private Spaces (`kin-v1.5.0`,
+Kin's current release is v1.6.0 — Kin for Everyone (`kin-v1.6.0`,
 2026-10-21). It is a Build Fest project, not a
 supported service: there is no staffed runtime support channel or guaranteed
 response time.

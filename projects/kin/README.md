@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Current implementation line: `v1.5.0` — One Account and Private Spaces.** Released as `kin-v1.5.0` on 2026-10-21, this minor release gives each member one account across their devices: a username and password at first run, an optional passkey and a backup code, signing in on a new phone or browser without another device present, and moving an existing household to accounts without starting over. Each member also gets private space only they can see: a journal, a Just for me list, and reminders and settings that follow them to every device, with an export of their own. It builds on v1.4.0 (the fridge, Meals and household helpers) and adds server schemas 21–24 as forward migrations; see the [changelog](CHANGELOG.md) for the compatibility notes. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
+**Current implementation line: `v1.6.0` — Kin for Everyone.** Released as `kin-v1.6.0` on 2026-10-21, this minor release makes Kin easier for someone who rarely uses apps: easy mode with bigger text and buttons and fewer things on screen, Help on every screen, household features an admin can switch off for everyone, reporting a problem or suggesting a feature from inside Kin, and setting Kin up for someone else with a printed "How to open Kin" sheet. It also prepares Kin for Google Play with an Android app, a public privacy policy and a release runbook. It builds on v1.5.0 (one account and private spaces) and adds server schemas 25–27 as forward migrations; see the [changelog](CHANGELOG.md) for the compatibility notes. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -42,6 +42,10 @@ AI runtime features, gamification, surveillance, and enterprise workflows stay o
 
 ## Release history
 
+- `v1.6.0` — Kin for Everyone: easy mode, Help on every screen, household
+  features, report a problem and suggest a feature, setting Kin up for
+  someone else, and the Android app for Google Play. Released 2026-10-21
+  (`kin-v1.6.0`).
 - `v1.5.0` — One Account and Private Spaces: accounts with a username and
   password, passkey and backup code, new-device sign-in, a private journal,
   Just for me, and reminders and settings that follow each member. Released
