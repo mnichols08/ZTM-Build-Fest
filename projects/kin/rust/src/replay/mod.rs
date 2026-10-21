@@ -121,6 +121,9 @@ pub struct Replay {
     /// The sitter page (sitter.rs), shared with finalized states until it
     /// changes.
     pub(super) sitter_page: Arc<crate::sitter::SitterPageState>,
+    /// A member's private records (private.rs). Only a private log ever
+    /// fills it, and `finalize` never copies it into a household state.
+    pub(super) private: Arc<crate::private::PrivateState>,
     /// Canonical bytes per applied event: an exact duplicate is skipped, a conflicting one fails. Shared, so cloning a Replay does not copy them.
     pub(super) event_bytes: BTreeMap<EventId, Arc<[u8]>>,
     /// Logical time of the last applied event; replay order never goes back.
@@ -323,6 +326,7 @@ impl Replay {
                 crate::store_sections::apply(&mut self.store_sections, event)?
             }
             K::SitterPageSet { .. } => crate::sitter::apply(&mut self.sitter_page, event)?,
+            K::PrivateNoteSet { .. } => crate::private::apply(&mut self.private, event)?,
         }
         self.last_logical_time = event.logical_time;
         self.event_bytes
@@ -339,6 +343,11 @@ impl Replay {
     /// The fridge as replayed so far (board.rs).
     pub fn board(&self) -> &crate::board::BoardState {
         &self.board
+    }
+
+    /// A member's private records as replayed so far (private.rs).
+    pub fn private(&self) -> &crate::private::PrivateState {
+        &self.private
     }
 
     /// The household state at `as_of` (UTC milliseconds) on `civil_date`.

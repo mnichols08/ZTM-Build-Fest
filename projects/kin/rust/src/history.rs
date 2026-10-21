@@ -34,6 +34,10 @@
 //! that never enter the KINS projection, with their own cap
 //! (`MAX_BOARD_EVENT_COUNT`) and checkpoint. Every log refuses the others'
 //! events.
+//!
+//! A fourth holds one member's private records (#489, ADR 0019, private.rs):
+//! sealed under the member key, never part of household replay or KINS,
+//! with its own cap (`MAX_PRIVATE_EVENT_COUNT`) and checkpoint.
 use crate::error::KinError;
 use crate::event::HouseholdId;
 use crate::event::IdentityBinding;
@@ -52,6 +56,9 @@ pub enum Log {
     Chat,
     /// Fridge events only (#317); at most `MAX_BOARD_EVENT_COUNT`.
     Board,
+    /// One member's private events only (#489); at most
+    /// `MAX_PRIVATE_EVENT_COUNT`.
+    Private,
 }
 
 impl Log {
@@ -61,6 +68,8 @@ impl Log {
             Self::Chat
         } else if kind.is_board() {
             Self::Board
+        } else if kind.is_private() {
+            Self::Private
         } else {
             Self::Household
         }
@@ -106,6 +115,11 @@ impl History {
         Self::of(Log::Board)
     }
 
+    /// An empty private log (one member's, #489).
+    pub const fn private() -> Self {
+        Self::of(Log::Private)
+    }
+
     const fn of(log: Log) -> Self {
         Self {
             log,
@@ -131,6 +145,7 @@ impl History {
             Log::Household => MAX_EVENT_COUNT,
             Log::Chat => crate::chat::MAX_CHAT_EVENT_COUNT,
             Log::Board => crate::board::MAX_BOARD_EVENT_COUNT,
+            Log::Private => crate::private::MAX_PRIVATE_EVENT_COUNT,
         }
     }
 
