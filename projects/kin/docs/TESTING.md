@@ -461,13 +461,7 @@ wait, and never delete or weaken a test to make it pass.
    commit's engine with `node scripts/fetch-wasm.mjs` if you can't build it).
    A flake that never reproduces locally is usually a wait on something
    asynchronous (an animation frame, a media-query `change`, a second tab
-   starting); look for the step just before the failing assertion. Once a
-   suite opens a second tab, the first is a background tab: on the Windows
-   Edge runner a load there could have its module requests cancelled, so
-   the regression's CDP client brings a tab to the front before every
-   `Page.navigate` or `Page.reload` (#469). A wait that times out names its
-   condition, and the page-load waits add the tab's state and its
-   unfinished and failed requests.
+   starting); look for the step just before the failing assertion.
 3. **File it.** Add a comment to the open flake-tracking issue (#327 while the
    test and CI reliability epic, #326, is open; afterwards a new issue labelled
    for test health), with the run link, suite, browser, the first failing line

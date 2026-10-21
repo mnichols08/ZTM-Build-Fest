@@ -200,18 +200,8 @@ async function connect(url) {
       inFlight.delete(message.params.requestId);
     }
   };
-  // Loads a page only in the front tab (#469). Once a suite opens a second
-  // tab, the first one is a background tab, and on the Windows Edge runner a
-  // navigation or reload there could have its module requests cancelled
-  // (net::ERR_ABORTED, nothing retried): kin-app never defined and every
-  // later wait timed out. A person loads Kin in the tab they are looking at.
-  const LOADS = new Set(["Page.navigate", "Page.reload"]);
   const client = {
-    async send(method, params = {}) {
-      if (LOADS.has(method)) await this.command("Page.bringToFront");
-      return this.command(method, params);
-    },
-    command(method, params = {}) {
+    send(method, params = {}) {
       return new Promise((resolve, reject) => {
         const number = ++id;
         const timeout = setTimeout(
