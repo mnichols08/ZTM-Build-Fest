@@ -521,6 +521,15 @@ pub extern "C" fn kin_private_history_truncate(count: u32) -> i32 {
     }
 }
 
+/// A new private event validated against the private log (#511): u32
+/// command length, KCMD with a private action (100–199) carrying the exact
+/// payload, record-less KINE context (private_command.rs). Publishes KCMT
+/// with an empty projection; the log is not changed.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_private_execute(pointer: u32, length: u32) -> i32 {
+    run_private(pointer, length, crate::private_command::execute)
+}
+
 /// The member's private projection: a record-less KINE context against the
 /// private log; publishes KPRV (private.rs).
 #[cfg_attr(target_arch = "wasm32", no_mangle)]

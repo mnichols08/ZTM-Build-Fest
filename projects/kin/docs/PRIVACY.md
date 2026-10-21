@@ -224,6 +224,22 @@ member deletes their private stream on the service; deleting the household
 deletes every member's. Copies on the member's own devices stay, as for
 household data. Household exports never include private logs.
 
+**Just for me (#510).** Private to-dos, notes on them and the member's
+"show on my Today" setting are private-log records (kinds 110–118): sealed
+like every private event, so the service sees only their count, size and
+timing. They show only on that member's devices: in Lists › Just for me
+and, when the member's setting is on, on their own Today and This week,
+marked "Private"; never in Simple view, household search, the sitter page,
+calendar (.ics) exports or household exports. A deleted item stays in the
+member's private log (so Undo can restore it), like every private record.
+Moving something between private and the household is always an explicit
+choice: **Share with the household…** asks first and names who will see it,
+then writes an ordinary household item, which every member can read from
+then on; **Make private** archives the household item (the household keeps
+its archived record, as with Archive) and keeps a private copy. The
+household item made by sharing has an ID derived one way (SHA-256) from the
+private item's, so it reveals nothing about the private log.
+
 The planning design for these boundaries is documented in [Identity](IDENTITY.md), [Pairing](PAIRING.md), [Synchronization](SYNC.md), [Cryptography](CRYPTOGRAPHY.md), and the [Threat Model](THREAT-MODEL.md). These documents specify intended properties and open decisions; they do not establish implemented security guarantees.
 
 ## Data lifecycle

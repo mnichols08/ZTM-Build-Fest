@@ -64,6 +64,7 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_private_history_append: status,
       kin_private_history_truncate: () => 0,
       kin_private_state: status,
+      kin_private_execute: status,
       kin_qr_encode: status,
       kin_qr_decode: status,
       kin_clear() {},

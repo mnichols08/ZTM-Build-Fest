@@ -37,6 +37,7 @@ import { SitterController } from "./sitter.js";
 import { RotationsController } from "./rotations.js";
 import { ImportController } from "./import.js";
 import { SectionsController } from "./sections.js";
+import { PrivateItemsController } from "./private-items.js";
 import { AppendCommands } from "./commands/append.js";
 import { AttachmentController } from "./attachments.js";
 import { ChatShareController } from "./chat-share.js";
@@ -86,6 +87,8 @@ export function createAppContext(app) {
   ctx.rotations = new RotationsController(ctx);
   ctx.importList = new ImportController(ctx);
   ctx.sections = new SectionsController(ctx);
+  // Just for me (#510): the member's private list.
+  ctx.privateItems = new PrivateItemsController(ctx);
   ctx.navigation = new NavigationController(ctx);
   ctx.detail = new DetailController(ctx);
   ctx.appearance = new AppearanceController(ctx);
@@ -163,6 +166,10 @@ export function initializeAppState(app) {
     // Item picture (#347), from the item details.
     app.onSetItemEmoji = (event) => void app.ctx.simple.setItemEmoji(event.detail);
     app.onReplenishStaple = (event) => app.ctx.items.handleReplenishStaple(event);
+    // Just for me (#510, #517): a private item done or reopened from Today
+    // or This week, and "Make private" from a household item's details.
+    app.onTogglePrivateItem = (event) => void app.ctx.privateItems.toggle(event.detail ?? {});
+    app.onMakeItemPrivate = (event) => void app.ctx.privateItems.makePrivate(event.detail?.itemId);
     app.syncState = null;
     // Follows the browser's own offline/online events, like the state notice.
     app.offline = typeof navigator !== "undefined" && navigator.onLine === false;

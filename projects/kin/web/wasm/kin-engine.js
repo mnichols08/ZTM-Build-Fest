@@ -25,6 +25,7 @@ import { SECTION_COMMANDS, SECTION_EVENT_KINDS, SectionFormatError, decodeShoppi
 import { ROTATION_COMMANDS, ROTATION_EVENT_KINDS, RotationFormatError, decodeRoutineRotations, encodeRotationIntent } from "./kin-rotations.js";
 import { SITTER_COMMANDS, SITTER_EVENT_KINDS, SitterFormatError, decodeSitterPage, encodeSitterIntent } from "./kin-sitter.js";
 import { FIRST_PRIVATE_KIND, MAX_PRIVATE_EVENT_COUNT, PRIVATE_EVENT_KINDS, decodePrivate } from "./kin-private.js";
+import { FIRST_PRIVATE_ITEM_KIND, PRIVATE_ITEM_EVENT_KINDS, PrivateFormatError, encodePrivateIntent } from "./kin-private.js";
 
 export { idToHex, KinEngineError };
 
@@ -131,6 +132,7 @@ export function createEngine(instanceExports) {
     "kin_private_history_append",
     "kin_private_history_truncate",
     "kin_private_state",
+    "kin_private_execute",
     "kin_qr_encode",
     "kin_qr_decode",
     "kin_clear",
@@ -422,6 +424,47 @@ export function createEngine(instanceExports) {
     // records). Returns { memberId, recordCount, notes } (kin-private.js).
     privateState: (privateRecords, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodePrivate(privateStateBytes(exports, privateMirror, privateRecords, asOf, civilDate, syncIdentity))),
+    // A private command (kin-private.js PRIVATE_ITEM_COMMANDS, #511)
+    // validated against the member's private log: { encodedEvent, metadata }.
+    // `identity` names the event (hex IDs, timestamp, logical time).
+    executePrivateCommand: (command, identity, privateRecords, asOf, civilDate, syncIdentity = null) =>
+      executePrivateCommand(exports, privateMirror, command, identity, privateRecords, asOf, civilDate, syncIdentity),
+  };
+}
+
+function executePrivateCommand(exports, privateMirror, command, identity, privateRecords, asOf, civilDate, syncIdentity) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (privateRecords.length > MAX_PRIVATE_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  let intent;
+  try { intent = encodePrivateIntent(command, identity); }
+  catch (error) {
+    if (error instanceof PrivateFormatError) throw new KinEngineError(2, error.message);
+    throw error;
+  }
+  // u32 intent length, KCMD, then the record-less KINE context.
+  const prefix = 4 + intent.length;
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, prefix);
+  new DataView(request.buffer).setUint32(0, intent.length, true);
+  request.set(intent, 4);
+  const release = privateMirror.hold(privateRecords);
+  let bytes;
+  try {
+    bytes = callCore(exports, "kin_private_execute", request);
+  } finally {
+    release();
+    intent.fill(0);
+    request.fill(0);
+  }
+  const invalid = () => new KinEngineError(6, "Kin received an invalid command result.");
+  if (bytes.length < 20 || readAscii(bytes, 0, 4) !== "KCMT") throw invalid();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const eventLength = view.getUint32(8, true), metadataLength = view.getUint32(12, true);
+  if (view.getUint16(4, true) !== 1 || view.getUint16(6, true) !== 0 || view.getUint32(16, true) !== 0 ||
+    20 + eventLength + metadataLength !== bytes.length)
+    throw invalid();
+  return {
+    encodedEvent: bytes.slice(20, 20 + eventLength),
+    metadata: decodeMetadata(bytes.subarray(20 + eventLength)),
   };
 }
 
@@ -1172,6 +1215,8 @@ const EVENT_KINDS = [
 ];
 // A member's private log (#489): kinds from 100, after a gap of unused codes.
 PRIVATE_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_PRIVATE_KIND + index] = kind; });
+// "Just for me" (#510): kinds 110–118.
+PRIVATE_ITEM_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_PRIVATE_ITEM_KIND + index] = kind; });
 
 // The command field that names each event's own entity (packet offset 92).
 // Other ID fields on a command are references to a different entity: a

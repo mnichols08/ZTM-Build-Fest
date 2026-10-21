@@ -53,6 +53,8 @@ class KinToday extends HTMLElement {
     this.attachmentRecords = [];
     this.routineRecords = [];
     this.handoffRecords = [];
+    // Just for me (#514): this member's dated private items (Today only).
+    this.privateRecords = [];
     this.householdMode = "normal";
     this.civilDate = null;
     this.selectedItemId = null;
@@ -268,6 +270,9 @@ defineProps(KinToday, {
   attachments: { field: "attachmentRecords", coerce: asArray },
   routines: { field: "routineRecords", coerce: asArray },
   handoffs: { field: "handoffRecords", coerce: asArray },
+  // Just for me (#514): the member's private items for Today, already
+  // filtered by their setting and never given in Simple view.
+  privateItems: { field: "privateRecords", coerce: asArray },
   mode: { field: "householdMode", coerce: (value) => value ?? "normal" },
   today: { field: "civilDate", coerce: (value) => (Number.isSafeInteger(value) ? value : null) },
   selected: { field: "selectedItemId", coerce: (value) => value ?? null },

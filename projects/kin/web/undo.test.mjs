@@ -142,6 +142,19 @@ test("archive is undone by creating it again with its details, and redone by arc
   assert.ok(!gone.some((command) => command.type === "change-responsibility" || command.type === "change-item-area"));
 });
 
+test("“Make private” is undone like an archive and has no redo (#517)", () => {
+  const before = state({ items: [item({ planningDate: 20261021, status: "completed" })] });
+  const entry = Object.freeze({ ...itemArchivedEntry(A, before), kind: "item-made-private", privateItemId: B, label: "make “Milk” private" });
+  const archived = apply(before, { type: "archive", itemId: A }, { now: 500 });
+  assert.equal(reversalStatus(entry, archived), "ready");
+  const { state: restored, commands } = reverse(entry, archived, { now: 600 });
+  assert.deepEqual(commands.map((command) => command.type), ["add", "set-item-planning-date", "complete"]);
+  assert.equal(restored.items.find((record) => record.itemId === entry.replacementId).text, "Milk");
+  assert.ok(isOptionalStep(entry, { type: "pin" }));
+  assert.equal(inverseEntry(entry, archived, restored), null, "redo would leave the private copy behind, so there is none");
+  assert.equal(describeReversal(entry, "undo", "done"), "Undone: make “Milk” private.");
+});
+
 test("a completed item comes back completed", () => {
   const before = state({ items: [item({ status: "completed" })] });
   const entry = itemArchivedEntry(A, before);
