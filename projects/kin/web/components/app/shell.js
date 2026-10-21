@@ -169,6 +169,8 @@ export class ShellBuilder {
       notifyPeerLock: (lockEpoch) => this.ctx.session.notifyPeerLock(lockEpoch),
       lockHousehold: (broadcast, options) => this.ctx.session.lockHousehold(broadcast, options),
       setAutoLockMinutes: (minutes) => this.ctx.session.setAutoLockMinutes(minutes),
+      // The first run's sign-up, finished once the household panel is up (#557).
+      completeFirstRun: (pending) => void this.ctx.firstRun.complete(pending),
       takeReloadResume: async (readManifest) => {
         const resumed = await this.app.reloadResume.take({ navigationType: currentNavigationType(), readManifest });
         void this.app.reloadResume.sweep();

@@ -901,6 +901,28 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the private storage migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 22) {
+      try {
+        this.transaction(() => {
+          // #558 (ADR 0018): a member's username for password sign-in, in its
+          // normalized form (web/security/account-credentials.js). Unique on
+          // the service among active members, so a removed member's name can
+          // be chosen again. Members who signed up with a passkey have none.
+          this.db.exec(`
+            ALTER TABLE members ADD COLUMN username TEXT
+              CHECK (username IS NULL OR (length(username) BETWEEN 3 AND 32 AND username = lower(username)));
+            CREATE UNIQUE INDEX members_active_username ON members(username)
+              WHERE username IS NOT NULL AND active = 1;
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(23, Date.now());
+          sqlitePragma(this.db, "user_version = 23");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the username migration.", { cause: error });
+      }
+    }
   },
 
   verify() {

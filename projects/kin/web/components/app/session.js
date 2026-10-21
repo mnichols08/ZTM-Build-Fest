@@ -224,6 +224,10 @@ export class SessionController {
     clearAttachmentProgress();
     this.app.householdStatus = null;
     this.app.passkeyPromptDismissed = false;
+    // A first run still signing up ends with the session; its keys go too.
+    if (this.app.firstRun?.pending?.signUp) for (const key of ["authKey", "passwordKey", "localKek"]) this.app.firstRun.pending.signUp[key]?.fill?.(0);
+    this.app.firstRun = null;
+    this.app.pendingProfile = null;
     if (this.app.onboarding) { this.app.onboarding.hidden = true; this.app.onboarding.replaceChildren(); }
     this.app.syncCoordinator?.stop();
     this.app.syncCoordinator = null;

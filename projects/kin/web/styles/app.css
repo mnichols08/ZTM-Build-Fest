@@ -1208,6 +1208,23 @@ kin-app > .security-panel {
 .security-guidance summary { color: var(--accent); }
 .security-guidance ul { margin: 6px 0 0; padding-inline-start: 20px; color: var(--ink-muted); font-size: 14px; display: grid; gap: 6px; }
 .setup-steps { margin: 10px 0 16px; padding-inline-start: 22px; display: grid; gap: 8px; }
+/* First run (#557, #559) and password unlock (#558). */
+.first-run-progress { margin: 0 0 4px; color: var(--ink-muted); font-size: 14px; }
+.first-run-field { display: grid; gap: 6px; }
+.first-run-field label, .password-unlock-form label, .password-sign-in label { font-weight: 650; }
+.first-run-field .security-note, .first-run-field .field-error { margin: 0; font-size: 14px; }
+.first-run-field .field-error, .first-run-retry .field-error { color: var(--danger); font-weight: 600; }
+.first-run-field input, .password-unlock-form input, .password-sign-in input, .first-run-retry input, .password-confirmation input {
+  min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control);
+  background: var(--surface); color: var(--ink); font: inherit; max-width: 100%;
+}
+.first-run-field input[aria-invalid="true"] { border-color: var(--danger); }
+.first-run-actions, .dialog-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.first-run-retry, .password-sign-in { display: grid; gap: 8px; margin-block: 10px; }
+.password-confirmation { width: min(calc(100% - 32px), 420px); padding: 20px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); color: var(--ink); }
+.password-confirmation form { display: grid; gap: 10px; }
+.password-confirmation h2 { margin: 0; font-size: 20px; }
+.password-confirmation::backdrop { background: rgba(10, 16, 12, .52); }
 .recovery-form { margin-top: 14px; }
 .recovery-form .security-note { margin: -4px 0 0; }
 .recovery-saved { display: flex; gap: 10px; align-items: flex-start; font-weight: 560; }

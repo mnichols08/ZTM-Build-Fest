@@ -188,6 +188,25 @@ receives the vault key, a password, a passkey's PRF output or a backup
 code. Deleting the household deletes the vaults; backups keep old copies.
 See [Cryptography](CRYPTOGRAPHY.md#account-key-vault-adr-0018).
 
+Username and password sign-in (#557, #558): for a member who signs up with
+a password, the service now stores **a username** (with the member, in
+normalized lower-case form, unique among active members) and **an Argon2id
+verifier of a key derived from the password** (`authKey`), with the
+password's salt and iteration count. It never receives the password itself,
+nor the separate password-derived key that opens the member's vault and
+their devices' local data. It learns when the member signs in with the
+password and from which address (as for a passkey login), and how many
+attempts failed (to limit them). Whether a username is taken is answered to
+anyone signing up, as on any sign-up page, at a limited rate. A username is
+chosen by the member and can be anything that fits the rules; it need not
+be a real name or an email address, and Kin has no email system. Deleting
+the household deletes the usernames and verifiers. Removing a member, or a
+member leaving, deletes their username, verifier, account vault and its
+wrappers on the service (backups keep old copies), and the username can be
+chosen again. The member's preferred display name, typed at
+first run, is a household event like before: encrypted, never seen by the
+service.
+
 **Private storage for each member (ADR 0019, #489).** A member's private
 things (the journal, "Just for me", reminders that follow them) are sealed
 under a member key that only their own devices hold, read from their account

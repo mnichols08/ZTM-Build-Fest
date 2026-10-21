@@ -141,7 +141,8 @@ Standing constraints from v1.0:
 - **Household authority:** up to four Adults, Limited members (children and
   teens) and Temporary members (babysitters, caregivers, guests). The founder
   is the first **household admin**; admins promote or demote other Adults with
-  a fresh passkey. Membership management, revoking another member's device,
+  a fresh passkey (or, for a member who has no passkey yet, a fresh password:
+  ADR 0018, weaker until one is added). Membership management, revoking another member's device,
   household deletion, admin recovery and shared settings require an admin.
   Legacy households without an admin keep Adult-level management and stay
   fail-closed for settings and admin grants.

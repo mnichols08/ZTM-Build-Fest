@@ -331,16 +331,17 @@ export const membershipMethods = {
       if (memberId === excludingMemberId) return false;
       const other = this.members.get(memberId);
       return isHouseholdAdmin(other, this.now()) &&
-        other.credentials?.size > 0 && this.hasUsableTrustedDevice(other.id);
+        this.canConfirmFreshly(other) && this.hasUsableTrustedDevice(other.id);
     });
   },
 
-  // Usable admin access needs a recorded admin with a passkey and an
-  // unrevoked trusted device; the admin flag alone is not enough.
+  // Usable admin access needs a recorded admin who can confirm freshly (a
+  // passkey, or a password until they add one, #558) and an unrevoked
+  // trusted device; the admin flag alone is not enough.
   hasUsableAdminAccess(household, excludingDeviceIds = []) {
     return [...household.members].some((memberId) => {
       const admin = this.members.get(memberId);
-      return isHouseholdAdmin(admin, this.now()) && admin.credentials?.size > 0 &&
+      return isHouseholdAdmin(admin, this.now()) && this.canConfirmFreshly(admin) &&
         [...this.devices.values()].some((device) =>
           device.memberId === memberId && !device.revokedAt &&
           !excludingDeviceIds.includes(device.id));
@@ -363,7 +364,7 @@ export const membershipMethods = {
       if (memberId === excludingMemberId) return false;
       const other = this.members.get(memberId);
       return other?.active && canManageTrust(other, this.now()) &&
-        other.credentials?.size > 0 && this.hasUsableTrustedDevice(other.id);
+        this.canConfirmFreshly(other) && this.hasUsableTrustedDevice(other.id);
     });
   },
 
@@ -389,6 +390,13 @@ export const membershipMethods = {
       memberId,
       actorId,
     });
+    // Their sign-in and account vault go with them (ADR 0018/0019): the
+    // username can be chosen again, and the service keeps no verifier,
+    // vault or wrappers for someone who is no longer a member. Copies on
+    // their own devices stay, as for household data.
+    delete target.username;
+    delete target.password;
+    this.onAccountRemoved?.(household.id, memberId);
     this.persistHousehold(household.id);
     // Their private stream goes with them (ADR 0019); copies on their own
     // devices stay, as for household data.

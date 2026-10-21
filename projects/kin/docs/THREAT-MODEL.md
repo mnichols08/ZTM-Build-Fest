@@ -167,7 +167,23 @@ Trust boundaries include the browser UI ↔ Rust/WASM engine, local browser stor
 | Another member, a removed member or a revoked device | Refused by the routes: only the session's own member, on a trusted device, reads or writes their vault. |
 
 The ADR's full table (stolen password, phished passkey account, phishing)
-applies once password and passkey sign-in exist (#557, #568).
+applies as password and passkey sign-in arrive (#557 now, #568 later).
+
+### Password sign-in (#557, #558)
+
+| Threat | With password sign-in |
+| --- | --- |
+| Stolen password, no device | Not enough yet: signing in needs a trusted device's cookie (the no-cookie sign-in is #568). Joining as a new member still needs an invitation code and the inviter's approval after comparing devices. |
+| Stolen password and an unlocked or stolen trusted device | The password unlocks that device's local copy offline and signs it in. Same as a stolen backup key today, except a password can be guessed: at a full PBKDF2 (600,000 iterations) per guess against the device, and the strength floor (10 characters, not one of ~200 very common passwords, not the username) only stops the first guesses. |
+| Online guessing against the service | Only from a trusted device's cookie; failures are limited to 10 per 15 minutes per member, per device and per address, and past that even the right password waits. One message and the same Argon2id work for every failure, so neither says whether a username exists. |
+| A **fresh password** instead of a fresh passkey | Weaker than a passkey until one is added. For a member with no passkey, admin-only and trust actions (approving a device or a member, signing in a computer, revoking a device, removing a member, household admins, Simple view, chat and fridge access, deleting the household or cancelling that) accept a password re-entry. Anyone who has the member's password *and* one of their trusted devices (or an open session on one) can do those things; with a passkey, they'd also need the passkey's device or account. A member who has a passkey always confirms with it, and an `authKey` is no substitute. |
+| Usernames can be listed | Whether a username is free is answered at sign-up, as on every sign-up page, limited to 30 checks per client address in 15 minutes. A claim waiting for approval holds its username. |
+| Forgotten password, one device, no other way in | The household can't be opened on that device (RECOVERY, "Members who signed up with a password"). No backup key exists to fall back to until the backup code (#571); the first run says so in one line. |
+| Phishing for the password | Possible, as for any password; another reason to add a passkey once that is offered. A phished `authKey` alone opens nothing locally (the local wrapper's key is derived separately). |
+
+Nothing in the vault, the verifier or the local wrapper lets the service
+read household content: it sees `authKey` (from which the password-derived
+keys can't be computed) and stores only its Argon2id hash.
 
 ## Private storage per member (ADR 0019, #489)
 

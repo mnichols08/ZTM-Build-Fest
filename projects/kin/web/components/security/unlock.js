@@ -2,11 +2,31 @@
 // open the household once the vault is unlocked.
 // Part of <kin-security>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-security.js lists them).
-import { LocalVault, setActiveVault } from "../../security/local-vault.js";
+import { LocalVault, setActiveVault, toBase64Url, VaultError } from "../../security/local-vault.js";
 import { authenticatePrf } from "../../security/passkey-unlock.js";
+import { passwordUnlockKeys, passwordWrapper } from "../../security/account-setup.js";
 import { EventStore } from "../../storage/event-store.js";
 import { commitRootRotationKeys, finalizeSyncKeyMigration, migrateSyncKeys, prepareRootRotationKeys } from "../../sync/key-store.js";
 import { loadKinEngine } from "../../wasm/kin-engine.js";
+
+/**
+ * Signs this trusted device in with the member's username and authKey
+ * (POST /api/login/password). Best effort: offline, or with a device the
+ * service no longer knows, the local unlock still stands and the household
+ * panel explains what's missing.
+ */
+export async function signInWithPassword(username, authKey, signal) {
+  if (!username) return false;
+  try {
+    const response = await fetch("/api/login/password", {
+      method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal,
+      body: JSON.stringify({ username, authKey: toBase64Url(authKey) }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
 
 export class SecurityUnlock {
   constructor(ctx) {
@@ -22,6 +42,42 @@ export class SecurityUnlock {
     this.host.assertCurrentOperation(operation);
     const unlockManifest = manifest?.phase === "root-rotating" ? manifest.rotation.candidateManifest : manifest;
     const vault = await LocalVault.unlock(unlockManifest, secret);
+    await this.finishUnlock(vault, operation);
+  }
+
+  /**
+   * Unlocks with the password (#558): one PBKDF2 run on this device gives
+   * the local wrapper's key (works offline) and the authKey that also signs
+   * this device in, so household actions don't ask again. A wrong password
+   * gets one calm message; the form stays.
+   */
+  async unlockPassword(password) {
+    const operation = this.host.operation;
+    await this.host.closest("kin-app")?.lockBarrier;
+    this.host.assertCurrentOperation(operation);
+    const manifest = await EventStore.securityStatus();
+    this.host.assertCurrentOperation(operation);
+    const wrapper = passwordWrapper(manifest);
+    this.host.message.textContent = "Checking your password…";
+    const keys = await passwordUnlockKeys(wrapper, password);
+    let vault;
+    try {
+      this.host.assertCurrentOperation(operation);
+      vault = await LocalVault.unlock(manifest, keys.localKek, wrapper.id);
+    } catch (error) {
+      this.host.message.textContent = "";
+      if (error?.code === "unlock_failed")
+        throw new VaultError("That password didn't work. Check it and try again.", "unlock_failed", error);
+      throw error;
+    } finally {
+      keys.localKek.fill(0);
+      keys.passwordKey.fill(0);
+    }
+    try {
+      await signInWithPassword(wrapper.username, keys.authKey, this.host.operationAbort.signal);
+    } finally {
+      keys.authKey.fill(0);
+    }
     await this.finishUnlock(vault, operation);
   }
 

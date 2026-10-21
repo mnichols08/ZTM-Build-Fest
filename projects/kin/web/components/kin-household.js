@@ -1,6 +1,7 @@
 import { getActiveVault } from "../security/local-vault.js";
 import { button, message, text } from "./shared/dom.js";
 import { OperationGuard } from "./shared/operation.js";
+import { HouseholdAccount } from "./household/account.js";
 import { HouseholdApi } from "./household/api.js";
 import { HouseholdAuth } from "./household/auth.js";
 import { HouseholdLifecycle } from "./household/lifecycle.js";
@@ -16,6 +17,7 @@ import { consumeInvitationCode, takeInvitationCode } from "../pairing-link.js";
 const PARTS = {
   api: HouseholdApi,
   auth: HouseholdAuth,
+  account: HouseholdAccount,
   pairing: HouseholdPairing,
   link: HouseholdLink,
   linkApproval: HouseholdLinkApproval,
@@ -88,7 +90,8 @@ class KinHousehold extends HTMLElement {
         this.prefilledCode = consumeInvitationCode() || takeInvitationCode();
       }
     }
-    this.load();
+    // The first load, which the first run waits for before it signs up.
+    this.loaded = this.load();
   }
 
   /** An invitation code arrived after this element connected (a same-page
@@ -101,6 +104,7 @@ class KinHousehold extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this.ctx.account.stop();
     this.ctx.link.abandon();
     this.ctx.linkApproval.abandon();
     this.connectionAbort.abort();
@@ -165,6 +169,7 @@ class KinHousehold extends HTMLElement {
 
   // Called from outside the element (regression scripts, <kin-app>);
   // each delegates to its part.
+  get account() { return this.ctx.account; }
   activateClaim(...args) { return this.ctx.pairing.activateClaim(...args); }
   api(...args) { return this.ctx.api.api(...args); }
   assertConnection(...args) { return this.ctx.api.assertConnection(...args); }

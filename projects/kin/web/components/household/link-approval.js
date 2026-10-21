@@ -25,7 +25,7 @@
 import { createDeviceAuthorizationCertificate, deviceKeyFingerprint } from "../../sync/crypto.js";
 import { linkTag, newLinkCode, signInRequest } from "../../device-link.js";
 import { invitationCode } from "../../pairing-link.js";
-import { authenticationOptions, credentialJson } from "./auth.js";
+import { freshConfirmation } from "./fresh-confirmation.js";
 import { SIGN_IN_TTL_MS } from "./link.js";
 
 export const APPROVE_WARNING = "Only approve a computer that's in front of you.";
@@ -180,10 +180,7 @@ export class HouseholdLinkApproval {
         // The keys must be the ones the camera saw on the computer.
         if (!view.existingDevice && (await deviceKeyFingerprint(view.syncPublicKeys)) !== scanned.fingerprint)
           throw new Error("The computer's key doesn't match the code you scanned. The computer was not approved.");
-        const credential = await navigator.credentials.get({
-          publicKey: authenticationOptions(started.publicKey),
-          signal: this.host.connectionAbort.signal,
-        });
+        const proof = await freshConfirmation(started, { signal: this.host.connectionAbort.signal });
         let deviceCertificate;
         if (!view.existingDevice) {
           deviceCertificate = await createDeviceAuthorizationCertificate({
@@ -200,7 +197,7 @@ export class HouseholdLinkApproval {
           method: "POST",
           body: JSON.stringify({
             flow: started.flow,
-            credential: credentialJson(credential),
+            ...proof,
             secret: scanned.secret,
             fingerprint: scanned.fingerprint,
             deviceCertificate,
