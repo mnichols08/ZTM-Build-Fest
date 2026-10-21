@@ -113,9 +113,10 @@ async function justForMeFlow() {
     if (!condition) throw new Error(`${message}${detail === undefined ? "" : ` ${JSON.stringify(detail)}`}`);
     checks += 1;
   };
-  const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
-  const until = async (test, message) => {
-    for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
+  // Polls on timers, not animation frames: this page is a background target
+  // in its own browser context, where frames may be throttled or paused.
+  const until = async (test, message, ms = 30_000, step = 25) => {
+    for (let index = 0; index < ms / step; index++) { if (test()) return; await new Promise((resolve) => setTimeout(resolve, step)); }
     check(false, message);
   };
   const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the work settles");
@@ -134,7 +135,8 @@ async function justForMeFlow() {
   const today = app.ctx.navigation.currentCivilDate();
   const dateInput = (date) => `${String(date).slice(0, 4)}-${String(date).slice(4, 6)}-${String(date).slice(6, 8)}`;
 
-  check(app.segmentNavs.get("lists").segments.some((segment) => segment.id === "mine" && segment.label === "Just for me"), "Lists has a Just for me segment");
+  const segment = app.segmentNavs.get("lists").querySelector('.segment-link[data-segment="mine"]');
+  check(segment?.textContent === "Just for me" && segment.getAttribute("href") === "#lists/mine", "Lists has a Just for me segment", segment?.outerHTML);
   app.ctx.navigation.navigate("#lists/mine");
   await until(() => !app.pages.get("lists").hidden && !view().hidden, "Just for me shows");
 
@@ -282,8 +284,8 @@ async function justForMeFlow() {
   app.detail.querySelector(".make-private-button").click();
   await idle();
   await until(() => privateItem(flights), "it is copied into Just for me");
-  check(app.state.items.find((entry) => entry.itemId === household.itemId).status === "archived", "the household item is archived");
-  check(app.ctx.undo.toastAction.textContent === "Undo", "with Undo");
+  await until(() => app.state.items.find((entry) => entry.itemId === household.itemId)?.status === "archived" && !app.busy, "the household item is archived");
+  await until(() => !app.ctx.undo.toast.hidden && app.ctx.undo.toastAction.textContent === "Undo", "with Undo");
   app.ctx.undo.toastAction.click();
   await idle();
   await until(() => !privateItem(flights), "Undo removes the private copy");
