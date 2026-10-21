@@ -70,6 +70,7 @@ async function writeInJournal() {
   check(page.querySelector(".journal-only-you")?.textContent === "Only you can see this.", "the page says only you can see it");
   check(/only your own devices can read it/.test(page.empty.textContent), "the empty journal explains its privacy in one sentence");
   check(fits(), `the journal fits ${innerWidth} px without sideways scrolling`);
+  check(app.querySelectorAll('input[type="file"]').length === 1, "the journal keeps no file input of its own");
 
   // Write: today by default; the draft is kept when the editor closes.
   page.newButton.click();

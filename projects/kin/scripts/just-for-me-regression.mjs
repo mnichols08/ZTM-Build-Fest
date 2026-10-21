@@ -113,13 +113,10 @@ async function justForMeFlow() {
     if (!condition) throw new Error(`${message}${detail === undefined ? "" : ` ${JSON.stringify(detail)}`}`);
     checks += 1;
   };
-  // Polls on timers, not animation frames: this page is a background target
-  // in its own browser context, where frames may be throttled or paused.
-  // `detail()`, when given, says what the page showed if the wait times out.
-  const until = async (test, message, detail = null) => {
-    const step = 25;
-    for (let index = 0; index < 1200; index++) { if (test()) return; await new Promise((resolve) => setTimeout(resolve, step)); }
-    check(false, message, detail?.());
+  const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  const until = async (test, message) => {
+    for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
+    check(false, message);
   };
   const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the work settles");
   // Asks for sync passes until nothing private waits to send (or 15 s).
@@ -137,8 +134,7 @@ async function justForMeFlow() {
   const today = app.ctx.navigation.currentCivilDate();
   const dateInput = (date) => `${String(date).slice(0, 4)}-${String(date).slice(4, 6)}-${String(date).slice(6, 8)}`;
 
-  const segment = app.segmentNavs.get("lists").querySelector('.segment-link[data-segment="mine"]');
-  check(segment?.textContent === "Just for me" && segment.getAttribute("href") === "#lists/mine", "Lists has a Just for me segment", segment?.outerHTML);
+  check(app.segmentNavs.get("lists").segments.some((segment) => segment.id === "mine" && segment.label === "Just for me"), "Lists has a Just for me segment");
   app.ctx.navigation.navigate("#lists/mine");
   await until(() => !app.pages.get("lists").hidden && !view().hidden, "Just for me shows");
 
@@ -265,8 +261,7 @@ async function justForMeFlow() {
   shareFrom(dentist);
   await until(() => dialog.open, "the dialog opens again");
   dialog.querySelector(".primary-action").click();
-  await until(() => app.state.items.some((item) => item.text === dentist) && /won't be added twice/.test(app.alert?.textContent ?? ""), "the household copy exists and a retry is offered",
-    () => ({ alert: app.alert?.textContent, status: app.status?.textContent, feedback: view().querySelector(".just-for-me-feedback")?.textContent, shared: app.state.items.filter((entry) => entry.text === dentist).length }));
+  await until(() => app.state.items.some((item) => item.text === dentist) && /won't be added twice/.test(app.alert?.textContent ?? ""), "the household copy exists and a retry is offered", app.alert?.textContent);
   check(privateItem(dentist), "the private one is still there after the failure");
   await idle();
   const item = privateItem(dentist);
@@ -287,8 +282,8 @@ async function justForMeFlow() {
   app.detail.querySelector(".make-private-button").click();
   await idle();
   await until(() => privateItem(flights), "it is copied into Just for me");
-  await until(() => app.state.items.find((entry) => entry.itemId === household.itemId)?.status === "archived" && !app.busy, "the household item is archived");
-  await until(() => !app.ctx.undo.toast.hidden && app.ctx.undo.toastAction.textContent === "Undo", "with Undo");
+  check(app.state.items.find((entry) => entry.itemId === household.itemId).status === "archived", "the household item is archived");
+  check(app.ctx.undo.toastAction.textContent === "Undo", "with Undo");
   app.ctx.undo.toastAction.click();
   await idle();
   await until(() => !privateItem(flights), "Undo removes the private copy");

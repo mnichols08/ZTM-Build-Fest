@@ -186,23 +186,11 @@ class KinJournal extends HTMLElement {
     this.photoList = document.createElement("ul");
     this.photoList.className = "journal-editor-photos";
     this.photoList.setAttribute("aria-label", "Photos in this entry");
-    this.photoInput = document.createElement("input");
-    this.photoInput.type = "file";
-    this.photoInput.accept = "image/jpeg,image/png,image/webp";
-    this.photoInput.multiple = true;
-    this.photoInput.hidden = true;
-    this.photoInput.tabIndex = -1;
-    this.photoInput.setAttribute("aria-hidden", "true");
-    this.photoInput.addEventListener("change", () => {
-      const files = [...(this.photoInput.files ?? [])];
-      this.photoInput.value = "";
-      if (files.length) void this.addPhotos(files);
-    });
     this.photoButton = document.createElement("button");
     this.photoButton.type = "button";
     this.photoButton.className = "journal-add-photos";
     this.photoButton.textContent = "Add photos";
-    this.photoButton.addEventListener("click", () => this.photoInput.click());
+    this.photoButton.addEventListener("click", () => this.choosePhotos());
     this.photoStatus = document.createElement("p");
     this.photoStatus.className = "section-hint";
     this.photoStatus.setAttribute("role", "status");
@@ -231,7 +219,7 @@ class KinJournal extends HTMLElement {
       field("Date", this.dateInput),
       field("Title (optional)", this.titleInput),
       field("What happened", this.bodyInput, "Plain text. Line breaks are kept."),
-      this.photoList, this.photoButton, this.photoInput, this.photoStatus, this.message, actions,
+      this.photoList, this.photoButton, this.photoStatus, this.message, actions,
     );
     // Escape closes the editor and keeps the draft.
     this.editor.addEventListener("keydown", (event) => {
@@ -500,6 +488,26 @@ class KinJournal extends HTMLElement {
       return item;
     }));
     this.photoButton.disabled = photos.length >= MAX_JOURNAL_PHOTOS;
+  }
+
+  /** Opens the photo picker. The app keeps one persistent file input (the
+   * household attachments'); like Import and Chat, this one exists only
+   * while the picker is open (kin-import.js `chooseFile`). */
+  choosePhotos() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/jpeg,image/png,image/webp";
+    input.multiple = true;
+    input.hidden = true;
+    const done = () => input.remove();
+    input.addEventListener("change", () => {
+      const files = [...(input.files ?? [])];
+      done();
+      if (files.length) void this.addPhotos(files);
+    });
+    input.addEventListener("cancel", done);
+    this.editor.append(input);
+    input.click();
   }
 
   async addPhotos(files) {
