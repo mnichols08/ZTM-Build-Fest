@@ -9,7 +9,7 @@
 //   vault key VK (32 random bytes, generated once per member)
 //     |-- HKDF-SHA-256(VK, fresh 32-byte salt, "kin/vault/v1") -> AES-256-GCM
 //     |     key for one vault version's contents (epoch keys, certification
-//     |     key, reserved private-storage key)
+//     |     key, member-key epochs for private storage, ADR 0019)
 //     '-- wrapped by each way the member can open it (a wrapper), under a
 //         32-byte key-encryption key (KEK):
 //           password          passwordKey (below)
@@ -37,8 +37,24 @@
 //         u8 family (1 household, 2 chat)  u8 0  u16 epoch (1..128)  32-byte key
 //     u16 L, then L bytes: the certification key (ECDSA P-256 PKCS8), L = 0 if none
 //     u16 M, then M bytes: the private-storage key (reserved, epic #480), M = 0 or 32
+//         (read as member-key epoch 1 with revokedThrough 0)
 //
-//   sealed vault, format 1 (what the service stores)
+//   vault contents, format 2 (ADR 0019, #487): format 1 with the reserved
+//   slot replaced by a list of member-key epochs
+//     u8  format (2)          u8  flags (0)
+//     u16 epoch count N and N entries, as format 1
+//     u16 L and the certification key, as format 1
+//     u16 member-key count K (1..128), then K entries sorted by epoch, unique:
+//         u16 epoch (1..128)  u16 0  u64 revokedThrough  32-byte member key
+//     `revokedThrough` is the latest revocation time (service milliseconds)
+//     of the member's own devices that the epoch was made after: a device
+//     that sees a newer revocation of one of the member's devices starts the
+//     next epoch (web/private/member-key.js). Contents with no member key
+//     are still written as format 1, byte for byte as before, so a vault
+//     only becomes format 2 once its member has a member key.
+//
+//   sealed vault, format 1 (what the service stores; unchanged by contents
+//   format 2, which an older release refuses as "written by a newer Kin")
 //     "KVLT"  u8 format (1)  32-byte HKDF salt  12-byte AES-GCM nonce
 //     ciphertext with its 16-byte tag
 //     AAD: JSON ["kin/vault/v1", "1", householdId, memberId, "<vault version>"]
@@ -51,15 +67,21 @@
 // AAD and HKDF info use a JSON array of strings, which is length-unambiguous
 // (the same encoding as local-vault.js); IDs are never concatenated raw.
 
-export const VAULT_FORMAT = 1;
+/** The newest vault contents format (2 since ADR 0019); format 1 is still
+ * read, and written while a vault holds no member key. */
+export const VAULT_FORMAT = 2;
+/** The sealed container around the contents ("KVLT" header byte and AAD). */
+export const SEALED_VAULT_FORMAT = 1;
 export const WRAPPER_FORMAT = 1;
 export const PASSWORD_ITERATIONS = 600_000;
 export const PASSWORD_SALT_BYTES = 16;
 export const WRAPPER_TYPES = Object.freeze(["password", "passkey", "password-passkey", "backup-code"]);
 export const EPOCH_FAMILY = Object.freeze({ household: 1, chat: 2 });
 export const MAX_VAULT_EPOCH = 128;
+/** Most member-key epochs, and the largest epoch number (ADR 0019). */
+export const MAX_MEMBER_KEY_EPOCH = 128;
 /** Largest sealed vault: 256 epoch entries (two families of 128), a PKCS8
- * key and the private-storage key fit with room to spare. The service
+ * key and 128 member-key epochs fit with room to spare. The service
  * enforces the same bound (server/account-vault-service.mjs). */
 export const MAX_SEALED_VAULT_BYTES = 64 * 1024;
 export const WRAPPED_KEY_BYTES = 61;
@@ -68,6 +90,7 @@ const MAGIC = [0x4b, 0x56, 0x4c, 0x54]; // "KVLT"
 const SEALED_HEADER_BYTES = 4 + 1 + 32 + 12;
 const MAX_ENTRIES = 2 * MAX_VAULT_EPOCH;
 const MAX_CERTIFICATION_KEY_BYTES = 512;
+const MEMBER_KEY_ENTRY_BYTES = 44;
 const encoder = new TextEncoder();
 const ID = /^[a-f0-9]{32}$/;
 
@@ -81,6 +104,16 @@ export class AccountVaultError extends Error {
 
 /** A new random 256-bit vault key. The caller zeroes it when done. */
 export function generateVaultKey() {
+  return crypto.getRandomValues(new Uint8Array(32));
+}
+
+/**
+ * A new random 256-bit member key (ADR 0019): the AES-256-GCM key a
+ * member's private envelopes are sealed under, for one epoch. It lives only
+ * in the member's vault and, while unlocked, on their devices. The caller
+ * zeroes it once it is sealed into the vault.
+ */
+export function generateMemberKey() {
   return crypto.getRandomValues(new Uint8Array(32));
 }
 
@@ -115,19 +148,19 @@ export function importCertificationKey(pkcs8) {
 // ---- Vault contents ------------------------------------------------------
 
 /**
- * Encodes vault contents (format 1). `epochs` is a list of
- * `{ family: "household" | "chat", epoch, key: Uint8Array(32) }`; it is
- * sorted here, and a repeated (family, epoch) is refused.
+ * Encodes vault contents. `epochs` is a list of
+ * `{ family: "household" | "chat", epoch, key: Uint8Array(32) }`;
+ * `memberKeys` a list of `{ epoch, key: Uint8Array(32), revokedThrough }`
+ * (ADR 0019). Both are sorted here, and a repeated epoch is refused. Without
+ * member keys the result is format 1, exactly as before; with them, format 2.
  */
-export function encodeVaultContents({ epochs = [], certificationKey = null, privateStorageKey = null } = {}) {
+export function encodeVaultContents({ epochs = [], certificationKey = null, memberKeys = [] } = {}) {
   const entries = normalizeEpochs(epochs);
   const certification = optionalBytes(certificationKey, MAX_CERTIFICATION_KEY_BYTES, "certification key");
-  const privateStorage = optionalBytes(privateStorageKey, 32, "private-storage key");
-  if (privateStorage.length !== 0 && privateStorage.length !== 32)
-    throw new AccountVaultError("The private-storage key must be 32 bytes.");
-  const bytes = new Uint8Array(4 + entries.length * 36 + 2 + certification.length + 2 + privateStorage.length);
+  const members = normalizeMemberKeys(memberKeys);
+  const bytes = new Uint8Array(4 + entries.length * 36 + 2 + certification.length + 2 + members.length * MEMBER_KEY_ENTRY_BYTES);
   const view = new DataView(bytes.buffer);
-  bytes[0] = VAULT_FORMAT;
+  bytes[0] = members.length ? VAULT_FORMAT : 1;
   bytes[1] = 0;
   view.setUint16(2, entries.length);
   let offset = 4;
@@ -141,17 +174,30 @@ export function encodeVaultContents({ epochs = [], certificationKey = null, priv
   view.setUint16(offset, certification.length);
   bytes.set(certification, offset + 2);
   offset += 2 + certification.length;
-  view.setUint16(offset, privateStorage.length);
-  bytes.set(privateStorage, offset + 2);
+  // Format 1 ends with an empty private-storage slot (M = 0); format 2 with
+  // the member-key list.
+  view.setUint16(offset, members.length);
+  offset += 2;
+  for (const entry of members) {
+    view.setUint16(offset, entry.epoch);
+    view.setUint16(offset + 2, 0);
+    view.setBigUint64(offset + 4, BigInt(entry.revokedThrough));
+    bytes.set(entry.key, offset + 12);
+    offset += MEMBER_KEY_ENTRY_BYTES;
+  }
   return bytes;
 }
 
-/** Decodes and validates vault contents (format 1). Keys are fresh copies. */
+/** Decodes and validates vault contents (format 1 or 2). Keys are fresh
+ * copies. Returns `{ epochs, certificationKey, memberKeys }`; a format 1
+ * private-storage key reads as member-key epoch 1. */
 export function decodeVaultContents(bytes) {
   const fail = () => new AccountVaultError("The vault contents are invalid.", "vault_corrupt");
   if (!(bytes instanceof Uint8Array) || bytes.length < 8) throw fail();
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (bytes[0] !== VAULT_FORMAT) throw new AccountVaultError("This vault was written by a newer version of Kin.", "vault_unsupported");
+  const format = bytes[0];
+  if (format !== 1 && format !== VAULT_FORMAT)
+    throw new AccountVaultError("This vault was written by a newer version of Kin.", "vault_unsupported");
   if (bytes[1] !== 0) throw fail();
   const count = view.getUint16(2);
   if (count > MAX_ENTRIES || bytes.length < 4 + count * 36 + 4) throw fail();
@@ -173,19 +219,37 @@ export function decodeVaultContents(bytes) {
   if (certificationLength > MAX_CERTIFICATION_KEY_BYTES || offset + certificationLength + 2 > bytes.length) throw fail();
   const certificationKey = certificationLength ? bytes.slice(offset, offset + certificationLength) : null;
   offset += certificationLength;
-  const privateLength = view.getUint16(offset);
+  const tail = view.getUint16(offset);
   offset += 2;
-  if ((privateLength !== 0 && privateLength !== 32) || offset + privateLength !== bytes.length) throw fail();
-  const privateStorageKey = privateLength ? bytes.slice(offset, offset + privateLength) : null;
-  return { epochs, certificationKey, privateStorageKey };
+  const memberKeys = [];
+  if (format === 1) {
+    if ((tail !== 0 && tail !== 32) || offset + tail !== bytes.length) throw fail();
+    if (tail) memberKeys.push({ epoch: 1, key: bytes.slice(offset, offset + 32), revokedThrough: 0 });
+    return { epochs, certificationKey, memberKeys };
+  }
+  if (tail < 1 || tail > MAX_MEMBER_KEY_EPOCH || offset + tail * MEMBER_KEY_ENTRY_BYTES !== bytes.length) throw fail();
+  let previousEpoch = 0;
+  for (let index = 0; index < tail; index += 1) {
+    const epoch = view.getUint16(offset);
+    const revokedThrough = view.getBigUint64(offset + 4);
+    if (epoch <= previousEpoch || epoch > MAX_MEMBER_KEY_EPOCH || view.getUint16(offset + 2) !== 0 ||
+        revokedThrough > BigInt(Number.MAX_SAFE_INTEGER)) throw fail();
+    previousEpoch = epoch;
+    memberKeys.push({ epoch, key: bytes.slice(offset + 12, offset + 44), revokedThrough: Number(revokedThrough) });
+    offset += MEMBER_KEY_ENTRY_BYTES;
+  }
+  return { epochs, certificationKey, memberKeys };
 }
 
 /**
- * Merges two vault contents by (family, epoch): the union of their epoch
- * keys. The same epoch with different key bytes is a conflict nobody can
- * resolve safely, so it is refused rather than silently picking one. The
- * certification and private-storage keys are kept from whichever side has
- * them; different values on both sides are refused the same way.
+ * Merges two vault contents: the union of their household and chat epoch
+ * keys by (family, epoch), and of their member-key epochs by epoch. The same
+ * epoch with different key bytes is a conflict nobody can resolve safely, so
+ * it is refused rather than silently picking one: `vault_epoch_conflict`,
+ * or `vault_member_key_conflict` when two devices started the same
+ * member-key epoch (the second adopts the first's, web/private/member-key.js).
+ * The certification key is kept from whichever side has it; different values
+ * on both sides are refused the same way.
  * Returns `{ contents, changed }`, where `changed` says whether the result
  * differs from `base` (so an unchanged vault isn't re-uploaded).
  */
@@ -200,6 +264,14 @@ export function mergeVaultContents(base, incoming) {
     if (!equalBytes(existing.key, entry.key))
       throw new AccountVaultError(`Two different keys exist for ${entry.family} epoch ${entry.epoch}.`, "vault_epoch_conflict");
   }
+  const members = new Map();
+  for (const entry of normalizeMemberKeys(base.memberKeys ?? [])) members.set(entry.epoch, entry);
+  for (const entry of normalizeMemberKeys(incoming.memberKeys ?? [])) {
+    const existing = members.get(entry.epoch);
+    if (!existing) { members.set(entry.epoch, entry); changed = true; continue; }
+    if (!equalBytes(existing.key, entry.key) || existing.revokedThrough !== entry.revokedThrough)
+      throw new AccountVaultError(`Two different member keys exist for epoch ${entry.epoch}.`, "vault_member_key_conflict");
+  }
   const pick = (left, right, name) => {
     if (!left) { if (right) changed = true; return right ?? null; }
     if (right && !equalBytes(left, right))
@@ -207,15 +279,17 @@ export function mergeVaultContents(base, incoming) {
     return left;
   };
   const certificationKey = pick(base.certificationKey ?? null, incoming.certificationKey ?? null, "certification key");
-  const privateStorageKey = pick(base.privateStorageKey ?? null, incoming.privateStorageKey ?? null, "private-storage key");
-  return { contents: { epochs: normalizeEpochs([...merged.values()]), certificationKey, privateStorageKey }, changed };
+  return {
+    contents: { epochs: normalizeEpochs([...merged.values()]), certificationKey, memberKeys: normalizeMemberKeys([...members.values()]) },
+    changed,
+  };
 }
 
 /** Overwrites every key in decoded contents with zeros. */
 export function wipeVaultContents(contents) {
   for (const entry of contents?.epochs ?? []) entry.key?.fill(0);
   contents?.certificationKey?.fill(0);
-  contents?.privateStorageKey?.fill(0);
+  for (const entry of contents?.memberKeys ?? []) entry.key?.fill(0);
 }
 
 // ---- Sealing the vault ---------------------------------------------------
@@ -237,7 +311,7 @@ export async function sealVault(vaultKey, contents, { householdId, memberId, ver
     const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: aad, tagLength: 128 }, key, plaintext));
     const sealed = new Uint8Array(SEALED_HEADER_BYTES + ciphertext.length);
     sealed.set(MAGIC, 0);
-    sealed[4] = VAULT_FORMAT;
+    sealed[4] = SEALED_VAULT_FORMAT;
     sealed.set(salt, 5);
     sealed.set(nonce, 37);
     sealed.set(ciphertext, SEALED_HEADER_BYTES);
@@ -256,7 +330,7 @@ export async function openVault(vaultKey, sealed, { householdId, memberId, versi
   if (!(sealed instanceof Uint8Array) || sealed.length < SEALED_HEADER_BYTES + 16 + 8 ||
       sealed.length > MAX_SEALED_VAULT_BYTES || MAGIC.some((value, index) => sealed[index] !== value))
     throw new AccountVaultError("The vault is invalid.", "vault_corrupt");
-  if (sealed[4] !== VAULT_FORMAT) throw new AccountVaultError("This vault was written by a newer version of Kin.", "vault_unsupported");
+  if (sealed[4] !== SEALED_VAULT_FORMAT) throw new AccountVaultError("This vault was written by a newer version of Kin.", "vault_unsupported");
   let plaintext;
   try {
     const key = await contentKey(vaultKey, sealed.subarray(5, 37));
@@ -375,7 +449,7 @@ export async function unwrapVaultKey(wrapped, kek, context) {
 function vaultAad({ householdId, memberId, version }) {
   if (!ID.test(householdId ?? "") || !ID.test(memberId ?? "") || !Number.isSafeInteger(version) || version < 1)
     throw new AccountVaultError("The vault context is invalid.");
-  return fields(["kin/vault/v1", String(VAULT_FORMAT), householdId, memberId, String(version)]);
+  return fields(["kin/vault/v1", String(SEALED_VAULT_FORMAT), householdId, memberId, String(version)]);
 }
 
 function wrapperAad({ householdId, memberId, type, wrapperId, version } = {}) {
@@ -433,6 +507,21 @@ function normalizeEpochs(epochs) {
   for (let index = 1; index < sorted.length; index += 1)
     if (sorted[index].family === sorted[index - 1].family && sorted[index].epoch === sorted[index - 1].epoch)
       throw new AccountVaultError("A vault epoch key is repeated.");
+  return sorted;
+}
+
+function normalizeMemberKeys(memberKeys) {
+  if (!Array.isArray(memberKeys) || memberKeys.length > MAX_MEMBER_KEY_EPOCH) throw new AccountVaultError("The vault holds too many member keys.");
+  const sorted = memberKeys.map((entry) => {
+    const revokedThrough = entry?.revokedThrough ?? 0;
+    if (!Number.isSafeInteger(entry?.epoch) || entry.epoch < 1 || entry.epoch > MAX_MEMBER_KEY_EPOCH ||
+        !(entry.key instanceof Uint8Array) || entry.key.length !== 32 ||
+        !Number.isSafeInteger(revokedThrough) || revokedThrough < 0)
+      throw new AccountVaultError("A member key is invalid.");
+    return { epoch: entry.epoch, key: entry.key, revokedThrough };
+  }).sort((left, right) => left.epoch - right.epoch);
+  for (let index = 1; index < sorted.length; index += 1)
+    if (sorted[index].epoch === sorted[index - 1].epoch) throw new AccountVaultError("A member key epoch is repeated.");
   return sorted;
 }
 

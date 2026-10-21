@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   WRAPPER_TYPES, backupCodeKek, combinedKek, decodeVaultContents, derivePasswordKeys, encodeVaultContents,
   generateCertificationKey, generateVaultKey, importCertificationKey, mergeVaultContents, newPasswordSalt,
-  newWrapperId, openVault, passkeyKek, sealVault, unwrapVaultKey, wrapVaultKey,
+  generateMemberKey, newWrapperId, openVault, passkeyKek, sealVault, unwrapVaultKey, wrapVaultKey,
 } from "./account-vault.js";
 
 const householdId = "a".repeat(32);
@@ -19,7 +19,7 @@ function sampleContents(certificationKey = null) {
       { family: "household", epoch: 1, key: random() },
     ],
     certificationKey,
-    privateStorageKey: null,
+    memberKeys: [],
   };
 }
 
@@ -30,7 +30,8 @@ test("vault contents round-trip in canonical order and refuse malformed bytes", 
   const decoded = decodeVaultContents(encoded);
   assert.deepEqual(decoded.epochs.map(({ family, epoch }) => `${family}:${epoch}`), ["household:1", "household:2", "chat:1"]);
   assert.deepEqual(decoded.certificationKey, pkcs8);
-  assert.equal(decoded.privateStorageKey, null);
+  assert.deepEqual(decoded.memberKeys, []);
+  assert.equal(encoded[0], 1, "a vault with no member key is still written as format 1");
   assert.deepEqual(encodeVaultContents(decoded), encoded);
   // The certification key imports for signing.
   const key = await importCertificationKey(decoded.certificationKey);
@@ -40,13 +41,48 @@ test("vault contents round-trip in canonical order and refuse malformed bytes", 
   assert.throws(() => decodeVaultContents(new Uint8Array([...encoded, 0])), { code: "vault_corrupt" });
   const unsorted = encoded.slice(); unsorted[7] = 9; // first entry's epoch becomes 9 > the next
   assert.throws(() => decodeVaultContents(unsorted), { code: "vault_corrupt" });
-  const newer = encoded.slice(); newer[0] = 2;
+  const newer = encoded.slice(); newer[0] = 3;
   assert.throws(() => decodeVaultContents(newer), { code: "vault_unsupported" });
   assert.throws(() => encodeVaultContents({ epochs: [{ family: "household", epoch: 1, key: random() }, { family: "household", epoch: 1, key: random() }] }));
   assert.throws(() => encodeVaultContents({ epochs: [{ family: "household", epoch: 129, key: random() }] }));
-  assert.throws(() => encodeVaultContents({ privateStorageKey: random(16) }));
-  const withPrivate = decodeVaultContents(encodeVaultContents({ privateStorageKey: random() }));
-  assert.equal(withPrivate.privateStorageKey.length, 32);
+});
+
+test("format 2 holds member-key epochs; format 1's reserved slot reads as epoch 1", () => {
+  const one = generateMemberKey(), two = generateMemberKey();
+  assert.equal(one.length, 32);
+  assert.notDeepEqual(one, two);
+  const contents = { ...sampleContents(), memberKeys: [{ epoch: 2, key: two, revokedThrough: 1_791_475_200_123 }, { epoch: 1, key: one, revokedThrough: 0 }] };
+  const encoded = encodeVaultContents(contents);
+  assert.equal(encoded[0], 2, "written as format 2 once a member key exists");
+  const decoded = decodeVaultContents(encoded);
+  assert.deepEqual(decoded.memberKeys, [{ epoch: 1, key: one, revokedThrough: 0 }, { epoch: 2, key: two, revokedThrough: 1_791_475_200_123 }]);
+  assert.deepEqual(decoded.epochs.map(({ family, epoch }) => `${family}:${epoch}`), ["household:1", "household:2", "chat:1"]);
+  assert.deepEqual(encodeVaultContents(decoded), encoded);
+  // The tail: count u16, then epoch u16, 0 u16, revokedThrough u64, key.
+  const tail = encoded.length - 2 - 2 * 44;
+  assert.deepEqual([...encoded.subarray(tail, tail + 6)], [0, 2, 0, 1, 0, 0]);
+  assert.deepEqual([...encoded.subarray(tail + 6, tail + 14)], [0, 0, 0, 0, 0, 0, 0, 0]);
+
+  // Damaged or out-of-range member-key lists are refused.
+  const unsorted = encoded.slice(); unsorted[tail + 3] = 3;
+  assert.throws(() => decodeVaultContents(unsorted), { code: "vault_corrupt" });
+  const reserved = encoded.slice(); reserved[tail + 5] = 1;
+  assert.throws(() => decodeVaultContents(reserved), { code: "vault_corrupt" });
+  assert.throws(() => decodeVaultContents(encoded.subarray(0, encoded.length - 1)), { code: "vault_corrupt" });
+  const empty = encoded.slice(0, tail + 2); empty[tail] = 0; empty[tail + 1] = 0;
+  assert.throws(() => decodeVaultContents(empty), { code: "vault_corrupt" }, "format 2 always has a member key");
+  assert.throws(() => encodeVaultContents({ memberKeys: [{ epoch: 1, key: one }, { epoch: 1, key: two }] }));
+  assert.throws(() => encodeVaultContents({ memberKeys: [{ epoch: 129, key: one }] }));
+  assert.throws(() => encodeVaultContents({ memberKeys: [{ epoch: 1, key: one.subarray(0, 16) }] }));
+  assert.throws(() => encodeVaultContents({ memberKeys: [{ epoch: 1, key: one, revokedThrough: -1 }] }));
+
+  // A format 1 vault from before ADR 0019 with its reserved slot filled.
+  const legacy = encodeVaultContents({ epochs: [] });
+  const filled = new Uint8Array(legacy.length + 32);
+  filled.set(legacy);
+  filled[filled.length - 33] = 32;
+  filled.set(one, legacy.length);
+  assert.deepEqual(decodeVaultContents(filled).memberKeys, [{ epoch: 1, key: one, revokedThrough: 0 }]);
 });
 
 test("a sealed vault opens only with its key, household, member and version", async () => {
@@ -146,4 +182,20 @@ test("merging takes the union by epoch, reports change, and refuses conflicting 
   const certificationKey = random(138);
   assert.equal(mergeVaultContents(remote, { certificationKey }).contents.certificationKey, certificationKey);
   assert.throws(() => mergeVaultContents({ certificationKey }, { certificationKey: random(138) }), { code: "vault_key_conflict" });
+});
+
+test("merging keeps member keys from either side and refuses a second key for one epoch", () => {
+  const one = random(), two = random();
+  const stored = { epochs: [{ family: "household", epoch: 1, key: random() }], memberKeys: [{ epoch: 1, key: one, revokedThrough: 0 }] };
+  // A device keeping household epochs (VaultKeeper) never drops member keys.
+  const kept = mergeVaultContents(stored, { epochs: [{ family: "household", epoch: 2, key: random() }] });
+  assert.equal(kept.changed, true);
+  assert.deepEqual(kept.contents.memberKeys.map((entry) => entry.epoch), [1]);
+  const rotated = mergeVaultContents(stored, { memberKeys: [{ epoch: 2, key: two, revokedThrough: 5 }] });
+  assert.equal(rotated.changed, true);
+  assert.deepEqual(rotated.contents.memberKeys.map((entry) => [entry.epoch, entry.revokedThrough]), [[1, 0], [2, 5]]);
+  assert.equal(mergeVaultContents(rotated.contents, { memberKeys: [{ epoch: 2, key: two.slice(), revokedThrough: 5 }] }).changed, false);
+  // Two devices that both started epoch 2: the second must adopt the first's.
+  assert.throws(() => mergeVaultContents(rotated.contents, { memberKeys: [{ epoch: 2, key: random(), revokedThrough: 5 }] }), { code: "vault_member_key_conflict" });
+  assert.throws(() => mergeVaultContents(rotated.contents, { memberKeys: [{ epoch: 2, key: two, revokedThrough: 6 }] }), { code: "vault_member_key_conflict" });
 });
