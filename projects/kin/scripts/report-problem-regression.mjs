@@ -104,7 +104,7 @@ async function reportWithScreenshot() {
   await wait(() => dialog().querySelector(".report-shot-preview img")?.complete && dialog().querySelector(".report-shot-preview img").naturalWidth > 0 ||
     dialog().querySelector(".report-shot .error-message"), "the picture is taken", 30_000);
   const failed = dialog().querySelector(".report-shot .error-message")?.textContent;
-  if (failed) throw new Error(`The screenshot failed: ${failed}`);
+  if (failed) throw new Error(`The screenshot failed (${app.ctx.report.element().shotErrorCode}): ${failed}`);
   check(/can show private things/.test(dialog().querySelector(".report-warning").textContent), "the picture comes with a warning");
   const before = app.ctx.report.element().shot.crop;
   const top = [...dialog().querySelectorAll(".report-trim input")][1];

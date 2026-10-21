@@ -271,6 +271,8 @@ class KinReport extends HTMLElement {
       if (generation !== this.generation) return;
       this.dropShot();
       this.shotError = error instanceof ScreenshotError ? error.message : "Kin couldn't take a picture of the screen. Send the report without one.";
+      // Which step failed (a fixed code), for the regression and debugging.
+      this.shotErrorCode = error instanceof ScreenshotError ? (error.attempts?.join(",") ?? error.code) : "other";
     }
     this.render({ keepFocus: true });
   }

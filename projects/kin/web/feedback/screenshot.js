@@ -213,19 +213,36 @@ export async function captureViewport(win = globalThis) {
   object.append(html);
   svg.append(object);
   const markup = new XMLSerializer().serializeToString(svg);
-  const url = URL.createObjectURL(new Blob([markup], { type: "image/svg+xml" }));
-  try {
-    const image = new Image();
-    image.decoding = "sync";
-    image.src = url;
-    try { await image.decode(); } catch { throw new ScreenshotError("unsupported", "This browser can't take a picture of Kin. Send the report without one."); }
-    const canvas = defaultCanvas(Math.round(width * scale), Math.round(height * scale));
-    canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
-    // Reading one pixel back finds a canvas the browser won't let Kin read.
-    try { canvas.getContext("2d").getImageData(0, 0, 1, 1); }
-    catch { throw new ScreenshotError("unsupported", "This browser can't take a picture of Kin. Send the report without one."); }
-    return canvas;
-  } finally {
-    URL.revokeObjectURL(url);
+  // First as a blob: URL; a browser that won't draw that one cleanly is
+  // given the same markup as a data: URL, which some treat as same-origin.
+  let failure = null;
+  const attempts = [];
+  for (const source of ["blob", "data"]) {
+    const url = source === "blob"
+      ? URL.createObjectURL(new Blob([markup], { type: "image/svg+xml" }))
+      : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`;
+    try {
+      return await drawSvg(url, Math.round(width * scale), Math.round(height * scale));
+    } catch (error) {
+      failure = error;
+      attempts.push(`${source}:${error.code ?? "other"}`);
+    } finally {
+      if (source === "blob") URL.revokeObjectURL(url);
+    }
   }
+  failure.attempts = attempts;
+  throw failure;
+}
+
+/** Loads an SVG image and draws it on a new canvas the page can read. */
+async function drawSvg(url, width, height) {
+  const unsupported = (code) => new ScreenshotError(code, "This browser can't take a picture of Kin. Send the report without one.");
+  const image = new Image();
+  image.src = url;
+  try { await image.decode(); } catch { throw unsupported("decode_failed"); }
+  const canvas = defaultCanvas(width, height);
+  canvas.getContext("2d").drawImage(image, 0, 0, width, height);
+  // Reading one pixel back finds a canvas the browser won't let Kin read.
+  try { canvas.getContext("2d").getImageData(0, 0, 1, 1); } catch { throw unsupported("tainted"); }
+  return canvas;
 }
