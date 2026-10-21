@@ -324,6 +324,7 @@ fn reminder_and_setting_payloads_decode_strictly() {
         malformed
     );
     assert_eq!(bad(SETTING_SET, setting_payload(3, b"huge")), malformed);
+    assert_eq!(bad(SETTING_SET, setting_payload(8, b"yes")), malformed);
     assert_eq!(
         bad(SETTING_SET, setting_payload(99, &[b'a'; 33])),
         malformed
@@ -341,6 +342,8 @@ fn reminder_and_setting_payloads_decode_strictly() {
         (5, b"off"),
         (6, b"messages-and-mine"),
         (7, b"on"),
+        (8, b"on"),
+        (8, b"off"),
         (99, b"anything-a-later-release-says"),
         (1, b""),
     ] {

@@ -79,6 +79,9 @@ export class SimpleController {
     if (this.on || !this.app.main) return;
     this.app.simpleView = true;
     document.documentElement.dataset.kinSimple = "on";
+    // Simple view wins over easy mode (ADR 0021): the stricter layout.
+    delete document.documentElement.dataset.kinEasy;
+    this.app.removeAttribute("data-easy");
     // Off in Simple view: Quick add, Search, the palette and shortcuts
     // (navigation.js), bulk selection and item details (detail.js).
     this.app.quickAdd.hidden = true;
@@ -112,7 +115,8 @@ export class SimpleController {
       heading.id = `${id}-title`;
       heading.tabIndex = -1;
       heading.textContent = title;
-      section.append(heading, ...children);
+      // Help on every screen (#621), Simple view's included.
+      section.append(heading, this.ctx.help.button(), ...children);
       return section;
     };
     this.app.simpleToday = document.createElement("kin-simple");

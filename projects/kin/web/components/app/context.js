@@ -34,6 +34,8 @@ import { ShareController } from "./share.js";
 import { BadgeController } from "./badge.js";
 import { PrivatePrefsController } from "./private-prefs.js";
 import { WeekController } from "./week.js";
+import { EasyController } from "./easy.js";
+import { HelpController } from "./help.js";
 import { SitterController } from "./sitter.js";
 import { JournalController } from "./journal.js";
 import { RotationsController } from "./rotations.js";
@@ -85,6 +87,9 @@ export function createAppContext(app) {
   ctx.share = new ShareController(ctx);
   ctx.badge = new BadgeController(ctx);
   ctx.privatePrefs = new PrivatePrefsController(ctx);
+  // Easy mode and Help on every screen (#616, #620, ADR 0021).
+  ctx.easy = new EasyController(ctx);
+  ctx.help = new HelpController(ctx);
   ctx.week = new WeekController(ctx);
   ctx.sitter = new SitterController(ctx);
   // The member's journal (#496): private, never household state.
@@ -278,6 +283,8 @@ export function initializeAppState(app) {
     // settings on this device".
     app.onPersonalSetting = (event) => { void app.ctx.privatePrefs.setDisplaySetting(event.detail.name, event.detail.value); };
     app.onSettingsThisDevice = (event) => { event.detail.kept = app.ctx.privatePrefs.setDeviceOnly(event.detail.on); };
+    // Help on every screen (#621): a page's or a dialog's Help button.
+    app.onOpenHelp = (event) => app.ctx.help.open(event.detail ?? {});
     app.onModeChange = () => app.ctx.records.saveMode(app.modeSelect.value);
     app.pulseTimer = null;
     app.catchUpCursor = null;

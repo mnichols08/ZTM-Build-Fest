@@ -23,7 +23,7 @@
 // - Setting, canceling, finishing (item done, routine archived) and
 //   dismissing (closing or clicking the notification) write to the log, so
 //   every device follows.
-import { DEVICE_ONLY_KEY, DISPLAY_SETTING_KEYS, MOTION_KEY, REMINDER_ALERTS_KEY, TEXT_SIZE_KEY, applyDisplayPrefs, readDisplayPref, writeDisplayPref } from "../../appearance/display-prefs.js";
+import { DEVICE_ONLY_KEY, DISPLAY_SETTING_KEYS, EASY_MODE_KEY, MOTION_KEY, REMINDER_ALERTS_KEY, TEXT_SIZE_KEY, applyDisplayPrefs, readDisplayPref, writeDisplayPref } from "../../appearance/display-prefs.js";
 import { saveAppearance } from "../../appearance/store.js";
 import { resolveAppearance } from "../../appearance/household.js";
 import { appearanceSettings, applyAppearanceSettings, changedSettings, describeSyncedReminder, migrationPlan, reminderPlan, settingsPlan, zoneSnapshot } from "../../private/synced-prefs.js";
@@ -205,6 +205,7 @@ export class PrivatePrefsController {
       motion: readDisplayPref(MOTION_KEY),
       "reminder-alerts": readDisplayPref(REMINDER_ALERTS_KEY),
       "app-badge": this.ctx.badge.choice,
+      "easy-mode": readDisplayPref(EASY_MODE_KEY),
     };
     for (const key of ["theme-mode", "theme-color"]) if (theme[key]) values[key] = theme[key];
     return values;
@@ -238,9 +239,10 @@ export class PrivatePrefsController {
     this.ctx.appearance.applyAppearance(effective);
   }
 
-  /** Puts this device's text size and motion on the page. */
+  /** Puts this device's text size, motion and easy mode on the page. */
   applyDisplay() {
-    applyDisplayPrefs({ textSize: readDisplayPref(TEXT_SIZE_KEY), motion: readDisplayPref(MOTION_KEY) });
+    applyDisplayPrefs({ textSize: readDisplayPref(TEXT_SIZE_KEY), motion: readDisplayPref(MOTION_KEY), easyMode: readDisplayPref(EASY_MODE_KEY) });
+    this.ctx.easy?.apply();
     this.app.personalSettings?.update?.(this.settingsView());
   }
 
@@ -393,6 +395,7 @@ export class PrivatePrefsController {
       textSize: readDisplayPref(TEXT_SIZE_KEY),
       motion: readDisplayPref(MOTION_KEY),
       reminderAlerts: readDisplayPref(REMINDER_ALERTS_KEY),
+      easyMode: readDisplayPref(EASY_MODE_KEY),
       deviceOnly: this.deviceOnly,
     };
   }

@@ -2401,3 +2401,123 @@ kin-journal { display: grid; gap: var(--space-3); min-width: 0; }
 @media (forced-colors: active) {
   .policy-summary { border: 1px solid CanvasText; }
 }
+
+/* ---------- Help on every screen (#620, #621, #622, ADR 0021) ---------- */
+.help-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--tap);
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.help-button svg { width: 18px; height: 18px; flex: none; }
+.page-intro > .help-button { align-self: center; margin-inline-start: auto; }
+.simple-view > .help-button { margin: 0 0 1rem; }
+.dialog-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.quick-add-dialog .dialog-top h2 { margin: 0; }
+.item-detail-bar { gap: 8px; }
+.item-detail-bar .help-button { margin-inline-start: auto; }
+.help-dialog {
+  width: min(92vw, 34rem);
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  margin: auto;
+  padding: 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .28);
+  overflow-wrap: anywhere;
+}
+.help-dialog::backdrop { background: rgba(10, 16, 12, .52); }
+.help-dialog h2 { margin: 0 0 6px; }
+.help-dialog h2:focus { outline: none; }
+.help-dialog h2:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.help-dialog h3 { margin: 16px 0 6px; font-size: 16px; }
+.help-about, .help-who { margin: 0; }
+.help-actions { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.help-actions li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.help-action-text { flex: 1 1 14rem; min-width: 0; }
+.help-show-me { flex: none; }
+.help-words { display: grid; gap: 2px; margin: 0; }
+.help-words dt { font-weight: 650; }
+.help-words dd { margin: 0 0 8px; color: var(--ink-muted); }
+.help-stuck { margin-top: 18px; border-top: 1px solid var(--line); }
+.help-stuck-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.help-close { display: block; margin-top: 18px; margin-inline-start: auto; }
+.help-easy-note { margin: 14px 0 0; }
+.help-highlight {
+  outline: 4px solid var(--accent) !important;
+  outline-offset: 4px !important;
+  box-shadow: 0 0 0 9px color-mix(in srgb, var(--accent) 22%, transparent);
+  animation: help-pulse 1.1s ease-in-out 3;
+}
+@keyframes help-pulse { 50% { outline-offset: 9px; } }
+.today-tip { display: grid; gap: 8px; }
+.today-tip h2 { margin: 0; font-size: 18px; }
+.today-tip p { margin: 0; }
+.today-tip-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.control-word { display: none; }
+:root:not([data-kin-easy="on"]) .easy-only { display: none; }
+@media (prefers-reduced-motion: reduce) { .help-highlight { animation: none; } }
+@media (forced-colors: active) {
+  .help-dialog, .today-tip { border: 2px solid CanvasText; }
+  .help-highlight { outline-color: Highlight !important; box-shadow: none; }
+}
+
+/* ---------- Easy mode (#616, #617, ADR 0021) ----------
+   Bigger, clearer, calmer, for anyone who wants it. The whole page scales as
+   text size does (base text 16px becomes 20px, 48px targets become 60px),
+   composing with Large and Larger and the browser's own zoom. Every icon
+   gets its word, the focus ring is thicker and darker, and the places the
+   person doesn't use step out of the navigation (`data-easy-hidden`, set by
+   app/easy.js). Simple view wins: display-prefs.js never sets
+   data-kin-easy while Simple view is on. */
+:root[data-kin-easy="on"] {
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 36px;
+}
+:root[data-kin-easy="on"] body { zoom: 1.25; }
+:root[data-kin-easy="on"][data-kin-text-size="large"] body { zoom: 1.375; }
+:root[data-kin-easy="on"][data-kin-text-size="larger"] body { zoom: 1.5; }
+:root[data-kin-easy="on"] [data-easy-hidden] { display: none !important; }
+:root[data-kin-easy="on"] .control-word { display: inline; }
+:root[data-kin-easy="on"] :is(.section-hint, .page-lead, .item-meta, .step-summary, .status-message, .error-message,
+  .undo-toast-text, .hub-link-text, .segment-link, .help-button, .help-dialog, .today-tip p, .compose-form > label:first-child,
+  .header-search, .header-lock, .item-row-actions button, .replenish-button, .completed-label) { font-size: 16px; }
+:root[data-kin-easy="on"] .item-text { font-size: 17px; }
+/* One clear action per row: photos are added from Details. */
+:root[data-kin-easy="on"] .item-row-actions .item-attach-button { display: none; }
+:root[data-kin-easy="on"] .complete-control { width: auto; min-width: var(--tap); column-gap: 8px; padding-inline: 10px; border: 1px solid var(--line-strong); }
+:root[data-kin-easy="on"] .complete-control .control-word { grid-area: 1 / 2; color: var(--ink); font-size: 15px; font-weight: 650; }
+:root[data-kin-easy="on"] :is(.page-intro a, .hub-link, .segment-link, .more-search-link) { display: inline-flex; align-items: center; min-height: var(--tap); }
+:root[data-kin-easy="on"] :is(button, input, select, textarea, a, summary, [tabindex="-1"]):focus-visible {
+  outline: 4px solid var(--ink);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 7px var(--surface);
+}
+:root[data-kin-easy="on"] .site-header :is(a, button):focus-visible { outline-color: var(--header-ink); box-shadow: 0 0 0 7px var(--header-bg); }
+:root[data-kin-easy="on"] .undo-toast { padding: 10px 10px 10px 16px; border-width: 2px; border-color: var(--line-strong); }
+:root[data-kin-easy="on"] .undo-toast-dismiss { padding-inline: 12px; }
+:root[data-kin-easy="on"] .undo-toast-dismiss::after { content: "Dismiss"; content: "Dismiss" / ""; margin-inline-start: 6px; font-size: 16px; }
+:root[data-kin-easy="on"] .undo-toast-action { font-size: 16px; }
+@media (max-width: 719px) {
+  /* Words beside the header's icons; the header wraps and scrolls away
+     rather than covering the page. */
+  :root[data-kin-easy="on"] .site-header { position: relative; flex-wrap: wrap; }
+  :root[data-kin-easy="on"] .site-tools { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+  :root[data-kin-easy="on"] :is(.header-search, .header-lock) span { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
+  :root[data-kin-easy="on"] .primary-nav { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  :root[data-kin-easy="on"] .nav-link { font-size: 13px; }
+}
+@media (forced-colors: active) {
+  :root[data-kin-easy="on"] :is(button, input, select, textarea, a, summary, [tabindex="-1"]):focus-visible { outline-color: Highlight; box-shadow: none; }
+}

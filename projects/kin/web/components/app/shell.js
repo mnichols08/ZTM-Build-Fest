@@ -236,6 +236,9 @@ export class ShellBuilder {
     this.app.append(this.app.importer);
     this.app.attachmentInput = this.ctx.attachments.buildAttachmentInput();
     this.app.append(this.app.attachmentInput);
+    // Help on every screen (#621): one panel for every page and dialog.
+    this.app.append(this.ctx.help.buildPanel());
     this.ctx.navigation.showPageFromLocation();
+    this.ctx.easy.apply();
   }
 }

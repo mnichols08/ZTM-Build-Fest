@@ -2,7 +2,9 @@
 // Staples, Handoffs · Talk, the Household destinations). Plain links with
 // hashes so Back/Forward and refresh land on the same segment; the current
 // link carries aria-current="true" and the selected segment is exposed on the
-// host as data-current.
+// host as data-current. Easy mode (#617) names the tabs it tucks away
+// (`easyHidden`); they carry data-easy-hidden, which app.css hides only in
+// easy mode. The current tab is never tucked away.
 
 class KinSegmentNav extends HTMLElement {
   constructor() {
@@ -10,6 +12,19 @@ class KinSegmentNav extends HTMLElement {
     this.entries = [];
     this.currentId = null;
     this.navLabel = "Sections";
+    this.hiddenIds = new Set();
+  }
+
+  set easyHidden(ids) {
+    this.hiddenIds = new Set(ids ?? []);
+    this.markHidden();
+  }
+
+  markHidden() {
+    for (const link of this.querySelectorAll(".segment-link")) {
+      const hide = this.hiddenIds.has(link.dataset.segment) && link.dataset.segment !== this.currentId;
+      link.parentElement?.toggleAttribute("data-easy-hidden", hide);
+    }
   }
 
   static get observedAttributes() { return ["label"]; }
@@ -33,6 +48,7 @@ class KinSegmentNav extends HTMLElement {
       else link.removeAttribute("aria-current");
     }
     this.dataset.current = this.currentId ?? "";
+    this.markHidden();
   }
   get current() { return this.currentId; }
 
@@ -66,6 +82,7 @@ class KinSegmentNav extends HTMLElement {
     const focused = this.contains(document.activeElement) ? document.activeElement.dataset?.segment : null;
     this.dataset.current = this.currentId ?? "";
     this.replaceChildren(nav);
+    this.markHidden();
     if (focused) nav.querySelector(`[data-segment="${CSS.escape(focused)}"]`)?.focus();
   }
 

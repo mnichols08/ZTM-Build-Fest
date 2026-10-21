@@ -1,7 +1,7 @@
 // Building the destination pages and their components.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { routeHash, SEGMENTS } from "../../routes.js";
-import { DESTINATION_DESCRIPTIONS } from "./constants.js";
+import { DESTINATION_DESCRIPTIONS, HOUSEHOLD_HUB_LINKS } from "./constants.js";
 import { currentPlatform, installHelp } from "../../platform.js";
 import { installHelpCard } from "../shared/dom.js";
 
@@ -24,7 +24,8 @@ export class ViewBuilder {
       heading.id = `${id}-title`;
       heading.tabIndex = -1;
       heading.textContent = title;
-      intro.append(heading);
+      // Help on every page (#621), beside the heading.
+      intro.append(heading, this.ctx.help.button());
       if (description) {
         const supporting = document.createElement("p");
         supporting.className = "page-lead";
@@ -68,7 +69,11 @@ export class ViewBuilder {
     this.app.onboarding = document.createElement("section");
     this.app.onboarding.className = "today-section onboarding-card";
     this.app.onboarding.hidden = true;
-    today.append(this.app.compose, this.app.tonight, this.app.catchUp, this.app.onboarding, this.app.today);
+    // The first week's tips (#617, #622): one calm card at a time.
+    this.app.todayTip = document.createElement("section");
+    this.app.todayTip.className = "today-section today-tip";
+    this.app.todayTip.hidden = true;
+    today.append(this.app.compose, this.app.tonight, this.app.catchUp, this.app.onboarding, this.app.today, this.app.todayTip);
 
     // Lists: one list at a time, each with its own quick-add; export lives in
     // the list actions with its warning at the point of use.
@@ -187,14 +192,7 @@ export class ViewBuilder {
     this.app.householdGlance.className = "household-glance";
     const hubLinks = document.createElement("ul");
     hubLinks.className = "hub-links";
-    for (const [segment, description] of [
-      ["fridge", "A shared board to draw on together."],
-      ["notes", "Notes, reference details, and maintenance history."],
-      ["areas", "Areas, household mode, and Pulse."],
-      ["people", "Members, pairing, trusted devices, and access."],
-      ["privacy", "Lock, passkeys, backup key, export, and restore."],
-      ["appearance", "Your colors and optional background on this device."],
-    ]) {
+    for (const [segment, description] of HOUSEHOLD_HUB_LINKS) {
       const entry = SEGMENTS.household.find((candidate) => candidate.id === segment);
       const item = document.createElement("li");
       const link = document.createElement("a");
@@ -206,6 +204,24 @@ export class ViewBuilder {
       const text = document.createElement("span");
       text.className = "hub-link-text";
       text.textContent = description;
+      link.append(name, text);
+      item.append(link);
+      hubLinks.append(item);
+    }
+    // Easy mode tucks Routines away from the navigation until it is used
+    // (#617); it stays one tap away here.
+    {
+      const item = document.createElement("li");
+      item.className = "easy-only";
+      const link = document.createElement("a");
+      link.className = "hub-link";
+      link.href = routeHash("routines");
+      const name = document.createElement("span");
+      name.className = "hub-link-name";
+      name.textContent = "Routines";
+      const text = document.createElement("span");
+      text.className = "hub-link-text";
+      text.textContent = DESTINATION_DESCRIPTIONS.routines;
       link.append(name, text);
       item.append(link);
       hubLinks.append(item);
@@ -403,6 +419,7 @@ export class ViewBuilder {
     main.append(this.app.detailPanel);
     this.ctx.journal?.render();
     this.ctx.navigation.showPageFromLocation();
+    this.ctx.easy?.updateNavigation();
   }
 
   /** Where the older Talk topics show: in Chat's To talk about list, or,

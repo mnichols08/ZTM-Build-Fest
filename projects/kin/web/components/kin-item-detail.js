@@ -6,6 +6,7 @@ import { describePlanningDate, KIND_LABELS } from "../today-view.js";
 import { button } from "./shared/dom.js";
 import { asArray, asFunction, defineProps, scheduleRender } from "./shared/props.js";
 import { ItemDetailSections } from "./item-detail/sections.js";
+import { helpButton } from "./shared/help-button.js";
 
 // The one shared detail view for an item. <kin-app> owns a single instance
 // and re-homes it between the mobile sheet, the inline column and the side
@@ -162,7 +163,8 @@ class KinItemDetail extends HTMLElement {
     close.dataset.focusId = "close";
     close.setAttribute("aria-label", this.backLabel === "Close" ? "Close details" : this.backLabel);
     close.addEventListener("click", () => this.dispatch("close-item-detail", {}));
-    header.append(close);
+    // Help for details (#621).
+    header.append(close, helpButton("dialog:item-detail"));
     section.append(header);
 
     const title = document.createElement("h2");

@@ -59,7 +59,8 @@ pub const MAX_SETTING_VALUE_BYTES: usize = 32;
 
 /// The settings this engine knows (#525). Key 7 ("my private things on
 /// Today") is reserved: "Just for me" (#510) keeps that setting as its own
-/// kind 118, which already follows the member.
+/// kind 118, which already follows the member. Key 8 is easy mode (#617,
+/// ADR 0021): bigger text and buttons, fewer things on screen.
 pub const SETTING_THEME_MODE: u16 = 1;
 pub const SETTING_THEME_COLOR: u16 = 2;
 pub const SETTING_TEXT_SIZE: u16 = 3;
@@ -67,6 +68,7 @@ pub const SETTING_MOTION: u16 = 4;
 pub const SETTING_REMINDER_ALERTS: u16 = 5;
 pub const SETTING_APP_BADGE: u16 = 6;
 pub const SETTING_PRIVATE_ON_TODAY: u16 = 7;
+pub const SETTING_EASY_MODE: u16 = 8;
 
 /// Whether a kind code is one of this module's (reminders or settings).
 pub const fn is_prefs_code(code: u16) -> bool {
@@ -158,7 +160,9 @@ pub fn setting_value_allowed(key: u16, value: &str) -> bool {
         }
         SETTING_TEXT_SIZE => one_of(&["standard", "large", "larger"]),
         SETTING_MOTION => one_of(&["system", "reduce"]),
-        SETTING_REMINDER_ALERTS | SETTING_PRIVATE_ON_TODAY => one_of(&["on", "off"]),
+        SETTING_REMINDER_ALERTS | SETTING_PRIVATE_ON_TODAY | SETTING_EASY_MODE => {
+            one_of(&["on", "off"])
+        }
         SETTING_APP_BADGE => one_of(&["off", "messages", "messages-and-mine"]),
         _ => true,
     }
