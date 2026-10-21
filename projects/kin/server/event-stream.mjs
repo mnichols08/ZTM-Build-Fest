@@ -82,10 +82,19 @@ export function memoryStreamMethods(stream, { conflictCode, conflictMessage }) {
  * The push, status and pull every stream shares. `words` holds the stream's
  * own error codes and messages, so each stream reports in its own terms;
  * `rateLimited()` makes the error for a device over its per-minute window.
+ *
+ * A stream is keyed by household unless it says otherwise: `keyOf(auth)`
+ * names the stream a request reads and writes (the private stream, #491, is
+ * keyed by member), `validate(envelope, auth, sync)` checks one envelope's
+ * routing (household streams hold household key epochs), and
+ * `minimumEpoch(auth)` is the oldest key epoch a page shows the device.
  */
 export class EventStream {
-  constructor({ syncService, storage, maxEvents, maxPull, window, words, rateLimited, hint }) {
-    Object.assign(this, { syncService, storage, maxEvents, maxPull, window, words, rateLimited, hint });
+  constructor({ syncService, storage, maxEvents, maxPull, window, words, rateLimited, hint,
+    keyOf = (auth) => auth.household.id,
+    validate = (envelope, auth, sync) => validateEventEnvelope(envelope, auth, sync.currentEpoch),
+    minimumEpoch = (auth) => auth.device.syncHistoryFromEpoch ?? 1 }) {
+    Object.assign(this, { syncService, storage, maxEvents, maxPull, window, words, rateLimited, hint, keyOf, validate, minimumEpoch });
   }
 
   /** Validates and stores a device's batch. The caller has already checked
@@ -94,7 +103,7 @@ export class EventStream {
     const { words } = this;
     if (!Array.isArray(envelopes) || envelopes.length < 1 || envelopes.length > MAX_EVENTS_PER_BATCH)
       throw new PairingError("sync_batch_invalid", words.batchInvalid, 400);
-    const householdId = auth.household.id;
+    const householdId = this.keyOf(auth);
     // New events only count: a retry of events the service already holds is
     // free. Checked here, charged only once they are stored, so a batch that
     // fails (full, conflict, invalid) never uses up the allowance.
@@ -107,7 +116,7 @@ export class EventStream {
     let requestBytes = 0;
     const staged = [], seen = new Map();
     for (const envelope of envelopes) {
-      validateEventEnvelope(envelope, auth, sync.currentEpoch);
+      this.validate(envelope, auth, sync);
       const canonical = canonicalEventEnvelope(envelope);
       requestBytes += Buffer.byteLength(canonical);
       if (requestBytes > MAX_REQUEST_BYTES)
@@ -134,7 +143,7 @@ export class EventStream {
     if (staged.length) {
       try {
         this.storage.commit(householdId, {
-          expectedNextSequence: relay.nextSequence, deviceId: auth.device.id, expectedDeviceSequence,
+          householdId: auth.household.id, expectedNextSequence: relay.nextSequence, deviceId: auth.device.id, expectedDeviceSequence,
           entries: staged, maxLogicalTime: maxLogicalTime.toString(),
         });
       } catch (error) {
@@ -154,7 +163,7 @@ export class EventStream {
   /** This device's last sequence in the stream (so a device whose local log
    * was lost can continue without a gap) and the relay's latest cursor. */
   status(auth) {
-    const householdId = auth.household.id;
+    const householdId = this.keyOf(auth);
     return {
       deviceSequence: this.storage.deviceSequence(householdId, auth.device.id),
       latestCursor: encodeCursor(this.storage.relayState(householdId).nextSequence - 1),
@@ -162,12 +171,12 @@ export class EventStream {
   }
 
   pull(auth, cursorValue = "", limitValue = String(this.maxPull)) {
-    const householdId = auth.household.id;
+    const householdId = this.keyOf(auth);
     const cursor = decodeCursor(cursorValue);
     const limit = Number(limitValue);
     const relay = this.storage.relayState(householdId);
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.maxPull || cursor > relay.nextSequence - 1)
       throw new PairingError("sync_cursor_invalid", this.words.cursor, 400);
-    return this.storage.read(householdId, cursor, limit, auth.device.syncHistoryFromEpoch ?? 1);
+    return this.storage.read(householdId, cursor, limit, this.minimumEpoch(auth));
   }
 }

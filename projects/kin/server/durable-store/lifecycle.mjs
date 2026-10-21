@@ -31,6 +31,10 @@ export function purgeHouseholdData(database, householdId) {
     database.prepare("DELETE FROM account_vault_wrappers WHERE household_id = ?").run(householdId);
     database.prepare("DELETE FROM account_vaults WHERE household_id = ?").run(householdId);
     database.prepare("DELETE FROM account_passwords WHERE household_id = ?").run(householdId);
+    // Members' private streams (ADR 0019).
+    database.prepare("DELETE FROM private_events WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM private_device_sequences WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM private_relay_state WHERE household_id = ?").run(householdId);
   } finally {
     database.exec(`PRAGMA secure_delete = ${secureDelete ? "ON" : "OFF"}`);
   }
@@ -124,6 +128,9 @@ export const lifecycleMethods = {
       ),
       accountVaults: count(
         "SELECT (SELECT COUNT(*) FROM account_vaults WHERE household_id = ?1) + (SELECT COUNT(*) FROM account_vault_wrappers WHERE household_id = ?1) + (SELECT COUNT(*) FROM account_passwords WHERE household_id = ?1) AS count",
+      ),
+      privateEvents: count(
+        "SELECT (SELECT COUNT(*) FROM private_events WHERE household_id = ?1) + (SELECT COUNT(*) FROM private_device_sequences WHERE household_id = ?1) + (SELECT COUNT(*) FROM private_relay_state WHERE household_id = ?1) AS count",
       ),
       chatBlobs: count(
         "SELECT (SELECT COUNT(*) FROM chat_blobs WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_blob_claims WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_blob_usage WHERE household_id = ?1) AS count",

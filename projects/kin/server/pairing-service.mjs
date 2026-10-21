@@ -35,6 +35,8 @@ export {
   chatAccess,
   chatPolicyOf,
   CHAT_ACCESS,
+  privateAccess,
+  privatePolicyOf,
   CLAIM_TTL_MS,
   isHouseholdAdmin,
   isTemporaryMember,
