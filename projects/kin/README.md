@@ -150,6 +150,13 @@ address bar. Set `KIN_ANDROID_PACKAGE` to the app's package name and
 key and an upload key). With neither set the file answers 404; setting only
 one, or a malformed value, stops startup with an explanation.
 
+The Android app itself is in `android/` ([ADR 0020](docs/decisions/0020-google-play-twa.md)):
+it opens `https://kin.journeytocode.io` and is built with Gradle, Google's
+`androidbrowserhelper` library being the one documented dependency exception,
+kept out of Kin's web runtime. [ANDROID](docs/ANDROID.md) covers building,
+versioning, signing (Play App Signing with an upload key), the asset-links
+setup and the phone checklist.
+
 ### Limiting new households
 
 Creating a household needs no account, so Kin limits it the same way: each
@@ -248,6 +255,7 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [Development workflow](docs/DEVELOPMENT.md)
 - [Code style](docs/CODE-STYLE.md)
 - [Release process](docs/RELEASES.md)
+- [Android app for Google Play](docs/ANDROID.md) and [its decision record](docs/decisions/0020-google-play-twa.md)
 - [Debugging and diagnostics](docs/DEBUGGING.md)
 - [Implementation preflight](docs/PREFLIGHT.md)
 - [Requirement traceability](docs/TRACEABILITY.md)

@@ -24,5 +24,7 @@ test("every third-party action is pinned to a full commit", async () => {
   const workflow = await readFile(projectCopy, "utf8");
   const uses = [...workflow.matchAll(/^\s*-?\s*uses:\s*(\S+)/gm)].map((match) => match[1]);
   assert.ok(uses.length > 0);
-  for (const action of uses) assert.match(action, /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/, `${action} is pinned by commit`);
+  // owner/repo, or owner/repo/path for an action in a subdirectory (such as
+  // gradle/actions/setup-gradle), always at a full commit.
+  for (const action of uses) assert.match(action, /^[\w.-]+\/[\w.-]+(\/[\w.-]+)*@[0-9a-f]{40}$/, `${action} is pinned by commit`);
 });
