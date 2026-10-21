@@ -89,6 +89,14 @@ class MemoryAccountVaultStore {
     row.wrappers.delete(wrapperId);
     return row.wrappers.size;
   }
+  removeAccountKeys(householdId, memberId) {
+    const vault = this.vaults.get(memberId);
+    const password = this.passwords.get(memberId);
+    let removed = false;
+    if (vault?.householdId === householdId) { this.vaults.delete(memberId); removed = true; }
+    if (password?.householdId === householdId) { this.passwords.delete(memberId); removed = true; }
+    return removed;
+  }
   accountPassword(householdId, memberId) {
     const row = this.passwords.get(memberId);
     return row && row.householdId === householdId ? structuredClone(row.value) : null;
@@ -184,6 +192,12 @@ export class AccountVaultService {
     this.spendWrite(auth);
     if (!ID.test(wrapperId ?? "")) throw invalid();
     return { remaining: this.guard(() => this.storage.removeAccountVaultWrapper(auth.household.id, auth.member.id, wrapperId)) };
+  }
+
+  /** A removed member's vault, wrappers and password verifier go (the
+   * pairing service calls this through onAccountRemoved). */
+  removeMember(householdId, memberId) {
+    return this.storage.removeAccountKeys(householdId, memberId);
   }
 
   spendWrite(auth) {

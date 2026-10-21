@@ -905,6 +905,28 @@ export const schemaMethods = {
     if (sqlitePragma(this.db, "user_version", { simple: true }) === 22) {
       try {
         this.transaction(() => {
+          // #558 (ADR 0018): a member's username for password sign-in, in its
+          // normalized form (web/security/account-credentials.js). Unique on
+          // the service among active members, so a removed member's name can
+          // be chosen again. Members who signed up with a passkey have none.
+          this.db.exec(`
+            ALTER TABLE members ADD COLUMN username TEXT
+              CHECK (username IS NULL OR (length(username) BETWEEN 3 AND 32 AND username = lower(username)));
+            CREATE UNIQUE INDEX members_active_username ON members(username)
+              WHERE username IS NOT NULL AND active = 1;
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(23, Date.now());
+          sqlitePragma(this.db, "user_version = 23");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the username migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 23) {
+      try {
+        this.transaction(() => {
           // #502: each member's private blobs (sealed journal photos and
           // thumbnails), keyed by member like the private relay stream, with
           // the member's household for its deletion and no foreign key to
@@ -922,8 +944,8 @@ export const schemaMethods = {
             );
             CREATE INDEX private_blobs_by_household ON private_blobs(household_id);
           `);
-          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(23, Date.now());
-          sqlitePragma(this.db, "user_version = 23");
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(24, Date.now());
+          sqlitePragma(this.db, "user_version = 24");
         });
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;

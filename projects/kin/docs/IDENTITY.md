@@ -82,6 +82,66 @@ The authenticator's local biometric/PIN operation is handled by the platform; Ki
 
 v0.1.0 had no login. The v0.8.x incubation line supports one passkey per member. v0.9 adds a same-member device-pairing flow with a separate credential per trusted device; account credential replacement remains unsupported. Device-specific keys are generated locally and the existing member approves the device fingerprint before its keys are provisioned.
 
+## Username and password sign-in (#557, #558)
+
+Since [ADR 0018](decisions/0018-account-key-vault.md) the first run signs a
+member up with a **username and a password** instead of a passkey; a passkey
+is offered later (the passkey second step), never at sign-up. The passkey
+paths above are unchanged and stay one tap away ("Set up with a passkey
+instead").
+
+- **Usernames** are unique among the service's active members,
+  case-insensitive, and stored in normalized form with the member
+  (`members.username`, server schema 23): NFKC, trimmed, lower-cased, 3 to 32
+  ASCII letters, digits, dots, dashes or underscores
+  (`web/security/account-credentials.js`, used by both the browser and the
+  service). A removed member's username can be chosen again. A claim waiting
+  for approval holds its username until it ends.
+- **The password never reaches the service.** The browser derives `authKey`
+  and `passwordKey` from it (CRYPTOGRAPHY, "Password keys") and sends only
+  `authKey`; the service stores Argon2id(`authKey`) and the PBKDF2 salt and
+  iterations (`account_passwords`).
+- **Creating a household** (`POST /api/account/bootstrap`) and **accepting an
+  invitation** (`POST /api/account/claim`) take `{ username, authKey, salt,
+  iterations }` in place of a passkey registration. Both keep their existing
+  limits (household creation per client, pairing-code attempts per client).
+  A password claim is for a **new member only**: adding a device to an
+  existing member, replacing one and member recovery still use a passkey.
+- **Joining still needs the inviter's approval.** The joiner's device key and
+  fingerprint comparison, the inviter's device certificate and the approval
+  are exactly as before; only the joiner's credential differs. An approved
+  password claim is activated with `POST /api/claim/activate/password`
+  (`authKey`) instead of a passkey assertion.
+- **Signing in on a trusted device** (`POST /api/login/password`): the
+  `kin_device` cookie names the device, and the username and `authKey` must
+  match its member. A success issues a session and rotates the device token,
+  as a passkey login does. Every failure (wrong username, wrong password, a
+  member without a password) gets the same message and the same Argon2id work
+  (a decoy verifier stands in), so neither the answer nor its timing says
+  whether a username exists. Failures are limited to 10 per 15 minutes per
+  member, per device and per client address; past that even a correct
+  password waits. Unlocking with the password signs the device in this way,
+  so household actions don't ask again.
+- **A sign-in without a device cookie** (a new browser) is not available yet:
+  it is the new-device story (#568). Pairing from another device works as
+  before.
+- **Fresh confirmations.** Actions that need "a fresh passkey" (approving a
+  device or a member, signing in a computer, revoking a device, removing a
+  member or leaving, household admins, Simple view, chat and fridge access,
+  deleting the household and cancelling that) accept a **fresh password
+  re-entry** from a member who has no passkey yet: the options response then
+  carries `password: { username, salt, iterations }` and the finish request
+  `authKey`. A member with a passkey always uses it, exactly as before, and
+  an `authKey` is no substitute for it. THREAT-MODEL records this as weaker
+  than a passkey until one is added.
+- A household needs a usable admin; an admin who signed up with a password
+  counts as one (they can confirm freshly).
+- `GET /api/claim` reports `signIn: "password" | "passkey"` so the joining
+  device knows how to finish. `POST /api/account/username` answers whether a
+  username is free (30 checks per client address in 15 minutes) and
+  `POST /api/account/invitation` checks an invitation code before a password
+  is chosen (the pairing-code limit).
+
 ## Device authorization
 
 A device is trusted only after explicit enrollment by an active member through the pairing flow. The device has its own ID and device key material, separate from the member's credential and household content key. Each accepted event records its originating `device_id` for later sync and audit context; this must not become a covert activity feed.

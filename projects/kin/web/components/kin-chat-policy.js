@@ -3,7 +3,7 @@
 // authorization metadata the service enforces, never chat content. Changing
 // it needs the admin's passkey, like other admin changes. Only an admin sees
 // this panel: the service sends the policy to admins alone.
-import { authenticationOptions, credentialJson } from "./household/auth.js";
+import { freshConfirmation } from "./household/fresh-confirmation.js";
 
 export const POLICY_CHOICES = Object.freeze([
   Object.freeze({ value: "write", label: "Read and post" }),
@@ -153,12 +153,12 @@ export class KinChatPolicy extends HTMLElement {
     if (!confirm(`${this.config.confirm}${warning}`)) return;
     this.busy = true;
     this.apply();
-    this.feedback.textContent = "Confirm the change with your passkey.";
+    this.feedback.textContent = "Confirm the change when Kin asks.";
     const generation = this.generation ?? 0;
     try {
       const started = await json(`${this.config.path}/options`, { method: "POST", body: JSON.stringify(change) });
-      const credential = await navigator.credentials.get({ publicKey: authenticationOptions(started.publicKey) });
-      await json(`${this.config.path}/finish`, { method: "POST", body: JSON.stringify({ flow: started.flow, credential: credentialJson(credential) }) });
+      const proof = await freshConfirmation(started);
+      await json(`${this.config.path}/finish`, { method: "POST", body: JSON.stringify({ flow: started.flow, ...proof }) });
       // Saved; but if the panel was hidden or replaced meanwhile, don't bring it back.
       if ((this.generation ?? 0) !== generation) return;
       this.saved = change;

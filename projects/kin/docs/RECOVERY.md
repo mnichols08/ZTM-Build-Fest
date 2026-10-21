@@ -84,6 +84,47 @@ usable local archive/recovery secret, and every valid credential/recovery
 authority is gone, encrypted household content is unrecoverable. This is safer
 than silently granting authority from stale server state.
 
+## Members who signed up with a password (#557, #558)
+
+Since the first run with a password ([ADR 0018](decisions/0018-account-key-vault.md)),
+a new member chooses a username and a password, and **no backup key is shown
+or required at first run**. On that member's first device:
+
+- The local root has one wrapper, a **password wrapper**: its key is derived
+  from the password on the device, so the password unlocks the device every
+  day, offline.
+- The member's **account vault** (CRYPTOGRAPHY, "Account key vault") is
+  created with the household keys the device holds and one password wrapper,
+  and kept current as keys change.
+
+**The final-unlock-path rule, restated.** "Never delete the final verified
+unlock path" still holds; what counts as that path is now:
+
+| Device set up | Its verified unlock path | Can it be removed? |
+| --- | --- | --- |
+| With a backup key (every household before #557, and "Set up with a passkey instead") | The recovery (backup key) wrapper | No, exactly as before; a passkey alone never counts |
+| With a password (the first run since #557) | The password wrapper | No; a passkey unlock added later can be removed, the password wrapper can't |
+
+The rule is one test (`hasVerifiedUnlockPath` in `web/security/local-vault.js`)
+that the vault, `EventStore.prepareSecurity` and `updateSecurityManifest`
+all apply. A device set up with a backup key has no password wrapper, so the
+test is the old rule for it, unchanged.
+
+**The trade-off, plainly.** Kin can't reset a password: the service never
+sees it, only a key derived from it. Until the member adds a passkey or a
+backup code (later stories, #571), or has another trusted device, **a
+forgotten password on a member's only device means that household can't be
+opened on it**: the local data stays encrypted, and with no other device
+there is nobody to pair a new one. The account vault doesn't change this yet:
+opening it on a new device is the new-device sign-in story (#568). With
+another trusted device of theirs, the member pairs a new device as before;
+another adult can authorize member recovery as before. The first run says
+this in one line where the password is chosen; the lock screen's "Forgot
+your password?" says what to do.
+
+A device set up with a password also can't make an export yet: exports open
+with a backup key, and it has none. Its household syncs as usual.
+
 ## Stale backups and rollback
 
 When an older backup is restored over a surviving validated database, Kin uses
