@@ -115,9 +115,11 @@ async function justForMeFlow() {
   };
   // Polls on timers, not animation frames: this page is a background target
   // in its own browser context, where frames may be throttled or paused.
-  const until = async (test, message, ms = 30_000, step = 25) => {
-    for (let index = 0; index < ms / step; index++) { if (test()) return; await new Promise((resolve) => setTimeout(resolve, step)); }
-    check(false, message);
+  // `detail()`, when given, says what the page showed if the wait times out.
+  const until = async (test, message, detail = null) => {
+    const step = 25;
+    for (let index = 0; index < 1200; index++) { if (test()) return; await new Promise((resolve) => setTimeout(resolve, step)); }
+    check(false, message, detail?.());
   };
   const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the work settles");
   // Asks for sync passes until nothing private waits to send (or 15 s).
@@ -263,7 +265,8 @@ async function justForMeFlow() {
   shareFrom(dentist);
   await until(() => dialog.open, "the dialog opens again");
   dialog.querySelector(".primary-action").click();
-  await until(() => app.state.items.some((item) => item.text === dentist) && /won't be added twice/.test(app.alert?.textContent ?? ""), "the household copy exists and a retry is offered", app.alert?.textContent);
+  await until(() => app.state.items.some((item) => item.text === dentist) && /won't be added twice/.test(app.alert?.textContent ?? ""), "the household copy exists and a retry is offered",
+    () => ({ alert: app.alert?.textContent, status: app.status?.textContent, feedback: view().querySelector(".just-for-me-feedback")?.textContent, shared: app.state.items.filter((entry) => entry.text === dentist).length }));
   check(privateItem(dentist), "the private one is still there after the failure");
   await idle();
   const item = privateItem(dentist);
