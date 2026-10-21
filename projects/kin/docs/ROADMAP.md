@@ -1,7 +1,7 @@
 # Roadmap
 
-Current release: `v1.3.0 — Member Names and Clearer Setup`, released
-2026-10-19 as `kin-v1.3.0`. The release before it was `v1.2.0 — Household Chat`.
+Current release: `v1.5.0 — One Account and Private Spaces`, released
+2026-10-21 as `kin-v1.5.0`. The release before it was `v1.4.0 — Fridge, Meals and Household Helpers`.
 The work between v0.10.3 and v1.0.0 shipped per the owner's
 [review-gate decisions](audits/V1.0_REVIEW_GATES.md); this page records how Kin
 got there and continues through v1.1. Work after v1.0 is tracked as GitHub
@@ -464,4 +464,13 @@ release. It was completed on `kin-testing` and merged into `kin-development`
 through the v1.2.0 release PR. Each new capability is a minor release with the
 stabilization patches described above. v1.3.0 closes the member identity and
 device pairing epic (#218) and starts the usability epic (#261), whose tester
-sessions (#262, #269) remain open.
+sessions (#262, #269) remain open. v1.4.0 adds the family fridge (#317), Meals
+(#333), Simple view (#341), Talk later (#312), undo and redo (#315) and the
+household helpers: share into Kin (#389), shopping mode (#403), store sections
+(#411), list import (#452), This week (#416), the sitter page (#441) and taking
+turns on routines (#428). v1.5.0 adds accounts with a key vault (#564,
+ADR 0018: first run #557, passkey and backup code #560 and #571, new-device
+sign-in #568, moving to an account #574, offline passkey unlock #551) and
+each member's private space (#485, ADR 0019: the journal #496, Just for me
+#510, reminders and settings #520, the private export #493), with the
+finished home-screen shortcuts (#471) and app-icon count (#476).

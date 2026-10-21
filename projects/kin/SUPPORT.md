@@ -1,7 +1,7 @@
 # Support
 
-Kin's current release is v1.3.0 — Member Names and Clearer Setup (`kin-v1.3.0`,
-2026-10-19). It is a Build Fest project, not a
+Kin's current release is v1.5.0 — One Account and Private Spaces (`kin-v1.5.0`,
+2026-10-21). It is a Build Fest project, not a
 supported service: there is no staffed runtime support channel or guaranteed
 response time.
 
