@@ -4,6 +4,16 @@
 
 All four household draft surfaces now retain text only in unlocked inputs. Reload/lock discards drafts, and startup removes historical sessionStorage draft keys before components mount. No household plaintext is written to localStorage, sessionStorage, Cache Storage, cookies, OPFS or debug persistence.
 
+localStorage holds per-device preferences only (such as the inactivity lock,
+`kin.auto-lock-minutes`). Since #563 that includes the name of the password-manager
+entry this device saved its backup key under with that key's label
+(`kin.backup-key-entry`: up to three, newest first, e.g.
+`[{"label":"K-7F3A","name":"Kin backup key — Chrome on Android (K-7F3A)"}]`;
+never the key, never a nickname) and whether
+the passkey suggestion was dismissed (`kin.passkey-suggestion-dismissed`).
+Losing them only changes which entry the unlock form asks for and whether the
+suggestion shows.
+
 ## Session event arena (refactor track)
 
 An unlocked `EventStore` keeps the decrypted canonical history in memory

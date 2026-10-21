@@ -8,7 +8,8 @@ import { EventStore } from "../../storage/event-store.js";
 import { EXPORT_STORAGE_RULE, joinLabels, manifestRecoveryLabels } from "../../security/key-label.js";
 import { currentPlatform, installHelp } from "../../platform.js";
 import { installHelpCard } from "../shared/dom.js";
-import { passwordManagerField, recoveryKeyAccount } from "./protection.js";
+import { passwordManagerField } from "./protection.js";
+import { entryHint, legacyEntryName, rememberedEntries, unlockEntryName } from "../../security/backup-key-entry.js";
 
 export const AUTO_LOCK_OPTIONS = [
   [0, "Only when Kin closes"],
@@ -54,7 +55,7 @@ export class SecurityViews {
     }, () => {});
   }
 
-  // frameOnly: just the heading and status lines, for a flow (recovery-key
+  // frameOnly: just the heading and status lines, for a flow (backup-key
   // setup) that fills in the rest itself.
   render({ frameOnly = false } = {}) {
     this.host.replaceChildren();
@@ -84,7 +85,7 @@ export class SecurityViews {
   }
 
   renderWelcome() {
-    this.host.text("Kin keeps your household's lists, notes, and photos encrypted on this device. Passkey unlock is for everyday use; first, set up this device's encryption with a recovery key.");
+    this.host.text("Kin keeps your household's lists, notes, and photos encrypted on this device. Passkey unlock is for everyday use; first, set up this device's encryption with a backup key for this device.");
     // On iPhone and iPad the Home Screen app has its own storage, so a
     // household set up in the browser wouldn't be in the installed app.
     const install = installHelp(currentPlatform());
@@ -92,7 +93,7 @@ export class SecurityViews {
     const steps = document.createElement("ol");
     steps.className = "setup-steps";
     for (const step of [
-      "Save a recovery key. It is your backup way in.",
+      "Save a backup key for this device. Each device has its own.",
       "Create your household, or join one that already uses Kin.",
       "Turn on passkey unlock so your face, fingerprint, or screen lock opens Kin next time.",
     ]) {
@@ -113,7 +114,7 @@ export class SecurityViews {
     const offline = navigator.onLine === false;
     let expanded = true;
     if (rotating)
-      this.host.text("Recovery protection is being replaced. Enter the new recovery key you saved to resume safely.");
+      this.host.text("Your backup key is being replaced. Enter the new backup key you saved to resume safely.");
     else if (this.host.manifest.phase !== "encrypted")
       this.host.text("Security setup is incomplete. Unlock to resume migration. Existing legacy data is not yet fully protected.");
     else if (passkeys.length && supported) {
@@ -125,12 +126,12 @@ export class SecurityViews {
           () => this.host.run(() => this.host.unlockPasskey(wrapper)), index === 0 ? "primary-action" : "");
       });
       if (offline) {
-        const note = this.host.text("You're offline. Passkey unlock needs a connection to confirm your passkey, so use your recovery key for now.");
+        const note = this.host.text("You're offline. Passkey unlock needs a connection to confirm your passkey, so use your backup key for now.");
         note.className = "security-note";
       }
       expanded = offline || this.host.recoveryExpanded;
       if (!expanded) {
-        this.host.button("Use recovery key", () => {
+        this.host.button("Use backup key", () => {
           this.host.recoveryExpanded = true;
           this.host.recoveryForm.hidden = false;
           this.host.recoveryToggle.hidden = true;
@@ -141,13 +142,13 @@ export class SecurityViews {
     } else if (passkeys.length) {
       const lead = this.host.text("Unlock Kin");
       lead.className = "security-lead";
-      this.host.text("This browser can't use the passkey saved for Kin. Use your recovery key instead.");
+      this.host.text("This browser can't use the passkey saved for Kin. Use your backup key instead.");
     } else {
       const lead = this.host.text("Unlock Kin");
       lead.className = "security-lead";
       this.host.text(supported
-        ? "Use your recovery key to unlock. Once you're in, turn on passkey unlock under More → Security so your face, fingerprint, or screen lock opens Kin next time."
-        : "Use your recovery key to unlock this device's copy of your household.");
+        ? "Use your backup key for this device to unlock. Once you're in, turn on passkey unlock under More → Security so your face, fingerprint, or screen lock opens Kin next time."
+        : "Use your backup key to unlock this device's copy of your household.");
     }
     const form = document.createElement("form");
     form.className = "recovery-form";
@@ -159,25 +160,36 @@ export class SecurityViews {
     input.autocomplete = "current-password";
     input.spellcheck = false;
     input.required = true;
-    input.setAttribute("aria-describedby", "recovery-unlock-help security-alert");
+    input.setAttribute("aria-describedby", "recovery-unlock-help recovery-unlock-entry security-alert");
     label.htmlFor = input.id;
-    label.textContent = "Recovery key";
+    label.textContent = "Backup key for this device";
     const help = document.createElement("p");
     help.id = "recovery-unlock-help";
     help.className = "security-note";
-    help.textContent = "The 64-character key you saved when you set up Kin on this device.";
+    help.textContent = "The 64-character key you saved when you set up Kin on this device. Each device has its own.";
+    // Which saved entry to pick, so a password manager's other devices' keys
+    // aren't mistaken for this one (#579). Filled in once the label is known.
+    const entry = document.createElement("p");
+    entry.id = "recovery-unlock-entry";
+    entry.className = "security-note";
+    entry.hidden = true;
     const button = document.createElement("button");
     button.type = "submit";
-    button.textContent = "Unlock with recovery key";
-    // Names the password-manager entry for this device's current key
-    // ("Kin recovery key K-7F3A"), so autofill offers that key, not another
-    // device's or a replaced one.
-    const account = passwordManagerField("text", "username", recoveryKeyAccount());
+    button.textContent = "Unlock with backup key";
+    // Names the password-manager entry for this device's current key, so
+    // autofill offers that key, not another device's or a replaced one: the
+    // name this device saved ("Kin backup key — Chrome on Android (K-7F3A)"),
+    // or the older "Kin recovery key K-7F3A" for keys saved before it.
+    const account = passwordManagerField("text", "username", legacyEntryName());
     const unlockManifest = this.host.manifest?.phase === "root-rotating" ? this.host.manifest.rotation?.candidateManifest : this.host.manifest;
     if (unlockManifest) void manifestRecoveryLabels(unlockManifest).then((labels) => {
-      if (labels?.length) account.value = recoveryKeyAccount(labels.at(-1));
+      if (!labels?.length) return;
+      const keyLabel = labels.at(-1);
+      account.value = unlockEntryName(keyLabel, rememberedEntries());
+      entry.textContent = entryHint(keyLabel);
+      entry.hidden = false;
     }, () => {});
-    form.append(account, label, input, help, button);
+    form.append(account, label, input, help, entry, button);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const secret = input.value;
@@ -200,10 +212,10 @@ export class SecurityViews {
     passkeyStatus.className = "security-status";
     passkeyStatus.dataset.passkeyUnlock = !supported ? "unavailable" : passkeys.length ? "on" : "off";
     passkeyStatus.textContent = !supported
-      ? "Passkeys aren't available in this browser. You unlock with your recovery key."
+      ? "Passkeys aren't available in this browser. You unlock with your backup key."
       : passkeys.length
         ? `On — ${passkeys.length === 1 ? "a passkey" : `${passkeys.length} passkeys`} can unlock Kin on this device.`
-        : "Off — you unlock with your recovery key.";
+        : "Off — you unlock with your backup key.";
     passkeySection.append(passkeyStatus);
     if (supported) {
       this.host.button(passkeys.length ? "Add another passkey" : "Turn on passkey unlock", () => this.host.run(() => this.host.addPasskey()),
@@ -216,7 +228,7 @@ export class SecurityViews {
       }
       passkeys.forEach((wrapper, index) => {
         this.host.button(passkeys.length === 1 ? "Remove passkey unlock" : `Remove passkey ${index + 1}`, () => this.host.run(async (operation) => {
-          if (!confirm("Remove this passkey unlock? Your recovery key will still work. Previously copied keys cannot be recalled.")) return;
+          if (!confirm("Remove this passkey unlock? Your backup key will still work. Previously copied keys cannot be recalled.")) return;
           const vault = getActiveVault();
           const manifest = vault.removeWrapper(wrapper.id);
           await EventStore.updateSecurityManifest(manifest, vault);
@@ -275,10 +287,10 @@ export class SecurityViews {
     resumeHint.textContent = "Closing the tab, Lock, and automatic lock still lock Kin.";
     lockSection.append(lockLabel, lockHint, resumeRow, resumeHint);
 
-    const recoverySection = this.host.section("Recovery key");
+    const recoverySection = this.host.section("Backup key for this device");
     const recoveryStatus = document.createElement("p");
     recoveryStatus.className = "security-status";
-    recoveryStatus.textContent = "Your recovery key is the backup way to unlock this device. Kin never stores it.";
+    recoveryStatus.textContent = "Your backup key unlocks Kin on this device when a passkey can't. Each device has its own, and Kin never stores it.";
     recoverySection.append(recoveryStatus);
     // The current key's label, which this device's exports name.
     const keyLabel = document.createElement("p");
@@ -287,21 +299,22 @@ export class SecurityViews {
     recoverySection.append(keyLabel);
     void manifestRecoveryLabels(getActiveVault()?.manifest ?? this.host.manifest).then((labels) => {
       if (!labels.length) return;
-      keyLabel.textContent = `This device's recovery key is ${joinLabels(labels)}. Exports made now open with it.`;
+      keyLabel.textContent = `This device's backup key is ${joinLabels(labels)}. Exports made now open with it.`;
       keyLabel.hidden = false;
     }, () => {});
     const guidance = document.createElement("details");
     guidance.className = "security-guidance";
     const summary = document.createElement("summary");
-    summary.textContent = "Recovery guidance";
+    summary.textContent = "Backup key guidance";
     guidance.append(summary);
     const list = document.createElement("ul");
     for (const line of [
       "Keep the key somewhere safe outside Kin, such as a password manager. Anyone with it can unlock this device's copy.",
-      "If you lose the key but a passkey still works, unlock with the passkey and choose Replace recovery key.",
+      "The key only opens Kin on this device. Another device has its own key; a password manager may offer you both, so pick the entry the unlock screen names.",
+      "If you lose the key but a passkey still works, unlock with the passkey and choose Replace backup key.",
       "If every unlock method is lost, this device's encrypted data cannot be recovered. Another trusted household device can re-approve a fresh device.",
       `To move Kin to another device, export the household. ${EXPORT_STORAGE_RULE}`,
-      "Replacing the recovery key doesn't change exports you already made: each still opens only with the key label it names.",
+      "Replacing the backup key doesn't change exports you already made: each still opens only with the key label it names.",
     ]) {
       const item = document.createElement("li");
       item.textContent = line;
@@ -309,7 +322,7 @@ export class SecurityViews {
     }
     guidance.append(list);
     recoverySection.append(guidance);
-    this.host.button("Replace recovery key", () => this.host.showReplacement(), "", recoverySection);
+    this.host.button("Replace backup key", () => this.host.showReplacement(), "", recoverySection);
 
     const backupSection = this.host.section("Backup and move");
     this.host.chatOption = null;

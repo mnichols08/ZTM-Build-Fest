@@ -200,7 +200,7 @@ export class WebAuthn {
       if (stored > 0 && count <= stored)
         throw new PairingError(
           "credential_replayed",
-          "This passkey reported an unexpected sign-in count, which can mean it was copied, so Kin won't accept it. Sign in with another passkey or your recovery key, then remove this passkey and add a new one.",
+          "This passkey reported an unexpected sign-in count, which can mean it was copied, so Kin won't accept it. Sign in with another passkey or your backup key, then remove this passkey and add a new one.",
           401,
         );
       if (count > stored) credential.signCount = count;

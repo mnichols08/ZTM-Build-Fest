@@ -51,7 +51,7 @@ export class SecurityArchive {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     const left = report.chatBlobsSkipped ? ` ${report.chatBlobsSkipped.toLocaleString()} older chat photos and files didn't fit and were left out; they stay in Kin and in your household's chat.` : "";
     const extras = [report.chatEvents ? "your household chat" : null, report.boardEvents ? "the fridge" : null].filter(Boolean);
-    this.host.message.textContent = `Kin export prepared${extras.length ? ` with ${extras.join(" and ")}` : ""}. It opens with recovery key ${joinLabels(labels)}. ${EXPORT_STORAGE_RULE}${left}`;
+    this.host.message.textContent = `Kin export prepared${extras.length ? ` with ${extras.join(" and ")}` : ""}. It opens with this device's backup key ${joinLabels(labels)}. ${EXPORT_STORAGE_RULE}${left}`;
   }
 
   // A progress bar after the status message while an archive operation runs.
@@ -81,7 +81,7 @@ export class SecurityArchive {
     const recovery = document.createElement("input");
     recovery.id = "archive-recovery"; recovery.type = "password"; recovery.autocomplete = "off"; recovery.required = true;
     recovery.setAttribute("aria-describedby", "security-alert");
-    const recoveryLabel = document.createElement("label"); recoveryLabel.htmlFor = recovery.id; recoveryLabel.textContent = "Recovery key for this export";
+    const recoveryLabel = document.createElement("label"); recoveryLabel.htmlFor = recovery.id; recoveryLabel.textContent = "Backup key for this export";
     const button = document.createElement("button"); button.type = "submit"; button.textContent = "Check export";
     // Before any key is asked for: when the file was made and which key opens it.
     const about = document.createElement("p");
@@ -99,7 +99,7 @@ export class SecurityArchive {
           if (selected.size > 160 * 1024 * 1024) throw new Error("Choose a Kin archive no larger than 160 MiB.");
           const described = await describeHouseholdArchive(new Uint8Array(await selected.arrayBuffer()), this.host.closest("kin-app").engine);
           const made = new Date(described.exportedAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
-          text = `This export was made on ${made} and opens with recovery key ${joinLabels(described.labels)} from the device that made it.`;
+          text = `This export was made on ${made} and opens with backup key ${joinLabels(described.labels)} from the device that made it.`;
         } catch (error) {
           text = error?.userMessage ?? "Kin couldn't read this file as a Kin export.";
         }

@@ -1,4 +1,4 @@
-// Unlocking with the recovery key or a passkey, and the shared steps that
+// Unlocking with the backup (recovery) key or a passkey, and the shared steps that
 // open the household once the vault is unlocked.
 // Part of <kin-security>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-security.js lists them).
@@ -79,7 +79,7 @@ export class SecurityUnlock {
       this.host.assertCurrentOperation(operation);
       vault.assertUnlocked();
       if (["root-rotating", "root-cleanup"].includes(status.phase)) {
-        this.host.message.textContent = "Resuming recovery protection…";
+        this.host.message.textContent = "Finishing the backup key replacement…";
         const engine = await loadKinEngine();
         try {
           this.host.assertCurrentOperation(operation);

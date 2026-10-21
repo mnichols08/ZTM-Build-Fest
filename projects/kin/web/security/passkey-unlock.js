@@ -1,11 +1,11 @@
 import { fromBase64Url, toBase64Url, VaultError } from "./local-vault.js";
 
 export const PASSKEY_UNSUPPORTED_MESSAGE =
-  "Secure passkey unlock is unavailable here. Use your recovery key.";
+  "Secure passkey unlock is unavailable here. Use your backup key.";
 export const PASSKEY_OFFLINE_MESSAGE =
-  "Kin can't reach your household service to confirm the passkey. Use your recovery key while offline; the passkey works again once you're connected.";
+  "Kin can't reach your household service to confirm the passkey. Use your backup key while offline; the passkey works again once you're connected.";
 export const PASSKEY_NOT_ENROLLED_MESSAGE =
-  "This device isn't signed in to a household yet, so it can't confirm a passkey. Use your recovery key, then create or join your household.";
+  "This device isn't signed in to a household yet, so it can't confirm a passkey. Use your backup key, then create or join your household.";
 
 // Browser capability only. It never proves that a credential is enrolled or
 // that the identity service will accept it.
@@ -35,7 +35,7 @@ export async function authenticatePrf(wrapper = null, { signal } = {}) {
     // 401/403 mean this device holds no trusted-device credential for a household.
     const message = [401, 403].includes(response.status)
       ? PASSKEY_NOT_ENROLLED_MESSAGE
-      : "Kin couldn't start passkey unlock right now. Use your recovery key.";
+      : "Kin couldn't start passkey unlock right now. Use your backup key.";
     throw new VaultError(message, "credential_unavailable", new Error(started.message ?? `HTTP ${response.status}`));
   }
   const publicKey = {
@@ -48,13 +48,13 @@ export async function authenticatePrf(wrapper = null, { signal } = {}) {
   if (wrapper) {
     publicKey.allowCredentials = publicKey.allowCredentials.filter((credential) => toBase64Url(credential.id) === wrapper.credentialId);
     if (!publicKey.allowCredentials.length)
-      throw new VaultError("This passkey is no longer authorized on this device. Use an authorized recovery path.", "credential_unavailable");
+      throw new VaultError("This passkey is no longer authorized on this device. Use your backup key.", "credential_unavailable");
   }
   const credential = await navigator.credentials.get({ publicKey, signal });
   if (!credential) throw new VaultError("Passkey authentication was cancelled.", "authentication_failed");
   const result = credential.getClientExtensionResults()?.prf?.results?.first;
   if (!result || result.byteLength !== 32)
-    throw new VaultError("This passkey does not support secure PRF unlock. Your recovery key remains available.", "unsupported_unlock");
+    throw new VaultError("This passkey does not support secure PRF unlock. Your backup key remains available.", "unsupported_unlock");
   const secret = new Uint8Array(result).slice();
   try {
     // The server verifies RP/origin/challenge/signature/UV; PRF output never leaves the browser.
