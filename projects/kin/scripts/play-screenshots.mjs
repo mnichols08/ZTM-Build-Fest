@@ -52,7 +52,7 @@ export const DEVICES = Object.freeze([
 
 export const SCREENS = Object.freeze([
   { name: "today", hash: "#today", ready: "!app.pages.get('today').hidden", anchor: "app.today" },
-  { name: "shopping", hash: "#lists/shopping", ready: "!app.pages.get('lists').hidden && app.shopping.textContent.includes('Bananas')", anchor: "app.shopping.querySelector('[data-item-id]')" },
+  { name: "shopping", hash: "#lists/shopping", ready: "!app.pages.get('lists').hidden && app.shopping.textContent.includes('Bananas')", anchor: "[...document.querySelectorAll('main *')].find((node) => !node.children.length && node.textContent === 'Milk' && node.getClientRects().length)" },
   { name: "week", hash: "#week", ready: "!app.pages.get('week').hidden && app.week.querySelectorAll('.week-day').length === 7" },
   { name: "chat", hash: "#updates/chat", ready: "!app.pages.get('updates').hidden && app.chat.querySelectorAll('.chat-text').length >= 4" },
   { name: "journal", hash: "#journal", ready: "!app.pages.get('journal').hidden && app.journal.querySelectorAll('.journal-entry').length >= 2" },
@@ -170,6 +170,12 @@ async function showScreen({ hash }, isReady, anchorOf) {
   const later = [...(app.onboarding?.querySelectorAll("button") ?? [])].find((button) => /^Not now$/.test(button.textContent));
   later?.click();
   if (app.onboarding) app.onboarding.hidden = true;
+  // The demo's own setup fills "Since you last looked"; mark it caught up.
+  const caughtUp = app.catchUp?.button;
+  if (caughtUp && !caughtUp.hidden && !caughtUp.disabled && caughtUp.getClientRects().length) {
+    caughtUp.click();
+    for (let i = 0; i < 400 && (app.busy || app.refreshing || app.pendingRefresh); i++) await new Promise((r) => setTimeout(r, 25));
+  }
   app.ctx.undo?.clear?.();
   if (app.status) app.status.textContent = "";
   for (const composer of document.querySelectorAll("kin-compose")) composer.clearResult?.();
@@ -182,6 +188,7 @@ async function showScreen({ hash }, isReady, anchorOf) {
   const anchor = anchorOf(app);
   const top = anchor?.getBoundingClientRect().top ?? 0;
   if (top > innerHeight * 0.25) scrollBy(0, top - innerHeight * 0.25);
+  const scrolled = `[anchor ${anchor ? Math.round(top) : "none"}, scrolled ${Math.round(scrollY)}] `;
   for (const scroller of document.querySelectorAll(".chat-scroll")) scroller.scrollTop = scroller.scrollHeight;
   await new Promise((r) => setTimeout(() => setTimeout(r, 0), 0));
   if (app.security?.phase !== "unlocked") throw new Error(`Kin is ${app.security?.phase} on ${hash}`);
@@ -196,7 +203,7 @@ async function showScreen({ hash }, isReady, anchorOf) {
     if (getComputedStyle(node.parentElement).visibility === "hidden") continue;
     seen.push(text.replace(/\s+/g, " ").slice(0, 60));
   }
-  return seen.join(" | ");
+  return scrolled + seen.join(" | ");
 }
 
 // ---- Capture ----------------------------------------------------------------------
