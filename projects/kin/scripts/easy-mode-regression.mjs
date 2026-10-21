@@ -291,7 +291,12 @@ export async function easyModeRegressions(client, { until }) {
     const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
     const dismiss = getComputedStyle(toast.querySelector(".undo-toast-dismiss"), "::after").content;
     return { text: toast.querySelector(".undo-toast-text").textContent, action: action.textContent, height: Math.round(box.height),
-      ratio: Math.round(ratio * 100) / 100, onTop: action.contains(hit), box: [Math.round(box.top), Math.round(box.bottom), innerHeight].join("/"), dismiss };
+      ratio: Math.round(ratio * 100) / 100, onTop: action.contains(hit), box: [Math.round(box.top), Math.round(box.bottom), innerHeight].join("/"), dismiss,
+      // What placed it, should it be off screen.
+      where: { scrollY: Math.round(scrollY), feedback: [...Object.values(app.feedback.getBoundingClientRect().toJSON())].map(Math.round).join(","),
+        nav: [...Object.values(app.nav.getBoundingClientRect().toJSON())].map(Math.round).join(","),
+        position: getComputedStyle(app.feedback).position, bottom: getComputedStyle(app.feedback).bottom, zoom: getComputedStyle(document.body).zoom,
+        hit: hit?.tagName + "." + (hit?.className ?? "") } };
   })()`);
   assert.ok(undoLine.text.length > 0 && undoLine.action === "Undo" && undoLine.height >= 56 && undoLine.ratio >= 0.99 && undoLine.onTop, `the Undo line: ${JSON.stringify(undoLine)}`);
   assert.match(undoLine.dismiss, /Dismiss/, "Dismiss has its word");

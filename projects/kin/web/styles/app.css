@@ -2422,9 +2422,11 @@ kin-journal { display: grid; gap: var(--space-3); min-width: 0; }
 .item-detail-bar { gap: 8px; }
 .item-detail-bar .help-button { margin-inline-start: auto; }
 .help-dialog {
-  width: min(92vw, 34rem);
-  max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 24px);
+  /* Viewport units don't shrink with the page's own zoom (text size, easy
+     mode), so they are divided by it: the panel always fits the screen. */
+  width: min(34rem, calc(100vw / var(--kin-zoom, 1) - 24px));
+  max-width: calc(100vw / var(--kin-zoom, 1) - 24px);
+  max-height: calc(100vh / var(--kin-zoom, 1) - 24px);
   overflow: auto;
   margin: auto;
   padding: 22px;
@@ -2485,9 +2487,12 @@ kin-journal { display: grid; gap: var(--space-3); min-width: 0; }
   --space-3: 24px;
   --space-4: 36px;
 }
-:root[data-kin-easy="on"] body { zoom: 1.25; }
-:root[data-kin-easy="on"][data-kin-text-size="large"] body { zoom: 1.375; }
-:root[data-kin-easy="on"][data-kin-text-size="larger"] body { zoom: 1.5; }
+:root[data-kin-text-size="large"] { --kin-zoom: 1.125; }
+:root[data-kin-text-size="larger"] { --kin-zoom: 1.25; }
+:root[data-kin-easy="on"] { --kin-zoom: 1.25; }
+:root[data-kin-easy="on"][data-kin-text-size="large"] { --kin-zoom: 1.375; }
+:root[data-kin-easy="on"][data-kin-text-size="larger"] { --kin-zoom: 1.5; }
+:root[data-kin-easy="on"] body { zoom: var(--kin-zoom); }
 :root[data-kin-easy="on"] [data-easy-hidden] { display: none !important; }
 :root[data-kin-easy="on"] .control-word { display: inline; }
 :root[data-kin-easy="on"] :is(.section-hint, .page-lead, .item-meta, .step-summary, .status-message, .error-message,
