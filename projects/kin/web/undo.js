@@ -207,6 +207,10 @@ export function reversalStatus(entry, state) {
       if (!routine || routine.status === "archived") return "gone";
       return routine.occurrenceKey === entry.occurrenceKey && routine.occurrenceStatus === entry.to ? "ready" : "conflict";
     }
+    // "Make private" (#517) archived it after copying it into Just for me;
+    // its Undo creates it again like an archive's, then the app removes the
+    // private copy (components/app/undo.js).
+    case "item-made-private":
     case "item-archived": {
       // Creating it again is always possible; a replacement someone has since
       // archived means it was deleted again elsewhere.
@@ -261,6 +265,7 @@ export function nextReversalStep(entry, state, { memberIds = null, skip = null }
       };
     }
     case "item-archived":
+    case "item-made-private":
       return recreateItemStep(entry, state, memberIds, skip);
     case "routine-archived":
       return recreateRoutineStep(entry, state, memberIds, skip);
@@ -273,7 +278,7 @@ export function nextReversalStep(entry, state, { memberIds = null, skip = null }
  * refusal (ten pins already, say) skips them, not the whole undo. The caller
  * passes their types back in `skip`. */
 export function isOptionalStep(entry, command) {
-  return (entry?.kind === "item-archived" || entry?.kind === "routine-archived") &&
+  return (entry?.kind === "item-archived" || entry?.kind === "item-made-private" || entry?.kind === "routine-archived") &&
     ["pin", "change-responsibility", "change-item-area"].includes(command?.type);
 }
 

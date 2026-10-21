@@ -113,6 +113,14 @@ export class ViewBuilder {
     this.app.meals.dataset.segment = "meals";
     lists.append(this.app.meals);
     listPanels.set("meals", this.app.meals);
+    // Just for me (#510): built with the views, so a lock drops it and
+    // everything it showed.
+    this.app.justForMe = document.createElement("kin-just-for-me");
+    this.app.justForMe.dataset.segment = "mine";
+    this.app.justForMe.controller = this.ctx.privateItems;
+    lists.append(this.app.justForMe);
+    listPanels.set("mine", this.app.justForMe);
+    this.ctx.privateItems.refresh();
     this.app.segmentPanels.set("lists", listPanels);
 
     const search = page("search", "Search");

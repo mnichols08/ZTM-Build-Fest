@@ -283,6 +283,8 @@ export class SessionController {
         ["tonight", "kin-tonight"],
       ];
       this.ctx.meals?.reset();
+      // Just for me (#510): the decrypted private list leaves with the lock.
+      this.ctx.privateItems?.reset();
       for (const [field, name] of components)
         this.app[field] = document.createElement(name);
       this.app.detailMode = null;

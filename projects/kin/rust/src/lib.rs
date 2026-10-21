@@ -13,6 +13,8 @@ pub mod event_decode;
 pub mod history;
 pub mod meals;
 pub mod private;
+pub mod private_command;
+pub mod private_items;
 pub mod qr;
 pub mod recurrence;
 pub mod replay;
@@ -79,6 +81,8 @@ mod chat_tests;
 mod board_tests;
 #[cfg(test)]
 mod meals_tests;
+#[cfg(test)]
+mod private_item_tests;
 #[cfg(test)]
 mod private_tests;
 #[cfg(test)]

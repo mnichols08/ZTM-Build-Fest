@@ -4,7 +4,9 @@
 // Part of <kin-today>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-today.js lists them).
 import { assigneeLabel } from "../shared/assignee-label.js";
-import { composeToday, ROUTINE_PERIOD_LABELS } from "../../today-view.js";
+import { composeToday, describePlanningDate, ROUTINE_PERIOD_LABELS } from "../../today-view.js";
+import { composePrivateToday } from "../../private-items.js";
+import { privateItemRow } from "../shared/private-marker.js";
 import { describeNextOccurrence, describeRepeat } from "../../recurrence.js";
 
 const MODE_LABELS = { normal: "Normal", vacation: "Vacation", guests: "Guests", rest: "Rest" };
@@ -32,23 +34,34 @@ export class TodaySections {
       return [pending];
     }
     const view = composeToday({ items: this.host.records, routines: this.host.routineRecords, pins: this.host.pinRecords, handoffs: this.host.handoffRecords, mode: this.host.householdMode, civilDate: this.host.civilDate });
+    // Just for me (#514): this member's dated private items, by Today's own
+    // rules, beside the household's and marked "Private". The app gives none
+    // in Simple view or with the member's setting off.
+    const mine = composePrivateToday(this.host.privateRecords, this.host.civilDate);
+    const counts = {
+      earlier: view.counts.earlier + mine.earlier.length,
+      today: view.counts.today + mine.today.length,
+      upcoming: view.counts.upcoming + mine.upcoming.length,
+      completed: view.counts.completed + mine.completed.length,
+    };
+    const hasMine = Object.values(mine).some((list) => list.length > 0);
     const sections = [];
-    if (view.hasItems) sections.push(this.createSummary(view.counts));
+    if (view.hasItems || hasMine) sections.push(this.createSummary(counts));
 
     // Most time-sensitive first: plans still open from earlier days, today's
     // plans, then later plans. The copy stays calm on purpose (no "overdue").
-    if (view.earlier.length) {
-      sections.push(this.createAgendaSection("earlier", "Earlier plans", view.earlier, "Still open from earlier. They stay in their lists too."));
+    if (view.earlier.length || mine.earlier.length) {
+      sections.push(this.createAgendaSection("earlier", "Earlier plans", view.earlier, "Still open from earlier. They stay in their lists too.", mine.earlier));
     }
 
-    const today = this.createAgendaSection("today", "Today", view.today);
+    const today = this.createAgendaSection("today", "Today", view.today, null, mine.today);
     today.className = "today-list";
-    if (!view.today.length) today.append(this.createTodayEmpty(view));
+    if (!view.today.length && !mine.today.length) today.append(this.createTodayEmpty(view));
     sections.push(today);
 
-    if (view.hasItems) {
-      const upcoming = this.createAgendaSection("upcoming", "Coming up", view.upcoming, view.upcoming.length ? "Planned for the coming days, soonest first." : null);
-      if (!view.upcoming.length) {
+    if (view.hasItems || hasMine) {
+      const upcoming = this.createAgendaSection("upcoming", "Coming up", view.upcoming, view.upcoming.length || mine.upcoming.length ? "Planned for the coming days, soonest first." : null, mine.upcoming);
+      if (!view.upcoming.length && !mine.upcoming.length) {
         const empty = document.createElement("p");
         empty.className = "empty-state";
         empty.textContent = "Nothing is planned for the coming days.";
@@ -62,16 +75,36 @@ export class TodaySections {
     sections.push(this.createQuickAccess(view.quickAccess));
     sections.push(this.createRoutines(view));
     if (view.waitingHandoffs) sections.push(this.createUpdatesContext(view.waitingHandoffs));
-    if (view.completed.length || view.completedRoutines.length) {
+    if (view.completed.length || view.completedRoutines.length || mine.completed.length) {
       const body = document.createDocumentFragment();
       if (view.completed.length) body.append(this.host.createList(view.completed, { kindVisible: true }));
+      if (mine.completed.length) body.append(this.createPrivateList(mine.completed));
       if (view.completedRoutines.length) body.append(this.createRoutineList(view.completedRoutines, "done"));
-      sections.push(this.host.disclosure("completed", `Completed (${view.completed.length + view.completedRoutines.length})`, body));
+      sections.push(this.host.disclosure("completed", `Completed (${view.completed.length + mine.completed.length + view.completedRoutines.length})`, body));
     }
     return sections;
   }
 
-  createAgendaSection(kind, title, records, hint = null) {
+  /** This member's private items (#514): named "Private: …", marked, and
+   * completed or reopened right here. */
+  createPrivateList(items, kind = "today") {
+    const list = document.createElement("ul");
+    list.className = "item-list private-list today-private-list";
+    list.setAttribute("aria-label", "Private, only you can see these");
+    for (const item of items) {
+      const meta = kind === "today" || item.date == null ? null : describePlanningDate(item.date, this.host.civilDate);
+      list.append(privateItemRow(item, {
+        disabled: this.host.isDisabled,
+        meta,
+        onToggle: (itemId, completed) => this.host.dispatchEvent(new CustomEvent("kin:toggle-private-item", {
+          detail: { itemId, completed }, bubbles: true, composed: true,
+        })),
+      }));
+    }
+    return list;
+  }
+
+  createAgendaSection(kind, title, records, hint = null, privateItems = []) {
     const section = document.createElement("section");
     section.className = `today-agenda today-${kind}`;
     section.dataset.section = kind;
@@ -86,6 +119,7 @@ export class TodaySections {
       section.append(note);
     }
     if (records.length) section.append(this.host.createList(records, { kindVisible: true }));
+    if (privateItems.length) section.append(this.createPrivateList(privateItems, kind));
     return section;
   }
 
