@@ -361,6 +361,13 @@ export const membershipMethods = {
       memberId,
       actorId,
     });
+    // Their sign-in and account vault go with them (ADR 0018/0019): the
+    // username can be chosen again, and the service keeps no verifier,
+    // vault or wrappers for someone who is no longer a member. Copies on
+    // their own devices stay, as for household data.
+    delete target.username;
+    delete target.password;
+    this.onAccountRemoved?.(household.id, memberId);
     this.persistHousehold(household.id);
     return { memberId, removed: true };
   },

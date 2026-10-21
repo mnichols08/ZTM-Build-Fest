@@ -101,6 +101,8 @@ export function createKinServer(options = {}) {
   syncService.boardRelayService = boardRelayService;
   // Members' encrypted key vaults (ADR 0018, #564).
   const accountVaultService = options.accountVaultService ?? new AccountVaultService({ store, now: options.now ?? (() => Date.now()) });
+  // A removed member's account vault and password verifier go with them.
+  service.onAccountRemoved = (householdId, memberId) => accountVaultService.removeMember(householdId, memberId);
   const webauthn =
     options.webauthn ??
     new WebAuthn({

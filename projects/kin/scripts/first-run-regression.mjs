@@ -182,6 +182,11 @@ async function lockAndUnlock(founder) {
 
 async function invite() {
   const app = document.querySelector("kin-app");
+  // The panel's own load after unlocking finishes first, so the invitation
+  // view isn't replaced under it.
+  for (let i = 0, step = 25; i < 1200 && !(app.household?.identity && app.household.syncStatus?.enabled && !app.household.busy); i++)
+    await new Promise((r) => setTimeout(r, step));
+  await app.household.loaded;
   await app.household.createPairing("adult");
   if (!app.household.pairing?.code) throw new Error("No invitation code: " + app.household.textContent.slice(0, 300));
   return app.household.pairing.code;
@@ -231,6 +236,13 @@ async function approveWithPassword(founder) {
   };
   const app = document.querySelector("kin-app");
   const household = app.household;
+  // The panel polls every 2 s; reading the same route here as well keeps a
+  // slow or throttled background tab from deciding the outcome.
+  for (let i = 0; i < 300 && household.pairing?.state !== "Claimed"; i++) {
+    const latest = await household.api(`/api/pairings/${household.pairing.pairingId}`);
+    if (latest.state === "Claimed") { household.pairing = { ...household.pairing, ...latest }; household.render(); break; }
+    await new Promise((r) => setTimeout(r, i));
+  }
   await wait(() => household.pairing?.state === "Claimed" && household.pairing.syncKeyFingerprint, "the claim reaches the founder");
   household.verifiedFingerprint = household.pairing.syncKeyFingerprint;
   const confirmWith = async (password) => {
@@ -260,6 +272,11 @@ async function finishJoining(partner) {
   };
   const app = document.querySelector("kin-app");
   const household = app.household;
+  for (let i = 0; i < 300 && household.claim?.state !== "Confirmed"; i++) {
+    const latest = await household.api("/api/claim");
+    if (latest.state === "Confirmed") { household.claim = latest; household.render(); break; }
+    await new Promise((r) => setTimeout(r, i));
+  }
   await wait(() => household.claim?.state === "Confirmed", "the joiner sees the approval");
   const finish = [...household.querySelectorAll("button")].find((element) => element.textContent === "Finish joining");
   check(Boolean(finish), "the joiner finishes with the password, not a passkey");

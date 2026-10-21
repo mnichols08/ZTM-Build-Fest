@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { derivePasswordKeys, PASSWORD_ITERATIONS } from "../web/security/account-vault.js";
+import { AccountVaultService } from "./account-vault-service.mjs";
 import { DurableStore } from "./durable-store.mjs";
 import { PASSWORD_ATTEMPTS, PairingError, PairingService, SIGN_IN_FAILED, USERNAME_CHECKS } from "./pairing-service.mjs";
 import { createKinServer } from "./server.mjs";
@@ -269,6 +270,38 @@ test("admin-only actions take a fresh password from a member with no passkey, an
     assert.equal(noPassword.body.error, "sign_in_failed");
   } finally {
     await server.close();
+  }
+});
+
+test("removing a member removes their account vault, password verifier and username", async () => {
+  for (const store of [new DurableStore(":memory:"), null]) {
+    const pairing = new PairingService({ store });
+    const vaults = new AccountVaultService({ store });
+    pairing.onAccountRemoved = (householdId, memberId) => vaults.removeMember(householdId, memberId);
+    const founder = pairing.bootstrap({ credential: { id: `founder-${Math.random()}`, publicKey: "k", algorithm: -7 } });
+    const invitation = pairing.createPairing(founder.sessionToken);
+    const claim = pairing.claimPairing({ code: invitation.code, password: await pairing.preparePassword(await signUp("leaving.soon")) });
+    pairing.approvePairing(founder.sessionToken, invitation.pairingId, claim.version);
+    const joined = pairing.activateClaim(claim.claimToken);
+    const wrapped = Buffer.alloc(61, 3);
+    wrapped[0] = 1;
+    const sealed = Buffer.alloc(120, 7);
+    sealed.write("KVLT", 0, "latin1");
+    sealed[4] = 1;
+    vaults.upload(pairing.authorize(joined.sessionToken), { expectedVersion: 0, ciphertext: b64(sealed), wrappers: [{
+      wrapperId: "1".repeat(32), type: "password", version: 1, wrapped: b64(wrapped),
+      params: { kdf: "pbkdf2-sha256", iterations: PASSWORD_ITERATIONS, salt: b64(SALT) } }] });
+    assert.equal(pairing.usernameAvailable("leaving.soon").available, false);
+
+    pairing.removeOtherAdult(founder.sessionToken, joined.memberId, founder.memberId);
+    assert.equal(vaults.storage.accountVault(founder.householdId, joined.memberId), null);
+    assert.equal(vaults.storage.accountPassword(founder.householdId, joined.memberId), null);
+    assert.equal(pairing.members.get(joined.memberId).username, undefined);
+    assert.equal(pairing.usernameAvailable("leaving.soon").available, true, "the username can be chosen again");
+    if (store) {
+      assert.equal(new PairingService({ store }).members.get(joined.memberId).username, undefined, "and stays gone after a restart");
+      store.close();
+    }
   }
 });
 

@@ -200,8 +200,10 @@ attempts failed (to limit them). Whether a username is taken is answered to
 anyone signing up, as on any sign-up page, at a limited rate. A username is
 chosen by the member and can be anything that fits the rules; it need not
 be a real name or an email address, and Kin has no email system. Deleting
-the household deletes the usernames and verifiers; a removed member's
-username can be chosen again. The member's preferred display name, typed at
+the household deletes the usernames and verifiers. Removing a member, or a
+member leaving, deletes their username, verifier, account vault and its
+wrappers on the service (backups keep old copies), and the username can be
+chosen again. The member's preferred display name, typed at
 first run, is a household event like before: encrypted, never seen by the
 service.
 
