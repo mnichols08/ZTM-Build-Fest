@@ -1152,8 +1152,11 @@ export async function chatRegressions({ keepRoom = false } = {}) {
     files.dispatchEvent(new Event("change", { bubbles: true }));
     await type("no such words");
     check(found().length === 0 && status() === "No matching chat messages.", "no match says so");
-    // Nothing about the query is stored.
-    check(!JSON.stringify({ ...localStorage }).toLowerCase().includes("cafe") && !JSON.stringify({ ...sessionStorage }).toLowerCase().includes("cafe"), "queries are not stored");
+    // Nothing about the query is stored. "cafe" is also hex, and storage
+    // holds random hex ids and sealed values that can contain it, so only a
+    // "cafe" that isn't part of a longer hex run counts (#594).
+    const storesQuery = (storage) => /(?<![0-9a-f])cafe(?![0-9a-f])/.test(JSON.stringify({ ...storage }).toLowerCase());
+    check(!storesQuery(localStorage) && !storesQuery(sessionStorage), "queries are not stored");
     // Escape closes the panel and returns to the button.
     box.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await settle();

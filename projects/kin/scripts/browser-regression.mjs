@@ -140,6 +140,9 @@ browser.on("error", (error) => {
 });
 const clients = [];
 const problems = [];
+// Document loads that lost a module request (#594), by load: the start-up
+// guard (web/boot-guard.js) should have loaded each again.
+const abortedModuleLoads = new Map();
 const requests = [];
 const REGRESSION_PART = process.env.KIN_REGRESSION_PART ?? "";
 if (!["", "1", "2"].includes(REGRESSION_PART)) throw new Error(`KIN_REGRESSION_PART must be 1 or 2, not ${REGRESSION_PART}`);
@@ -170,8 +173,65 @@ async function connect(url) {
   // say what it waits for (#469).
   const inFlight = new Map();
   const failedRequests = [];
+  // The tab's recent navigations, document loads, service worker states and
+  // failed requests, in order, so a page whose modules stopped loading shows
+  // what started or stopped around it (#594).
+  const timeline = [];
+  const loaders = new Map();
+  const short = (value) => String(value ?? "").replace(/^https?:\/\/[^/]+/, "").slice(0, 70);
+  const tag = (loaderId) => (loaderId ? String(loaderId).slice(-5) : "-");
+  const mark = (text) => {
+    timeline.push({ at: Date.now(), text });
+    if (timeline.length > 60) timeline.shift();
+  };
+  const loader = (loaderId) => {
+    if (!loaders.has(loaderId)) loaders.set(loaderId, { scripts: 0, done: 0, fromWorker: 0, failed: 0, at: Date.now() });
+    if (loaders.size > 6) loaders.delete(loaders.keys().next().value);
+    return loaders.get(loaderId);
+  };
+  let workerStates = "";
+  const trace = (message) => {
+    const params = message.params ?? {};
+    switch (message.method) {
+      case "Page.frameRequestedNavigation": mark(`requested ${params.reason}/${params.disposition} ${short(params.url)}`); break;
+      case "Page.frameStartedNavigating": mark(`starting ${params.navigationType} L${tag(params.loaderId)} ${short(params.url)}`); break;
+      case "Page.frameNavigated": if (!params.frame?.parentId) mark(`committed ${params.type ?? ""} L${tag(params.frame?.loaderId)} ${short(params.frame?.url)}`); break;
+      case "Page.frameStartedLoading": mark("loading"); break;
+      case "Page.frameStoppedLoading": mark("stopped loading"); break;
+      case "Page.domContentEventFired": mark("DOMContentLoaded"); break;
+      case "Page.loadEventFired": mark("load"); break;
+      case "Inspector.targetCrashed": mark("renderer crashed"); break;
+      case "ServiceWorker.workerVersionUpdated": {
+        const states = (params.versions ?? []).map((version) => `v${version.versionId}:${version.runningStatus}/${version.status}${version.controlledClients?.length ? `(${version.controlledClients.length})` : ""}`).join(" ");
+        if (states !== workerStates) mark(`worker ${(workerStates = states)}`);
+        break;
+      }
+      case "Network.requestWillBeSent":
+        if (params.type === "Document") mark(`document request L${tag(params.loaderId)} ${short(params.request?.url)}`);
+        if (params.type === "Script") loader(params.loaderId).scripts += 1;
+        break;
+      case "Network.loadingFailed": {
+        const request = inFlight.get(params.requestId);
+        if (request?.type === "Script") {
+          loader(request.loaderId).failed += 1;
+          if (params.canceled) abortedModuleLoads.set(request.loaderId, short(request.url));
+        }
+        mark(`failed ${params.type ?? request?.type} L${tag(request?.loaderId)} ${params.errorText}${params.canceled ? " canceled" : ""}${params.blockedReason ? ` blocked:${params.blockedReason}` : ""} ${short(request?.url)} by ${request?.initiator ?? "?"} after ${request ? Date.now() - request.at : "?"} ms, response ${request?.status ?? "none"}${request?.sw ? " from worker" : ""}`);
+        break;
+      }
+      case "Network.loadingFinished": {
+        const request = inFlight.get(params.requestId);
+        if (request?.type === "Script") {
+          loader(request.loaderId).done += 1;
+          if (request.sw) loader(request.loaderId).fromWorker += 1;
+        }
+        break;
+      }
+    }
+  };
   socket.onmessage = ({ data }) => {
     const message = JSON.parse(data);
+    if (message.method) trace(message);
     if (message.method)
       for (const listener of [...(eventListeners.get(message.method) ?? [])]) listener(message.params);
     if (message.id) {
@@ -187,7 +247,9 @@ async function connect(url) {
         problems.push(entry);
     } else if (message.method === "Network.requestWillBeSent") {
       requests.push(message.params.request.url);
-      inFlight.set(message.params.requestId, { url: message.params.request.url, type: message.params.type ?? null, at: Date.now() });
+      const initiator = message.params.initiator;
+      inFlight.set(message.params.requestId, { url: message.params.request.url, type: message.params.type ?? null, at: Date.now(),
+        loaderId: message.params.loaderId, initiator: `${initiator?.type ?? "?"}${initiator?.url ? ` ${short(initiator.url)}` : ""}` });
     }
     if (message.method === "Network.responseReceived") {
       const request = inFlight.get(message.params.requestId);
@@ -260,6 +322,20 @@ async function connect(url) {
     failed(limit = 6) {
       const now = Date.now();
       return failedRequests.slice(-limit).map(({ at, ...rest }) => ({ ...rest, ageMs: now - at }));
+    },
+    // The timeline as short lines (ms before now), each fit for one CI
+    // annotation line, with script counts per document load (#594).
+    loadTrace() {
+      const now = Date.now();
+      const lines = [`scripts per load: ${[...loaders].map(([id, counts]) => `L${tag(id)} ${counts.scripts} sent/${counts.done} done (${counts.fromWorker} by the worker)/${counts.failed} failed, ${now - counts.at} ms ago`).join("; ")}`];
+      let line = "";
+      for (const { at, text } of timeline) {
+        const entry = `-${now - at}ms ${text}`;
+        if (line.length + entry.length > 1300) { lines.push(line); line = ""; }
+        line += (line ? " | " : "") + entry;
+      }
+      if (line) lines.push(line);
+      return lines;
     },
     close: () => socket.close(),
   };
@@ -1234,6 +1310,8 @@ try {
     const client = await connect(target.webSocketDebuggerUrl);
     for (const domain of ["Runtime", "Page", "Log", "Network"])
       await client.send(`${domain}.enable`);
+    // Worker starts, stops and version changes go into the load trace (#594).
+    await client.send("ServiceWorker.enable").catch(() => {});
     await applyRegressionDefaults((method, params) => client.send(method, params));
     await client.send("Page.navigate", { url: origin });
     // A new tab on the Windows runner sometimes never runs Kin's modules
@@ -1242,10 +1320,19 @@ try {
     for (let attempt = 0; attempt < 150 && !(await defined()); attempt += 1) await delay(100);
     if (!(await defined())) {
       console.log(`NOTE new tab had not defined kin-app after 15 s (${JSON.stringify(await tabFacts(client))}); loading it again (#327)`);
+      printLoadTrace(client);
       await client.send("Page.reload", { ignoreCache: true });
     }
     await ready(client);
     return client;
+  }
+  // The tab's load trace (#594). In GitHub Actions each line is a warning
+  // annotation, so it is readable even when the retry passes.
+  function printLoadTrace(client) {
+    for (const line of client.loadTrace()) {
+      if (process.env.GITHUB_ACTIONS) console.log(`::warning title=Kin load trace (#594)::${line.replace(/%/g, "%25")}`);
+      else console.error(`load trace: ${line}`);
+    }
   }
   // What a tab was doing, so a slow start can be told from a stuck one (#327).
   function tabFacts(client) {
@@ -1267,6 +1354,7 @@ try {
       await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.security?.heading)'), { attempts: 600 });
     } catch (error) {
       const state = await tabFacts(client);
+      printLoadTrace(client);
       error.message += ` — tab state ${JSON.stringify(state)}; unfinished requests ${JSON.stringify(client.unfinished())}; failed requests ${JSON.stringify(client.failed())}; recent problems ${JSON.stringify(problems.slice(-5)).slice(0, 2000)}`;
       throw error;
     }
@@ -1688,6 +1776,7 @@ try {
     const resume = await first.evaluate(`({ navigation: performance.getEntriesByType("navigation")[0]?.type ?? null,
       ticket: Boolean(sessionStorage.getItem("kin.reload-resume")), armed: Boolean(document.querySelector("kin-app")?.reloadResume?.armed),
       preference: localStorage.getItem("kin.reload-resume-enabled") })`).catch((reason) => ({ unreadable: String(reason?.message ?? reason) }));
+    printLoadTrace(first);
     error.message += ` — tab state ${JSON.stringify(await tabFacts(first))}; resume ${JSON.stringify(resume)}; unfinished requests ${JSON.stringify(first.unfinished())}; failed requests ${JSON.stringify(first.failed())}; recent problems ${JSON.stringify(problems.slice(-3)).slice(0, 800)}`;
     throw error;
   }
@@ -1696,6 +1785,7 @@ try {
   try {
     console.log(await shortcutsBadgeRegressions(first, { origin, until, ready, recovery: recoverySecret }));
   } catch (error) {
+    printLoadTrace(first);
     error.message += ` — tab state ${JSON.stringify(await tabFacts(first))}; unfinished requests ${JSON.stringify(first.unfinished())}; failed requests ${JSON.stringify(first.failed())}`;
     throw error;
   }
@@ -3063,10 +3153,20 @@ try {
   // changed elsewhere, with a virtual authenticator on its own service.
   if (REGRESSION_PART !== "1") console.log(await accountMigrationRegressions({ endpoint, browserClient }));
 } catch (error) {
+  // The whole failure as an annotation, so an attempt that a passing retry
+  // hides can still be read in CI (#594).
+  if (process.env.GITHUB_ACTIONS) {
+    const text = `${error?.stack ?? error}`.slice(0, 3500).replace(/%/g, "%25").replace(/\r?\n/g, "%0A");
+    console.log(`::warning title=Kin browser regression attempt failed::${text}`);
+  }
   // Before the browser closes: what each page showed (#328).
   await captureFailure("browser regression");
   throw error;
 } finally {
+  if (abortedModuleLoads.size) {
+    const summary = `${abortedModuleLoads.size} page load(s) lost a module request (${[...abortedModuleLoads.values()].join(", ")}); the start-up guard loads such a page again`;
+    console.log(process.env.GITHUB_ACTIONS ? `::warning title=Kin aborted module loads (#594)::${summary}` : `NOTE ${summary}`);
+  }
   if (browserClient) await browserClient.send("Browser.close").catch(() => {});
   for (const client of clients) client.close();
   browser.kill();
