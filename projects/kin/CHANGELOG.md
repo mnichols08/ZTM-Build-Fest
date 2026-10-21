@@ -9,6 +9,33 @@ documentation only.
 
 ### Added
 
+- **Set up Kin for someone** (#612: #613, #614, #615; epic #603,
+  [ADR 0021](docs/decisions/0021-kin-for-everyone.md) §4). A household admin
+  prepares Kin for one person from People & devices: their name, who they
+  are (Adult, Limited or Temporary), easy mode (on by default), the helper's
+  name and a note. Kin makes a QR code, a link and a one-page "How to open
+  Kin" sheet in large type (the QR code, the link and code, three plain
+  steps, "If you get stuck, call Mikey" and when it ends) with a print
+  stylesheet. Opening it: "Hi Rose — your family set this up for you" in
+  easy mode, a password with Show password and a username chosen from her
+  name, the wait for approval naming the helper, "Do these match?", then
+  Today in easy mode with her name set and easy mode in her synced settings.
+  The inviter still approves after comparing fingerprints (side by side in
+  person, or by phone); there is no unattended pre-approval (THREAT-MODEL).
+  The names travel only in a card sealed on the admin's device under a key
+  carried in the link's fragment. **Server schema 27** adds
+  `prepared_invitations` (forward migration from 26): a prepared invitation
+  lasts 1 to 7 days, survives a restart, is single-use, and its claim waits a
+  day for approval; at most three wait per household. Routes `POST` and
+  `GET /api/pairings/prepared`; `POST /api/account/invitation` answers a
+  prepared code with `prepared`. UX §42, PAIRING, IDENTITY.
+- **Easy-mode sweep** (#639, story #638): Help's "Words on this page" now
+  also covers the words a page shows at that moment, and in easy mode every
+  button, menu, field and disclosure gets the tap size. Browser regressions
+  `scripts/easy-sweep-regression.mjs` (every page in easy mode at 320 px and
+  desktop: Help, 56 px controls, no unexplained word, switched-off features
+  absent) and `scripts/setup-for-someone-regression.mjs` (the whole set-up
+  flow in two browsers).
 - **Easy mode** (#616: #617, #618, #619; epic #603,
   [ADR 0021](docs/decisions/0021-kin-for-everyone.md)): bigger text and
   buttons, fewer things on screen. Turned on in Household → Identity &

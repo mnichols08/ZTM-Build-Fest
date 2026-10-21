@@ -787,6 +787,72 @@ accept it, as for attachment removal above. The page can only point at
 records already in the household, so the worst case is a rearranged or
 emptied page that an Adult sets again.
 
+### Prepared invitations: a printed sheet is an invitation (#613, ADR 0021 §4)
+
+"Set up Kin for someone" lets a household admin prepare an invitation for one
+person and print it as a one-page sheet. Security review of what changes
+against an ordinary invitation:
+
+- **What the service holds.** A row in `prepared_invitations` (server schema
+  27): the household, the inviting member and device and that device's key
+  fingerprint, the member kind (and a Temporary member's end), whether the
+  person starts in easy mode, the times, the code's verifier, and the
+  **card**. The card (the person's name, the helper's name and an optional
+  note) is sealed on the admin's device with AES-GCM under a fresh random
+  128-bit key that only the link's fragment carries
+  (`/pair#code=…&k=…`); Kin never sends the key, and browsers never send a
+  fragment, so the service, its operator and a stolen database copy can't
+  read the names. Easy mode and the member kind are readable, as for any
+  invitation's kind.
+- **The code's verifier.** Ordinary codes are verified with an HMAC keyed by
+  a per-process secret, which is why a restart ends them. A prepared code must
+  survive a restart, so its verifier is a domain-separated SHA-256 of the
+  8-character code (about 40 bits). Someone holding a copy of the database can
+  recover a still-open code by brute force. What that code gets them is what
+  the sheet gets anyone: a **claim**, never membership; see the next point.
+  The row is deleted as soon as the code stops working (approved, cancelled,
+  expired, the household deleted), so old backups hold only codes that have
+  ended, unless the backup was taken while one was open.
+- **Lifetime and guessing.** A prepared code lasts 1 to 7 days instead of 10
+  minutes, so it is open to online guessing for longer. Guessing is limited
+  as for every code (12 failures a minute per client), the answer to a wrong
+  code is the same generic one, at most three prepared invitations wait per
+  household, and each is single-use: the first claim holds it, and approval
+  spends it.
+- **Approval stays the gate.** A claim joins nothing and reveals nothing of
+  the household until the inviter approves it with a fresh passkey (or
+  password), after comparing the joining device's fingerprint, exactly as for
+  any invitation; the joining device then compares the inviter's fingerprint
+  before it finishes. A sheet that is lost, photographed or intercepted in
+  the post lets its finder *ask* to join; the helper sees a request they
+  weren't expecting (or a device name that isn't Rose's) and a fingerprint
+  that doesn't match Rose's screen, and cancels. If the finder claims first,
+  Rose's own attempt says the invitation was already used, and the helper
+  cancels and makes a new one: an annoyance, not a way in. The sheet says
+  "Keep it private: anyone with it can ask to join".
+- **A day to say yes.** A prepared invitation's claim waits up to 24 hours
+  for approval (an ordinary claim: 15 minutes), because the helper may not be
+  at hand. Like every claim it is process-local: a restart while she waits
+  ends the claim and the code works again until it expires.
+- **In person.** The safest way is side by side: Rose's screen shows her
+  device's code, the helper's screen shows the same one ("The codes match on
+  both screens"), and after approval Rose's screen asks "Do these match?"
+  against the code on the helper's screen. Remotely, they compare by phone,
+  which is only as good as knowing it's really Rose on the line.
+- **No unattended pre-approval (deferred).** A pre-approval made before the
+  sheet is posted can't be bound to the joining device's key, because that
+  key doesn't exist until Rose opens the link; bound only to the code, it
+  would turn the paper into a bearer credential that admits whoever holds it
+  and gives them the household's keys. The only binding that keeps today's
+  guarantee is a comparison of the claim's fingerprint on both devices,
+  which is the in-person path above. Pre-approval is therefore not offered.
+- **What stays in memory.** The admin's device keeps the code, the card's key
+  and the names only in the open page, to print the sheet again; they are
+  never stored, so after Kin closes or locks the sheet can't be reprinted
+  (cancel and make a new one). The joining device turns easy mode on from
+  the invitation before the password is set (a presentation setting, kept
+  in `kin.easy-mode` like text size).
+
 ### Reports to the Kin team are readable by the operator (ADR 0021 §3)
 
 A problem report's typed text and picture, and a suggestion's text, are

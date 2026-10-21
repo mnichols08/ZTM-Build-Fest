@@ -60,6 +60,12 @@ export function setupProblems(values, now = Date.now()) {
   return problems;
 }
 
+/** While the sheet is on screen, the print stylesheet prints only it
+ * (app.css, `html.printing-setup-sheet`). */
+export function printingSheet(on) {
+  globalThis.document?.documentElement?.classList?.toggle("printing-setup-sheet", on);
+}
+
 const localDateTimeValue = (timestamp) => {
   const date = new Date(timestamp);
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
@@ -77,6 +83,7 @@ export class HouseholdPrepared {
 
   /** Takes the panel for a view of this part (like People & devices). */
   takePanel(title) {
+    printingSheet(false);
     clearTimeout(this.host.poll);
     clearInterval(this.host.timer);
     this.host.viewGeneration = (this.host.viewGeneration ?? 0) + 1;
@@ -440,6 +447,7 @@ export class HouseholdPrepared {
       this.host.makeButton("Back", () => this.host.render(), "secondary"),
     );
     this.host.append(sheet, actions);
+    printingSheet(true);
   }
 
   /** People & devices: the prepared invitations still waiting, each one

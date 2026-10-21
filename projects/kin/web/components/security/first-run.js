@@ -125,6 +125,9 @@ export class SecurityFirstRun {
   turnOnEasyMode() {
     writeDisplayPref(EASY_MODE_KEY, "on");
     applyStoredDisplayPrefs();
+    // The app's own easy mode (its marker and trimmed navigation), which is
+    // already built behind this screen.
+    this.host.closest?.("kin-app")?.ctx?.easy?.apply?.();
   }
 
   go(step, mode = this.state.mode) {

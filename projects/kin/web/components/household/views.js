@@ -5,6 +5,7 @@ import { currentPlatform, householdDeviceName } from "../../platform.js";
 import { invitationCode, invitationLink } from "../../pairing-link.js";
 import { consumeOpenedSignInLink } from "../../device-link.js";
 import { CODE_ARRIVAL_COPY, intentConflict, inviterPathCopy, joinerPathCopy } from "./pairing-path.js";
+import { printingSheet } from "./prepared.js";
 import "../kin-qr.js";
 import "../kin-qr-scanner.js";
 
@@ -55,6 +56,8 @@ export class HouseholdViews {
     // started before it stops writing once it sees a newer generation.
     this.host.viewGeneration = (this.host.viewGeneration ?? 0) + 1;
     clearInterval(this.host.timer);
+    // Leaving a setup sheet (#614): printing is the whole page again.
+    printingSheet(false);
     this.host.replaceChildren();
     const heading = document.createElement("h2");
     heading.textContent =

@@ -141,6 +141,31 @@ instead").
   `POST /api/account/invitation` checks an invitation code before a password
   is chosen (the pairing-code limit).
 
+## A member set up by someone else (#612–#615)
+
+A household admin can prepare Kin for one person ("Set up Kin for someone",
+[ADR 0021](decisions/0021-kin-for-everyone.md) §4). Identity is the same as
+for any invited member; what differs is who types what:
+
+- **Who they are** (Adult, Limited or Temporary, with a Temporary end) is
+  chosen by the admin and recorded with the prepared invitation, exactly as an
+  ordinary invitation's kind; the member limits are checked when it is made
+  and again at approval.
+- **Their name** is typed by the admin and travels in the invitation's sealed
+  card, which only the link opens. Once she has joined, her own device records
+  it as her preferred name (event 51, as "Set my name" does), so the name is
+  hers to change, and the service never learns it.
+- **Their username** is offered by Kin from her name with four digits
+  (`rose.4821`, `web/security/prepared-card.js` `suggestUsername`); she can
+  change it, and the usual rules and uniqueness apply. Her password, its
+  strength floor and the account vault are as for any password sign-up.
+- **Easy mode** is turned on on her device from the invitation before she
+  sets her password, and her synced settings carry it from her first private
+  change (ADR 0019), so her other devices open in easy mode too. It is a
+  presentation she can turn off, not a restriction.
+- **Approval** is the inviter's, with the fingerprint comparison, as for every
+  member (PAIRING, "Set up Kin for someone").
+
 ## Signing in on a new device (#568, #569, #570)
 
 A member signs in on a browser that has no `kin_device` cookie and no local

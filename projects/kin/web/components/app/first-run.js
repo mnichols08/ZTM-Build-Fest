@@ -26,6 +26,8 @@ export class FirstRunController {
     const app = this.app;
     const session = this.ctx.session.captureSession();
     app.firstRun = { pending, state: "working", error: null };
+    // Easy mode may have been turned on during the first run (#615).
+    this.ctx.easy?.apply();
     this.ctx.status.renderOnboarding();
     try {
       const household = await this.household(session);

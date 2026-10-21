@@ -9,7 +9,7 @@ import { HouseholdLink } from "./household/link.js";
 import { HouseholdLinkApproval } from "./household/link-approval.js";
 import { HouseholdMembership } from "./household/membership.js";
 import { HouseholdPairing } from "./household/pairing.js";
-import { HouseholdPrepared } from "./household/prepared.js";
+import { HouseholdPrepared, printingSheet } from "./household/prepared.js";
 import { HouseholdViews } from "./household/views.js";
 import { consumeInvitationCode, takeInvitationCode } from "../pairing-link.js";
 
@@ -106,6 +106,7 @@ class KinHousehold extends HTMLElement {
   }
 
   disconnectedCallback() {
+    printingSheet(false);
     this.ctx.account.stop();
     this.ctx.link.abandon();
     this.ctx.linkApproval.abandon();

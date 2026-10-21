@@ -2675,13 +2675,13 @@ button.show-password { justify-self: start; }
 .setup-sheet-ends { color: var(--ink-muted); }
 @media print {
   @page { margin: 14mm; }
-  html:has(.setup-sheet) body * { visibility: hidden; }
-  html:has(.setup-sheet) .setup-sheet, html:has(.setup-sheet) .setup-sheet * { visibility: visible; }
-  html:has(.setup-sheet) .setup-sheet {
+  html.printing-setup-sheet body * { visibility: hidden; }
+  html.printing-setup-sheet .setup-sheet, html.printing-setup-sheet .setup-sheet * { visibility: visible; }
+  html.printing-setup-sheet .setup-sheet {
     position: absolute; inset: 0 auto auto 0; width: 100%; max-width: none; margin: 0; padding: 0;
     border: 0; background: #fff; color: #000; font-size: 16pt;
   }
-  html:has(.setup-sheet) body { zoom: 1 !important; background: #fff; }
+  html.printing-setup-sheet body { zoom: 1 !important; background: #fff; }
   .setup-sheet h2 { font-size: 30pt; }
   .setup-sheet-steps { font-size: 18pt; }
   .setup-sheet-call { font-size: 20pt; }
