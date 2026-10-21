@@ -306,16 +306,32 @@ export async function handoffRegressions() {
       "action error focus/announcement",
     );
     const actionRetry = app.retryAction;
+    // A wake refresh (window focus, visibility, the Pulse timer: onTimeWake
+    // in context.js) reads the security epoch before it marks the app
+    // refreshing, so idle() can't see it coming. If one lands while a refresh
+    // below runs, refreshFromEvents only defers (pendingRefresh) and the
+    // deferred run can end after the stub is restored, so the Retry checked
+    // below was the refresh's, or none (#469). Settle after each refresh,
+    // while the failure is still injected, so every refresh that starts in
+    // this window fails as intended.
+    await idle();
     app.store.getCatchUpState = async () => {
       throw new Error("Synthetic action refresh failure");
     };
     try {
       await app.ctx.refresh.refreshFromEvents();
+      await idle();
       await app.ctx.refresh.refreshFromEvents();
+      await idle();
     } finally {
       app.store.getCatchUpState = getCatchUpState;
     }
+    check(
+      app.retryAction === app.retryRefresh,
+      "a failed refresh offers its own Retry while the Handoff action waits",
+    );
     await app.retryAction();
+    await idle();
     check(
       app.retryAction === actionRetry,
       "refresh recovery retains Handoff action retry",

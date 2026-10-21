@@ -151,7 +151,9 @@ async function until(check, { attempts = 200 } = {}) {
     if (result) return result;
     await delay(50);
   }
-  throw new Error("Timed out waiting for browser state");
+  // Name the condition, so a CI annotation says which wait ran out (#469).
+  const condition = String(check.label ?? check).replace(/\s+/g, " ").slice(0, 240);
+  throw new Error(`Timed out waiting for browser state: ${condition}`);
 }
 
 async function connect(url) {
@@ -163,6 +165,10 @@ async function connect(url) {
   let id = 0;
   const pending = new Map();
   const eventListeners = new Map();
+  // Requests the page has started and not finished, so a stalled load can
+  // say what it waits for (#469).
+  const inFlight = new Map();
+  const failedRequests = [];
   socket.onmessage = ({ data }) => {
     const message = JSON.parse(data);
     if (message.method)
@@ -180,6 +186,18 @@ async function connect(url) {
         problems.push(entry);
     } else if (message.method === "Network.requestWillBeSent") {
       requests.push(message.params.request.url);
+      inFlight.set(message.params.requestId, { url: message.params.request.url, type: message.params.type ?? null, at: Date.now() });
+    }
+    if (message.method === "Network.responseReceived") {
+      const request = inFlight.get(message.params.requestId);
+      if (request) Object.assign(request, { status: message.params.response.status, sw: Boolean(message.params.response.fromServiceWorker) });
+    } else if (message.method === "Network.loadingFinished" || message.method === "Network.loadingFailed") {
+      const request = inFlight.get(message.params.requestId);
+      if (message.method === "Network.loadingFailed" && request)
+        failedRequests.push({ path: request.url.replace(/^https?:\/\/[^/]+/, "").slice(0, 120), type: request.type,
+          error: message.params.errorText, canceled: Boolean(message.params.canceled), at: Date.now() });
+      if (failedRequests.length > 20) failedRequests.shift();
+      inFlight.delete(message.params.requestId);
     }
   };
   const client = {
@@ -230,6 +248,17 @@ async function connect(url) {
         const timer = setTimeout(() => { stop(); reject(new Error(`Timed out waiting for ${method}`)); }, timeoutMs);
         const stop = this.on(method, (params) => { clearTimeout(timer); stop(); resolve(params); });
       });
+    },
+    // The oldest unfinished requests, for diagnostics.
+    unfinished(limit = 8) {
+      const now = Date.now();
+      return [...inFlight.values()].sort((a, b) => a.at - b.at).slice(0, limit)
+        .map(({ url, type, status, sw, at }) => ({ path: url.replace(/^https?:\/\/[^/]+/, "").slice(0, 120), type, status, sw, ageMs: now - at }));
+    },
+    // The most recent requests that failed (cancelled ones included).
+    failed(limit = 6) {
+      const now = Date.now();
+      return failedRequests.slice(-limit).map(({ at, ...rest }) => ({ ...rest, ageMs: now - at }));
     },
     close: () => socket.close(),
   };
@@ -1118,19 +1147,32 @@ async function regressions() {
   history.replaceState(null, "", "/pair#code=F7KM-Q2DX");
   const household = document.createElement("kin-household");
   document.body.append(household);
-  for (
-    let attempt = 0;
-    attempt < 100 && !household.querySelector('input[name="code"]');
-    attempt++
-  )
-    await new Promise((resolve) => setTimeout(resolve, 10));
+  // connectedCallback takes the code out of the address synchronously.
   check(
     location.pathname === "/pair" && location.search === "" && location.hash === "",
     "invitation code must be removed from browser history immediately",
   );
+  // The join form is drawn only when the element's first status load
+  // (`household.loaded`) settles: three security-epoch reads from IndexedDB
+  // and a /api/status round trip. A fixed ~1 s poll for the input lost that
+  // race on the Windows Edge runner, where those reads can queue behind the
+  // app's own IndexedDB writes (#469). Wait for the load itself, bounded.
+  const prefillStarted = performance.now();
+  const prefillLoad = await Promise.race([
+    household.loaded,
+    new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), 30_000)),
+  ]);
+  const prefillFacts = () => JSON.stringify({
+    load: prefillLoad,
+    ms: Math.round(performance.now() - prefillStarted),
+    path: location.pathname + location.search + location.hash,
+    input: Boolean(household.querySelector('input[name="code"]')),
+    value: household.querySelector('input[name="code"]')?.value ?? null,
+    message: household.querySelector(".household-message")?.textContent ?? null,
+  });
   check(
     household.querySelector('input[name="code"]')?.value === "F7KM-Q2DX",
-    "invitation code must prefill after URL cleanup",
+    `invitation code must prefill after URL cleanup (${prefillFacts()})`,
   );
 
   for (const [state, expected] of [
@@ -1211,6 +1253,8 @@ try {
       defined: Boolean(customElements.get("kin-app")), controlled: Boolean(navigator.serviceWorker?.controller),
       worker: navigator.serviceWorker?.controller?.state ?? null,
       modules: performance.getEntriesByType("resource").filter((entry) => entry.name.endsWith(".js")).length,
+      lastModules: performance.getEntriesByType("resource").filter((entry) => entry.name.endsWith(".js")).slice(-3).map((entry) => new URL(entry.name).pathname),
+      navigation: performance.getEntriesByType("navigation")[0]?.type ?? null,
       security: Boolean(document.querySelector("kin-app")?.security), phase: document.querySelector("kin-app")?.security?.phase ?? null,
       starting: Boolean(document.querySelector("kin-app")?.starting), busy: document.querySelector("kin-app")?.busy ?? null,
       status: document.querySelector("kin-app")?.status?.textContent ?? null, body: document.body?.innerText?.slice(0, 200) ?? null,
@@ -1222,7 +1266,7 @@ try {
       await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.security?.heading)'), { attempts: 600 });
     } catch (error) {
       const state = await tabFacts(client);
-      error.message += ` — tab state ${JSON.stringify(state)}; recent problems ${JSON.stringify(problems.slice(-5)).slice(0, 2000)}`;
+      error.message += ` — tab state ${JSON.stringify(state)}; unfinished requests ${JSON.stringify(client.unfinished())}; failed requests ${JSON.stringify(client.failed())}; recent problems ${JSON.stringify(problems.slice(-5)).slice(0, 2000)}`;
       throw error;
     }
     const locked = await client.evaluate('document.querySelector("kin-app").security.phase !== "unlocked"');
@@ -1600,8 +1644,9 @@ try {
   assert.equal(backgroundResponsibilityFocus, true, "Background responsibility reconciliation leaves Today capture enabled and focused");
   // #351: a refresh keeps Kin unlocked in the same tab; Lock, the setting and
   // a non-refresh navigation still leave it locked.
-  if (heavy) {
-    const safely = (expression) => async () => { try { return await first.evaluate(expression); } catch { return false; } };
+  if (heavy) try {
+    // Each condition carries its expression as a label, so a timeout names it.
+    const safely = (expression) => Object.assign(async () => { try { return await first.evaluate(expression); } catch { return false; } }, { label: expression });
     const settled = safely('(()=>{const app=document.querySelector("kin-app");return Boolean(app?.security?.heading)&&!app.busy&&(app.security.phase!=="unlocked"||Boolean(app.store))&&!app.starting})()');
     const phase = () => first.evaluate('document.querySelector("kin-app").security.phase');
     const armed = safely('Boolean(document.querySelector("kin-app")?.reloadResume?.armed)');
@@ -1637,10 +1682,22 @@ try {
     await ready(first);
     await first.evaluate('location.hash="#today"');
     console.log("PASS refresh keeps Kin unlocked in the same tab; Lock, navigation and the setting still lock (#351)");
+  } catch (error) {
+    // Where the tab was when a #351 wait ran out (#469).
+    const resume = await first.evaluate(`({ navigation: performance.getEntriesByType("navigation")[0]?.type ?? null,
+      ticket: Boolean(sessionStorage.getItem("kin.reload-resume")), armed: Boolean(document.querySelector("kin-app")?.reloadResume?.armed),
+      preference: localStorage.getItem("kin.reload-resume-enabled") })`).catch((reason) => ({ unreadable: String(reason?.message ?? reason) }));
+    error.message += ` — tab state ${JSON.stringify(await tabFacts(first))}; resume ${JSON.stringify(resume)}; unfinished requests ${JSON.stringify(first.unfinished())}; failed requests ${JSON.stringify(first.failed())}; recent problems ${JSON.stringify(problems.slice(-3)).slice(0, 800)}`;
+    throw error;
   }
   // Home-screen shortcuts and the app icon count (#471): each shortcut loads
   // Kin locked, then lands after unlock; it ends unlocked on Today.
-  console.log(await shortcutsBadgeRegressions(first, { origin, until, ready, recovery: recoverySecret }));
+  try {
+    console.log(await shortcutsBadgeRegressions(first, { origin, until, ready, recovery: recoverySecret }));
+  } catch (error) {
+    error.message += ` — tab state ${JSON.stringify(await tabFacts(first))}; unfinished requests ${JSON.stringify(first.unfinished())}; failed requests ${JSON.stringify(first.failed())}`;
+    throw error;
+  }
   if (heavy) console.log(await fridgeRegressions(first, until));
   console.log(await simpleRegressions(first, { until, ready }));
   await first.evaluate(
