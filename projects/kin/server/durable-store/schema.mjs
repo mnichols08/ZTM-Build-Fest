@@ -901,6 +901,35 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the private storage migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 22) {
+      try {
+        this.transaction(() => {
+          // #502: each member's private blobs (sealed journal photos and
+          // thumbnails), keyed by member like the private relay stream, with
+          // the member's household for its deletion and no foreign key to
+          // members (removal purges them with the stream).
+          this.db.exec(`
+            CREATE TABLE private_blobs (
+              member_id TEXT NOT NULL CHECK (length(member_id) = 32),
+              household_id TEXT NOT NULL REFERENCES households(id),
+              blob_ref TEXT NOT NULL CHECK (length(blob_ref) = 64),
+              size_bytes INTEGER NOT NULL CHECK (size_bytes BETWEEN 29 AND 4198400),
+              uploader_device_id TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              ciphertext BLOB NOT NULL,
+              PRIMARY KEY (member_id, blob_ref)
+            );
+            CREATE INDEX private_blobs_by_household ON private_blobs(household_id);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(23, Date.now());
+          sqlitePragma(this.db, "user_version = 23");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the private blob migration.", { cause: error });
+      }
+    }
   },
 
   verify() {

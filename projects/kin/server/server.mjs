@@ -13,6 +13,7 @@ import { ChatBlobService } from "./chat-blob-service.mjs";
 import { ChatRelayService } from "./chat-relay-service.mjs";
 import { BoardRelayService } from "./board-relay-service.mjs";
 import { PrivateRelayService } from "./private-relay-service.mjs";
+import { PrivateBlobService } from "./private-blob-service.mjs";
 import { AccountVaultService } from "./account-vault-service.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
@@ -103,9 +104,15 @@ export function createKinServer(options = {}) {
   // Each member's private relay (#491, ADR 0019): a stream keyed by member.
   const privateRelayService = new PrivateRelayService({ syncService, store });
   syncService.privateRelayService = privateRelayService;
-  // Removing a member purges their private stream, in the removal's own
-  // transaction (removeMembership runs inside withTransaction).
-  service.onMemberRemoved = (_householdId, memberId) => privateRelayService.forgetMember(memberId);
+  // A member's private blobs (#502): journal photos, keyed by member too.
+  const privateBlobService = new PrivateBlobService({ relay: privateRelayService, store, now: options.now ?? (() => Date.now()) });
+  syncService.privateBlobService = privateBlobService;
+  // Removing a member purges their private stream and blobs, in the
+  // removal's own transaction (removeMembership runs inside withTransaction).
+  service.onMemberRemoved = (_householdId, memberId) => {
+    privateRelayService.forgetMember(memberId);
+    privateBlobService.forgetMember(memberId);
+  };
   // Members' encrypted key vaults (ADR 0018, #564).
   const accountVaultService = options.accountVaultService ?? new AccountVaultService({ store, now: options.now ?? (() => Date.now()) });
   const webauthn =
@@ -126,6 +133,7 @@ export function createKinServer(options = {}) {
     chatRelayService,
     boardRelayService,
     privateRelayService,
+    privateBlobService,
     accountVaultService,
     store,
     webauthn,
@@ -286,6 +294,7 @@ export function createKinServer(options = {}) {
     chatRelayService,
     boardRelayService,
     privateRelayService,
+    privateBlobService,
     accountVaultService,
     liveService,
     webauthn,
@@ -422,8 +431,16 @@ async function api(request, response, url, context) {
     // A member who can't post is refused before the body is read.
     context.chatBlobService.assertCanChat(chatUploadAuth, "write");
   }
+  // A private blob upload (#502) likewise: only the member's own trusted
+  // devices, while private storage is theirs to use.
+  const privateBlobRoute = PRIVATE_BLOB_ROUTE.exec({ pathname: url.pathname })?.pathname.groups.ref ?? null;
+  let privateUploadAuth = null;
+  if (request.method === "PUT" && privateBlobRoute) {
+    privateUploadAuth = syncService.authorize(cookies(request).kin_session);
+    context.privateBlobService.assertCanUse(privateUploadAuth);
+  }
   const binaryUpload = (request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname)) ||
-    chatUploadAuth !== null ||
+    chatUploadAuth !== null || privateUploadAuth !== null ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
   // Event envelopes travel as binary batches (web/sync/envelope-wire.js).
   const envelopePush = request.method === "POST" &&
@@ -1140,7 +1157,26 @@ async function api(request, response, url, context) {
     return;
   }
   if (url.pathname === "/api/private/status" && request.method === "GET") {
-    json(response, 200, context.privateRelayService.status(syncService.authorize(session)));
+    const auth = syncService.authorize(session);
+    json(response, 200, { ...context.privateRelayService.status(auth), ...context.privateBlobService.usage(auth) });
+    return;
+  }
+  // A member's private blobs (#502): always the session's own member's.
+  if (privateUploadAuth) {
+    json(response, 200, withTransaction(context, () => context.privateBlobService.put(privateUploadAuth, privateBlobRoute, body)));
+    return;
+  }
+  if (privateBlobRoute && request.method === "GET") {
+    const bytes = context.privateBlobService.get(syncService.authorize(session), privateBlobRoute);
+    response.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": bytes.length, "Cache-Control": "no-store" });
+    response.end(bytes);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/private/blobs/retire") {
+    const auth = syncService.authorize(session);
+    // Not in an outer transaction: the store zeroes freed pages and then
+    // checkpoints the WAL, which needs no transaction open.
+    json(response, 200, context.privateBlobService.retire(auth, body?.refs));
     return;
   }
   if (url.pathname === "/api/private/events" && request.method === "GET") {
@@ -1875,6 +1911,7 @@ export function fingerprintedShell(html, fingerprint) {
 // New routes match with URLPattern (#106) rather than hand-written parsing.
 const INSTALL_ICON_ROUTE = new URLPattern({ pathname: "/install-icon/:file([a-z0-9\\-]+[.]png)" });
 const CHAT_BLOB_ROUTE = new URLPattern({ pathname: "/api/chat/blobs/:ref([a-f0-9]{64})" });
+const PRIVATE_BLOB_ROUTE = new URLPattern({ pathname: "/api/private/blobs/:ref([a-f0-9]{64})" });
 const ACCOUNT_VAULT_WRAPPER_ROUTE = new URLPattern({ pathname: "/api/account/vault/wrappers/:id([a-f0-9]{32})" });
 
 // The install identity (#78) a trusted device's kin_device cookie resolves

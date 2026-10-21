@@ -2,7 +2,7 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const SERVER_SCHEMA_VERSION = 22;
+export const SERVER_SCHEMA_VERSION = 23;
 
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
 
@@ -54,6 +54,13 @@ export const MIN_ACCOUNT_PASSWORD_ITERATIONS = 600_000;
 // member, the engine's private log bound (rust/src/private.rs
 // MAX_PRIVATE_EVENT_COUNT).
 export const MAX_MEMBER_PRIVATE_EVENTS = 50_000;
+// Private blobs (#502): a member's sealed journal photos and thumbnails.
+// One blob is at most the household attachment bound; per member, the
+// bytes and count every upload must fit in.
+export const MIN_PRIVATE_BLOB_BYTES = 29;
+export const MAX_PRIVATE_BLOB_BYTES = 4 * 1024 * 1024 + 4096;
+export const MAX_MEMBER_PRIVATE_BLOB_BYTES = 256 * 1024 * 1024;
+export const MAX_MEMBER_PRIVATE_BLOBS = 2_000;
 
 export const MAX_AUDIT_ROWS = 10_000;
 
