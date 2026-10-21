@@ -94,6 +94,7 @@ fn the_note_test_vector_decodes_and_reencodes_byte_for_byte() {
     assert_eq!(encode_event(&event).unwrap(), record);
     assert_eq!(record.len(), 88 + 20 + 8);
     assert_eq!(&record[2..4], &[100, 0]);
+    assert_eq!(&record[84..88], &[0x1c, 0, 0, 0]);
 }
 
 #[test]

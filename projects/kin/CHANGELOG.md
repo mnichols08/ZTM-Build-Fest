@@ -9,6 +9,15 @@ documentation only.
 
 ### Added
 
+- **Private storage for each member, groundwork** (#485, #489, [ADR 0019](docs/decisions/0019-member-private-log.md)):
+  a member key kept only in the member's account vault (vault contents
+  format 2) and rotated when one of their devices is revoked; a private log
+  in the engine (kinds from 100, KPRV), a private relay stream on the service
+  keyed by member (server schema 22, the admin's "private storage for
+  children and teens" setting, purge on member removal), and a private log
+  store and sync pass on the device. Nothing visible yet: the pass stays off
+  until the vault key is kept on the device (#557) and the journal, list and
+  reminder stories add the first private records.
 - **Encrypted key vault on the service, groundwork** (#564, [ADR 0018](docs/decisions/0018-account-key-vault.md)):
   the vault and wrapper formats, password/passkey/backup-code key
   derivations, server schema 21 with the vault routes (own member, trusted

@@ -143,6 +143,25 @@ Integers are big-endian; a decoder refuses unsorted, repeated or trailing
 bytes. The certification key is generated (`generateCertificationKey`) but
 certifying it and signing with it are a later story.
 
+**Vault contents, format 2** (ADR 0019, #487): format 1 with the reserved
+slot replaced by the member's member-key epochs:
+
+```text
+u8  format (2)   u8 flags (0)
+u16 N and N epoch entries, as format 1
+u16 L and the certification key, as format 1
+u16 K (1..128), then K entries sorted by epoch, no repeats:
+    u16 epoch (1..128)  u16 0  u64 revokedThrough  32-byte member key
+```
+
+Format 1 is still read (a filled reserved slot reads as member-key epoch 1,
+`revokedThrough` 0), and contents without a member key are still written as
+format 1, byte for byte, so a vault becomes format 2 only once its member
+uses private storage. The sealed container below is unchanged (format 1,
+AAD "1"); an older release opening format 2 contents refuses them as
+written by a newer Kin. Merging keeps member keys from either side; two
+different keys for one epoch are refused (`vault_member_key_conflict`).
+
 **Sealed vault, format 1** (what the service stores, at most 64 KiB):
 
 ```text
@@ -223,6 +242,53 @@ with its first wrapper and can never lose its last; downloads are limited
 to 10 per member and 30 per address in 15 minutes. A download for a device
 without a cookie (#568) is a stub that refuses. The service never learns
 whether a device's unlock attempt failed; devices count their own.
+
+## Member key and private envelopes (ADR 0019)
+
+Implemented in `web/private/member-key.js`, `web/private/private-envelope.js`
+and `web/private/private-log.js`; every primitive is Web Crypto.
+
+**Member key (MK).** 32 random bytes from `crypto.getRandomValues`
+(`generateMemberKey`), an AES-256-GCM key, made on the member's first device
+the first time they use something private, and sealed straight into their
+account vault (contents format 2). It is never stored anywhere else: the
+member's devices read it by opening the vault with VK, hold each epoch as a
+non-extractable CryptoKey while unlocked, and drop them on lock. A device
+may cache the **sealed** vault (ciphertext under VK) for offline unlocks.
+No same-member key package exists: the vault is the only way MK reaches a
+device, so private storage needs an account (ADR 0018). Where a device keeps
+VK is story #557's; until it is wired the key ring's `vaultKey()` provider
+resolves null and private storage stays off.
+
+**Epochs.** Each MK epoch records `revokedThrough`, the latest revocation
+time (service milliseconds) of the member's own devices it was made after.
+A device that sees one of its member's devices revoked later than the newest
+epoch's mark re-reads the vault and, unless another device already did,
+creates epoch n+1 and uploads the vault compare-and-set; a device that loses
+that race finds a different key for the same epoch when it merges and adopts
+the winner's. New envelopes use the newest epoch, and pending ones are
+resealed under it before sending; old epochs stay in the vault so old
+envelopes stay readable. A revoked device keeps whatever it already had; an
+envelope signed by a device under an epoch made after that device's
+revocation is refused.
+
+**Private envelope.** The sync envelope's fields and versions (protocol 1,
+envelope 1), so it shares the binary transport and the service's opaque
+checks, with its own key, AAD and signature domain:
+
+```text
+ciphertext = AES-256-GCM(MK[keyEpoch], 12-byte random nonce, canonical event, AAD)
+AAD        = fields("kin.sync.private.aad.v1", "1", "1", "private", householdId,
+                    memberId, eventId, deviceId, deviceSequence, logicalTime, keyEpoch)
+signature  = ECDSA P-256 / SHA-256 (sending device's signing key) over
+             fields("kin.sync.private.signature.v1", AAD, nonce, ciphertext)
+```
+
+`fields` is the sync envelope's length-prefixed encoding. The member ID is in
+the AAD though not in the envelope: an envelope can't be moved to another
+member's stream or read as a household, chat or board envelope. A receiving
+device verifies the signature with the sender's verified key history and
+requires the sender to be one of its own member's devices.
 
 ## Claims boundary
 

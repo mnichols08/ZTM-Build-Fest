@@ -178,6 +178,23 @@ receives the vault key, a password, a passkey's PRF output or a backup
 code. Deleting the household deletes the vaults; backups keep old copies.
 See [Cryptography](CRYPTOGRAPHY.md#account-key-vault-adr-0018).
 
+**Private storage for each member (ADR 0019, #489).** A member's private
+things (the journal, "Just for me", reminders that follow them) are sealed
+under a member key that only their own devices hold, read from their account
+vault; no other member, household admins included, can read them, and the
+service can't either. For each member who uses private storage the service
+learns: that they use it; how many private events and blobs they have, how
+large and when; which of their devices sent each one; and the member-key
+epoch number each is sealed under (which says how many times their key
+changed after a device of theirs was revoked). Never their content. Only that
+member's other devices are hinted that something changed. A household admin
+can turn private storage off for children and teens (it is on by default);
+that only stops the service relaying it, and nobody gains access to what is
+already on the child's devices. Temporary members have none. Removing a
+member deletes their private stream on the service; deleting the household
+deletes every member's. Copies on the member's own devices stay, as for
+household data. Household exports never include private logs.
+
 The planning design for these boundaries is documented in [Identity](IDENTITY.md), [Pairing](PAIRING.md), [Synchronization](SYNC.md), [Cryptography](CRYPTOGRAPHY.md), and the [Threat Model](THREAT-MODEL.md). These documents specify intended properties and open decisions; they do not establish implemented security guarantees.
 
 ## Data lifecycle

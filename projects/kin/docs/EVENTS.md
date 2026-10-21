@@ -288,6 +288,27 @@ Replay (rust/src/board.rs) never fails on a decoded board event:
 - Commands are stricter: a new ID, room in the budget, a change that changes
   something, and a logical time after the board log's latest.
 
+## A member's private log
+
+Kinds 100–199 (#489, [ADR 0019](decisions/0019-member-private-log.md)) are
+reserved for records only one member's devices can read. They live only in
+that member's private log, a fourth log beside the household history, chat
+and the fridge, with its own cap (50,000 events) and checkpoint, sealed under
+the member key and relayed in the member's own stream. Every other log
+refuses them, so they never enter household replay, the KINS projection, the
+catch-up summary, household search or household exports.
+
+| Kind | Name | Payload |
+|---|---|---|
+| 100 | `PRIVATE_NOTE_SET` | note ID, text length u32 (0 removes it; at most 2,048 bytes), text (line feeds allowed, no other control characters) |
+
+Kind 100 is a placeholder that proves the log end to end; the journal (#496),
+"Just for me" (#510) and reminders and settings that follow a member (#520)
+add their own kinds and replace it if they need to. Replay
+(`rust/src/private.rs`) never fails on a decoded private event, except that
+every event in one log must have the same author: the latest note for an ID
+in replay order wins, and empty text removes it.
+
 ## Meals
 
 Kinds 59–63 (#333, [ADR 0012](decisions/0012-meals.md)) are schema 1 events in
