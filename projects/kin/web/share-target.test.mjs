@@ -48,6 +48,10 @@ test("where each shortcut lands: Quick add on the right list, or Today in Simple
   // "New journal entry" (#509): the journal editor; Simple view has no journal.
   assert.deepEqual(shortcutLanding("new-journal-entry"), { hash: "#journal", quickAdd: false, journal: true });
   assert.deepEqual(shortcutLanding("new-journal-entry", { simpleView: true }), { hash: "#today", quickAdd: false });
+  // A household that switched the journal off (#625): Today, naming why.
+  const journalOff = (route) => route !== "journal";
+  assert.deepEqual(shortcutLanding("new-journal-entry", { available: journalOff }), { hash: "#today", quickAdd: false, unavailable: "journal" });
+  assert.deepEqual(shortcutLanding("add-shopping", { available: journalOff }), { hash: "#lists/shopping", quickAdd: true });
   assert.equal(shortcutLanding(""), null);
   assert.equal(shortcutLanding("delete-everything"), null);
 });

@@ -87,6 +87,8 @@ export class PrivateItemsController {
   /** The private items this member's Today and This week show: none in
    * Simple view or with the setting off. */
   todayItems() {
+    // Just for me switched off (#625) leaves Today and This week too.
+    if (this.ctx.features?.isOn("mine") === false) return EMPTY.items;
     return showPrivateOnToday({ onToday: this.view.onToday, simpleView: this.app.simpleView }) ? this.view.items : EMPTY.items;
   }
 
@@ -186,7 +188,7 @@ export class PrivateItemsController {
   /** Whether "Make private" is offered for a household item: the member
    * added it, and private storage works here. */
   canMakePrivate(record) {
-    if (this.app.simpleView || this.availability().state !== "ready") return false;
+    if (this.app.simpleView || this.ctx.features?.isOn("mine") === false || this.availability().state !== "ready") return false;
     const memberId = this.app.syncCoordinator?.identity?.memberId ?? this.app.store?.actorId ?? null;
     return canMakePrivate(record, memberId);
   }

@@ -228,6 +228,7 @@ export class TodaySections {
     const section = document.createElement("section");
     section.className = "today-routines";
     section.dataset.section = "routines";
+    section.dataset.feature = "routines";
     const heading = document.createElement("h2");
     heading.textContent = "Routines";
     heading.tabIndex = -1;

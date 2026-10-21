@@ -81,6 +81,8 @@ export class SessionController {
       this.app.privacyPage.append(this.app.security);
       await this.ctx.simple.restore(snapshot.syncIdentity, session);
       this.assertCurrentSession(session);
+      // Household features (#625): what this device last knew was off.
+      this.ctx.features.restore(snapshot.syncIdentity);
       this.ctx.render.renderState();
       void this.ctx.attachments.refreshAttachmentRows();
       this.app.main.hidden = false;
@@ -260,6 +262,7 @@ export class SessionController {
     this.ctx.status.clearAlert();
     clearLegacyDrafts();
     this.ctx.simple?.reset();
+    this.ctx.features?.reset();
     this.ctx.journal?.reset();
     this.app.quickAdd?.reset();
     this.app.chatShare?.reset();

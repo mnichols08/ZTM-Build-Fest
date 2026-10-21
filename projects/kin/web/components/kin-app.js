@@ -36,6 +36,7 @@ import "./kin-security.js";
 import "./kin-appearance.js";
 import "./kin-personal-settings.js";
 import "./kin-household-defaults.js";
+import "./kin-household-features.js";
 import { createAppContext, initializeAppState } from "./app/context.js";
 import { captureInvitationCode } from "../pairing-link.js";
 import { takeSignInLink } from "../device-link.js";

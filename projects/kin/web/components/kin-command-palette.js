@@ -215,7 +215,8 @@ class KinCommandPalette extends HTMLElement {
   }
 
   render() {
-    this.matches = filterCommands(this.input.value, COMMANDS);
+    // `commands` leaves out switched-off features' commands (#625).
+    this.matches = filterCommands(this.input.value, this.commands ?? COMMANDS);
     const options = this.matches.map((command, index) => {
       const option = document.createElement("li");
       option.id = `command-option-${command.id}`;

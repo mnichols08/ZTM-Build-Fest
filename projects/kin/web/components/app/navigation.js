@@ -3,6 +3,7 @@
 import { projectionContext } from "../../browser-time.js";
 import { listSegmentForClassification, resolveRoute, ROUTE_CHANGE_EVENT, routeHash } from "../../routes.js";
 import { isTypingContext, shortcutForKey } from "../../keyboard-commands.js";
+import { unavailableLine } from "../../features.js";
 
 export class NavigationController {
   constructor(ctx) {
@@ -25,6 +26,20 @@ export class NavigationController {
   showPageFromLocation() {
     if (!this.app.pages || !this.app.navLinks) return;
     let route = this.routeFor({ hash: location.hash, pathname: location.pathname });
+    // A switched-off feature (#625, ADR 0021): its routes, links and
+    // shortcuts open Today with a calm line. Simple view has its own list.
+    if (!this.app.simpleView && !this.ctx.features.routeAvailable(route)) {
+      const blocked = this.ctx.features.blocking(route);
+      route = resolveRoute({ hash: "#today" });
+      history.replaceState(null, "", route.hash);
+      this.ctx.status.setStatus(unavailableLine(blocked));
+    }
+    // Old Talk links with Talk later off open Chat without its list.
+    if (route.topics && !this.ctx.features.isOn("talk")) {
+      route = { ...route };
+      delete route.topics;
+      this.pendingTopics = false;
+    }
     // Without chat access (#123) Chat isn't there: its links, and the old
     // Talk tab's, go to Handoffs, where the older topics then live (#312).
     if (route.page === "updates" && route.segment === "chat" && this.app.chatAccess === "none" && !this.app.simpleView) {

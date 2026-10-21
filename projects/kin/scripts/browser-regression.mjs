@@ -39,6 +39,7 @@ import { shoppingModeRegressions } from "./shopping-mode-regression.mjs";
 import { weekRegressions } from "./week-regression.mjs";
 import { importRegressions } from "./import-regression.mjs";
 import { sitterRegressions } from "./sitter-regression.mjs";
+import { householdFeaturesRegressions } from "./household-features-regression.mjs";
 import { rotationsRegressions } from "./rotations-regression.mjs";
 import { storeSectionsRegressions } from "./store-sections-regression.mjs";
 import { recurringTaskRegressions } from "./recurring-tasks-regression.mjs";
@@ -1548,6 +1549,9 @@ try {
   console.log(await first.evaluate(`(${rotationsRegressions.toString()})()`));
   console.log(await first.evaluate(`(${importRegressions.toString()})()`));
   console.log(await first.evaluate(`(${storeSectionsRegressions.toString()})()`));
+  // Household features (#623–#626): off, hidden everywhere, on again.
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${householdFeaturesRegressions.toString()})()`));
   await visit(first, "today");
   await setViewport(first, { width: 320, height: 640, deviceScaleFactor: 2, mobile: true });
   try {
