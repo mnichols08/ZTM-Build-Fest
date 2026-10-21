@@ -176,10 +176,10 @@ async function showScreen({ hash }, isReady, anchorOf) {
   for (const details of document.querySelectorAll("details.list-actions")) details.open = false;
   document.activeElement?.blur?.();
   scrollTo(0, 0);
-  // When the screen's main content starts below the middle (Today's
+  // When the screen's main content starts below the top quarter (Today's
   // composer comes first on a phone), scroll it up under the header.
   const anchor = anchorOf(app);
-  if (anchor && anchor.getBoundingClientRect().top > innerHeight * 0.45) anchor.scrollIntoView({ block: "start" });
+  if (anchor && anchor.getBoundingClientRect().top > innerHeight * 0.25) anchor.scrollIntoView({ block: "start" });
   for (const scroller of document.querySelectorAll(".chat-scroll")) scroller.scrollTop = scroller.scrollHeight;
   await new Promise((r) => setTimeout(() => setTimeout(r, 0), 0));
   if (app.security?.phase !== "unlocked") throw new Error(`Kin is ${app.security?.phase} on ${hash}`);
