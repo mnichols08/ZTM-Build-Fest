@@ -14,6 +14,7 @@ import { ChatRelayService } from "./chat-relay-service.mjs";
 import { BoardRelayService } from "./board-relay-service.mjs";
 import { PrivateRelayService } from "./private-relay-service.mjs";
 import { AccountVaultService } from "./account-vault-service.mjs";
+import { NEW_DEVICE_TTL_MS } from "./pairing-service/new-device.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
@@ -679,6 +680,118 @@ async function api(request, response, url, context) {
     json(response, 200, omitToken(result));
     return;
   }
+  // Signing in on a device with no cookie (ADR 0018 section 4, #568). A
+  // sign-in earns a short-lived new-device capability (HttpOnly cookie
+  // kin_new_device), never a session; the capability downloads the vault and
+  // registers this browser as one of the member's devices, once.
+  const newDeviceToken = cookies(request).kin_new_device;
+  const vaultWrappers = (member) => context.accountVaultService.wrapperSummary(member.householdId, member.id);
+  const issueNewDevice = (issued) => {
+    if (issued.token) cookie(response, "kin_new_device", issued.token, secureCookies, Math.ceil(NEW_DEVICE_TTL_MS / 1000));
+    json(response, 200, issued.view);
+  };
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/parameters") {
+    json(response, 200, service.signInParameters(body.username, context.clientKey(request)));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/password") {
+    issueNewDevice(await service.signInNewDeviceWithPassword({
+      username: body.username, authKey: body.authKey, rateKey: context.clientKey(request),
+      vaultWrapperTypes: (member) => vaultWrappers(member)?.map((wrapper) => wrapper.type) ?? null,
+    }));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/passkey/options") {
+    const rateKey = context.clientKey(request);
+    let pending = null;
+    if (newDeviceToken) {
+      try { pending = service.newDeviceCapability(newDeviceToken, { allowPending: true }).record; } catch { pending = null; }
+      if (!pending?.needsPasskey) pending = null;
+    }
+    const { memberId, credentials } = service.newDevicePasskeyCredentials({ username: body.username, pending, rateKey, vaultWrappers });
+    service.assertNewDevicePasskeyAllowed(memberId, rateKey);
+    const flow = createFlow({ purpose: "new-device", memberId, credentialIds: credentials.map((entry) => entry.id), pending: Boolean(pending) },
+      context, { anonymous: true });
+    try {
+      json(response, 200, {
+        flow,
+        publicKey: context.webauthn.authenticationOptions(flow, credentials.map((entry) => entry.id)),
+        // Each passkey's PRF input for its vault wrapper (public parameters).
+        prfSalts: Object.fromEntries(credentials.map((entry) => [entry.id, entry.prfSalt])),
+      });
+    } catch (error) {
+      context.flows.delete(flow);
+      context.webauthn.discardFlow?.(flow);
+      throw error;
+    }
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/passkey/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "new-device") throw badRequest();
+    const rateKey = context.clientKey(request);
+    service.assertNewDevicePasskeyAllowed(flow.memberId, rateKey);
+    const credentialId = body.credential?.id;
+    const credential = flow.memberId && flow.credentialIds.includes(credentialId) ? service.credentials.get(credentialId) : null;
+    try {
+      if (!credential || credential.memberId !== flow.memberId)
+        throw new PairingError("sign_in_failed", "That passkey didn't match. Try again or use your password.", 401);
+      context.webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    } catch {
+      context.webauthn.discardFlow?.(body.flow);
+      service.newDevicePasskeyFailed(flow.memberId, rateKey);
+      throw new PairingError("sign_in_failed", "That passkey didn't match. Try again or use your password.", 401);
+    }
+    const issued = service.completeNewDevicePasskey({
+      memberId: flow.memberId, credentialId, pendingToken: flow.pending ? newDeviceToken : null, vaultWrappers,
+    });
+    // The verified signature counter is kept, as for any passkey sign-in.
+    withTransaction(context, () => service.persistHousehold(service.members.get(flow.memberId).householdId));
+    issueNewDevice(issued);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/account/sign-in") {
+    json(response, 200, service.newDeviceView(service.newDeviceCapability(newDeviceToken, { allowPending: true }).record));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/cancel") {
+    if (newDeviceToken) service.cancelNewDeviceCapability(newDeviceToken);
+    clearCookie(response, "kin_new_device", secureCookies);
+    json(response, 200, { cancelled: true });
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/vault") {
+    const capability = service.spendNewDeviceDownload(newDeviceToken);
+    json(response, 200, {
+      ...context.accountVaultService.downloadWithCapability(capability, context.clientKey(request)),
+      certificationEndorsement: service.certificationEndorsement(capability.memberId),
+    });
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/account/sign-in/device") {
+    const result = withTransaction(context, () => {
+      const { record } = service.newDeviceCapability(newDeviceToken);
+      const registered = service.registerNewDevice({
+        capability: newDeviceToken,
+        syncPublicKeys: body.syncPublicKeys,
+        certificate: body.certificate,
+        replaceDeviceId: body.replaceDeviceId ?? null,
+        deviceLabel: deviceLabel(body.deviceLabel),
+        vaultEpochs: body.vaultEpochs ?? [],
+        currentEpoch: syncService.state(record.householdId).currentEpoch,
+      });
+      // A replaced device is left out of the next epoch; the new device gets
+      // every epoch it doesn't have, like any same-member device.
+      if (registered.replacedDeviceId) syncService.onAccessChange(registered.householdId, [registered.replacedDeviceId]);
+      syncService.onDeviceAdded(registered.householdId, registered.deviceId, { historyFromEpoch: 1 });
+      return registered;
+    });
+    cookie(response, "kin_session", result.sessionToken, secureCookies);
+    cookie(response, "kin_device", result.deviceToken, secureCookies, 31_536_000);
+    clearCookie(response, "kin_new_device", secureCookies);
+    json(response, 201, omitToken(result));
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/login/options") {
     const { member, device } = service.trustedDevice(deviceToken);
     const issued = issueAuthenticationFlow(
@@ -1134,7 +1247,17 @@ async function api(request, response, url, context) {
   // own member, from one of their trusted devices; no route names a member.
   if (url.pathname === "/api/account/vault" && request.method === "GET") {
     const auth = service.authorize(session);
-    json(response, 200, context.accountVaultService.download(auth, context.clientKey(request)));
+    json(response, 200, {
+      ...context.accountVaultService.download(auth, context.clientKey(request)),
+      // Whether the member's certification key is endorsed yet (#568).
+      certificationEndorsement: service.certificationEndorsement(auth.member.id),
+    });
+    return;
+  }
+  // A trusted device endorses its member's certification key (#570).
+  if (url.pathname === "/api/account/certification" && request.method === "PUT") {
+    syncService.authorize(session);
+    json(response, 200, withTransaction(context, () => service.putCertificationEndorsement(session, body.endorsement)));
     return;
   }
   if (url.pathname === "/api/account/vault" && request.method === "PUT") {

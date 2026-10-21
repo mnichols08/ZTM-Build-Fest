@@ -122,9 +122,8 @@ instead").
   member, per device and per client address; past that even a correct
   password waits. Unlocking with the password signs the device in this way,
   so household actions don't ask again.
-- **A sign-in without a device cookie** (a new browser) is not available yet:
-  it is the new-device story (#568). Pairing from another device works as
-  before.
+- **A sign-in without a device cookie** (a new browser, #568): see "Signing
+  in on a new device" below. Pairing from another device works as before.
 - **Fresh confirmations.** Actions that need "a fresh passkey" (approving a
   device or a member, signing in a computer, revoking a device, removing a
   member or leaving, household admins, Simple view, chat and fridge access,
@@ -141,6 +140,37 @@ instead").
   username is free (30 checks per client address in 15 minutes) and
   `POST /api/account/invitation` checks an invitation code before a password
   is chosen (the pairing-code limit).
+
+## Signing in on a new device (#568, #569, #570)
+
+A member signs in on a browser that has no `kin_device` cookie and no local
+household, and the browser becomes one of their trusted devices, with no
+other device's approval (ADR 0018 section 4; RECOVERY, "Signing in on a new
+device"). Routes (`server/pairing-service/new-device.mjs`):
+
+| Route | What it does |
+| --- | --- |
+| `POST /api/account/sign-in/parameters` `{ username }` | The PBKDF2 salt and iterations for that username (a stable made-up salt for an unknown one). 30 per address per 15 minutes. |
+| `POST /api/account/sign-in/password` `{ username, authKey }` | The usual password check and limits, then a **new-device capability** in the HttpOnly cookie `kin_new_device` and its view: method, expiry, member, the device ID this browser will get, the member's trusted devices (ID, automatic name, date) and the household's device count and limit. |
+| `POST /api/account/sign-in/passkey/options` / `…/finish` | A passkey sign-in (WebAuthn, user verification, PRF input per passkey from the vault's passkey wrappers), or the passkey step of require-both. |
+| `POST /api/account/sign-in/vault` | With the capability: the sealed vault, the one wrapper this sign-in opens, and the member's certification-key endorsement. |
+| `POST /api/account/sign-in/device` `{ syncPublicKeys, certificate, replaceDeviceId?, deviceLabel, vaultEpochs }` | Spends the capability: checks the version 2 certificate against the endorsement, revokes `replaceDeviceId` (one of the member's own active devices) in the same transaction, checks the trusted-device limit after that, trusts the device with same-member history and the vault's epochs recorded as provisioned, starts a key rotation, and issues a session and `kin_device`. |
+| `GET /api/account/sign-in`, `POST /api/account/sign-in/cancel` | The capability's view; ending it. |
+| `PUT /api/account/certification` `{ endorsement }` | A trusted device endorses its member's certification key (CRYPTOGRAPHY, "Certification key chain"). |
+
+**Which sign-in opens the vault** is decided by the service from the vault's
+wrapper types (ADR 0018 D3/D4): the password alone while there is a
+password wrapper and no passkey wrapper; once a passkey wrapper exists, only
+the passkey; with "require password and passkey" (a password-passkey
+wrapper and no passkey-only one), the password first and then the passkey.
+A member without a vault, or whose certification key isn't endorsed yet, is
+told to add the device by pairing instead.
+
+The new device is the member's like any other: same member ID, its own keys
+and certificate, same-member history (every epoch), and admin-only and
+household-authority actions keep their existing requirements (an admin who
+signs in on a new device is still an admin, and still confirms admin
+actions freshly).
 
 ## Device authorization
 

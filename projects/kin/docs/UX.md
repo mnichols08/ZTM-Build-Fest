@@ -887,8 +887,9 @@ The owner's principle for accounts ([ADR 0018](decisions/0018-account-key-vault.
 don't overwhelm people at the start. A new device opens on **at most three
 screens before Today**, with no keys and no security choices:
 
-1. **Welcome to Kin.** `Start a new household` (primary) or `I have an
-   invitation`. Nothing to type. A quiet `Set up with a passkey instead`
+1. **Welcome to Kin.** `Start a new household` (primary), `I have an
+   invitation`, or `Sign in` ("You already use Kin, on another device or one
+   you lost"; below). Nothing to type. A quiet `Set up with a passkey instead`
    leads to the earlier setup (backup key, then passkey create or join),
    which is also where adding a device you already use and signing in with
    your phone live.
@@ -921,6 +922,37 @@ device meanwhile. A joiner lands on People & devices, waiting for approval
 exactly as before (compare the device keys), and after approval finishes
 with `Finish joining`, without typing the password again unless the page was
 reloaded meanwhile, then lands on Today.
+
+### Sign in on a new device — Adopted (#568, #569)
+
+For a member on a new phone or a wiped browser, from `Sign in` on the
+welcome screen; two screens, then Today, with no other device needed:
+
+1. **Sign in to your household** — `Username` (`autocomplete="username"`)
+   and `Password` (`autocomplete="current-password"`), so a password manager
+   offers the saved login. `Sign in` and `Back`; below, a quiet `Sign in with
+   a passkey` for members who added one. A wrong username or password says
+   "That username and password didn't match. Check them and try again." in
+   the alert line and keeps the form. A member whose account signs in with a
+   passkey is told so; a member who requires both sees **Confirm with your
+   passkey** next (`Use my passkey`).
+2. **Which device is this?** "Signed in as <username>." A radio group (a
+   fieldset with the question as its legend): **Add this as a new device**
+   (chosen), then one **This replaces <device name>** per trusted device of
+   theirs, with the date it was added. Choosing a replacement shows, and ties
+   to that choice with `aria-describedby`, the warning "The device you choose
+   is signed out for good: it can't open your household again, even if it
+   turns up. Choose this only for a device that's lost, broken or wiped."
+   `Continue` / `Cancel`. At the household's device limit, adding says to
+   choose a device to replace instead.
+
+Then this device's storage is made with the same password (it unlocks this
+device every day, offline, as after the first run) and Today opens; the card
+reads "Setting up this device…" while the device registers and installs the
+household's keys, and the household's items arrive with the first sync. A
+failure says so on the card with `Try again`. After a passkey-only sign-in,
+a backup key for this device is shown once (with "I've saved this key
+somewhere safe") before Today, since there is no password to protect it with.
 
 **Daily unlock.** The lock screen of a device set up this way reads "Unlock
 Kin", "Enter your password to open your household on this device.", with
