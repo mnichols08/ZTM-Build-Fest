@@ -2510,7 +2510,10 @@ kin-journal { display: grid; gap: var(--space-3); min-width: 0; }
   box-shadow: 0 0 0 7px var(--surface);
 }
 :root[data-kin-easy="on"] .site-header :is(a, button):focus-visible { outline-color: var(--header-ink); box-shadow: 0 0 0 7px var(--header-bg); }
-:root[data-kin-easy="on"] .undo-toast { padding: 10px 10px 10px 16px; border-width: 2px; border-color: var(--line-strong); }
+/* The confirmation gets its own line; Undo and Dismiss sit under it, so
+   the words never squeeze into a narrow column. */
+:root[data-kin-easy="on"] .undo-toast { flex-wrap: wrap; justify-content: flex-end; padding: 10px 10px 10px 16px; border-width: 2px; border-color: var(--line-strong); }
+:root[data-kin-easy="on"] .undo-toast-text { flex-basis: 100%; }
 :root[data-kin-easy="on"] .undo-toast-dismiss { padding-inline: 12px; }
 :root[data-kin-easy="on"] .undo-toast-dismiss::after { content: "Dismiss"; content: "Dismiss" / ""; margin-inline-start: 6px; font-size: 16px; }
 :root[data-kin-easy="on"] .undo-toast-action { font-size: 16px; }
