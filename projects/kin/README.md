@@ -131,6 +131,17 @@ network. Only failed code attempts count toward a client's limit, so a
 household's own successful pairing never uses it up. An invalid
 `KIN_TRUSTED_PROXIES` value stops startup with an explanation.
 
+### Linking a Google Play app
+
+If Kin is also published as an Android app from Google Play (a Trusted Web
+Activity, epic #527), Android checks `/.well-known/assetlinks.json` to confirm
+the app and this site belong together; without it the app shows a browser
+address bar. Set `KIN_ANDROID_PACKAGE` to the app's package name and
+`KIN_ANDROID_CERT_SHA256` to its signing certificate's SHA-256 fingerprint
+(`AA:BB:…`, comma-separated if there are several, such as the Play App Signing
+key and an upload key). With neither set the file answers 404; setting only
+one, or a malformed value, stops startup with an explanation.
+
 ### Limiting new households
 
 Creating a household needs no account, so Kin limits it the same way: each
