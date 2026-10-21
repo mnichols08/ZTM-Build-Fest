@@ -151,7 +151,9 @@ async function until(check, { attempts = 200 } = {}) {
     if (result) return result;
     await delay(50);
   }
-  throw new Error("Timed out waiting for browser state");
+  // Name the condition, so a CI annotation says which wait ran out (#469).
+  const condition = String(check).replace(/\s+/g, " ").slice(0, 240);
+  throw new Error(`Timed out waiting for browser state: ${condition}`);
 }
 
 async function connect(url) {
@@ -1118,19 +1120,32 @@ async function regressions() {
   history.replaceState(null, "", "/pair#code=F7KM-Q2DX");
   const household = document.createElement("kin-household");
   document.body.append(household);
-  for (
-    let attempt = 0;
-    attempt < 100 && !household.querySelector('input[name="code"]');
-    attempt++
-  )
-    await new Promise((resolve) => setTimeout(resolve, 10));
+  // connectedCallback takes the code out of the address synchronously.
   check(
     location.pathname === "/pair" && location.search === "" && location.hash === "",
     "invitation code must be removed from browser history immediately",
   );
+  // The join form is drawn only when the element's first status load
+  // (`household.loaded`) settles: three security-epoch reads from IndexedDB
+  // and a /api/status round trip. A fixed ~1 s poll for the input lost that
+  // race on the Windows Edge runner, where those reads can queue behind the
+  // app's own IndexedDB writes (#469). Wait for the load itself, bounded.
+  const prefillStarted = performance.now();
+  const prefillLoad = await Promise.race([
+    household.loaded,
+    new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), 30_000)),
+  ]);
+  const prefillFacts = () => JSON.stringify({
+    load: prefillLoad,
+    ms: Math.round(performance.now() - prefillStarted),
+    path: location.pathname + location.search + location.hash,
+    input: Boolean(household.querySelector('input[name="code"]')),
+    value: household.querySelector('input[name="code"]')?.value ?? null,
+    message: household.querySelector(".household-message")?.textContent ?? null,
+  });
   check(
     household.querySelector('input[name="code"]')?.value === "F7KM-Q2DX",
-    "invitation code must prefill after URL cleanup",
+    `invitation code must prefill after URL cleanup (${prefillFacts()})`,
   );
 
   for (const [state, expected] of [
