@@ -224,6 +224,12 @@ documentation only.
 
 ### Changed
 
+- **Kin loads itself again if its start was cut short** (#594): on Edge for
+  Windows a page load sometimes had its module requests cancelled by the
+  browser part way, which left a blank page with only "Skip to content". A
+  small start-up guard (`web/boot-guard.js`) now notices and loads the page
+  again, at most twice in a row, then offers Try again. A load that wasn't a
+  refresh stays locked: the guard's reload never resumes it (#351).
 - The page no longer triggers the browser's pull-to-refresh where the browser
   allows turning it off (#353).
 - **Calmer unlock until accounts arrive** (#563): screens call the recovery

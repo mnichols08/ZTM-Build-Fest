@@ -139,6 +139,9 @@ browser.on("error", (error) => {
 });
 const clients = [];
 const problems = [];
+// Document loads that lost a module request (#594), by load: the start-up
+// guard (web/boot-guard.js) should have loaded each again.
+const abortedModuleLoads = new Map();
 const requests = [];
 const REGRESSION_PART = process.env.KIN_REGRESSION_PART ?? "";
 if (!["", "1", "2"].includes(REGRESSION_PART)) throw new Error(`KIN_REGRESSION_PART must be 1 or 2, not ${REGRESSION_PART}`);
@@ -208,7 +211,10 @@ async function connect(url) {
         break;
       case "Network.loadingFailed": {
         const request = inFlight.get(params.requestId);
-        if (request?.type === "Script") loader(request.loaderId).failed += 1;
+        if (request?.type === "Script") {
+          loader(request.loaderId).failed += 1;
+          if (params.canceled) abortedModuleLoads.set(request.loaderId, short(request.url));
+        }
         mark(`failed ${params.type ?? request?.type} L${tag(request?.loaderId)} ${params.errorText}${params.canceled ? " canceled" : ""}${params.blockedReason ? ` blocked:${params.blockedReason}` : ""} ${short(request?.url)} by ${request?.initiator ?? "?"} after ${request ? Date.now() - request.at : "?"} ms, response ${request?.status ?? "none"}${request?.sw ? " from worker" : ""}`);
         break;
       }
@@ -3145,6 +3151,10 @@ try {
   await captureFailure("browser regression");
   throw error;
 } finally {
+  if (abortedModuleLoads.size) {
+    const summary = `${abortedModuleLoads.size} page load(s) lost a module request (${[...abortedModuleLoads.values()].join(", ")}); the start-up guard loads such a page again`;
+    console.log(process.env.GITHUB_ACTIONS ? `::warning title=Kin aborted module loads (#594)::${summary}` : `NOTE ${summary}`);
+  }
   if (browserClient) await browserClient.send("Browser.close").catch(() => {});
   for (const client of clients) client.close();
   browser.kill();
