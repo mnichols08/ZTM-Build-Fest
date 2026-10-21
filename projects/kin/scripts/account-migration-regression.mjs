@@ -211,7 +211,7 @@ async function backupCodeRetiresTheKey(member, h) {
   await h.wait(() => app.household?.identity, "the household signed in again");
   app.ctx.navigation.navigate("#household/privacy");
   const before = () => h.security().querySelector("[data-backup-key-retired]");
-  await h.security().account.refresh({ render: false });
+  await h.wait(async () => { await h.security().account.refresh({ render: false }); return h.security().account.ready(); }, "the account's summary on this device");
   h.security().render();
   check(before()?.dataset.backupKeyRetired === "false" && Boolean(h.button("Replace backup key")), "until there's a backup code, the backup key is the way back");
   check(await h.security().account.start("backup-code"), "Security offers a backup code");
@@ -339,7 +339,7 @@ async function signInAgainAndHarden(member, h) {
   check(bare.status === 401 && (await bare.json()).error === "fresh_auth_required", "removing a vault wrapper needs the password or a fresh passkey");
   // Remove this passkey: the last one, so the password comes back.
   app.ctx.navigation.navigate("#household/privacy");
-  await h.security().account.refresh({ render: false });
+  await h.wait(async () => { await h.security().account.refresh({ render: false }); return h.security().account.ready(); }, "the account's summary on this device");
   h.security().render();
   const credentialId = security.passkeys[0];
   await h.wait(() => h.security().querySelector(`[data-remove-passkey="${credentialId}"]`), "Remove this passkey");
@@ -347,9 +347,15 @@ async function signInAgainAndHarden(member, h) {
   h.security().querySelector(`[data-remove-passkey="${credentialId}"]`).click();
   await h.wait(() => h.security().querySelector("#account-password-remove-passkey"), "it asks for the password");
   check(/password signs you in on a new device again/.test(h.security().querySelector('[data-account-flow="remove-passkey"]').textContent), "it says what removing the last passkey means");
+  check(/your password unlocks it from then on/.test(h.security().querySelector('[data-account-flow="remove-passkey"]').textContent),
+    "it says this device's unlock moves to the password, and that Kin locks");
   h.security().querySelector("#account-password-remove-passkey").value = member.password;
   h.security().querySelector('[data-account-flow="remove-passkey"]').requestSubmit();
-  await h.wait(() => /Passkey removed/.test(h.security().message.textContent), "the passkey removed", 60_000);
+  // Taking an unlock path away locks Kin, as removing any unlock path does.
+  await h.wait(() => !app.store && h.security().phase === "locked" && !h.security().busy, "locked after the passkey went", 60_000);
+  check(Boolean(h.security().querySelector("#password-unlock")) && !h.button("Unlock with passkey"), "the lock screen asks for the password; the passkey is gone");
+  await h.unlockWithPassword(member.password);
+  await h.today();
   check(h.types() === "password", "this passkey-only device now unlocks with the password");
   return { checks: checks.length, credentialId };
 }

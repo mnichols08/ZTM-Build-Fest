@@ -1052,8 +1052,9 @@ passkey will stop signing you in. Your password signs you in on a new device
 again, until you add another passkey." for the last one; "This passkey will
 stop signing you in. Your password and your other passkeys keep working."
 otherwise), whether it also stops unlocking this device (and that the
-password then unlocks it), `Your password`, `Remove passkey` / `Cancel`.
-Status: "Passkey removed. It no longer signs you in."
+password then unlocks it; Kin then locks, as removing any unlock path from a
+device does, and says so before), `Your password`, `Remove passkey` /
+`Cancel`. Status: "Passkey removed. It no longer signs you in."
 
 **Start over on this browser** (#592 follow-up): on the lock screen of a
 device whose only way in is its passkey, under "Can't use your passkey?": one

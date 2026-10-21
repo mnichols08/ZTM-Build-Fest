@@ -88,6 +88,9 @@ export class SecurityAccount {
   }
 
   async holdsVaultKey(identity) {
+    // Right after an unlock the household panel may still be opening its
+    // key store; ask once it has.
+    await this.app()?.household?.loaded?.catch?.(() => {});
     const vaultKey = await this.app()?.household?.syncKeyStore?.accountVaultKey?.(identity.householdId).catch(() => null);
     vaultKey?.fill(0);
     return Boolean(vaultKey);
@@ -215,9 +218,11 @@ export class SecurityAccount {
       ? "Your passkey will stop signing you in. Your password signs you in on a new device again, until you add another passkey."
       : "This passkey will stop signing you in. Your password and your other passkeys keep working.";
     form.prepend(lead);
+    // Taking an unlock away from this device locks Kin (like removing any
+    // unlock path), so it's said before.
     if (unlocksHere) this.note(form, this.host.manifest?.wrappers?.some((wrapper) => wrapper.type === "recovery" || wrapper.type === "password")
-      ? "It also stops unlocking Kin on this device."
-      : "It also stops unlocking Kin on this device; your password unlocks it instead.");
+      ? "It also stops unlocking Kin on this device, and Kin locks once it's done."
+      : "It also stops unlocking Kin on this device: Kin locks once it's done, and your password unlocks it from then on.");
     const input = this.passwordField(form, { id: "account-password-remove-passkey", label: "Your password" });
     this.actions(form, "Remove passkey");
     parent.append(form);
