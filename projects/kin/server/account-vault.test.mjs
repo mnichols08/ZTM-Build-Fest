@@ -233,7 +233,18 @@ test("a no-cookie download (#568) needs a checked capability and releases only t
 });
 
 test("the vault routes serve only the session's own member on a trusted device", { timeout: 30_000 }, async (t) => {
-  const app = createKinServer({ store: false, origin: "https://kin.example.org", host: "127.0.0.1" });
+  // WebAuthn is stubbed: the per-wrapper routes take a fresh passkey
+  // assertion, and these members signed up with passkeys.
+  const webauthn = {
+    registrationOptions: (flow) => ({ challenge: flow }),
+    authenticationOptions: (flow, credentialIds) => ({ challenge: b64(Buffer.from(flow)), allowCredentials: credentialIds.map((id) => ({ id })) }),
+    verifyAuthentication(response, _flow, registered) {
+      if (!registered || response?.id !== registered.id) throw new PairingError("passkey_verification_failed", "Invalid passkey.", 401);
+      return true;
+    },
+    discardFlow() {},
+  };
+  const app = createKinServer({ store: false, origin: "https://kin.example.org", host: "127.0.0.1", webauthn });
   await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => app.server.close(resolve)));
   const url = `http://127.0.0.1:${app.server.address().port}`;
@@ -261,21 +272,39 @@ test("the vault routes serve only the session's own member on a trusted device",
   assert.deepEqual(await theirs.json(), { vault: null, wrappers: [], certificationEndorsement: null });
   // ... and their writes land on their own vault, never the founder's.
   assert.equal((await call("/api/account/vault", { cookie: cookieOf(other), method: "PUT", body: { expectedVersion: 1, ciphertext: sealedVault(100, 1) } })).status, 409);
-  assert.equal((await call(`/api/account/vault/wrappers/${"1".repeat(32)}`, { cookie: cookieOf(other), method: "DELETE" })).status, 404);
+  // A fresh passkey for one change: options, then the assertion with the body.
+  const fresh = async (who, credentialId) => {
+    const options = await call("/api/account/confirm/options", { cookie: cookieOf(who), method: "POST", body: {} });
+    assert.equal(options.status, 200);
+    return { flow: (await options.json()).flow, credential: { id: credentialId } };
+  };
+  assert.equal((await call(`/api/account/vault/wrappers/${"1".repeat(32)}`, { cookie: cookieOf(other), method: "DELETE", body: await fresh(other, "adult-other") })).status, 404);
 
   // CAS conflict and last-wrapper protection over HTTP.
   const stale = await call("/api/account/vault", { cookie: cookieOf(founder), method: "PUT", body: { expectedVersion: 0, ciphertext: sealedVault(), wrappers: [wrapper()] } });
   assert.equal(stale.status, 409);
   assert.equal((await stale.json()).error, "vault_version_conflict");
-  const last = await call(`/api/account/vault/wrappers/${"1".repeat(32)}`, { cookie: cookieOf(founder), method: "DELETE" });
+  // A session alone can't change how the vault opens (hardening after #592).
+  const bare = await call(`/api/account/vault/wrappers/${"a".repeat(32)}`, { cookie: cookieOf(founder), method: "PUT", body: backupWrapper() });
+  assert.equal(bare.status, 401, "adding a wrapper needs a fresh confirmation");
+  assert.equal((await bare.json()).error, "fresh_auth_required");
+  assert.equal((await call(`/api/account/vault/wrappers/${"1".repeat(32)}`, { cookie: cookieOf(founder), method: "DELETE" })).status, 401,
+    "removing one does too");
+  const wrongPasskey = await call(`/api/account/vault/wrappers/${"a".repeat(32)}`, { cookie: cookieOf(founder), method: "PUT",
+    body: { ...backupWrapper(), ...(await fresh(founder, "adult-other")) } });
+  assert.equal(wrongPasskey.status, 401, "another member's passkey doesn't confirm it");
+  const once = await fresh(founder, "founder");
+  const last = await call(`/api/account/vault/wrappers/${"1".repeat(32)}`, { cookie: cookieOf(founder), method: "DELETE", body: once });
   assert.equal(last.status, 409);
   assert.equal((await last.json()).error, "vault_last_wrapper");
-  const refused = await call(`/api/account/vault/wrappers/${"2".repeat(32)}`, { cookie: cookieOf(founder), method: "PUT", body: passkeyWrapper() });
+  assert.equal((await call(`/api/account/vault/wrappers/${"1".repeat(32)}`, { cookie: cookieOf(founder), method: "DELETE", body: once })).status, 410,
+    "a confirmation is spent once");
+  const refused = await call(`/api/account/vault/wrappers/${"2".repeat(32)}`, { cookie: cookieOf(founder), method: "PUT", body: { ...passkeyWrapper(), ...(await fresh(founder, "founder")) } });
   assert.equal(refused.status, 409, "a passkey wrapper can't join a password-only one");
   assert.equal((await refused.json()).error, "vault_wrapper_rules");
-  const added = await call(`/api/account/vault/wrappers/${"a".repeat(32)}`, { cookie: cookieOf(founder), method: "PUT", body: backupWrapper() });
+  const added = await call(`/api/account/vault/wrappers/${"a".repeat(32)}`, { cookie: cookieOf(founder), method: "PUT", body: { ...backupWrapper(), ...(await fresh(founder, "founder")) } });
   assert.equal(added.status, 200);
-  assert.equal((await call(`/api/account/vault/wrappers/${"1".repeat(32)}`, { cookie: cookieOf(founder), method: "DELETE" })).status, 200);
+  assert.equal((await call(`/api/account/vault/wrappers/${"1".repeat(32)}`, { cookie: cookieOf(founder), method: "DELETE", body: await fresh(founder, "founder") })).status, 200);
   // A body past the bound is refused before it's read.
   const huge = await call("/api/account/vault", { cookie: cookieOf(founder), method: "PUT", body: { expectedVersion: 1, ciphertext: "A".repeat(200_000) } });
   assert.equal(huge.status, 413);

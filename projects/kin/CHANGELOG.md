@@ -9,6 +9,48 @@ documentation only.
 
 ### Added
 
+- **Move to an account, without starting over** (#574, #575, #576, [ADR
+  0018](docs/decisions/0018-account-key-vault.md) "Migration"): if you set
+  Kin up with a passkey and a backup key, Today now calmly invites you, once,
+  to choose a username and password so you can sign in on your other
+  devices (`Not now` puts it away for a week). One touch of your passkey
+  confirms it; your device makes your account's key vault from what it
+  holds, and where your passkey supports it, the passkey alone signs you in
+  on a new device (no password-only way in is ever stored). Your password
+  unlocks this device too; your passkey and backup key keep working. Your
+  other old-style devices offer `Use my account here`. Interrupted setups
+  pick up where they stopped. Once you have a backup code, Security says the
+  per-device backup key is no longer needed. Members who decline keep using
+  Kin exactly as before.
+- **Unlock with your passkey offline** (#551, #552, #553): on the train with
+  no signal, your face or fingerprint opens Kin: the passkey unlocks with a
+  challenge made on the device, user verification required. Online unlock
+  is unchanged. A documented contract change (CRYPTOGRAPHY, "Offline passkey
+  unlock").
+- **Your private things in your own export** (#493, #494, #495, [ADR
+  0019](docs/decisions/0019-member-private-log.md)): Security → Backup and
+  move → `Save my private things` saves your journal, Just for me list,
+  reminders and settings (and journal photos, as many as fit in 64 MiB; the
+  rest are named) in a file only you can open, on your devices or with your
+  backup code. `Restore my private things` puts them back only for you,
+  without duplicates. Household exports never include them.
+- **Remove a passkey; start over on a browser** (#592 follow-ups): each
+  passkey under Security has `Remove this passkey` (after your password;
+  never your last way in: removing the last one brings your password back).
+  A device whose passkey no longer works offers `Start over on this
+  browser`, which clears Kin from that browser after a clear warning and
+  opens Sign in, instead of asking you to clear site data.
+
+### Security
+
+- The one-wrapper vault routes (`PUT`/`DELETE /api/account/vault/wrappers/<id>`)
+  now need your current password or a fresh passkey, like every other change
+  to how your account opens.
+- A password changed on another device: at its next unlock with a
+  connection, a device asks for the new password before opening, and
+  switches to it. Offline, the old password still opens that device until it
+  is online (THREAT-MODEL).
+
 - **Add a passkey: it signs you in alone, or require password and passkey**
   (#560, #561, #562, [ADR 0018](docs/decisions/0018-account-key-vault.md)
   D3/D4): once you've added something, Today calmly offers a passkey (and

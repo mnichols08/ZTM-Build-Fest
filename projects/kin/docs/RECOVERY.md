@@ -163,10 +163,18 @@ in `web/security/local-vault.js`) that the vault, `EventStore.prepareSecurity`
 and `updateSecurityManifest` all apply. A device set up with a backup key has
 no password wrapper and no `accountRecovery`, so the test is the old rule for
 it, unchanged. The passkey-only case is the one place the final path isn't on
-the device: if that passkey can't open it, the member clears Kin's site data,
-signs in with the backup code and chooses "This replaces" that device; the
-household comes back from sync, and only what the device hadn't synced is
-lost. The lock screen says so under "Can't use your passkey?".
+the device: if that passkey can't open it, the lock screen's "Can't use your
+passkey?" offers **Start over on this browser** (#592 follow-up): after a
+clear warning, Kin removes its own data from this browser (its databases and
+storage entries; the session ends) and opens Sign in, where the member signs
+in (password, passkey or backup code) and chooses "This replaces" that
+device; the household comes back from sync, and only what the device hadn't
+synced is lost. Nobody has to find "clear site data" in the browser's
+settings. The passkey also unlocks such a device offline (#551).
+
+A member set up the old way who moves to an account (#575) keeps every
+wrapper the device had and gains a password wrapper beside them; the
+recovery (backup key) wrapper stays the device's verified path as before.
 
 **The account vault's own rule (#561/#572).** The vault always keeps at least
 one wrapper, and the service refuses any set where a password alone opens it
@@ -179,7 +187,7 @@ the backup code, always.
 **The trade-off, plainly.** Kin can't reset a password: the service never
 sees it, only a key derived from it. **The backup code (#571) is the way
 back** from a forgotten password or a lost passkey: on a new device (or this
-one, after clearing Kin's site data), Sign in → Use my backup code, then
+one, after "Start over on this browser"), Sign in → Use my backup code, then
 choose a new password; it replaces the old one in the same step that trusts
 the device, and the vault's password wrappers are re-wrapped under it. A
 "require password and passkey" wrapper needs the passkey too, so a
@@ -198,11 +206,36 @@ pairs a new device as before; another adult can authorize member recovery as
 before. The first run says this in one line where the password is chosen;
 the lock screen's "Forgot your password?" says what to do.
 
-**Per-device backup keys.** Once a member has a backup code, Kin no longer
-asks them for a backup key on any device: a passkey-only sign-in shows none,
-Security stops offering "Replace backup key", and exports open with the code
-(PORTABILITY). Backup keys a device already has keep unlocking it and keep
-opening the exports made with them.
+**Per-device backup keys (#576).** Until a member has a backup code, the
+backup keys of the devices they set up the old way are their way back, and
+keep working after they move to an account. Once they have a backup code,
+Kin no longer asks them for a backup key on any device: a passkey-only
+sign-in shows none, Security says "You no longer need this device's backup
+key" and stops offering "Replace backup key", and exports open with the code
+(PORTABILITY). Backup keys a device already has keep unlocking it (one tap
+away on its lock screen, behind the password or passkey) and keep opening the
+exports made with them.
+
+## Moving to an account (#574, #575)
+
+Members who set Kin up with a passkey and a per-device backup key, before
+accounts, aren't forced to change anything. On their next unlock Today shows
+one calm card, "Sign in on your other devices?", with **Set up** and **Not
+now** (back no sooner than a week later); Security shows the same offer under
+**Your account**. Setting up asks for a username and a password, then one
+touch of their passkey, and the device makes their account and vault from
+the keys it holds (CRYPTOGRAPHY, "Moving an existing member to an account").
+From then on:
+
+- their password unlocks this device too, offline; the passkey and the
+  backup key still do;
+- a new device signs in with the passkey alone (when it supports PRF; else
+  with the password), with no other device present;
+- their other old-style devices offer **Use my account here**, which asks
+  for the password and gives that device the vault key too.
+
+An interrupted setup is simply run again: each step checks what is already
+done, so nothing is made twice.
 
 A device set up with a password exports once the member has a backup code;
 before that it has nothing for an export to open with, and says so. Its
@@ -211,8 +244,12 @@ household syncs as usual.
 **Changing the password (#560).** Under Security → Password, with the
 current password: the service's verifier, the vault's password wrappers and
 this device's local password wrapper all move to the new password. Another
-device keeps unlocking with the old one until it next signs in to the
-service, which takes the new password and re-wraps that device's wrapper.
+device, at its next unlock with a connection, notices the change (the
+service's password parameters differ from its wrapper's) and asks for the
+new password before it opens; then its wrapper follows. If the person types
+the new password first, it signs in, and Kin asks once for the previous one,
+which that device still needs to open its storage. Offline, that device keeps
+opening with the previous password until it is next online (THREAT-MODEL).
 
 ## Stale backups and rollback
 

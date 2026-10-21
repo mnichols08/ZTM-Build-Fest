@@ -874,9 +874,10 @@ Not:
 Once a device holds a passkey that can unlock Kin, the lock screen reads
 "Welcome back" with `Unlock with passkey` as the only primary action and
 `Use backup key` as a secondary control that reveals the backup-key form. The
-backup key is a backup, never the everyday login. Offline, the screen says
-plainly that passkey unlock needs a connection and shows the backup-key form
-directly. First run is a welcome, a "Save your backup key for this device"
+backup key is a backup, never the everyday login. Offline, the passkey still
+unlocks (#551, below): the screen says "You're offline. Your passkey still
+unlocks Kin on this device; Kin signs you in again once you're connected." and
+keeps the backup key one tap away as usual. First run is a welcome, a "Save your backup key for this device"
 step, then create/join choices; passkey unlock is offered as soon as the
 device holds a household credential (§8.1, "Calmer unlock"). Security settings
 state whether passkey unlock is on.
@@ -1017,7 +1018,7 @@ can't do (reset it) and what can (the backup code), and `Change password`:
 current password, new password (with the guidance line) and the new password
 again (`autocomplete="new-password"`); with require-both on, the passkey is
 asked for too. A note says other devices keep their old password until they
-next sign in.
+next sign in (they ask for the new one at their next online unlock).
 
 **Security → Backup code**: whether there is one (and when it was made),
 what it's for, and `Make a backup code` (`Make a new backup code` when one
@@ -1035,13 +1036,113 @@ password or passkey?") asks for the username and the code (dashes, spaces,
 case and look-alike letters don't matter; a typo is named before anything is
 sent), then "Which device is this?", then **Choose a new password**, which
 is required. After a passkey-alone sign-in, a member with a backup code isn't
-shown a backup key for the device; the lock screen offers the passkey and,
-under "Can't use your passkey?", how to sign the browser in again with the
-backup code.
+shown a backup key for the device; the lock screen offers the passkey (online
+and offline) and, under "Can't use your passkey?", **Start over on this
+browser** (below).
 
 **Exports** from a member with a backup code open with it: the success line
 says "It opens with your account backup code" (or "… or this device's backup
 key K-XXXX"), and the restore screen's single field takes either.
+
+**Security → Passkey → your passkeys** (#592 follow-up): each passkey is
+listed ("Your passkey", or "Passkey 1", "Passkey 2", with "(unlocks this
+device)" where it does) with `Remove this passkey` (`Remove passkey 2`). It
+opens the same inline form: one line on what removing it means ("Your
+passkey will stop signing you in. Your password signs you in on a new device
+again, until you add another passkey." for the last one; "This passkey will
+stop signing you in. Your password and your other passkeys keep working."
+otherwise), whether it also stops unlocking this device (and that the
+password then unlocks it; Kin then locks, as removing any unlock path from a
+device does, and says so before), `Your password`, `Remove passkey` /
+`Cancel`. Status: "Passkey removed. It no longer signs you in."
+
+**Start over on this browser** (#592 follow-up): on the lock screen of a
+device whose only way in is its passkey, under "Can't use your passkey?": one
+sentence on why ("This device has no backup key of its own: your account is
+its way back. …") and the button, described by it. A confirmation says
+plainly what goes ("Kin removes everything it keeps in this browser: this
+device's copy of your household, its keys and anything it hasn't synced yet.
+Your household stays on your other devices and in your account.") and what
+to do next ("sign in again and choose “This replaces” this device"). Then
+Kin opens straight on **Sign in to your household**. Nobody is sent to the
+browser's settings to clear site data.
+
+**A password changed on another device** (#560 follow-up): the password lock
+screen, online, after the previous password: "Your password was changed on
+another device. Enter your new password to open Kin here; this device then
+unlocks with it from now on." `New password` (`autocomplete="current-password"`,
+username offered to password managers) / `Unlock`, and `Cancel` (locks again).
+A wrong one: "That isn't your new password. Check it and try again." If the
+new password is typed first: "That's your new password, and it signed you
+in. This device still opens with your previous password: enter it once more,
+and Kin switches this device to the new one." with the field labelled
+`Previous password`. Afterwards: "Your new password unlocks Kin on this
+device from now on." Offline, nothing is asked: the previous password works
+until the device is online.
+
+### Moving to an account — Adopted (#574, #575, #576)
+
+For members who set Kin up with a passkey and a backup key before accounts.
+Never forced, one calm offer:
+
+- **On Today** (after the next unlock, online, `data-account-offer="account-migrate"`):
+  **"Sign in on your other devices?"** — "Choose a username and password so
+  you can sign in on your other devices. Your passkey and backup key keep
+  working; nothing else changes." `Set up` / `Not now`. `Not now` puts it
+  away for a week on this device (back once, never nagging). On another
+  old-style device of a member who already moved: **"Use your account on
+  this device?"** — "Your account is set up on another device. Enter your
+  password here once, and this device uses it too." `Use my account here` /
+  `Not now`.
+- **Security → Your account** (first, for those members): the status ("You
+  unlock Kin with your passkey and this device's backup key.", or "Your
+  account (<username>) is set up, but not on this device yet."), one line on
+  what it gives, and `Choose a username and password` (`Use my account
+  here`). The inline form: `Username` (`autocomplete="username"`, with the
+  username guidance), `Password` and `Password again`
+  (`autocomplete="new-password"`, with the password guidance), and "Kin can't
+  reset this password. Next, confirm with your passkey." `Set up my account`
+  / `Cancel`. Problems are said in the alert line before anything is sent
+  (two different passwords, a weak one, a taken username). Progress reads
+  "Confirming with your passkey…", "Making your account's key vault…",
+  "Getting your account ready for new devices…", "Letting your password
+  unlock this device…"; then "Your account is ready. On another device, sign
+  in with your username and your passkey. Your password unlocks this device
+  too." The section is replaced by the account's Passkey, Password and
+  Backup code sections.
+- **The lock screen** then asks for the password (`Unlock`), offers `Unlock
+  with passkey`, and keeps `Use backup key` one tap away.
+- **Backup key for this device** (#576): once the member has a backup code,
+  the section says "You no longer need this device's backup key: your
+  account backup code is your way back in now. The key still unlocks this
+  device, and still opens the exports made with it, so keep it until you
+  don't need those." and no longer offers `Replace backup key` or the key
+  guidance.
+
+### Your private things — Adopted (#493, #494, #495)
+
+Under **Security → Backup and move**, after the household export, where the
+member's private storage is open: **Your private things** — "Your journal,
+your Just for me list, and the reminders and settings that follow you.
+Household exports never include them. Save your own copy: only you can open
+it, on your devices or with your account backup code." `Save my private
+things` / `Restore my private things`.
+
+- **Save** downloads `kin-private-<date>.kinp` and says what went in: "Saved
+  12 private changes and 3 journal photos. It opens on your devices, or with
+  your account backup code." Without a backup code: "It opens on your
+  devices. Make a backup code to be able to open it without them." Photos
+  that didn't fit: "2 journal photos didn't fit in the file and aren't
+  included; they stay in your account."
+- **Restore** shows one file field (`accept=".kinp"`), describes the file
+  once chosen ("Saved on <date>: 12 private changes and 3 journal photos."),
+  and asks for `Account backup code` only when this device can't open the
+  file ("Only needed if this device doesn't hold the key the file was saved
+  with."). Results: "Restored 12 private changes; 3 were already here." or
+  "Everything in this file is already here. Nothing was duplicated." Another
+  member's file: "This file holds someone else's private things, or another
+  household's. Kin restores private things only for the member who saved
+  them."
 
 ### Calmer unlock until accounts arrive — Adopted (#563)
 

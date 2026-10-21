@@ -1,6 +1,6 @@
 # Cryptographic Posture
 
-**Status:** Implemented through v0.10.3 for local incubation. Web Crypto supplies AES-GCM, ECDSA P-256/SHA-256, ECDH P-256 and HKDF-SHA-256 for local encryption, archives and existing encrypted sync. Recovery or verified WebAuthn PRF authorizes local root unwrapping. No independent cryptographic audit or production certification is claimed.
+**Status:** Implemented through v0.10.3 for local incubation. Web Crypto supplies AES-GCM, ECDSA P-256/SHA-256, ECDH P-256 and HKDF-SHA-256 for local encryption, archives and existing encrypted sync. Recovery, a password, or a user-verified WebAuthn PRF output (checked by the service online, by the device offline since #551) authorizes local root unwrapping. No independent cryptographic audit or production certification is claimed.
 
 ## Non-negotiable rule
 
@@ -107,13 +107,43 @@ retyping it). Kin never stores it or sends it to the server; the browser may
 offer to save it in its password manager (THREAT-MODEL C5). An encrypted archive plus that
 secret supports profile-loss recovery; a secret alone cannot restore absent data.
 
-PRF enrollment/unlock verifies an assertion with the same-origin identity server;
-it requires connectivity and surviving server identity. Recovery unlock works
-offline. The v0.41.0 passkey-first presentation does not change this contract:
-the lock screen leads with the passkey where a PRF wrapper exists, explains the
-connectivity requirement when offline, and keeps the recovery wrapper as the
-fallback. A local-challenge offline PRF unlock was considered and deferred; it
-would be a documented contract change rather than a presentation change. New registration requests opt into PRF, but existing credentials may not
+PRF enrollment verifies an assertion with the same-origin identity server and
+needs a connection. Online, PRF unlock does too, exactly as before (V0.41.0):
+the service issues the challenge, checks RP, origin, challenge, signature and
+user verification, and refreshes the device's session. Recovery unlock works
+offline.
+
+### Offline passkey unlock (#551, contract change)
+
+The deferred V0.41.0 follow-up is now the contract: when the browser says it
+is offline, or the identity service can't be reached (no connection, or a 5xx
+from a proxy in front of it), PRF unlock of an **existing** PRF wrapper runs
+with a challenge made on the device (`authenticatePrfLocally`,
+`web/security/passkey-unlock.js`):
+
+```text
+challenge = 32 random bytes (Web Crypto)
+navigator.credentials.get({ challenge, rpId: this origin's host,
+  allowCredentials: [the wrapper's credential], userVerification: "required",
+  extensions: { prf: { eval: { first: the wrapper's PRF salt } } } })
+checks: clientDataJSON type "webauthn.get", this challenge, this origin;
+        authenticatorData rpIdHash = SHA-256(rpId); flags UP and UV set;
+        the credential is the wrapper's
+PRF output (32 bytes) --the v0.10 wrapper construction--> local root
+```
+
+What changed, and why it holds: the server assertion never protected the
+local root; the PRF output does. Only the authenticator holding the passkey
+can compute it for the wrapper's salt, after it verified the person, and only
+that output unwraps the root (AES-GCM authenticates the attempt). The local
+checks make sure the ceremony was this one, for this site, with the person
+verified; the signature is not checked locally (the device has no copy of the
+public key, and a forged assertion can't come with the PRF output). A service
+that is reachable and refuses (401/403: this device isn't trusted there) is
+not bypassed. Enrolling a new passkey still needs the service. An offline
+unlock does not refresh the session; sync resumes when the device signs in
+again. THREAT-MODEL ("Offline passkey unlock") records what this adds.
+New registration requests opt into PRF, but existing credentials may not
 support it. Actual 32-byte PRF output is required, is never sent to the server and
 is discarded after wrapping/unwrapping. Multiple supported adult credentials may
 independently wrap this installation's root. Each installation has its own local
@@ -128,7 +158,7 @@ agreement keys are removed and migration verification completes.
 - Existing canonical event bytes are encrypted directly. Historical placeholder identities remain byte-for-byte intact; a separate signed, encrypted identity-binding control record establishes the authenticated importing identity for v8 replay. No semantic JSON event replacement is used.
 - Tests cover roundtrip, wrong keys, metadata substitution, ciphertext/signature/nonce mutation, unsupported/truncated envelopes, nonce variation, sealed-key restore, correct/wrong recipient, expiry, signature tampering, and actual two-trusted-device opaque relay exchange.
 
-Key generation and authenticated encryption use platform Web Crypto. The implementation has no custom cipher, MAC, nonce counter, or password-derived content key. [ADR 0018](decisions/0018-account-key-vault.md) (accepted) allows a password-derived key, from Web Crypto PBKDF2-SHA-256, to wrap a member's vault key and a device's local root; it never encrypts content directly. The vault formats, key derivations and service storage below are implemented (#564), and so are password sign-in, the local password wrapper and creating the vault at first run (#557, #558), the no-cookie sign-in (#568), adding a passkey with "require password and passkey" (#560) and the backup code (#571).
+Key generation and authenticated encryption use platform Web Crypto. The implementation has no custom cipher, MAC, nonce counter, or password-derived content key. [ADR 0018](decisions/0018-account-key-vault.md) (accepted) allows a password-derived key, from Web Crypto PBKDF2-SHA-256, to wrap a member's vault key and a device's local root; it never encrypts content directly. The vault formats, key derivations and service storage below are implemented (#564), and so are password sign-in, the local password wrapper and creating the vault at first run (#557, #558), the no-cookie sign-in (#568), adding a passkey with "require password and passkey" (#560), the backup code (#571), moving existing households to accounts (#574) and the offline passkey (#551).
 
 ### Local password wrapper (#558)
 
@@ -157,6 +187,21 @@ nothing on the service (it never sees local attempts). Offline guessing
 against a stolen device costs a full PBKDF2 per guess; the strength floor
 (at least 10 characters, not one of about 200 very common passwords, not
 the username) keeps out the first guesses.
+
+A device set up the old way (a recovery wrapper, perhaps PRF wrappers) whose
+member moves to an account (#575) gets the same password wrapper **beside**
+its other wrappers (`LocalVault.addPasswordWrapper`): the root is unchanged,
+so nothing is re-encrypted, and the backup key keeps opening it (#576).
+
+A password changed on another device (#560 follow-up): this device's wrapper
+still opens with the previous password, which only the device itself can
+re-wrap. At each unlock with a connection, the device asks the service for
+the account's current password parameters (`POST
+/api/account/sign-in/parameters`); if they differ from its wrapper's, it
+doesn't open the household until the new password signs in (the previous
+password, or the new one typed first, opens the root once), then replaces
+its wrapper under the new password (same wrapper ID). Offline, the previous
+password keeps opening the device (THREAT-MODEL).
 
 ## Account key vault (ADR 0018)
 
@@ -278,7 +323,44 @@ make a backup code       [..., backup-code]     an older code's wrapper replaced
 change the password      password / password-passkey wrappers re-wrapped (same ID, version + 1)
 backup-code sign-in      password wrappers re-wrapped under the new password;
                          password-passkey wrappers removed (they need the passkey too)
+remove a passkey         its passkey / password-passkey wrappers removed; when none
+                         a password or passkey opens is left, a password wrapper
+                         comes back (password-only stage again, never the code alone)
+moving to an account     [passkey] when the member's passkey gave a PRF output in the
+(#575)                   touch that set the password, else [password]
 ```
+
+`POST /api/account/vault/wrappers` and `POST /api/account/passkeys/remove`
+need the current password. The one-wrapper routes (`PUT` and `DELETE
+/api/account/vault/wrappers/<id>`) need the same fresh confirmation: the
+current password (`currentAuthKey`), or a fresh passkey assertion (`flow`
+from `POST /api/account/confirm/options` and `credential`), so a session alone
+(a browser left signed in) can't add or remove a way into the vault.
+
+**Moving an existing member to an account (#575).** A member set up the old
+way has a passkey and per-device backup keys, and no username, password or
+vault. Accepting the invitation runs, on the device, with every step first
+checking what is done (`web/security/account-migration.js`):
+
+```text
+1 password   POST /api/account/migrate/options -> one assertion of the member's passkey
+             with PRF { first: a new random salt }; POST .../finish with the
+             assertion, the username and authKey (the service checks the
+             assertion, then keeps Argon2id(authKey)). Already done: the typed
+             password signs this device in (POST /api/login/password) instead.
+2 vault key  VK = 32 random bytes, kept in this device's bound record first
+3 vault      contents = this device's household and chat epoch keys and a new
+             certification key; sealed as version 1 with ONE wrapper: passkey
+             (KEK = HKDF(PRF output, "kin/vault-passkey/v1")) when the touch gave
+             a PRF output, else password (KEK = passwordKey). A vault already
+             there is opened with this device's VK, else through its password
+             wrapper or (one more touch) a passkey wrapper, and that VK is kept.
+4 endorse    the certification key endorsed by this device (#570)
+5 local      a local password wrapper beside the recovery and PRF wrappers
+```
+
+So a member whose passkey has PRF never has a password-only vault wrapper
+(D3/D4), and their next device signs in with the passkey alone.
 
 Each passkey wrapper gets its own random 32-byte PRF input. Adding a passkey
 asks it for two PRF values in one touch (the extension's `first` and
@@ -489,6 +571,37 @@ the AAD though not in the envelope: an envelope can't be moved to another
 member's stream or read as a household, chat or board envelope. A receiving
 device verifies the signature with the sender's verified key history and
 requires the sender to be one of its own member's devices.
+
+**A member's own export of their private things (#493, KPEX format 1,
+`web/private/private-export.js`).** A separate file from the household
+export, which never reads a private store:
+
+```text
+"KPEX" u8 1  u32 H  header (H bytes, UTF-8 JSON)  nonce (12)  ciphertext+tag
+body   = AES-256-GCM(MK[keyEpoch] (the newest epoch), nonce, plaintext,
+                     AAD = every byte before the nonce)
+         plaintext: serializeProtectedValue({ envelopes, blobs }): the private
+         envelopes as the device keeps them (each sealed under its own epoch,
+         AAD-bound to the member) and journal photos as sealed blobs
+header.backupCode (member with a backup code only):
+         { wrapperId, version, wrapped }   the backup code's vault wrapper of VK
+         keys = AES-256-GCM(HKDF-SHA-256(VK, 32-byte random salt,
+                "kin/private-export-keys/v1"), nonce, vault contents format 2
+                holding only the member-key epochs,
+                AAD JSON ["kin/private-export-keys/v1", "1", householdId,
+                memberId, exportedAt])
+```
+
+On one of the member's devices the file opens with the member key from the
+vault, as always; without it, the backup code opens VK, VK the member keys,
+and the newest epoch the body: the code alone is enough, offline. Changing
+any header byte makes the body fail to open; the member keys are bound to
+the member, household and export time. Restoring checks the header names this
+member and household, opens every envelope under this member's key for its
+epoch (an envelope bound to another member fails AES-GCM, and the whole file
+is refused), adds what isn't there by event ID, and keeps photos whose SHA-256
+matches their reference as pending uploads. Epochs the backup code opened that
+the vault lacks are merged into the vault first (compare-and-set, as always).
 
 ## Claims boundary
 

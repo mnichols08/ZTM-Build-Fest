@@ -1,8 +1,11 @@
 # ADR 0019 — Private storage for each member: a member key and a private log
 
-Status: **Accepted** (#481, epic #480). The decisions recorded below are the
-ones written into epic #480 when the owner asked for it. The owner can veto
-any of them before the stories that depend on them ship.
+Status: **Implemented** (accepted in #481, epic #480). The decisions
+recorded below are the ones written into epic #480 when the owner asked for
+it. Every story is in: the member key and vault format 2 (#485), the private
+log and stream (#489), and the member's own export (#493: KPEX 1, sealed
+under the member key, openable with the backup code; PORTABILITY "A
+member's private things").
 
 ## Context
 

@@ -154,6 +154,25 @@ export class PrivateLogStore {
     });
   }
 
+  /** Stores envelopes from the member's own export (#495), already checked
+   * against their member key; events already stored are skipped, and the
+   * relay cursor is left as it is. Resolves with how many were new. */
+  addImported(envelopes) {
+    return transact(this.db, [EVENTS, IDS, META], "readwrite", async ({ events, ids, meta }) => {
+      const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      let added = 0;
+      for (const envelope of envelopes) {
+        if (await settle(ids.get(envelope.eventId))) continue;
+        const order = state.nextOrder++;
+        events.put({ order, eventId: envelope.eventId, envelope });
+        ids.put({ eventId: envelope.eventId, order });
+        added += 1;
+      }
+      await settle(meta.put(state));
+      return added;
+    });
+  }
+
   /** Stores an event this device just made with its outbox entry. Its
    * sequence must follow the last one this device used, so two tabs writing
    * at once can't both take it; the loser retries. */

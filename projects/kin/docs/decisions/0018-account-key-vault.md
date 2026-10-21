@@ -1,15 +1,16 @@
 # ADR 0018 — One account on every device: password, passkey as a second step, and an encrypted key vault
 
-Status: **Accepted** (owner decisions D1–D5, 2026-10-20; #547, epic #546).
-Partly implemented: the vault (#564–#567) and the first run with a username
-and password (#557–#559: sign-up, the local password wrapper, creating the
-vault, sign-in on a trusted device, fresh password confirmations) and the
-no-cookie sign-in with the certification key chain (#568–#570), adding a
-passkey with "require password and passkey" (#560–#562) and the backup code
-(#571–#573) are in; the migration of existing households (#574) and the
-offline passkey (#551) are not. It changes four standing rules, listed under "Rules this
-changes"; AGENTS.md and CRYPTOGRAPHY point here until the implementation
-stories update the rest of the docs.
+Status: **Implemented** (accepted with owner decisions D1–D5, 2026-10-20;
+#547, epic #546). Every part is in: the vault (#564–#567), the first run
+with a username and password (#557–#559), the no-cookie sign-in with the
+certification key chain (#568–#570), adding a passkey with "require
+password and passkey" (#560–#562), the backup code (#571–#573), the
+migration of existing households (#574–#576) and the offline passkey
+(#551–#553), with the hardening follow-ups of #592 (per-wrapper routes need
+a fresh confirmation, removing a passkey, starting over on a browser, other
+devices following a changed password). It changes four standing rules,
+listed under "Rules this changes"; AGENTS.md, CRYPTOGRAPHY, IDENTITY,
+RECOVERY, THREAT-MODEL, PRIVACY and PORTABILITY carry them.
 
 ## Context
 
@@ -197,7 +198,10 @@ the size of their vault. It learns nothing new about household content.
 - Existing members see a calm invitation on the next unlock to "choose a
   username and password so you can sign in on other devices". Accepting
   creates VK, the vault and the certification key from what this device
-  holds.
+  holds. (Implemented in #575: one passkey touch confirms the change and,
+  with PRF, makes the vault's passkey wrapper, so such a member never has a
+  password-only wrapper; without PRF, the password wrapper. Every step
+  resumes; CRYPTOGRAPHY "Moving an existing member to an account".)
 - Members who decline keep using Kin exactly as now.
 - Recovery keys keep working until the member has a backup code.
 - Older app versions ignore vaults; nothing in the household history or

@@ -12,6 +12,7 @@ import {
   makeWrapper,
   passwordChangeWrappers,
   passwordParams,
+  removePasskeyChange,
   requireBothChange,
   wrapperChangeBody,
 } from "./account-wrappers.js";
@@ -146,4 +147,30 @@ test("a new backup code replaces the old one, and only the new code opens the va
   // The request body carries base64url keys.
   const body = wrapperChangeBody(change);
   assert.match(body.put[0].wrapped, /^[A-Za-z0-9_-]+$/);
+});
+
+test("removing a passkey (#592 follow-up): its wrappers go; the last one brings the password back", async () => {
+  const vaultKey = generateVaultKey();
+  const { passwordKey } = await passwordKeys();
+  const [a, b] = [random(), random()];
+  const passkeyA = await makeWrapper({ vaultKey, kek: await passkeyKek(a), ...ids, type: "passkey", params: { credentialId: "cred-a", prfSalt: "salt-a" } });
+  const passkeyB = await makeWrapper({ vaultKey, kek: await passkeyKek(b), ...ids, type: "passkey", params: { credentialId: "cred-b", prfSalt: "salt-b" } });
+  const code = await makeWrapper({ vaultKey, kek: random(), ...ids, type: "backup-code", params: { verifier: "v" } });
+  // Another passkey remains: only this one's wrapper goes, no password wrapper.
+  const one = await removePasskeyChange({ vaultKey, ...ids, wrappers: [passkeyA, passkeyB, code], credentialId: "cred-a" });
+  assert.deepEqual(one, { put: [], remove: [passkeyA.wrapperId] });
+  // The last passkey: the password opens the vault again (never only the code).
+  const last = await removePasskeyChange({ vaultKey, ...ids, wrappers: [passkeyB, code], credentialId: "cred-b", passwordKey, password });
+  assert.deepEqual(last.remove, [passkeyB.wrapperId]);
+  assert.equal(last.put[0].type, "password");
+  assert.equal(await opens(last.put[0], passwordKey, vaultKey), true);
+  const after = apply([passkeyB, code], last);
+  assert.deepEqual(accountWrapperState(after), { ...accountWrapperState(after), passwordOnly: true, passkey: false, backupCode: true });
+  await assert.rejects(removePasskeyChange({ vaultKey, ...ids, wrappers: [passkeyB], credentialId: "cred-b" }), /Enter your password/);
+  // A combined wrapper of that passkey goes too.
+  const both = await makeWrapper({ vaultKey, kek: await combinedKek(a, passwordKey), ...ids, type: "password-passkey",
+    params: { ...passwordParams(password), credentialId: "cred-a", prfSalt: "salt-a" } });
+  const combined = await removePasskeyChange({ vaultKey, ...ids, wrappers: [both], credentialId: "cred-a", passwordKey, password });
+  assert.deepEqual(combined.remove, [both.wrapperId]);
+  assert.equal(combined.put[0].type, "password");
 });

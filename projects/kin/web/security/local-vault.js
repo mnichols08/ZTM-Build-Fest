@@ -349,6 +349,31 @@ export class LocalVault {
     return structuredClone(candidate);
   }
 
+  /**
+   * A password wrapper beside this device's other unlock paths (#575): a
+   * member set up the old way (passkey and backup key) who chose a username
+   * and password gets one, so the password unlocks this device offline
+   * too. `kek` is localPasswordKek of the passwordKey; the parameters are
+   * the account's. Verified by unlocking with the candidate; the caller
+   * saves it (EventStore.updateSecurityManifest). Refused when the device
+   * already has one (replacePasswordWrapper changes that one).
+   */
+  async addPasswordWrapper(kek, { salt, iterations, username }) {
+    this.assertUnlocked();
+    if (this.manifest.wrappers.some((wrapper) => wrapper.type === "password"))
+      throw new VaultError("This device already unlocks with a password.", "wrapper_exists");
+    if (this.manifest.wrappers.length >= MAX_WRAPPERS)
+      throw new VaultError("This household has reached its unlock-path limit.");
+    const wrapper = await this.createWrapper(kek, { type: "password", salt, iterations, username });
+    const candidate = { ...this.manifest, wrappers: [...this.manifest.wrappers, wrapper] };
+    validateManifest(candidate);
+    const verified = await LocalVault.unlock(candidate, kek, wrapper.id);
+    verified.lock();
+    this.assertUnlocked();
+    this.manifest = candidate;
+    return structuredClone(candidate);
+  }
+
   async sealArchive(value, metadata = new Uint8Array(), { rawCiphertext = false } = {}) {
     this.assertUnlocked();
     const bytes = serializeProtectedValue(value);
