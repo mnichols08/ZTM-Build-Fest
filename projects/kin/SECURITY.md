@@ -1,6 +1,6 @@
 # Security Policy
 
-**Current security status:** Kin v1.3.0 (`kin-v1.3.0`, released 2026-10-19)
+**Current security status:** Kin v1.5.0 (`kin-v1.5.0`, released 2026-10-21)
 includes encrypted local household storage,
 recovery/optional-PRF unlock, journalled root replacement, encrypted archives,
 passkey-authenticated pairing, client-encrypted sync, durable identity/relay
