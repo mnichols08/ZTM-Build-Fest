@@ -3247,6 +3247,7 @@ feature still shown or linked, or sideways scrolling.
   closes it, and focus returns to Slideshow. It pauses while the page is
   hidden. The kitchen display (#651) will host the same element as its
   screensaver.
+
 ## The chore chart (#676, #677, #678)
 
 [ADR 0022](decisions/0022-family-hub.md) §6 and the owner's decision on #654:

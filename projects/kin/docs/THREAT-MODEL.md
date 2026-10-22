@@ -812,6 +812,7 @@ hour (so Undo works) before the next sync pass deletes it. Photos another
 device added are downloaded the first time they are shown and kept on this
 device in `kin-album:<household>`, sealed like the household's other
 attachments; "Start over on this browser" deletes that database too.
+
 ### The chore chart's rules are kept by the app (#676)
 
 The chore chart ([ADR 0022](decisions/0022-family-hub.md) §6) has three

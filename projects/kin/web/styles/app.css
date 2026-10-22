@@ -2853,6 +2853,8 @@ kin-photo-frame:focus-visible { outline: 3px solid var(--accent); outline-offset
 @media (prefers-reduced-motion: reduce) {
   /* No fade: the next photo replaces the last in place. */
   .photo-frame-slide { transition: none; }
+}
+
 /* The chore chart (#676, ADR 0022 §6): a card per person in their colour,
    with big tick boxes. Colour is never the only signal: the name is in the
    card's header, and done jobs say "Done". The kitchen display reuses
