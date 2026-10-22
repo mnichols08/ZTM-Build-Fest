@@ -105,6 +105,31 @@ export class UndoController {
       this.ctx.status.setStatus(describeReversal(null, direction, "empty"));
       return;
     }
+    // A child's reward on the kitchen display (#705): undoing or redoing it
+    // changes the reward again, so the adult whose device it is confirms
+    // first, as for saving one. Cancelled or refused, nothing is written
+    // and the entry stays, so Undo (or Redo) can be pressed again. The
+    // entry goes back, and this run lets go, synchronously as the dialog
+    // closes: a press straight after a cancel is a new Undo, not one
+    // ignored while this run's promise chain unwinds.
+    if (entry.kind === "chore-reward" && this.app.displayMode === true) {
+      this.running = true;
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        this.history.restore(direction, entry);
+        this.running = false;
+        this.ctx.status.setStatus(`Not ${direction === "redo" ? "redone" : "undone"}: the reward wasn't changed.`);
+      };
+      let confirmed = false;
+      try {
+        confirmed = await this.ctx.chores.confirmOnDisplay({ onSettle: (value) => { if (value !== true) release(); } });
+      } catch { /* refused below */ }
+      if (!confirmed || released) { release(); return; }
+      // Confirmed: the run below takes over the guard.
+      this.running = false;
+    }
     // Calendar changes (#660) carry their own steps (web/undo.js).
     if (entry.kind === "calendar") return this.runCalendar(entry, direction);
     // Family-album entries (#673) also need the album, which isn't part of

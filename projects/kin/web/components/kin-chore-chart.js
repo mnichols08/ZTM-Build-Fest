@@ -13,7 +13,8 @@
 // - `kin:chore-toggle` { memberId, kind, id, occurrenceKey, done, text } when
 //   a tick box changes (the host records it; the next `cards` shows it);
 // - `kin:chore-reward` { memberId, goal, text } to set a reward (goal 0 and
-//   no text removes it).
+//   no text removes it). On the kitchen display the host asks the adult to
+//   confirm before it writes anything (#705); the chart doesn't know.
 // Household text is only ever set as textContent.
 
 const dayFormat = new Intl.DateTimeFormat(undefined, { weekday: "long" });
@@ -246,6 +247,12 @@ class KinChoreChart extends HTMLElement {
     // tablet's keyboard would cover the chart before anyone asked to type.
     if (open) this.querySelector(`[data-focus-key="${card.memberId}:${this.forDisplay ? "goal-more" : "goal"}"]`)?.focus();
     else this.querySelector(`[data-focus-key="${card.memberId}:reward"]`)?.focus();
+  }
+
+  /** Puts the focus back on a child's "Set a reward" button (after the
+   * kitchen display's confirmation closed without saving, #705). */
+  focusReward(memberId) {
+    this.querySelector(`[data-focus-key="${memberId}:reward"]`)?.focus();
   }
 
   rewardEditor(card) {

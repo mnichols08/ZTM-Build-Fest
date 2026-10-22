@@ -29,7 +29,13 @@ documentation only.
   On the display an Adult can also set or change a child's reward (kind 78)
   with 64 px buttons, with Undo (#699), and the fridge has a wall-tablet
   layout: tools beside the door, its notes repeated in large type, no full
-  screen, hover titles or drop-downs (#700).
+  screen, hover titles or drop-downs (#700). Saving or removing a reward on
+  the display, and Undo or Redo of one, first asks for the adult's passkey
+  or password (or the backup key on a device from before accounts), with
+  the same on-device check and dialog as leaving, now shared
+  (`display/leave.js` `askAdult`); cancelled or refused, nothing is
+  written. Ticking chores, shopping and the fridge stay open, and the
+  phone's chart doesn't ask (#705).
 
 - **Family photos** (#673: #674, #675; epic #651,
   [ADR 0022](docs/decisions/0022-family-hub.md) §5). A shared, encrypted

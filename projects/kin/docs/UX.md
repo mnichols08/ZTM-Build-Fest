@@ -3430,7 +3430,18 @@ can tap.
     and **Cancel**. It is the chore chart's own path (`kin:chore-reward` →
     kind 78 `CHORE_REWARD_SET`), and once saved the toast offers **Undo**,
     which sets the previous reward back (or removes a new one) and is refused
-    if the reward changed since. No Join here;
+    if the reward changed since. **Saving or removing a reward, and Undo or
+    Redo of one, first asks for the adult's passkey or password** (#705):
+    the same dialog and on-device check as leaving (below), titled "Change a
+    reward" — "Only the adult this device belongs to can change a child's
+    reward. Confirm with …" — with **Don't change it**. It asks at the
+    moment of saving, not when the editor opens; a device set up before
+    accounts asks for the backup key. A wrong secret is refused calmly and
+    the dialog stays; **Don't change it** (or Escape) closes it, writes
+    nothing, says "The reward wasn't changed." and puts the focus back on the
+    child's reward button; a cancelled Undo stays on the toast. Ticking
+    chores, shopping and the fridge never ask. The phone's chart is
+    unchanged: no question there. No Join here;
   - **lists** — the shopping list (`<kin-display-shopping>`): one big box to
     add, big rows to tick off;
   - **board** — the fridge (#700): the household's own `<kin-fridge>` with
@@ -3466,10 +3477,12 @@ can tap.
   passkey**, **Use my password** and **Stay in display mode**. The secret is
   checked on the device; a wrong one says so and keeps the dialog; the right
   one turns display mode off and Kin reloads into the full layout (still
-  unlocked, #351).
+  unlocked, #351). Its buttons and box are 64 px targets. A child's reward
+  asks through the same dialog (#705, above; `display/leave.js` `askAdult`).
 - **What it never offers** is unchanged by #699: a child's reward is the only
-  setting on the display, the same one an Adult has on the phone's chart;
-  Household settings, admin actions and private storage stay out.
+  setting on the display, the same one an Adult has on the phone's chart,
+  and on the display it needs the adult's secret (#705); Household settings,
+  admin actions and private storage stay out.
 - **Help** on the display says what it is, how to tick, set a reward and
   wake it, and how to leave; "Message an admin" and "Report a problem" aren't offered there.
 - `scripts/kitchen-display-regression.mjs` checks the flow in the browser at
