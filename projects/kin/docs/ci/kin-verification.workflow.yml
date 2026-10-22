@@ -362,14 +362,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # Kin at home (ADR 0025 §10, #713, #714): the home server's single
-  # executables for Linux x64 and arm64, built from the official node
-  # binaries (checked against nodejs.org's SHASUMS256.txt) with this commit's
-  # engine, checksummed, started once to record the start time, and kept as
-  # the kin-home-executables artifact. macOS (#747) and Windows (#748) are
-  # follow-ups. No other job waits for this one.
+  # Kin at home (ADR 0025 §10, #713, #714, #747, #748): the home server's
+  # single executables for Linux x64 and arm64, macOS arm64 and x64 and
+  # Windows x64, all built here on Linux from the official node binaries
+  # (checked against nodejs.org's SHASUMS256.txt) with this commit's engine,
+  # parsed back and checked by the build, checksummed, the Linux x64 one
+  # started once to record the start time, and kept as the
+  # kin-home-executables artifact. The injector tests then run again against
+  # the official binaries the build cached (with llvm-objdump and
+  # llvm-readobj as independent readers when the runner has them). The
+  # Windows service host (#749) shipped beside kin.exe is the one the
+  # service-host job built and ran as a service on Windows. No other job
+  # waits for this one.
   home-executables:
-    needs: verify-linux
+    needs: [verify-linux, service-host]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -390,11 +396,23 @@ jobs:
           path: projects/kin/web/wasm
       - name: Check the engine against its recorded hash
         run: sha256sum -c web/wasm/kin_engine.wasm.sha256
+      - name: Download the Windows service host
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kin-service-host-windows-x64
+          path: ${{ runner.temp }}/service-host
       - name: Build the executables and record their size and start time
         run: |
+          export KIN_SERVICE_HOST_EXE="$RUNNER_TEMP/service-host/kin-service-host.exe"
           node scripts/build-sea.mjs --measure
           cat target/sea/dist/SHA256SUMS target/sea/dist/build-info.json target/sea/dist/start-time.json
           (cd target/sea/dist && sha256sum -c SHA256SUMS)
+      - name: Check the injectors against the official node binaries
+        run: |
+          llvm="$(ls -d /usr/lib/llvm-*/bin 2>/dev/null | sort -V | tail -n 1)"
+          if [ -n "$llvm" ]; then export PATH="$llvm:$PATH"; fi
+          export KIN_SERVICE_HOST_EXE="$RUNNER_TEMP/service-host/kin-service-host.exe"
+          node --test --test-timeout=300000 scripts/build-sea.test.mjs scripts/sea/*.test.mjs
       - name: Keep the executables
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -402,6 +420,207 @@ jobs:
           path: projects/kin/target/sea/dist
           if-no-files-found: error
           retention-days: 7
+
+  # The macOS and Windows executables built on Linux above, run on a Mac
+  # (arm64) and on Windows (#747, #748): Apple's codesign accepts the ad-hoc
+  # signatures, each runs --version, starts the service and answers
+  # --health, and on Windows `kin.exe --print-service` finds the service
+  # host shipped beside it (so --install-service registers the real
+  # service). The same target is also built here, natively, and must be
+  # byte-identical to the Linux build (the build is reproducible across
+  # machines). The x64 Mac executable runs only if the runner has Rosetta.
+  # Every check runs even when an earlier one failed, and reports what went
+  # wrong as an annotation (readable from the checks API). Installing as a
+  # service and rebooting are device checks (#717). No other job waits for
+  # this one.
+  home-executables-run:
+    name: home-executables-run (${{ matrix.target }})
+    needs: home-executables
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin-arm64
+          - os: windows-latest
+            target: win-x64
+    defaults:
+      run:
+        shell: bash
+        working-directory: projects/kin
+    env:
+      # annotate LEVEL TITLE TEXT: the last 30 lines of TEXT as one
+      # annotation (titles avoid ':' and ',').
+      KIN_ANNOTATE: |
+        annotate() {
+          printf '::%s title=%s::%s\n' "$1" "$2" "$(printf '%s\n' "$3" | tail -n 30 | cut -c1-800 | sed -e 's/%/%25/g' -e 's/\r//g' | awk 'BEGIN{ORS="%0A"} {print}')"
+        }
+        # run_limited SECONDS COMMAND...: COMMAND with a time limit (Git for
+        # Windows has timeout; macOS doesn't, so perl's alarm stands in).
+        run_limited() {
+          local limit="$1"; shift
+          if command -v timeout > /dev/null; then timeout "$limit" "$@"; else perl -e 'alarm shift; exec @ARGV or die "exec: $!\n"' "$limit" "$@"; fi
+        }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - name: Download this commit's engine
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kin-engine-wasm
+          path: projects/kin/web/wasm
+      - name: Download the executables built on Linux
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kin-home-executables
+          path: projects/kin/target/sea/linux
+      - name: Download the Windows service host
+        if: runner.os == 'Windows'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kin-service-host-windows-x64
+          path: ${{ runner.temp }}/service-host
+      - name: Check the engine and the executables against their recorded hashes
+        run: |
+          eval "$KIN_ANNOTATE"
+          # macOS has shasum but not always sha256sum.
+          if command -v sha256sum > /dev/null; then sum="sha256sum"; else sum="shasum -a 256"; fi
+          if ! out="$($sum -c web/wasm/kin_engine.wasm.sha256 2>&1)"; then echo "$out"; annotate error "Engine hash" "$out"; exit 1; fi
+          if ! out="$(cd target/sea/linux && $sum -c SHA256SUMS 2>&1)"; then echo "$out"; annotate error "Linux build hashes" "$out"; exit 1; fi
+          echo "$out"
+      - name: Build ${{ matrix.target }} here and start it
+        if: ${{ !cancelled() }}
+        run: |
+          eval "$KIN_ANNOTATE"
+          if [ "${{ runner.os }}" = Windows ]; then export KIN_SERVICE_HOST_EXE="$RUNNER_TEMP/service-host/kin-service-host.exe"; fi
+          status=0
+          node scripts/build-sea.mjs --target "${{ matrix.target }}" --measure > "$RUNNER_TEMP/native-build.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/native-build.txt"
+          if [ "$status" -ne 0 ]; then annotate error "Native ${{ matrix.target }} build failed (exit $status)" "$(cat "$RUNNER_TEMP/native-build.txt")"; exit "$status"; fi
+          annotate notice "Native ${{ matrix.target }} build" "$(cat target/sea/dist/SHA256SUMS target/sea/dist/start-time.json)"
+      - name: The Linux build is byte-identical
+        if: ${{ !cancelled() }}
+        run: |
+          eval "$KIN_ANNOTATE"
+          if [ ! -s target/sea/dist/SHA256SUMS ]; then annotate error "Byte-identical check" "There is no native build to compare (see the build step)."; exit 1; fi
+          # Every file built here (with the service host on Windows) is
+          # listed, with the same hash, in the Linux build's SHA256SUMS.
+          differs=0
+          while read -r hash file; do
+            if grep -qx "$hash  $file" target/sea/linux/SHA256SUMS; then echo "$file: same"; continue; fi
+            differs=1
+            linux="$(grep -- "  $file\$" target/sea/linux/SHA256SUMS | cut -d ' ' -f 1)"
+            detail="$(node -e '
+              const fs = require("fs");
+              const [a, b] = process.argv.slice(1).map((path) => fs.existsSync(path) ? fs.readFileSync(path) : null);
+              if (!a || !b) { console.log("missing from the Linux build"); process.exit(); }
+              let at = 0;
+              while (at < a.length && at < b.length && a[at] === b[at]) at += 1;
+              console.log(`native ${a.length} bytes, Linux ${b.length} bytes, first difference at byte ${at}`);
+            ' "target/sea/dist/$file" "target/sea/linux/$file")"
+            echo "$file differs: native $hash, Linux ${linux:-none}; $detail"
+            annotate error "Not byte-identical $file" "native $hash
+          Linux ${linux:-none}
+          $detail"
+          done < target/sea/dist/SHA256SUMS
+          if [ "$differs" -ne 0 ]; then
+            # Different app files (line endings, say) show as a different
+            # bundle; the same bundle with a different blob or executable
+            # points at the injector or the node binary.
+            annotate error "Build information (native, then Linux)" "$(node -e '
+              for (const path of process.argv.slice(1)) {
+                const { bundle, files, blob, targets } = JSON.parse(require("fs").readFileSync(path, "utf8"));
+                console.log(`bundle ${bundle} (${files} files), blob ${blob.sha256}, node ${targets.map(({ target, node }) => `${target} ${node.sha256}`).join(" ")}`);
+              }
+            ' target/sea/dist/build-info.json target/sea/linux/build-info.json 2>&1)"
+          fi
+          exit "$differs"
+      - name: Apple's codesign accepts the ad-hoc signatures
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: |
+          eval "$KIN_ANNOTATE"
+          failed=0
+          for file in target/sea/linux/kin-[0-9]*-darwin-* target/sea/dist/kin-[0-9]*-darwin-*; do
+            [ -f "$file" ] || continue
+            if out="$(codesign --verify --strict --verbose=4 "$file" 2>&1)"; then
+              annotate notice "codesign --verify accepts $file" "$out"
+            else
+              failed=1
+              annotate error "codesign --verify rejects $file" "$out"
+            fi
+            annotate notice "codesign --display $file" "$(codesign --display --verbose=4 "$file" 2>&1)"
+          done
+          exit "$failed"
+      - name: Diagnose the Mac executable (ours, and re-signed by Apple's codesign)
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: |
+          eval "$KIN_ANNOTATE"
+          chmod +x target/sea/linux/kin-* 2>/dev/null || true
+          for file in target/sea/linux/kin-[0-9]*-darwin-arm64 target/sea/dist/kin-[0-9]*-darwin-arm64; do
+            [ -f "$file" ] || continue
+            # If Apple's own ad-hoc signature runs where ours doesn't, the
+            # signature is the problem; if neither runs, the layout is.
+            copy="$RUNNER_TEMP/apple-signed-$(basename "$(dirname "$file")")"
+            cp "$file" "$copy"
+            resign="$(codesign --force --sign - "$copy" 2>&1)" || annotate error "codesign --sign - failed on a copy of $file" "$resign"
+            for candidate in "$file" "$copy"; do
+              status=0
+              out="$(run_limited 60 "$candidate" --version 2>&1)" || status=$?
+              if [ "$status" -eq 0 ]; then annotate notice "$candidate --version works" "$out"; else annotate error "$candidate --version exited $status" "$out"; fi
+            done
+          done
+          annotate notice "Recent code-signing and kernel messages" "$(log show --last 10m --style compact --predicate 'process == "kernel" OR sender == "AppleMobileFileIntegrity" OR sender == "amfid"' 2>&1 | grep -i -E 'kin|code sign|cs_|amfi' | tail -n 30)"
+      - name: The Linux-built executable runs, starts and answers --health
+        if: ${{ !cancelled() }}
+        run: |
+          eval "$KIN_ANNOTATE"
+          exe="$(ls target/sea/linux/kin-[0-9]*-${{ matrix.target }}* 2>/dev/null | head -n 1)"
+          if [ -z "$exe" ]; then annotate error "Run check" "The Linux build has no ${{ matrix.target }} executable."; exit 1; fi
+          chmod +x target/sea/linux/kin-*
+          version="$(node -p 'require("./package.json").version')"
+          status=0
+          printed="$(run_limited 60 "$exe" --version 2>&1)" || status=$?
+          printed="$(printf '%s' "$printed" | tr -d '\r')"
+          if [ "$status" -ne 0 ] || [ "$printed" != "$version" ]; then annotate error "$exe --version (exit $status)" "expected $version, got: $printed"; exit 1; fi
+          if [ "${{ runner.os }}" = macOS ]; then
+            if arch -x86_64 /usr/bin/true 2>/dev/null; then
+              status=0
+              printed="$(run_limited 60 target/sea/linux/kin-[0-9]*-darwin-x64 --version 2>&1)" || status=$?
+              if [ "$status" -ne 0 ] || [ "$printed" != "$version" ]; then annotate error "darwin-x64 --version under Rosetta (exit $status)" "expected $version, got: $printed"; exit 1; fi
+            else
+              annotate notice "darwin-x64" "No Rosetta on this runner; the x64 Mac executable wasn't run."
+            fi
+          fi
+          export KIN_DATA_DIR="$RUNNER_TEMP/kin-data" KIN_APP_CACHE="$RUNNER_TEMP/kin-cache" KIN_PORT=18731
+          "$exe" > "$RUNNER_TEMP/kin.log" 2>&1 &
+          pid=$!
+          healthy=1
+          for attempt in $(seq 1 60); do
+            if run_limited 30 "$exe" --health > /dev/null 2>&1; then healthy=0; break; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/kin.log"
+          kill "$pid" 2>/dev/null || true
+          if [ "$healthy" -ne 0 ]; then annotate error "$exe didn't answer --health within a minute" "$(cat "$RUNNER_TEMP/kin.log")"; exit 1; fi
+          annotate notice "$exe runs and answers --health" "$(tail -n 5 "$RUNNER_TEMP/kin.log")"
+      - name: kin.exe finds the service host beside it
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: |
+          eval "$KIN_ANNOTATE"
+          if ! ls target/sea/linux/kin-service-host-*-win-x64.exe; then annotate error "Service host" "The Linux build has no kin-service-host-*-win-x64.exe."; exit 1; fi
+          status=0
+          definition="$(run_limited 60 target/sea/linux/kin-[0-9]*-win-x64.exe --print-service 2>&1)" || status=$?
+          echo "$definition"
+          if [ "$status" -ne 0 ] || ! echo "$definition" | grep -q 'sc.exe create' || ! echo "$definition" | grep -q 'kin-service-host.exe'; then
+            annotate error "kin.exe --print-service doesn't use the service host (exit $status)" "$definition"
+            exit 1
+          fi
 
   # The home server's container image (#715): built from deploy/home and
   # started until its own health check passes, as its unprivileged user.

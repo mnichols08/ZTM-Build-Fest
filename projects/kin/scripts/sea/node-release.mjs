@@ -8,13 +8,14 @@ import { gunzipSync } from "node:zlib";
 export const NODE_DIST = "https://nodejs.org/dist";
 
 /** Kin's targets: the node release file and the binary inside it. `format`
- * is the executable format the injector must write. */
+ * is the executable format the injector must write; `machine` is the ELF
+ * e_machine, Mach-O CPU type or PE machine the binary must have. */
 export const TARGETS = Object.freeze({
   "linux-x64": { format: "elf", machine: 62, archive: (v) => `node-v${v}-linux-x64.tar.gz`, entry: (v) => `node-v${v}-linux-x64/bin/node`, suffix: "" },
   "linux-arm64": { format: "elf", machine: 183, archive: (v) => `node-v${v}-linux-arm64.tar.gz`, entry: (v) => `node-v${v}-linux-arm64/bin/node`, suffix: "" },
-  "darwin-arm64": { format: "macho", archive: (v) => `node-v${v}-darwin-arm64.tar.gz`, entry: (v) => `node-v${v}-darwin-arm64/bin/node`, suffix: "" },
-  "darwin-x64": { format: "macho", archive: (v) => `node-v${v}-darwin-x64.tar.gz`, entry: (v) => `node-v${v}-darwin-x64/bin/node`, suffix: "" },
-  "win-x64": { format: "pe", archive: () => "win-x64/node.exe", entry: null, suffix: ".exe" },
+  "darwin-arm64": { format: "macho", machine: 0x0100000c, archive: (v) => `node-v${v}-darwin-arm64.tar.gz`, entry: (v) => `node-v${v}-darwin-arm64/bin/node`, suffix: "" },
+  "darwin-x64": { format: "macho", machine: 0x01000007, archive: (v) => `node-v${v}-darwin-x64.tar.gz`, entry: (v) => `node-v${v}-darwin-x64/bin/node`, suffix: "" },
+  "win-x64": { format: "pe", machine: 0x8664, archive: () => "win-x64/node.exe", entry: null, suffix: ".exe" },
 });
 
 /** The target this machine can run, or null. */

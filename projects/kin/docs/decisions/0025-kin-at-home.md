@@ -13,12 +13,14 @@ is `relay/README.md`), and the packaging and `KIN_MODE` of §9–§10 in part
 (packaging), #718 (control panel), #723 (ACME client), #728 (relay), #733
 (tunnel, home side), #737 (moving a household) and #740 (acceptance). Built
 so far (#713, [HOME-SERVER](../HOME-SERVER.md)): `KIN_MODE` (§9), the
-executables for Linux x64 and arm64 with Kin's own ELF injector, the
-container image, and installing as a service, on Windows as a real
-service run by the Rust service host (#749, `tools/kin-service-host`: std
-only, stopping Kin by closing its stdin), with the Task Scheduler fallback
-when the host is missing; the macOS and Windows executables (#747, #748)
-follow. Built by #733 (`server/home/`,
+executables for Linux x64 and arm64, macOS arm64 and x64 and Windows x64,
+built on any machine with Kin's own ELF, Mach-O and PE injectors (#714,
+#747, #748; the macOS ones with Kin's own ad-hoc signature), the container
+image, and installing as a service, on Windows as a real service run by
+the Rust service host (#749, `tools/kin-service-host`: std only, stopping
+Kin by closing its stdin, shipped beside the Windows executable), with the
+Task Scheduler fallback when the host is missing.
+Built by #733 (`server/home/`,
 [HOME-SERVER](../HOME-SERVER.md#reaching-it-from-anywhere-the-tunnel)): the
 home side of the tunnel (§2) with the home key, name claiming and
 `SET_CAA` (§3, §5), reconnecting with backoff, on wake and on network
@@ -642,7 +644,12 @@ x64 and arm64 (Raspberry Pi), plus a **container image** for NAS and server
 users, with the data directory as a volume (`/data`). Building the SEA uses
 Node's own SEA support; the blob is injected without the `postject` npm
 package (a Kin build script that writes the executable's resource section, or
-Node's built-in builder where the build machine's Node has one). No
+Node's built-in builder where the build machine's Node has one). Built
+(#714, #747, #748): `scripts/sea/elf.mjs` (a note in a new segment),
+`scripts/sea/macho.mjs` (a `NODE_SEA` segment, with an ad-hoc code
+signature from `scripts/sea/codesign.mjs` in place of node's own) and
+`scripts/sea/pe.mjs` (an `RT_RCDATA` resource, node's Authenticode
+certificate removed), all checked by parsing the result back. No
 dependency is added. The launcher stays the only part that starts processes,
 and the service still runs under the permission model; how a SEA passes those
 flags to its own service process is settled in #713: it starts a second

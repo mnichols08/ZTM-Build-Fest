@@ -25,8 +25,30 @@ documentation only.
   unprivileged user with `/data` as a volume and a health check. The
   launcher moves into `server/launcher.mjs` and adds `--health`,
   `--supervise`, `--log-file` and `admin`. CI builds the executables and the
-  image (`home-executables`, `home-container`). macOS (#747) and Windows
-  (#748) executables follow; builds are unsigned for now.
+  image (`home-executables`, `home-container`). Builds are unsigned for
+  now.
+- **Kin at home on macOS and Windows** (#747, #748; story #713,
+  [HOME-SERVER](docs/HOME-SERVER.md)). `scripts/build-sea.mjs` now builds
+  all five targets on any machine, including `darwin-arm64`, `darwin-x64`
+  and `win-x64` from Linux. `scripts/sea/macho.mjs` adds the SEA blob as
+  the `NODE_SEA/__NODE_SEA_BLOB` section Node looks up, moving `__LINKEDIT`
+  and its chained fixups, and `scripts/sea/codesign.mjs` replaces node's
+  signature with an ad-hoc one (SHA-256 page hashes, no certificate), which
+  Apple silicon requires; no Mac or `codesign` is needed.
+  `scripts/sea/pe.mjs` adds the `RT_RCDATA` resource `NODE_SEA_BLOB` in a
+  new resource section and removes node.exe's Authenticode certificate.
+  Every executable is parsed back and checked before it is written. CI
+  builds all five, and `home-executables-run` checks the signatures with
+  `codesign`, runs the Mac and Windows executables and compares them with
+  native builds; the Windows executable ships with the service host (#749)
+  built by the `service-host` job, and CI checks that `kin.exe
+  --print-service` finds it. The blob's assets are sorted and the bundled
+  files keep LF endings, so Linux, macOS and Windows build byte-identical
+  executables. The executable now loads its app files by their real path
+  (it failed to start from a cache under macOS's symlinked temporary
+  folders) and unpacks safely when several copies start at once (Windows
+  refused to rename onto a folder another copy had just written). Still
+  unsigned: Gatekeeper and SmartScreen warn.
 - **Kin runs as a real Windows service** (#749; story #713,
   [ADR 0025](docs/decisions/0025-kin-at-home.md) §10,
   [HOME-SERVER](docs/HOME-SERVER.md)). `tools/kin-service-host` is a small
