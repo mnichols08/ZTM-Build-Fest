@@ -95,7 +95,10 @@ export async function photoAlbumRegressions() {
   check(restored.photoId !== beach.photoId && restored.caption === `Beach ${tag}`, "under a new photo ID, with its caption", restored);
   await until(() => tileOf(restored), "it is back in the grid");
 
-  // The slideshow.
+  // The slideshow. The test browser may report its page as hidden (a
+  // background tab), so visibility is set here and given back at the end.
+  let pageHidden = false;
+  Object.defineProperty(document, "hidden", { configurable: true, get: () => pageHidden });
   album.slideshowButton.click();
   const showing = () => album.frame.querySelector(".photo-frame-slide.is-showing");
   await until(() => album.slideshow.open && showing()?.querySelector("img")?.getAttribute("src"), "the slideshow shows a photo");
@@ -106,10 +109,10 @@ export async function photoAlbumRegressions() {
   check(reduce ? fade === "0s" : fade !== "0s", "it crossfades, except with reduced motion", { reduce, fade });
   check(album.frame.querySelector(".photo-frame-pause")?.getAttribute("aria-pressed") === "false", "Pause is offered");
   // Hidden page: it pauses; shown again: it carries on.
-  Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+  pageHidden = true;
   document.dispatchEvent(new Event("visibilitychange"));
   check(album.frame.timer === 0, "hidden pauses the slideshow");
-  delete document.hidden;
+  pageHidden = false;
   document.dispatchEvent(new Event("visibilitychange"));
   check(album.frame.timer !== 0, "visible again, it carries on");
   // A tap returns.
@@ -117,6 +120,7 @@ export async function photoAlbumRegressions() {
   await until(() => !album.slideshow.open, "a tap closes the slideshow");
   check(document.activeElement === album.slideshowButton, "focus returns to Slideshow");
   check(album.frame.urls.every((url) => url === null), "the slideshow lets go of its images");
+  delete document.hidden;
 
   // Share sheet: a shared photo can go to Family photos.
   app.ctx.navigation.navigate("#today");
