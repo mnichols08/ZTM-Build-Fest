@@ -75,7 +75,9 @@ export async function photoAlbumRegressions() {
   check(album.viewerTitle.textContent === `Beach ${tag}`, "the viewer shows the caption", album.viewerTitle.textContent);
   check(album.viewerMeta.textContent.startsWith("Added by You"), "and who added it", album.viewerMeta.textContent);
   check(!album.removeButton.hidden, "whoever added it may remove it");
-  check(album.viewerImage.naturalWidth > 0 || album.viewerImage.complete, "the image decodes");
+  // The viewer image decodes asynchronously (decoding="async", a blob URL), so
+  // wait for it rather than checking once; a broken image never gets a width.
+  await until(() => album.viewerImage.complete && album.viewerImage.naturalWidth > 0, "the image decodes");
 
   // Remove, then Undo.
   album.removeButton.click();
