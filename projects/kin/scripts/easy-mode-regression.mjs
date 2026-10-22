@@ -219,7 +219,7 @@ export async function easyModeRegressions(client, { until }) {
   assert.deepEqual(nav.lists, ["todo", "shopping"], "Lists keeps To do and Shopping");
   await go("#household");
   nav = await navigation();
-  assert.deepEqual(nav.household, ["hub"], "Household keeps its overview");
+  assert.deepEqual(nav.household, ["hub", "photos"], "Household keeps its overview and Family photos (#673)");
   assert.ok(nav.routinesOnHub, "Routines is one tap away on the overview");
   await go("#routines");
   await go("#lists/staples");
