@@ -157,5 +157,13 @@ export async function photoAlbumRegressions() {
   await app.syncCoordinator?.syncNow?.();
   await idle();
   app.ctx.navigation.navigate("#today");
+  const open = [...document.querySelectorAll("dialog[open]")].map((dialog) => dialog.className);
+  check(open.length === 0, "no dialog is left open", open);
+  const probe = document.createElement("input");
+  app.pages.get("today").append(probe);
+  probe.focus();
+  const focused = document.activeElement === probe;
+  probe.remove();
+  check(focused && !app.busy && !app.controlFieldset?.disabled, "focus still moves", { busy: app.busy, fieldset: app.controlFieldset?.disabled, hasFocus: document.hasFocus(), active: document.activeElement?.outerHTML?.slice(0, 120), inert: [...document.querySelectorAll("[inert]")].map((node) => node.tagName + "." + node.className) });
   return "PASS family photos: added with captions, thumbnails, viewer, remove with Undo, slideshow (crossfade, pause when hidden, tap returns), share sheet and chat (#673)";
 }
