@@ -1571,3 +1571,64 @@ fn the_range_merges_routines_and_next_countdowns() {
         at(20280301, 0, 0)
     );
 }
+
+// #660: the range carries every meal slot, by date then slot, with the cook
+// on dinners only.
+#[test]
+fn range_meals_include_every_slot() {
+    use crate::meals::MealSlot as Planner;
+    let mut home = Household::new();
+    let meal = |date_value: u32, slot: Planner, name: &str| {
+        C::Meal(EventKind::MealSet {
+            date: date(date_value),
+            slot,
+            recipe_id: None,
+            name: name.into(),
+        })
+    };
+    home.run_as(ALEX, meal(20261007, Planner::Breakfast, "Porridge"))
+        .unwrap();
+    home.run_as(ALEX, meal(20261006, Planner::Snack, "Apples"))
+        .unwrap();
+    home.run_as(ALEX, meal(20261006, Planner::Lunch, "Soup"))
+        .unwrap();
+    home.run_as(
+        ALEX,
+        C::Meal(EventKind::DinnerSet {
+            date: date(20261006),
+            recipe_id: None,
+            name: "Tacos".into(),
+        }),
+    )
+    .unwrap();
+    home.run_as(
+        ALEX,
+        C::Meal(EventKind::DinnerCookSet {
+            date: date(20261006),
+            member_id: Some(ActorId(SAM)),
+        }),
+    )
+    .unwrap();
+    // Outside the range.
+    home.run_as(ALEX, meal(20261012, Planner::Lunch, "Later"))
+        .unwrap();
+    let state = home.state();
+    let meals = meals_in(&state, date(20261005), date(20261011));
+    assert_eq!(
+        meals
+            .iter()
+            .map(|meal| (
+                meal.date.encoded(),
+                meal.slot,
+                meal.name.as_str(),
+                meal.cook
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (20261006, MealSlot::Lunch, "Soup", None),
+            (20261006, MealSlot::Snack, "Apples", None),
+            (20261006, MealSlot::Dinner, "Tacos", Some(ActorId(SAM))),
+            (20261007, MealSlot::Breakfast, "Porridge", None),
+        ]
+    );
+}

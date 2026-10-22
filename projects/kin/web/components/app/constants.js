@@ -19,6 +19,8 @@ export const DESTINATION_DESCRIPTIONS = Object.freeze({
   // When the household's chat policy leaves this member without Chat (#123).
   updatesWithoutChat: "Leave a note for someone in Handoffs, and save bigger topics in To talk about for a calm moment.",
   household: "Notes, people and devices, privacy and recovery, and how Kin looks for you.",
+  // The Calendar (#661): This week grown into Day, Week and Month views.
+  week: "Family events in each person's colour, with things planned, routines and meals, by week, day or month.",
 });
 // The Household overview's links (#266), with one plain line each.
 export const HOUSEHOLD_HUB_LINKS = Object.freeze([

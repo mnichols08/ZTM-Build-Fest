@@ -14,6 +14,8 @@ const DESTINATIONS = Object.freeze([
   ["photos", "Add to family photos"],
   // A member's own journal (#508): private, never household data.
   ["journal", "Add to my journal"],
+  // A calendar file (.ics, #660): its events, after a preview.
+  ["calendar", "Add to the calendar"],
 ]);
 
 class KinShareSheet extends HTMLElement {

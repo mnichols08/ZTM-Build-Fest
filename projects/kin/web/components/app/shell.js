@@ -242,6 +242,12 @@ export class ShellBuilder {
     // Bring a list into Kin (#452).
     this.app.importer = document.createElement("kin-import");
     this.app.append(this.app.importer);
+    // The family calendar's dialogs (#662, #660): adding or changing an
+    // event, and importing a calendar file.
+    this.app.eventEditor = document.createElement("kin-event-editor");
+    this.app.append(this.app.eventEditor);
+    this.app.calendarImport = document.createElement("kin-calendar-import");
+    this.app.append(this.app.calendarImport);
     this.ctx.report.element();
     this.app.attachmentInput = this.ctx.attachments.buildAttachmentInput();
     this.app.append(this.app.attachmentInput);

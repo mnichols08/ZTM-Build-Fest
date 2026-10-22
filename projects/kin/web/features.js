@@ -17,6 +17,8 @@
 // inside other pages is marked in the DOM with `data-feature="<id>"`, which
 // app.css hides while that feature is off.
 
+import { SEGMENTS } from "./routes.js";
+
 const feature = (id, bit, label, description, routes = []) =>
   Object.freeze({ id, bit, label, description, routes: Object.freeze(routes) });
 
@@ -26,7 +28,9 @@ export const FEATURES = Object.freeze([
   feature("meals", 2, "Meals", "Plan the week's meals, keep favourite recipes, and see today's meals on Today.", ["lists/meals"]),
   feature("routines", 3, "Routines", "Things that repeat, like taking the bins out on Tuesday, and reusable checklists.", ["routines"]),
   feature("turns", 4, "Taking turns", "Routines that rotate between people, so everyone knows whose turn it is.", []),
-  feature("week", 5, "This week", "The next seven days in one list, reached from Today.", ["week"]),
+  // This week grew into the Calendar (#661): bit 5 stays the Week view's
+  // switch; the Calendar (bit 14) owns the Day and Month views.
+  feature("week", 5, "This week", "The next seven days in one list, reached from Today.", ["week/week"]),
   feature("talk", 6, "Talk later", "A list of things to talk about at a calmer moment, from Chat or Updates.", []),
   feature("sections", 7, "Store sections", "Sort the shopping list by the aisles of your shop.", []),
   feature("shopping-mode", 8, "Shopping mode", "A big, simple shopping list to tick off in the shop.", []),
@@ -35,7 +39,10 @@ export const FEATURES = Object.freeze([
   feature("sitter", 11, "Sitter page", "A welcome page for babysitters and guests, with what they need to know.", ["household/sitter", "foryou"]),
   feature("journal", 12, "Journal", "Each person's own private journal. Only they can see it.", ["journal"]),
   feature("mine", 13, "Just for me", "Each person's own private list. Only they can see it.", ["lists/mine"]),
-  // 14 is the Calendar (ADR 0022 §2, its own story).
+  // The family calendar (#660, ADR 0022 §2): events in each person's
+  // colour, the Day and Month views, today's events and countdowns.
+  feature("calendar", 14, "Calendar", "Family events in each person's colour, by day, week or month, with countdowns on Today.", ["week/day", "week/month"]),
+  // The chore chart (#676, ADR 0022 §6).
   feature("chores", 15, "Chore chart", "The children's jobs for the week with big tick boxes, their points and rewards.", ["chores"]),
   feature("photos", 16, "Family photos", "A shared album of family photos, with a slideshow.", ["household/photos"]),
 ]);
@@ -95,17 +102,29 @@ export function routeOwners(route) {
 }
 
 /** Whether a route is available with `off` switched off: it has no owner,
- * or one of its owners is on. The generic hook navigation, Help and the
- * other destinations ask (ADR 0021). */
+ * or one of its owners is on. A whole page with segments ("week") is
+ * available while any of its segments is. The generic hook navigation,
+ * Help and the other destinations ask (ADR 0021). */
 export function routeAvailable(route, off) {
+  const page = typeof route === "string" ? route.split("/")[0] : route?.page;
+  const segment = typeof route === "string" ? route.split("/")[1] ?? null : route?.segment ?? null;
   const owners = routeOwners(route);
+  if (!segment && owners.length === 0 && SEGMENTS[page])
+    return SEGMENTS[page].some((entry) => routeAvailable({ page, segment: entry.id }, off));
   return owners.length === 0 || owners.some((entry) => isFeatureOn(off, entry.id));
+}
+
+/** The first segment of `page` that is available, or null. */
+export function firstAvailableSegment(page, off) {
+  return (SEGMENTS[page] ?? []).find((entry) => routeAvailable({ page, segment: entry.id }, off))?.id ?? null;
 }
 
 /** The switched-off feature that makes a route unavailable, or null. */
 export function blockingFeature(route, off) {
   if (routeAvailable(route, off)) return null;
-  return routeOwners(route)[0] ?? null;
+  const page = typeof route === "string" ? route.split("/")[0] : route?.page;
+  const pageOwners = FEATURES.filter((entry) => entry.routes.some((owned) => owned.split("/")[0] === page));
+  return routeOwners(route)[0] ?? pageOwners[0] ?? null;
 }
 
 /** Joins labels the way a person would say them: "Meals", "Meals and
@@ -163,9 +182,9 @@ export function searchableHousehold(household, off) {
 
 /** Share sheet destinations (kin-share-sheet kinds) without switched-off
  * features: "chat" (Chat), "note" (Notes & reference), "journal",
- * "photos" (Family photos). */
+ * "calendar" (an .ics file, #660), "photos" (Family photos, #673). */
 export function shareDestinations(allowed, off) {
-  const owners = { chat: "chat", note: "notes", journal: "journal", photos: "photos" };
+  const owners = { chat: "chat", note: "notes", journal: "journal", calendar: "calendar", photos: "photos" };
   return new Set([...allowed].filter((kind) => !owners[kind] || isFeatureOn(off, owners[kind])));
 }
 

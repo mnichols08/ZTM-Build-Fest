@@ -42,7 +42,8 @@ export class StatusController {
     if (this.app.detail?.closest(".detail-sheet")) this.app.detail.disabled = controlsDisabled;
     if (this.app.lockButton) this.app.lockButton.disabled = isBusy;
     if (this.app.shoppingMode) this.app.shoppingMode.disabled = controlsDisabled;
-    if (this.app.week) this.app.week.disabled = controlsDisabled;
+    if (this.app.calendar) this.app.calendar.disabled = controlsDisabled;
+    else if (this.app.week) this.app.week.disabled = controlsDisabled;
     if (this.app.choreChart) this.app.choreChart.disabled = controlsDisabled;
     if (this.app.sitterEditor) this.app.sitterEditor.disabled = controlsDisabled;
     this.app.albumView?.update?.({ disabled: controlsDisabled });

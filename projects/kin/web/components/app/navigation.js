@@ -5,7 +5,7 @@ import { recordDiagnostic } from "../../diagnostics/ring-buffer.js";
 import { errorName } from "../../diagnostics/global.js";
 import { listSegmentForClassification, resolveRoute, ROUTE_CHANGE_EVENT, routeHash } from "../../routes.js";
 import { isTypingContext, shortcutForKey } from "../../keyboard-commands.js";
-import { unavailableLine } from "../../features.js";
+import { firstAvailableSegment, unavailableLine } from "../../features.js";
 
 export class NavigationController {
   constructor(ctx) {
@@ -39,10 +39,18 @@ export class NavigationController {
     // A switched-off feature (#625, ADR 0021): its routes, links and
     // shortcuts open Today with a calm line. Simple view has its own list.
     if (!this.app.simpleView && !this.ctx.features.routeAvailable(route)) {
-      const blocked = this.ctx.features.blocking(route);
-      route = resolveRoute({ hash: "#today" });
+      // The Calendar's views are one page (#661): a switched-off view (the
+      // Week view with only the Calendar on) opens the first one that is
+      // on. Other pages' segments are places of their own and open Today.
+      const segment = route.page === "week" ? firstAvailableSegment(route.page, this.ctx.features.off) : null;
+      if (segment) {
+        route = resolveRoute({ hash: routeHash(route.page, segment) });
+      } else {
+        const blocked = this.ctx.features.blocking(route);
+        route = resolveRoute({ hash: "#today" });
+        this.ctx.status.setStatus(unavailableLine(blocked));
+      }
       history.replaceState(null, "", route.hash);
-      this.ctx.status.setStatus(unavailableLine(blocked));
     }
     // Old Talk links with Talk later off open Chat without its list.
     if (route.topics && !this.ctx.features.isOn("talk")) {
@@ -84,7 +92,11 @@ export class NavigationController {
     this.ctx.easy?.routeShown(route);
     this.ctx.help?.routeShown(route);
     if (route.page === "routines") this.app.routines.view = route.segment;
-    if (route.page === "week") void this.ctx.week?.refresh();
+    // The Calendar (#661): its view is the route's segment.
+    if (route.page === "week") {
+      this.ctx.calendar?.routeShown(route);
+      void this.ctx.week?.refresh();
+    }
     if (route.page === "chores" || route.page === "routines") void this.ctx.chores?.refresh();
     void this.ctx.sitter?.refresh();
     void this.ctx.album?.refresh();

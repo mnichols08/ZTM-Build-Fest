@@ -24,6 +24,32 @@ documentation only.
   encrypted on the device, kept in their own device database and counted in
   their own service quota. Household feature "Family photos" (bit 16), Help
   and easy mode. Browser regression `scripts/photo-album-regression.mjs`.
+- **Calendar views in each person's colour** (#660: #661, #662, #663, #664;
+  epic #651, [ADR 0022](docs/decisions/0022-family-hub.md) §1–2). This week
+  grows into the **Calendar** with **Week**, **Day** and **Month** views
+  (`#week`, `#week/day`, `#week/month`), still reached from Today, which
+  stays marked. Events show in each attendee's colour with their names,
+  in the viewer's own time (`Intl`; floating times as written), beside
+  meals, planned items and routines; an all-day row, a day timeline with
+  overlaps side by side, a month grid, and keyboard navigation between days,
+  weeks and months. **Add event** (what, when, who; place, notes, repeats
+  and a countdown under More details), change this one or all, cancel this
+  one or all, Undo and Redo, and a calm message when the event changed on
+  another device. **My calendar colour** (twelve colours, or Kin's choice
+  by join order) under Identity & appearance. **Today** shows today's
+  events and the next countdown. **Import a calendar file** (and **Add to
+  the calendar** from the share sheet for `.ics` files) previews the count,
+  then saves; importing again updates by source UID. Household feature
+  **Calendar** (bit 14); This week (bit 5) stays the Week view's switch.
+  `kin_calendar_range` now lists breakfast, lunch and snacks beside dinners
+  (no format change). Components `<kin-calendar>`, `<kin-calendar-today>`,
+  `<kin-event-editor>`, `<kin-member-colour>`, `<kin-calendar-import>`.
+  Synced outside calendars (#668, `web/calendar/external.js`) show
+  read-only with their source label in every view and on Today, and their
+  settings follow the Calendar switch. Unit tests for zones (DST), ranges, layout, colours,
+  repeats, import plans and undo; browser regression
+  `scripts/calendar-regression.mjs`. UX §8.16, Help.
+
 - **The chore chart** (#676: #677, #678; epic #651,
   [ADR 0022](docs/decisions/0022-family-hub.md) §6). From Today (and Simple
   view for children): a card per child in their colour with today's jobs —

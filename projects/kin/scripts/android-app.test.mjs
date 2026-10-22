@@ -60,7 +60,8 @@ test("the package name and origin are set once, in android/gradle.properties", (
 
 test("the manifest opens the origin, shares, delegates notifications and falls back to a Custom Tab", () => {
   assert.deepEqual(checkManifest(mergedManifest(), expected), []);
-  assert.deepEqual(expected.shareMimeTypes, ["text/plain", "image/*", "application/pdf"]);
+  // Calendar files (.ics) go to the calendar (#660).
+  assert.deepEqual(expected.shareMimeTypes, ["text/plain", "image/*", "application/pdf", "text/calendar"]);
   assert.equal(expected.shareTarget.action, "https://kin.journeytocode.io/share");
   assert.equal(webManifest.share_target.method, "POST");
   assert.equal(webManifest.share_target.enctype, "multipart/form-data");

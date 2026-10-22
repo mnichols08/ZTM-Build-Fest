@@ -34,6 +34,7 @@ import { ShareController } from "./share.js";
 import { BadgeController } from "./badge.js";
 import { PrivatePrefsController } from "./private-prefs.js";
 import { WeekController } from "./week.js";
+import { CalendarController } from "./calendar.js";
 import { ChoresController } from "./chores.js";
 import { EasyController } from "./easy.js";
 import { HelpController } from "./help.js";
@@ -96,6 +97,9 @@ export function createAppContext(app) {
   ctx.easy = new EasyController(ctx);
   ctx.help = new HelpController(ctx);
   ctx.week = new WeekController(ctx);
+  // The family calendar (#660, ADR 0022): views, Today, colours, import.
+  // Outside calendars (#668) reach the views through calendar/external.js.
+  ctx.calendar = new CalendarController(ctx);
   // The chore chart (#676, ADR 0022 §6).
   ctx.chores = new ChoresController(ctx);
   ctx.sitter = new SitterController(ctx);
@@ -326,6 +330,17 @@ export function initializeAppState(app) {
     // Help on every screen (#621): a page's or a dialog's Help button.
     app.onOpenHelp = (event) => app.ctx.help.open(event.detail ?? {});
     app.onModeChange = () => app.ctx.records.saveMode(app.modeSelect.value);
+    // The family calendar (#660): <kin-calendar>, the event editor, the
+    // colour setting and importing a calendar file.
+    app.onCalendarFocus = (event) => app.ctx.calendar.handleFocus(event.detail ?? {});
+    app.onCalendarOpenEvent = (event) => app.ctx.calendar.openEvent(event.detail ?? {});
+    app.onCalendarNewEvent = (event) => app.ctx.calendar.openNew(event.detail ?? {});
+    app.onCalendarImport = (event) => app.ctx.calendar.openImport(event.detail ?? {});
+    app.onCalendarSave = async (event) => event.detail?.done?.(await app.ctx.calendar.save(event.detail));
+    app.onCalendarCancel = async (event) => event.detail?.done?.(await app.ctx.calendar.cancel(event.detail));
+    app.onSetMemberColour = async (event) => event.detail?.done?.(await app.ctx.calendar.setColour(event.detail?.colour ?? null));
+    app.onCalendarImportFile = async (event) => event.detail?.done?.(await app.ctx.calendar.previewImport(event.detail?.file));
+    app.onCalendarImportConfirm = async (event) => event.detail?.done?.(await app.ctx.calendar.confirmImport());
     app.pulseTimer = null;
     app.catchUpCursor = null;
     app.snapshotBoundary = null;

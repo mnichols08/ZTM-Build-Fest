@@ -80,7 +80,9 @@ export class ShareController {
     // Destinations of switched-off features leave the sheet (#625).
     // Family photos (#673) when a photo came through.
     const photos = (shared.files ?? []).filter((file) => /^image\/(jpeg|png|webp)$/.test(file.type ?? ""));
-    const allowed = shareDestinations(["todo", "shopping", "note", "handoff", ...(chatOpen ? ["chat"] : []), ...(journalOpen ? ["journal"] : []), ...(photos.length ? ["photos"] : [])], this.ctx.features.off);
+    // A calendar file (#660) can go to the calendar, after a preview.
+    const calendarFile = (shared.files ?? []).find((file) => file.type === "text/calendar" || /\.ics$/i.test(file.name ?? "")) ?? null;
+    const allowed = shareDestinations(["todo", "shopping", "note", "handoff", ...(chatOpen ? ["chat"] : []), ...(journalOpen ? ["journal"] : []), ...(photos.length ? ["photos"] : []), ...(calendarFile ? ["calendar"] : [])], this.ctx.features.off);
     const sheet = this.app.shareSheet;
     if (!sheet) return;
     const kind = await sheet.choose({ text, link, files, allowed });
@@ -90,6 +92,10 @@ export class ShareController {
     }
     if (kind === "photos") {
       await this.ctx.album.offer(photos);
+      return;
+    }
+    if (kind === "calendar") {
+      this.ctx.calendar.openImport({ file: calendarFile });
       return;
     }
     if (kind === "journal") {

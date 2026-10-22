@@ -1806,6 +1806,99 @@ included, and not the service.
   to journal (PRODUCT-BOUNDARIES). Entries never appear in household
   search, Today, chat, catch-up or household exports.
 
+## 8.16 The family calendar (#660, ADR 0022 §1–2)
+
+This week grew into the **Calendar**. It is reached from Today (the This
+week link, `#week`) and keeps **Today** marked in the navigation: there is
+no sixth destination.
+
+- **Three views** as the page's tabs: **Week** (`#week`, the default),
+  **Day** (`#week/day`) and **Month** (`#week/month`). A toolbar names the
+  period ("This week", "Week of Monday 12 October", "Tuesday 6 October",
+  "October 2026") with **‹ Previous**, **Today** and **Next ›**, and
+  **Add event**.
+  - **Week** is This week's list: seven days from today ("today first"),
+    each starting with its events, then meals, planned items (tick, Move
+    to…, Details), routines and maintenance. Weeks step by seven days.
+  - **Day** has an **All day** box (all-day events, meals, planned items and
+    routines) above the day hour by hour (from 7:00 to 21:00, or wider to
+    fit). Overlapping events sit side by side. An empty hour is a button
+    that adds an event there; a line marks the time now.
+  - **Month** is a grid of six weeks. Each day shows up to three events
+    with their colours (on a phone, colours and a count), "+2 more", and
+    how many other things fall on it. Pressing a day opens it in Day.
+  - A **row of the seven days** sits above Week and Day: each says its date,
+    "today" and how many events it has. In Week it brings that day into
+    view; in Day it shows it.
+- **Keyboard.** In the row of days and the month grid, one day is in the
+  tab order. The arrow keys move between days (up and down by a week in
+  the grid), Home and End go to the start and end of the week, Page Up and
+  Page Down to the previous or next week (month in Month), Enter opens a
+  month day.
+- **Screen readers** hear each event as "title, date, time, for whom, at
+  where", plus "Repeats", "Cancelled", "your time; set in Europe/London" or
+  the outside calendar's name when they apply. Month days are read as
+  "Tuesday 6 October, today, 3 events, …".
+- **Times.** An event keeps its own zone; Kin shows it in the viewer's own
+  time (`Intl`), so 9:00 in London is 4:00 for someone in New York. Times
+  set without a zone (some imported ones) are shown as written. All-day
+  events are dates and never move.
+- **Colours by person.** Every event shows a small bar in each attendee's
+  colour **and their names** ("You and Sam"); an event for nobody in
+  particular is "Everyone", with a striped neutral bar. Colour is never the
+  only signal. **My calendar colour** (Household › Identity & appearance)
+  offers twelve named colours and **Kin's choice** (a default by join
+  order); everyone's colours are listed beneath. Each colour has a light-
+  and a dark-theme value with at least 3:1 against Kin's surfaces; in
+  forced colours they become outlined system colours.
+- **Adding** is a few taps: **What**, **Day**, **All day** or **Starts** and
+  **Ends**, and **Who** (you are ticked; nobody means everyone). **More
+  details** holds **Last day** (several days), **Where**, **Notes**,
+  **Repeat** and **Count down to this on Today**.
+- **Repeat** follows the engine's subset: every N days, weeks (on chosen
+  weekdays), months (on day 13, the second Tuesday, the last Tuesday or the
+  last day, as the start date allows) or years; ending never, after a number
+  of times or on a date. A line says it in words ("Every week on Monday and
+  Wednesday, 10 times").
+- **Changing** a repeating event asks **Change: Just this one / All of
+  them**. "Just this one" cancels that occurrence and saves a linked event
+  for it; "All of them" moves the series by as many days as the occurrence
+  moved. **Cancel…** asks **Just this one** or **All of them** (a one-off
+  event: **Cancel it**). Every change offers **Undo** (and then Redo).
+- **Changed elsewhere.** If someone changed the event on another device
+  while the editor was open, nothing is saved; the editor says so and offers
+  **Show the latest** or **Keep my changes**. A change the household refused
+  meanwhile (cancelled elsewhere) is said plainly, and the calendar shows
+  what is there now.
+- **Today** shows **Today's events** (all-day first, then by time) under
+  Tonight, and the next countdown: "12 days until Trip", "1 day until
+  Trip", "Trip is today". With nothing on, "Nothing on the calendar today."
+  and **Open the calendar**.
+- **Importing a calendar file.** **Import a calendar file…** under the
+  calendar, or sharing an `.ics` file to Kin (**Add to the calendar** in the
+  share sheet), opens a dialog: choose the file, see "12 events from Kids:
+  10 new, 2 changed." (and what is left out or simplified) before anything
+  is saved, then **Import 12 events**. The file is read on this device.
+  Importing the same file again updates the events by their source UID and
+  never doubles them ("12 already in Kin"); an imported event the household
+  had cancelled comes back. One Undo takes back the whole import.
+- **Outside calendars** synced by the service (#668) show read-only in
+  every view and on Today (`web/calendar/external.js`): dashed, with their
+  source label ("From Google"), never editable here. Their settings
+  (Identity & appearance) leave with the Calendar switch.
+- **Easy mode** shows the Day view as a list ("All day", "At set times")
+  instead of hours, with bigger text and day buttons; Month waits in the
+  tabs until it is used. **Help** has a topic for each view, for the event
+  editor and for importing.
+- **Feature switches.** **Calendar** (bit 14) owns Day, Month, events,
+  Today's events and countdown, the colour setting and importing. **This
+  week** (bit 5) owns the Week view. With only the Calendar on, `#week`
+  opens Day; with only This week on, Week is This week as before.
+- **Reuse.** `<kin-calendar>` (with `views="day week"`, `compact` and
+  `readonly`) and `<kin-calendar-today>` only draw what they are given and
+  ask for the rest with events, so the kitchen display (#669) can embed
+  them.
+
 # 9. States every relevant screen must handle
 
 | State | User-facing behavior |

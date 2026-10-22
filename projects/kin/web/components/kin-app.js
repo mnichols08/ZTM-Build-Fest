@@ -7,6 +7,11 @@ import "./kin-chat-share.js";
 import "./kin-share-sheet.js";
 import "./kin-shopping-mode.js";
 import "./kin-week.js";
+import "./calendar/kin-calendar.js";
+import "./calendar/kin-calendar-today.js";
+import "./calendar/kin-event-editor.js";
+import "./calendar/kin-member-colour.js";
+import "./calendar/kin-calendar-import.js";
 import "./kin-chore-chart.js";
 import "./kin-chore-adults.js";
 import "./kin-just-for-me.js";
@@ -111,6 +116,12 @@ const ELEMENT_EVENTS = [
   ["kin:publish-install-identity", "onPublishInstallIdentity"], ["kin:withdraw-install-identity", "onWithdrawInstallIdentity"],
   ["keydown", "onDetailKeydown"], ["kin:change-routine-schedule", "onChangeRoutineSchedule"],
   ["kin:open-routine-schedule", "onOpenRoutineSchedule"],
+  // The family calendar (#660).
+  ["kin:calendar-focus", "onCalendarFocus"], ["kin:calendar-open-event", "onCalendarOpenEvent"],
+  ["kin:calendar-new-event", "onCalendarNewEvent"], ["kin:calendar-import", "onCalendarImport"],
+  ["kin:calendar-save", "onCalendarSave"], ["kin:calendar-cancel", "onCalendarCancel"],
+  ["kin:set-member-colour", "onSetMemberColour"], ["kin:calendar-import-file", "onCalendarImportFile"],
+  ["kin:calendar-import-confirm", "onCalendarImportConfirm"],
 ];
 // Document listeners: activity resets auto-lock; shortcuts; visibility wake.
 const DOCUMENT_EVENTS = [

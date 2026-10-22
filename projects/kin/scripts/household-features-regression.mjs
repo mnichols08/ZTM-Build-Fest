@@ -55,7 +55,7 @@ export async function householdFeaturesRegressions() {
   const switches = [...page.querySelectorAll("input.features-switch")];
   // One switch per feature in web/features.js, however many there are.
   const featureCount = (await import("/features.js")).FEATURES.length;
-  check(switches.length === featureCount && switches.every((input) => input.checked && input.getAttribute("role") === "switch"), "a switch per feature, all on", [switches.length, featureCount]);
+  check(switches.length === featureCount && switches.every((input) => input.checked && input.getAttribute("role") === "switch"), "one switch per feature, all on", [switches.length, featureCount]);
   for (const input of switches) {
     const label = page.querySelector(`label[for="${input.id}"]`);
     const description = document.getElementById(input.getAttribute("aria-describedby"));

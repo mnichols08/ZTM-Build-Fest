@@ -814,8 +814,10 @@ tuned for printed codes under heavy blur.
   context's date to 400 days on, in the range or not. Events are those an
   occurrence or the countdown names, or all of them with flag bit 0 (editing
   a series; finding an earlier import by source UID). Items, routines and
-  meals are as KWKD has them over the range; only dinners exist today, and
-  meal slots 1–3 arrive with kinds 80–82 without a format change. At most
+  meals are as KWKD has them over the range, except that meals include
+  breakfast, lunch and snacks (kinds 80–81) beside dinners since #660, by
+  date then KCAL slot (1 breakfast, 2 lunch, 3 snack, 4 dinner; a cook only
+  on dinners), with no format change. At most
   2,000 events and 5,000 occurrences; the earliest are kept. JavaScript
   decodes it with `decodeCalendarRange` (`kin-calendar.js`).
 - **KICS v1** (an iCalendar file as Kin events, `kin_ical_parse`, #666,

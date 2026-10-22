@@ -381,6 +381,63 @@ export function inverseEntry(entry, before, after) {
   }
 }
 
+// ---- The family calendar (#660) -----------------------------------------
+// Calendar events aren't in the projection: the calendar controller reads
+// them from KCAL. A calendar entry carries the steps that reverse it and
+// the steps that redo it ({ command, optional }), worked out when the
+// change was made, and a mark of each event (or colour) it touched as the
+// change left it. Undo runs only while every mark still matches; otherwise
+// someone changed it since and it is left alone. `next` counts the steps
+// already run, so a run that stopped part-way resumes where it left off.
+
+/** What an event looks like now, as a comparable string: its canonical
+ * fields and what is cancelled of it. Null when there is no such event. */
+export function calendarEventMark(event) {
+  if (!event) return null;
+  const { cancelled = false, cancelledThroughSeries = false, cancelledStarts = [], ...saved } = event;
+  const starts = cancelledStarts.map((start) => `${start.date}:${start.minute}`).sort().join(",");
+  return `${JSON.stringify(saved)}|${cancelled ? 1 : 0}${cancelledThroughSeries ? 1 : 0}|${starts}`;
+}
+
+/** The marks of every event and member colour in a KCAL read (allEvents):
+ * Map key → mark, keyed by event ID or "colour:<memberId>". */
+export function calendarMarks(range) {
+  const marks = new Map();
+  for (const event of range?.events ?? []) marks.set(event.eventId, calendarEventMark(event));
+  for (const [memberId, colour] of range?.colours ?? []) marks.set(`colour:${memberId}`, String(colour));
+  return marks;
+}
+
+/** A calendar change that can be undone: `undo` and `redo` are step lists,
+ * `keys` the events (or "colour:<id>") it touched, `marks` their marks
+ * after the change. */
+export function calendarEntry({ label, undo, redo, keys, marks }) {
+  return {
+    kind: "calendar", label, steps: undo, back: redo, next: 0,
+    expect: keys.map((key) => [key, marks.get(key) ?? null]),
+  };
+}
+
+/** "ready", "conflict" (changed since) or "gone" (no longer there). A
+ * colour back at the default has no mark, which matches null. */
+export function calendarReversalStatus(entry, marks) {
+  if (entry.next > 0) return "ready";
+  for (const [key, mark] of entry.expect) {
+    const now = marks.get(key) ?? null;
+    if (now === mark) continue;
+    return now === null && !key.startsWith("colour:") ? "gone" : "conflict";
+  }
+  return "ready";
+}
+
+/** The entry for the other stack after a finished run. */
+export function calendarInverse(entry, marks) {
+  return {
+    kind: "calendar", label: entry.label, steps: entry.back, back: entry.steps, next: 0,
+    expect: entry.expect.map(([key]) => [key, marks.get(key) ?? null]),
+  };
+}
+
 const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /** Plain words for the outcome of an undo or redo. */
