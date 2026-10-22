@@ -371,6 +371,169 @@ photo count 2, removal count 1, then photo 3 (attachment 3, Sam, +1003,
 `03 00` "Zoo"), photo 2 (attachment 2, Alex, +1002, `00 00`), then photo 1,
 attachment 1 and +1004. An empty history is `"KALB"`, `01 00 00 00` and two
 zero counts (16 bytes).
+## The family calendar (#656)
+
+These vectors are written out by hand in `rust/src/calendar_tests.rs`; event
+IDs are `numbered_id(n)`, Alex is 16 bytes of `01` and Sam of `02`, and the
+context's date is 2026-10-03. JavaScript mirrors 140, 141, 146 and 147 in
+`web/wasm/kin-calendar.test.mjs` and `abi-ownership.test.mjs`;
+`web/wasm/calendar-engine.test.mjs` runs them through the built engine.
+
+**140 — Event payload (kind 71).** "Swimming", event 7, Tuesdays and
+Thursdays 17:30–18:15 in Europe/London from 2026-10-06, ten times, Alex and
+Sam, place "Leisure centre", notes "Bring goggles.\nTowels at the desk.",
+source UID "swim-1@example.com": event 7, `04 02 00 00`, start date, `1a 04`
+(1050), `47 04` (1095), end date, rule `02 00 0a 00 01 00 0a 00` and eight
+zero bytes, 24 zero bytes, Alex, Sam, then the five texts. An all-day
+countdown linked to series 9 has flags `0b`, zero minutes and the series ID
+and original date at 48. The largest event (200-byte title, 200-byte place,
+2,000-byte notes, 16 attendees, a 64-byte zone, a 255-byte UID, 366 days)
+encodes. Code 2: a zero ID; titles "", " Swim", "Swim ", "a\tb", "a\nb" or
+201 bytes; a 201-byte or untrimmed place; 2,001-byte notes or "a\r\nb",
+"a \nb", "\na", "a\u{7}"; attendees out of order, twice, zero or 17; a
+256-byte or untrimmed UID; the zones "Europe//London", "/Europe",
+"Europe/", "Europe London", "Zürich" or 65 bytes; an end before the start;
+367 days; a weekly rule with no or an eighth weekday; interval 0 or 1,001;
+weekdays on a daily rule; a monthly rule without a day, or day 0, 32 or -2,
+or the 6th weekday; weekday 7; count 0 or 1,001; until before the start; an
+event linked to itself. Decoding also fails on an unknown flag, a reserved
+byte, an attendee count that disagrees, frequency 5, by 3, a rule's reserved
+byte, series bytes without the flag, minutes on an all-day event, rule bytes
+without the flag, a trailing or missing byte, both a count and an until, and
+invalid UTF-8.
+
+**141 — Cancel, restore and colour (kinds 72–74).** Cancelling Thursday
+2026-10-08 17:30 of event 7 is event 7, `01 00 00 00`, the date, `1a 04`,
+`00 00` (28 bytes); the same bytes as kind 73 restore it; the whole series is
+event 7, `02` and eleven zero bytes. Colour 11 is `0b 00 00 00`; `ff 00 00
+00` is back to the default. Code 2: 27 or 29 bytes, scope 0 or 3, a reserved
+byte, minute 1,440, 2026-02-30, a date on the series, a zero event, colour
+12 or 254, a reserved colour byte, three bytes, and kind 75.
+
+**142 — Command rules (code 4).** Saving the same event again; cancelling
+Wednesday 10-07, 10-08 at 17:31 or 11-10 (past the tenth); cancelling an
+unknown event; cancelling an occurrence twice; restoring a series that isn't
+cancelled or an occurrence twice; linking to a date that isn't an
+occurrence, to an event that doesn't repeat, or to an unknown series;
+cancelling a cancelled series, or an occurrence of it; editing a cancelled
+series or an event linked to one; clearing a colour never set or setting
+the same colour. A linked event (late swimming, 10-08 18:30) is hidden while
+its series is cancelled and back when it is restored. Alex and Sam may both
+choose colour 3; each sets only their own. Attendees need not be known
+members. Past 2,000 events a 2,001st replays as a no-op and is refused as a
+command, while an existing event can still be edited.
+
+**143 — Repeats.** Every 3 days from 2024-02-27, five times: 02-27, 03-01,
+03-04, 03-07, 03-10. Mon/Wed/Fri from Tuesday 2026-10-06 until 10-14: 10-06,
+10-07, 10-09, 10-12, 10-14. Every other week on Sunday and Monday from
+Sunday 2026-10-04, six times: with WKST Sunday 10-04, 10-05, 10-18, 10-19,
+11-01, 11-02; with Monday 10-04, 10-12, 10-18, 10-26, 11-01, 11-09. Monthly
+on the 31st from 2026-01-31: 01-31, 03-31, 05-31, 07-31, 08-31. The last day
+from 2024-01-31: 01-31, 02-29, 03-31, 04-30. The second Tuesday from
+2026-10-13: 10-13, 11-10, 12-08. The last Friday from 2026-10-30: 10-30,
+11-27, 12-25, 2027-01-29. The fifth Monday from 2026-11-30 to 2027-06-30:
+11-30, 03-29, 05-31. February 29 yearly: 2024, 2028, 2032. The fourth
+Thursday of November: 2026-11-26, 2027-11-25, 2028-11-23, 2029-11-22. The
+15th monthly from 2026-10-07, three times: 10-07, 10-15, 11-15 (the start
+counts). Every 7 days from 1990-01-01 read 2026-10-01 to 10-14: 10-05,
+10-12. Monthly from 9999-12-01 stops at the end of the calendar. Weekly
+rules agree with a day-by-day reading for three starts, four weekday sets,
+intervals 1–3 and both week starts, in any window.
+
+**144 — Local time across daylight saving.** Church, Sundays 09:00 in
+Europe/London from 2026-10-18, read 2026-10-24 to 2027-04-04: 24
+occurrences, all at minute 540, including 10-25 and 2027-03-28. A night
+shift 23:30–01:00 in America/New_York from 10-31, three times: ends 11-01,
+11-02, 11-03 at 01:00. 11-01 alone shows two shifts; a film ending exactly
+at midnight doesn't show the next day.
+
+**145 — Replay.** Of two saves of event 7 made from the same history, the
+later in replay order wins. A cancel of event 40's 10-12 occurrence that
+arrives before event 40 (weekly Mondays from 10-05) applies once it arrives:
+10-05 and 10-19 show, and with cancelled ones 10-12 too, marked.
+
+**146 — KCMD.** Actions 71–74 carry the payload as their text with zero
+entity, date, option and expiry; the largest event fits; a non-zero entity,
+date, option or expiry, an empty payload or colour 12 fail.
+
+**147 — KCAL.** Bins (event 1, all-day Mondays from 10-05; 10-12 cancelled),
+Dentist (event 2, 10-06 10:00–10:30 Europe/London, Sam), Trip (event 3,
+all-day countdown 12-24 to 12-27), Alex's colour 2, item 50 "Pay rent" on
+10-07 and dinner "Tacos" on 10-06, read 10-05 to 10-11: `"KCAL"`, `01 00
+00 00`, the two dates, 2026-10-03, flags `10 00 00 00`, counts 1, 3, 2, 1, 0,
+1; the countdown (event index 2, 12-24, flags `03`, 12-27); Alex and `02 00
+00 00`; the three events in ID order (Bins with one cancelled start, 10-12);
+occurrences Bins 10-05 (flags `01`) and Dentist 10-06 10:00–10:30; the item
+(classification 0, no owner); the dinner (slot 4, no recipe or cook,
+"Tacos"). Read 10-12 alone with flags 3: three events, one occurrence. An
+empty history is the 48-byte header with zero counts and flags and 20 zero
+bytes.
+
+**148 — Bounds.** A query backwards, over 400 days, with flag 4 or on
+2026-02-30 fails (code 2); 400 days works; version 2 is code 3. Twenty
+daily events over 400 days keep the earliest 5,000 occurrences (through
+2026-09-07), sorted, and KCAL sets flag bit 0. A weekly routine created
+2026-10-03 opens on 10-03 (current), 10-05, 10-12 and 10-19; a yearly
+countdown on March 1 is next on 2027-03-01, and cancelling that one leaves
+none within 400 days of 2026-10-03.
+
+## iCalendar import (#666)
+
+These vectors are in `rust/src/ical_tests.rs`, which holds three realistic
+exports written for Kin (Google, Apple and Outlook shaped).
+`web/wasm/kin-calendar.test.mjs` mirrors 155 and
+`web/wasm/calendar-engine.test.mjs` imports a file end to end.
+
+**150 — Google.** CRLF, a folded DESCRIPTION, a VTIMEZONE and a VALARM (whose
+DESCRIPTION is not the event's): Swimming, Tue/Thu 17:30–18:15
+Europe/London, WKST Sunday, ten times, EXDATE 10-13, place "Leisure Centre,
+High Street"; an override moving 10-15 to 18:30 (series 0, original 10-15
+17:30); a cancelled override on 10-20 that becomes an EXDATE; an all-day trip
+12-24 with DTEND 12-28 (exclusive: last day 12-27); a yearly birthday (March
+1); a call in UTC. Five events, nothing skipped, name "Family".
+
+**151 — Apple.** LF only, Apple's own properties (a quoted parameter with a
+colon): Piano lesson, first Monday monthly in America/New_York; Thanksgiving,
+yearly fourth Thursday of November; Park run, floating 07:00 for 45 minutes
+(not flagged); Brunch with a Mozilla-style TZID read as Europe/Paris.
+
+**152 — Outlook.** Quoted Windows zone names: School board,
+"Eastern Standard Time" (America/New_York), monthly BYDAY=TU;BYSETPOS=2 six
+times, EXDATE 11-10; "Customized Time Zone" is floating and flagged;
+School run in "W. Europe Standard Time" (Europe/Berlin) on weekdays until
+2026-10-30; a "(UTC-08:00) Pacific Time (US & Canada)" display name.
+
+**153 — Rule mapping.** From Tuesday 2026-10-13: DAILY;INTERVAL=2;UNTIL;
+DAILY;BYDAY=MO,WE (weekly); WEEKLY (the start's weekday); MONTHLY;
+BYMONTHDAY=-1; MONTHLY (the 13th); lower-case `byday=-1fr`; YEARLY in
+October on the 13th; an UNTIL before the start (the start). Unsupported and
+imported as the first occurrence, flagged: HOURLY, an ordinal on WEEKLY,
+DAILY;INTERVAL=2;BYDAY, two month days, two weekdays monthly, a 6th
+weekday, YEARLY in another month, BYYEARDAY, BYHOUR, COUNT 0 or 1,001, COUNT
+with UNTIL, INTERVAL 0, a repeated part, a bad WKST, no FREQ, an X- part,
+"FREQ" and "". Zones: IANA names (quoted, inside a path), UTC/GMT, Etc/GMT+12,
+Windows names in any case, an Outlook display name; "Customized Time Zone",
+"Mars/Olympus" and "" are not understood.
+
+**154 — Malformed input.** Every truncation and 2,000 random byte changes of
+each sample, and random bytes up to 20,000, parse without failing, and every
+event they give is a valid kind-71 payload. An unterminated event counts;
+events without a usable DTSTART are skipped; an event nested 40 deep is
+skipped; lines without a colon, an unclosed quote and stray END lines are
+ignored; escapes `\\`, `\;`, `\,`, `\N` and a lone `\`; invalid UTF-8 becomes
+U+FFFD; a BOM is skipped; long text is shortened at a character boundary
+(flagged); a two-year all-day event becomes 366 days (flagged, and untitled);
+a negative DURATION is zero; a repeated UID is skipped; an override without
+its series stands alone; EXDATEs that name no occurrence are dropped.
+More than 2 MB is code 5; 5,001 events give 5,000, flagged, one skipped.
+
+**155 — KICS.** "Kids", Bins (all-day Mondays from 10-05, EXDATE 10-12) and
+an override moving 10-19 to 10-20: `"KICS"`, `01 00 00 00`, count 2, 0
+skipped, flags 0, `04 00` "Kids"; Bins: flags 0, series `ff ff ff ff`, eight
+zero bytes, one EXDATE, payload length, 10-12 with minute 0, the payload
+(zero ID); the override: flags `08`, series 0, original 10-19 minute 0, no
+EXDATE, the payload. A payload given an ID decodes as kind 71; with a zero
+ID it doesn't. A file with nothing in it is the 22-byte header.
 ## Fuller meal plans (#679)
 
 These vectors are written out by hand in `rust/src/meals_tests.rs`

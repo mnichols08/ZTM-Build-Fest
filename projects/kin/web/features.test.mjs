@@ -19,7 +19,7 @@ test("the switchable features, in the ADR's order, with stable small bits", () =
     ["Journal", 12], ["Just for me", 13], ["Family photos", 16],
   ]);
   assert.equal(new Set(FEATURES.map((entry) => entry.id)).size, FEATURES.length);
-  assert.equal(KNOWN_FEATURE_MASK, 0x3fff | 0x10000);
+  assert.equal(KNOWN_FEATURE_MASK, FEATURES.reduce((mask, entry) => mask + 2 ** entry.bit, 0));
   for (const entry of FEATURES) {
     assert.match(entry.description, /^[A-Z].*\.$/, `${entry.label} has a plain sentence`);
     assert.ok(entry.description.length <= 120, `${entry.label}'s description stays short`);
@@ -146,6 +146,6 @@ test("Family photos (#673) leave the Household page, the share sheet and chat wh
   assert.deepEqual([...shareDestinations(["todo", "photos"], 0)], ["todo", "photos"]);
   assert.ok(hiddenChatActions(photos).includes("to-photos"));
   assert.ok(!hiddenChatActions(0).includes("to-photos"));
-  // A newer service's bits 14 and 15 are left alone by this Kin.
-  assert.deepEqual(parseFeatureSet({ off: 2 ** 14 | 2 ** 15 | 2 ** 16, revision: 3 }), { off: 2 ** 16, revision: 3 });
+  // A bit this Kin doesn't know is left alone.
+  assert.deepEqual(parseFeatureSet({ off: 2 ** 30 + 2 ** 16, revision: 3 }), { off: 2 ** 16, revision: 3 });
 });

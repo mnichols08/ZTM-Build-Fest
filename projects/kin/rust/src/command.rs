@@ -244,6 +244,9 @@ pub enum HouseholdCommand {
     /// event; `AlbumState::check_command` decides whether it applies. Who
     /// may remove a photo is the host's check (album.rs).
     Album(EventKind),
+    /// The family calendar (#656, kinds 71–74), carried whole like a meals
+    /// event; `CalendarState::check_command` decides whether it applies.
+    Calendar(EventKind),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -561,6 +564,12 @@ pub fn create_event(
             }
             kind.clone()
         }
+        Calendar(kind) => {
+            if !crate::calendar::is_calendar_code(crate::codec::kind_code(kind)) {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -825,6 +834,9 @@ pub fn execute_with(
     }
     if let HouseholdCommand::Album(kind) = command {
         current.album.check_command(kind)?;
+    }
+    if let HouseholdCommand::Calendar(kind) = command {
+        current.calendar.check_command(kind, context.actor_id)?;
     }
     if let HouseholdCommand::ChangeResponsibility {
         target_kind,
@@ -1466,6 +1478,17 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         }
         let event_kind = crate::album::decode_payload(kind, &bytes[128..])?;
         return Ok((HouseholdCommand::Album(event_kind), command_context(bytes)?));
+    }
+    // The family calendar (#656): likewise.
+    if crate::calendar::is_calendar_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::calendar::decode_payload(kind, &bytes[128..])?;
+        return Ok((
+            HouseholdCommand::Calendar(event_kind),
+            command_context(bytes)?,
+        ));
     }
     let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48..=50 | 65) {
         String::new()

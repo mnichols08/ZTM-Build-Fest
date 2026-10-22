@@ -124,6 +124,9 @@ pub struct Replay {
     /// The family album (album.rs), shared with finalized states until it
     /// changes.
     pub(super) album: Arc<crate::album::AlbumState>,
+    /// The family calendar (calendar.rs), shared with finalized states until
+    /// it changes.
+    pub(super) calendar: Arc<crate::calendar::CalendarState>,
     /// A member's private records (private.rs). Only a private log ever
     /// fills it, and `finalize` never copies it into a household state.
     pub(super) private: Arc<crate::private::PrivateState>,
@@ -335,6 +338,10 @@ impl Replay {
             K::AlbumPhotoAdded { .. } | K::AlbumPhotoRemoved { .. } => {
                 crate::album::apply(&mut self.album, event)?
             }
+            K::CalendarEventSaved(_)
+            | K::CalendarEventCancelled { .. }
+            | K::CalendarEventRestored { .. }
+            | K::MemberColourSet { .. } => crate::calendar::apply(&mut self.calendar, event)?,
             K::PrivateNoteSet { .. }
             | K::PrivateItem(_)
             | K::ReminderSet { .. }
@@ -450,6 +457,7 @@ impl Replay {
             rotations: Arc::clone(&self.rotations),
             sitter_page: Arc::clone(&self.sitter_page),
             album: Arc::clone(&self.album),
+            calendar: Arc::clone(&self.calendar),
         })
     }
 }

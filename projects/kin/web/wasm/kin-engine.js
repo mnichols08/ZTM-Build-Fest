@@ -27,6 +27,7 @@ import { SECTION_COMMANDS, SECTION_EVENT_KINDS, SectionFormatError, decodeShoppi
 import { ROTATION_COMMANDS, ROTATION_EVENT_KINDS, RotationFormatError, decodeRoutineRotations, encodeRotationIntent } from "./kin-rotations.js";
 import { SITTER_COMMANDS, SITTER_EVENT_KINDS, SitterFormatError, decodeSitterPage, encodeSitterIntent } from "./kin-sitter.js";
 import { ALBUM_COMMANDS, ALBUM_EVENT_KINDS, AlbumFormatError, FIRST_ALBUM_KIND, decodeAlbum, encodeAlbumIntent } from "./kin-album.js";
+import { CALENDAR_COMMANDS, CALENDAR_EVENT_KINDS, CalendarFormatError, MAX_ICAL_BYTES, decodeCalendarRange, decodeICalendar, encodeCalendarIntent, encodeCalendarRangeQuery } from "./kin-calendar.js";
 import { FIRST_PRIVATE_KIND, MAX_PRIVATE_EVENT_COUNT, PRIVATE_EVENT_KINDS, decodePrivate } from "./kin-private.js";
 import { FIRST_JOURNAL_KIND, FIRST_PRIVATE_ITEM_KIND, JOURNAL_EVENT_KINDS, PRIVATE_ITEM_EVENT_KINDS, PrivateFormatError, encodePrivateIntent } from "./kin-private.js";
 import { encodePrefsIntent, PREFS_COMMANDS, PREFS_KIND_CODES, PrefsFormatError } from "./kin-prefs.js";
@@ -120,6 +121,8 @@ export function createEngine(instanceExports) {
     "kin_routine_rotations",
     "kin_sitter_page",
     "kin_album",
+    "kin_calendar_range",
+    "kin_ical_parse",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_audio_peaks",
@@ -370,6 +373,31 @@ export function createEngine(instanceExports) {
       safeDecode(() => decodeAlbum(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_album"),
       )),
+    // The calendar from `from` to `to` (civil dates, at most 400 days; #656,
+    // ADR 0022): occurrences of calendar events with cancellations applied,
+    // merged with dated items, routines and meals, the next countdown and
+    // member colours (kin-calendar.js decodeCalendarRange). Options:
+    // allEvents (every event's definition, for editing a series and
+    // de-duplicating imports by sourceUid), includeCancelled (cancelled
+    // occurrences too, marked).
+    calendarRange: (from, to, records, asOf, civilDate, syncIdentity = null, options = {}) => {
+      let query;
+      try { query = encodeCalendarRangeQuery(from, to, options); }
+      catch (error) {
+        if (error instanceof CalendarFormatError) throw new KinEngineError(2, error.message);
+        throw error;
+      }
+      return safeDecode(() => decodeCalendarRange(queryBytes(exports, mirror, "kin_calendar_range", query, records, asOf, civilDate, syncIdentity)));
+    },
+    // An .ics file (bytes, at most 2 MB) as Kin events (#666,
+    // kin-calendar.js decodeICalendar). Parsed in Rust on this device; no
+    // household state is read or changed.
+    parseICalendar: (bytes) => {
+      const input = asBytes(bytes);
+      if (input.length > MAX_ICAL_BYTES) throw new KinEngineError(5, "That calendar file is too large to import (2 MB at most).");
+      if (input.length === 0) return { name: "", skipped: 0, truncated: false, events: [] };
+      return safeDecode(() => decodeICalendar(callCore(exports, "kin_ical_parse", input)));
+    },
     // A member's things on `civilDate` (#344, ADR 0013): [{ kind: "item",
     // itemId } | { kind: "routine", routineId, occurrenceKey, done }].
     myThings: (memberId, records, asOf, civilDate, syncIdentity = null) =>
@@ -1179,6 +1207,9 @@ const COMMAND_TYPES = [
   ...ROTATION_COMMANDS,
   // The sitter page (#442): KCMD action 70, encoded by kin-sitter.js.
   ...SITTER_COMMANDS,
+  // The family calendar (#656): KCMD actions 71–74, encoded by
+  // kin-calendar.js.
+  ...CALENDAR_COMMANDS,
 ];
 // Fuller meal plans (#679): KCMD actions 80–82, encoded by kin-meals.js.
 // Placed by code, after a gap of codes used by other family-hub kinds.
@@ -1243,6 +1274,7 @@ const EVENT_KINDS = [
   ...SECTION_EVENT_KINDS,
   ...ROTATION_EVENT_KINDS,
   ...SITTER_EVENT_KINDS,
+  ...CALENDAR_EVENT_KINDS,
 ];
 // A member's private log (#489): kinds from 100, after a gap of unused codes.
 PRIVATE_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_PRIVATE_KIND + index] = kind; });
@@ -1379,6 +1411,15 @@ function encodeIntentPacket(command, identity) {
     try { return encodeAlbumIntent(command, identity); }
     catch (error) {
       if (error instanceof AlbumFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // The family calendar (71–74) carries its canonical payloads
+  // (kin-calendar.js).
+  if (kind >= 71 && kind <= 74) {
+    try { return encodeCalendarIntent(command, identity); }
+    catch (error) {
+      if (error instanceof CalendarFormatError) throw new KinEngineError(2, error.message);
       throw error;
     }
   }

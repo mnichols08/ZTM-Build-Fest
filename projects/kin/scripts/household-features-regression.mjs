@@ -53,7 +53,9 @@ export async function householdFeaturesRegressions() {
   check(segments("household").includes("features"), "Features is a Household segment", segments("household"));
   check(page.value.admin && page.value.local, "a household that doesn't sync decides on this device", page.value);
   const switches = [...page.querySelectorAll("input.features-switch")];
-  check(switches.length === 14 && switches.every((input) => input.checked && input.getAttribute("role") === "switch"), "fourteen switches, all on", switches.length);
+  // One switch per feature in web/features.js, however many there are.
+  const featureCount = (await import("/features.js")).FEATURES.length;
+  check(switches.length === featureCount && switches.every((input) => input.checked && input.getAttribute("role") === "switch"), "a switch per feature, all on", [switches.length, featureCount]);
   for (const input of switches) {
     const label = page.querySelector(`label[for="${input.id}"]`);
     const description = document.getElementById(input.getAttribute("aria-describedby"));
@@ -134,7 +136,7 @@ export async function householdFeaturesRegressions() {
   // Back as the admin: everything on again, and nothing was lost.
   features.receive({ off, revision: features.revision + 1, admin: true });
   app.ctx.navigation.navigate("#household/features");
-  await until(() => page.querySelectorAll("input.features-switch").length === 14, "the admin's switches are back");
+  await until(() => page.querySelectorAll("input.features-switch").length === featureCount, "the admin's switches are back");
   for (const id of OFF) {
     const input = page.querySelector(`#household-feature-${id}`);
     check(!input.checked, `${id} shows off`);

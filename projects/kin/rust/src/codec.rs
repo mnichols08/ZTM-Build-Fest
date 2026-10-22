@@ -81,6 +81,10 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::SitterPageSet { .. } => crate::sitter::SITTER_PAGE_SET,
         EventKind::AlbumPhotoAdded { .. } => crate::album::ALBUM_PHOTO_ADDED,
         EventKind::AlbumPhotoRemoved { .. } => crate::album::ALBUM_PHOTO_REMOVED,
+        EventKind::CalendarEventSaved(_) => crate::calendar::CALENDAR_EVENT_SAVED,
+        EventKind::CalendarEventCancelled { .. } => crate::calendar::CALENDAR_EVENT_CANCELLED,
+        EventKind::CalendarEventRestored { .. } => crate::calendar::CALENDAR_EVENT_RESTORED,
+        EventKind::MemberColourSet { .. } => crate::calendar::MEMBER_COLOUR_SET,
         EventKind::PrivateNoteSet { .. } => crate::private::PRIVATE_NOTE_SET,
         EventKind::PrivateItem(event) => event.code(),
         EventKind::ReminderSet { .. } => crate::private_prefs::REMINDER_SET,
@@ -505,6 +509,13 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
         // The family album (#673): album.rs owns the payloads.
         kind @ (EventKind::AlbumPhotoAdded { .. } | EventKind::AlbumPhotoRemoved { .. }) => {
             payload = crate::album::encode_payload(kind)?;
+        }
+        // The family calendar (#656): calendar.rs owns the payloads.
+        kind @ (EventKind::CalendarEventSaved(_)
+        | EventKind::CalendarEventCancelled { .. }
+        | EventKind::CalendarEventRestored { .. }
+        | EventKind::MemberColourSet { .. }) => {
+            payload = crate::calendar::encode_payload(kind)?;
         }
         // A member's private log (#489): private.rs owns the payloads.
         kind @ (EventKind::PrivateNoteSet { .. }

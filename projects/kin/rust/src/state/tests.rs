@@ -137,6 +137,10 @@ fn event(event_number: u8, logical_time: u64, kind: EventKind) -> EventEnvelope 
         EventKind::SitterPageSet { .. }
         | EventKind::AlbumPhotoAdded { .. }
         | EventKind::AlbumPhotoRemoved { .. }
+        | EventKind::CalendarEventSaved(_)
+        | EventKind::CalendarEventCancelled { .. }
+        | EventKind::CalendarEventRestored { .. }
+        | EventKind::MemberColourSet { .. }
         | EventKind::PrivateNoteSet { .. }
         | EventKind::PrivateItem(_)
         | EventKind::ReminderSet { .. }

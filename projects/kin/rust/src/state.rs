@@ -453,6 +453,10 @@ pub struct HouseholdState {
     /// The family album (album.rs, #673). Not part of the KINS projection;
     /// hosts read it through `kin_album`. Shared with the replay, not copied.
     pub album: std::sync::Arc<crate::album::AlbumState>,
+    /// The family calendar and member colours (calendar.rs, #656). Not part
+    /// of the KINS projection; hosts read it through `kin_calendar_range`.
+    /// Shared with the replay, not copied.
+    pub calendar: std::sync::Arc<crate::calendar::CalendarState>,
 }
 
 impl HouseholdState {
