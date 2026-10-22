@@ -1124,3 +1124,41 @@ silent for `idleSeconds`; a second tunnel with the same key replaces the
 first (GOAWAY 3), and the phones on the old tunnel are closed; near the
 stream limit the relay sends GOAWAY 0 and routes new phones only once the
 home server reconnects.
+
+## Home server certificates (#723)
+
+The home server's ACME client (`server/acme/`, [HOME-CERTIFICATES](HOME-CERTIFICATES.md))
+writes its own DER. `server/acme/der.test.mjs` pins these values. The key is
+the ES256 example key of RFC 7515 Appendix A.3 (`x`
+`f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU`, `y`
+`x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0`, `d`
+`jpsQnnGQmL-YBIffH1136cspYG6-0iY7X1fCE9-E9LI`).
+
+- **JWK thumbprint (RFC 7638)** of that key:
+  `oKIywvGUpTVTyxMQ3bwIIeQUudfr_CkLMjCE19ECD-U`, the SHA-256 of
+  `{"crv":"P-256","kty":"EC","x":"…","y":"…"}`.
+- **CSR.** For the name `fern.home.kin.journeytocode.io` and that key, the
+  CertificationRequestInfo is 202 bytes with SHA-256
+  `2e822352b116789e6ec7f3a1cd998352c9ac6acd69ebe469633e01758eedfa1a`:
+  version 0, subject `CN=fern.home.kin.journeytocode.io` (UTF8String), the
+  key's SPKI, and `[0]` holding one extensionRequest attribute with
+  subjectAltName `dNSName fern.home.kin.journeytocode.io`. The signature
+  algorithm is `30 0a 06 08 2a 86 48 ce 3d 04 03 02` (ecdsa-with-SHA256, no
+  parameters); the signature is a DER `ECDSA-Sig-Value` that verifies with
+  the key. ECDSA signatures are randomised, so only the signed part is
+  pinned.
+- **openssl.** `openssl req -verify` accepts generated CSRs (one name, two
+  names, a 75-character name that leaves the subject empty) and `openssl
+  x509 -text` shows the challenge certificate's
+  `1.3.6.1.5.5.7.1.31: critical` extension. Both tests skip when `openssl`
+  isn't installed.
+- **acmeIdentifier (RFC 8737).** For the key authorization
+  `evaGxfADs6pSRb2LAv9IZf17Dt3juxGJ-PCt92wr-oA.oKIywvGUpTVTyxMQ3bwIIeQUudfr_CkLMjCE19ECD-U`
+  the SHA-256 is
+  `65a26016d215e16034b7633337b91b4a4d2c7d17761998dac51a9a49300aea52` and the
+  extension is
+  `3031 06082b0601050507011f 0101ff 04220420` followed by that digest.
+- **DER primitives.** OID 1.3.6.1.5.5.7.1.31 is `06 08 2b 06 01 05 05 07 01
+  1f`; INTEGER 128 is `02 02 00 80`; length 300 is `82 01 2c`; 2026-10-22
+  08:05:09 UTC is UTCTime `261022080509Z`, and 2050-01-01 is GeneralizedTime
+  `20500101000000Z`.

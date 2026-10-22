@@ -176,6 +176,21 @@ documentation only.
   browser regression `scripts/meal-plan-regression.mjs`. UX §8.11, EVENTS,
   ABI, V1.0-COMPATIBILITY.
 
+- **Certificates from scratch for Kin at home** (#723: #724, #725, #726,
+  #727; epic #708, [ADR 0025](docs/decisions/0025-kin-at-home.md) §5). A
+  dependency-free ACME (RFC 8555) client in `server/acme/`: ES256 account,
+  flattened-JWS requests with nonce handling and badNonce retry, orders,
+  TLS-ALPN-01 (RFC 8737) answered through an `ALPNCallback`/`SNICallback`
+  hook with a hand-encoded validation certificate carrying the critical
+  acmeIdentifier extension, a hand-encoded DER PKCS#10 CSR, certificate
+  download, renewal at two thirds of the lifetime with 1–24 hour backoff,
+  hot swap with `setSecureContext`, a status object for the control panel,
+  CAA records with `accounturi` and `validationmethods`, and a daily
+  Certificate Transparency check. Keys are stored 0600. Tested end to end
+  against an in-process ACME server with a real loopback TLS validation;
+  not yet started by any server (home mode and the tunnel, #733, wire it).
+  [HOME-CERTIFICATES](docs/HOME-CERTIFICATES.md), TEST-VECTORS.
+
 ## v1.6.0 — Kin for Everyone
 
 Released 2026-10-21 as `kin-v1.6.0`. This minor release makes Kin easier for

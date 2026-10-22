@@ -825,20 +825,19 @@ the installed web app from their own address (ADR 0020).
   Node's SEA gives one file per platform with the code that exists. Rust is
   used only for the small Windows service host.
 
-## Open questions for the owner
+## Owner answers to the open questions (2026-10-22, recorded on #708)
 
-1. **Signing for macOS and Windows.** Without an Apple Developer ID
-   (notarization) and a Windows code-signing certificate, macOS Gatekeeper
-   and Windows SmartScreen warn on first open, which a non-technical person
-   may not get past. Both cost money every year. Buy them, or document the
-   warnings?
-2. **Claims without an account.** Names are claimed by key, limited per
-   source address. Should a claim also need an email address (more abuse
-   protection, but the relay then holds a contact for each name)?
-3. **A separate domain for free names** (see Alternatives), to avoid the
-   PSL's months of lead time and sharing `journeytocode.io`'s reputation.
-4. **Automatic updates.** The default above installs patch and minor
-   releases at night and waits for an admin on major ones. Is that right?
-5. **Reports from home servers.** Should a home server be able to send
-   reports to the Kin team (through a project endpoint rather than a GitHub
-   token), or do they stay with the household's admins?
+1. **Signing for macOS and Windows:** unsigned for now. The guides show the
+   Gatekeeper and SmartScreen warnings and how to get past them. Buy an
+   Apple Developer ID and a Windows code-signing certificate when Kin at home
+   is offered widely.
+2. **Claims without an account:** the home key only, with no email address,
+   so the connection relay's registry holds no personal data. Abuse limits
+   stay per key and per source address (§3).
+3. **Free names** stay on `home.kin.journeytocode.io`: apply to the PSL now
+   and use `__Host-` cookie names in the meantime (§9).
+4. **Automatic updates:** as proposed. Patch and minor releases install at
+   night with a backup and rollback; major releases wait for an admin.
+5. **Reports from home servers:** allowed, as on the hosted service (ADR
+   0021 §3), through a Kin project endpoint rather than a GitHub token on the
+   home server. The home server's admin can turn it off.
