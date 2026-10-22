@@ -21,6 +21,8 @@ import { LIVE_TYPE, LiveChannel, liveUrl } from "./live-channel.js";
 import { QUARANTINE_MESSAGE, quarantineMessage } from "../storage/quarantine.js";
 import { idToHex } from "../wasm/kin-engine.js";
 import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
+import { reconcileAlbum } from "../album/album-blobs.js";
+import { openAlbumStore } from "../album/album-session.js";
 import { decryptHouseholdSettings, encryptHouseholdSettings } from "../appearance/household.js";
 import { openBrowserChatRoom } from "../chat/chat-room.js";
 import { openBrowserBoardRoom } from "../board/board-room.js";
@@ -685,6 +687,9 @@ export class SyncCoordinator {
         const attachmentResult = await reconcileAttachments({ identity: this.identity, store: this.store, keyStore: this.keyStore, state: await this.store.projectCurrent(), signal: this.abortController.signal, suspectedOrphans: (this.suspectedOrphans ??= new Set()) });
         attachmentRows = attachmentResult.rows;
       } catch { /* Attachment transport retries independently; household event sync remains available. */ }
+      // The family album's photos (#673): uploaded, re-encrypted, and
+      // deleted once no photo needs them (album-blobs.js).
+      try { await this.syncAlbum(); } catch { /* retried on the next pass */ }
       if (pendingOutbox.length === 0 && pendingBindings.length === 0)
         await this.store.markSyncInitialized();
       this.catchUp = null;
@@ -1632,8 +1637,20 @@ export class SyncCoordinator {
     return this.request("/api/household/install-identity", { method: "DELETE", body: JSON.stringify({ expectedRev }) });
   }
 
+  /** One album pass (#673): reads the album from the history, then lets
+   * album-blobs.js upload and tidy its photos. */
+  async syncAlbum() {
+    if (this.stopped || typeof this.store?.album !== "function") return;
+    const album = await this.store.album();
+    this.albumStore ??= await openAlbumStore(this.store);
+    if (this.stopped || !this.albumStore) return;
+    await reconcileAlbum({ album, identity: this.identity, store: this.store, keyStore: this.keyStore, albumStore: this.albumStore, suspected: (this.albumSuspects ??= new Set()), signal: this.abortController.signal });
+  }
+
   stop() {
     this.stopped = true;
+    this.albumStore?.close();
+    this.albumStore = null;
     this.stopLive();
     this.abortController.abort();
     clearInterval(this.timer);

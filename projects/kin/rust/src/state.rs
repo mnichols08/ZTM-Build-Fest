@@ -450,6 +450,9 @@ pub struct HouseholdState {
     /// projection; hosts read it through `kin_sitter_page`. Shared with the
     /// replay, not copied.
     pub sitter_page: std::sync::Arc<crate::sitter::SitterPageState>,
+    /// The family album (album.rs, #673). Not part of the KINS projection;
+    /// hosts read it through `kin_album`. Shared with the replay, not copied.
+    pub album: std::sync::Arc<crate::album::AlbumState>,
 }
 
 impl HouseholdState {

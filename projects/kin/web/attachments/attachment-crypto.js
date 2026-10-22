@@ -9,13 +9,18 @@ export const ALLOWED_ATTACHMENT_TYPES = new Set([
   "application/pdf",
 ]);
 
+// The records an attachment's metadata may name as its parent. "album" is a
+// family-album photo (#673): its parent ID is the attachment's own ID, so the
+// same image can come back under a new photo with Undo (web/album).
+const PARENT_KINDS = new Set(["note", "reference-record", "maintenance", "item", "album"]);
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
 export async function encryptAttachment(file, { householdId, attachmentId, keyEpoch, householdKey, parentKind, parentId }) {
   validateContext({ householdId, attachmentId, keyEpoch, householdKey });
   validateAttachmentFile(file);
-  if (!new Set(["note", "reference-record", "maintenance", "item"]).has(parentKind) || !isId(parentId))
+  if (!PARENT_KINDS.has(parentKind) || !isId(parentId))
     throw new Error("Kin could not attach this file to that household record.");
   const fileBytes = new Uint8Array(await file.arrayBuffer());
   const metadata = encoder.encode(JSON.stringify({ version: 1, name: typeof file.name === "string" ? file.name.slice(0, 240) : "Attachment", type: file.type, size: fileBytes.length, parentKind, parentId }));
@@ -56,7 +61,7 @@ export async function decryptAttachment(ciphertext, { householdId, attachmentId,
     const bodyOffset = 5 + metadataLength;
     if (metadataLength < 2 || metadataLength > 1024 || bodyOffset > plaintext.length) throw new Error();
     const metadata = JSON.parse(decoder.decode(plaintext.subarray(5, bodyOffset)));
-    if (metadata.version !== 1 || !ALLOWED_ATTACHMENT_TYPES.has(metadata.type) || !Number.isSafeInteger(metadata.size) || metadata.size < 1 || metadata.size > MAX_ATTACHMENT_PLAINTEXT_BYTES || plaintext.length - bodyOffset !== metadata.size || !isId(metadata.parentId) || !new Set(["note", "reference-record", "maintenance", "item"]).has(metadata.parentKind) || typeof metadata.name !== "string" || metadata.name.length > 240) throw new Error();
+    if (metadata.version !== 1 || !ALLOWED_ATTACHMENT_TYPES.has(metadata.type) || !Number.isSafeInteger(metadata.size) || metadata.size < 1 || metadata.size > MAX_ATTACHMENT_PLAINTEXT_BYTES || plaintext.length - bodyOffset !== metadata.size || !isId(metadata.parentId) || !PARENT_KINDS.has(metadata.parentKind) || typeof metadata.name !== "string" || metadata.name.length > 240) throw new Error();
     const blob = new Blob([plaintext.subarray(bodyOffset)], { type: metadata.type });
     return { blob, name: metadata.name, type: metadata.type, size: metadata.size, parentKind: metadata.parentKind, parentId: metadata.parentId };
   } catch {

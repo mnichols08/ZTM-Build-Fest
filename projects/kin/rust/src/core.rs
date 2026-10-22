@@ -154,6 +154,16 @@ pub fn sitter_page(context: &[u8], history: &mut History) -> Result<Vec<u8>, Kin
     ))
 }
 
+/// The family album (`kin_album`, #673): the record-less KINE context
+/// against the household history; publishes KALB (album.rs).
+pub fn album(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    Ok(crate::album::encode_album(&state.album))
+}
+
 /// A member's things today (`kin_my_things`, #344): KMTQ (simple.rs) and the
 /// record-less KINE context; publishes KMTD for the context's civil date.
 pub fn my_things(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {

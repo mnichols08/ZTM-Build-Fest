@@ -1,4 +1,5 @@
 pub mod abi;
+pub mod album;
 pub mod archive;
 pub mod audio;
 pub mod board;
@@ -79,6 +80,8 @@ mod member_name_tests;
 #[cfg(test)]
 mod chat_tests;
 
+#[cfg(test)]
+mod album_tests;
 #[cfg(test)]
 mod board_tests;
 #[cfg(test)]

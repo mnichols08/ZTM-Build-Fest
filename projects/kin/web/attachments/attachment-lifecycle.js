@@ -215,7 +215,7 @@ async function describeLocal(bindings, local, identity, keyStore, store, remote 
   return rows;
 }
 
-async function currentEpoch(identity, keyStore, store) {
+export async function currentEpoch(identity, keyStore, store) {
   let currentEpoch;
   try {
     const status = await attachmentJson("/api/sync/status");
@@ -251,6 +251,6 @@ async function attachmentRequest(path, options = {}) {
   if (!response.ok) { const value = await response.json().catch(() => ({})); throw new Error(value.message ?? "Household sync is unavailable."); }
   return response.headers.get("content-type")?.includes("json") ? response.json() : response;
 }
-async function sha256(bytes) { return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join(""); }
+export async function sha256(bytes) { return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join(""); }
 function validRemoteRecord(row) { return row && /^[a-f0-9]{32}$/.test(row.attachmentId ?? "") && Number.isSafeInteger(row.keyEpoch) && row.keyEpoch > 0 && Number.isSafeInteger(row.size) && row.size >= 29 && row.size <= MAX_CIPHERTEXT && /^[a-f0-9]{64}$/.test(row.digest ?? ""); }
 function randomId() { return [...crypto.getRandomValues(new Uint8Array(16))].map((byte) => byte.toString(16).padStart(2, "0")).join(""); }

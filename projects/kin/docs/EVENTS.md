@@ -539,6 +539,30 @@ updates the page. Hosts read it through `kin_sitter_page`, which is not part
 of the KINS projection. Older devices pause sync with "unsupported" and keep
 their data until they update.
 
+## The family album
+
+Kinds 75 and 76 (#673, [ADR 0022](decisions/0022-family-hub.md) §5) are schema
+1 events in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 75 | `ALBUM_PHOTO_ADDED` | A photo in the family album: its photo ID, the album attachment holding the encrypted image (an ID starting `a1 b0`), and a caption (0–200 UTF-8 bytes, one line, empty for none) |
+| 76 | `ALBUM_PHOTO_REMOVED` | Takes a photo out of the album |
+
+Replay (rust/src/album.rs) refuses an add that reuses a live or recently
+removed photo ID, an attachment a live photo already uses, or would make more
+than 500 photos. Removing a live photo keeps it among the last 64 removals
+with its time, so a second removal of it (two devices at once) changes
+nothing; removing a photo the album never had is refused. The image is a
+household attachment blob encrypted under the household key like an item's
+photo, but it isn't bound with kind 39: the photo event names it. Undo puts a
+removed photo's image back under a new photo ID while devices still keep its
+blob (an hour after the removal). Whoever added a photo, or a household
+admin, may remove it; the host checks that, because replay doesn't know who
+is an admin. Hosts read the album through `kin_album`, which is not part of
+the KINS projection. Older devices pause sync with "unsupported" and keep
+their data until they update.
+
 ## v1.1.0 Household chat
 
 `CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and

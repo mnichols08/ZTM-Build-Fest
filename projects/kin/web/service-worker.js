@@ -32,6 +32,9 @@ const SHELL = [
   "/private/member-key.js", "/private/private-envelope.js", "/private/private-log-store.js", "/private/private-log.js", "/private/synced-prefs.js", "/private/private-blobs.js", "/private/journal.js", "/private/journal-view.js",
   // Household features (#625, ADR 0021).
   "/features.js", "/features-cache.js", "/components/app/features.js", "/components/kin-household-features.js",
+  // Family photos (#673).
+  "/wasm/kin-album.js", "/album/album-blobs.js", "/album/album-image.js", "/album/album-session.js", "/album/album-store.js",
+  "/components/kin-album.js", "/components/kin-photo-frame.js", "/components/app/album.js",
   // Just for me (#510).
   "/private-items.js", "/components/kin-just-for-me.js", "/components/app/private-items.js", "/components/shared/private-marker.js",
   "/appearance/palette.js", "/appearance/display-prefs.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js", "/appearance/install-icons.js",

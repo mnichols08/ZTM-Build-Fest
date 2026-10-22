@@ -22,6 +22,7 @@ kin_week(ptr, len)                   KWKQ + KINE context -> KWKD (#417)
 kin_shopping_sections(ptr, len)      replay the history: KINE context -> KSHS (#411)
 kin_routine_rotations(ptr, len)      replay the history: KINE context -> KRRS (#429)
 kin_sitter_page(ptr, len)            replay the history: KINE context -> KSIT (#442)
+kin_album(ptr, len)                  replay the history: KINE context -> KALB (#673)
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
@@ -293,6 +294,8 @@ N  payload
 | 68 | ROUTINE_ROTATION_SET (#429) | routine ID [16] (non-zero), member count u8 (0, or 2–12), current index u8 (below the count; 0 when the count is 0), reserved u16, then each member ID [16] (non-zero, no repeats): 20 + 16 × count bytes. An empty list ends the rotation |
 | 69 | ROUTINE_TURN_SET (#429) | routine ID [16] (non-zero), member ID [16] (non-zero): 32 bytes |
 | 70 | SITTER_PAGE_SET (#442) | entry count u16 (0–30), reserved u16, then each entry: kind u8 (1 note, 2 reference record, 3 routine), 3 reserved, record ID [16] (non-zero; no entry twice); then the intro (u16 length + UTF-8; trimmed, 0–500 bytes, no controls but newline) |
+| 75 | ALBUM_PHOTO_ADDED (#673) | photo ID [16] (non-zero), attachment ID [16] (starts `a1 b0`, not the prefix alone), caption (u16 length + UTF-8; trimmed, 0–200 bytes, no control characters) |
+| 76 | ALBUM_PHOTO_REMOVED (#673) | photo ID [16] (non-zero): 16 bytes |
 | 100 | PRIVATE_NOTE_SET (#489, private log) | note ID [16] (non-zero), text length u32 (0 removes the note; at most 2,048 bytes), UTF-8 text (no control characters except line feed). Reserved: still decoded; no surface writes it. Kinds without a definition in 100–199 fail with code 3 |
 | 101 | JOURNAL_ENTRY_CREATED (#498, private log) | entry ID [16] (non-zero), civil date u32 (YYYYMMDD, a real date), title length u16 (≤ 200), photo count u8 (≤ 10), reserved u8, body length u32 (≤ 20,000), title (UTF-8, no controls, trimmed), body (UTF-8, no controls but line feed, trimmed), then each photo (136 bytes): type u8 (1 JPEG, 2 PNG, 3 WebP), reserved [3], sealed size u32 (29 to 4 MiB + 4 KiB), blob reference [32], key [32], thumbnail reference [32], thumbnail key [32] (all non-zero; no reference twice in an entry). Title, body or a photo is required |
 | 102 | JOURNAL_ENTRY_EDITED (#498, private log) | as 101: the whole new content |
@@ -675,6 +678,28 @@ tuned for printed codes under heavy blur.
   0 for none). The host takes titles, fields and text from the KINS
   projection by ID, so nothing is copied. A household that never set a page
   reports no entries and no intro.
+- **The family album (kinds 75–76, #673).** The payloads are strict: they
+  re-encode to the same bytes, so a zero photo ID, an attachment ID without
+  the album prefix `a1 b0` (or with nothing after it), an untrimmed caption,
+  a control character or more than 200 caption bytes fail with code 2. KCMD
+  actions 75 (`add-album-photo`) and 76 (`remove-album-photo`) carry the
+  exact payload as their text with a zero entity ID and no option, date or
+  expiry; the host trims the caption and makes it one line first
+  (`kin-album.js`). Rust checks them against the album
+  (`AlbumState::check_command`, code 4): a new photo ID, an attachment no
+  live photo uses, at most 500 photos; a removal names a live photo. Only
+  whoever added a photo or a household admin may remove it: Rust can't tell
+  who is an admin, so the host's command append path reads the album and
+  refuses it for anyone else (`canRemoveAlbumPhoto`); replay accepts a
+  removal from any member ([THREAT-MODEL](THREAT-MODEL.md)).
+- **KALB v1** (the family album, `kin_album`): `"KALB"`, version 1,
+  reserved u16, photo count u32 (≤ 500), removal count u32 (≤ 64); then each
+  live photo, newest first: photo ID [16], attachment ID [16], added by
+  (member ID) [16], added at i64 (Unix ms, the event's timestamp), caption
+  (u16 + UTF-8); then each recent removal, newest first: photo ID [16],
+  attachment ID [16], removed at i64. JavaScript decodes it as `{ photos:
+  [{ photoId, attachmentId, addedBy, addedAt, caption }], removed: [{
+  photoId, attachmentId, removedAt }] }`.
 - **KMTQ v1 / KMTD v1** (a member's things today, `kin_my_things`): the
   24-byte query `"KMTQ"`, version 1, reserved u16, member ID [16] (non-zero),
   then a record-less KINE context. The result `"KMTD"`, version 1, reserved

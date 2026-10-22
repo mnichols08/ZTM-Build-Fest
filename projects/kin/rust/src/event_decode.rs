@@ -593,6 +593,13 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
             }
             crate::sitter::decode_payload(code, payload)?
         }
+        // The family album (#673): album.rs decodes its payloads strictly.
+        (1, code) if crate::album::is_album_code(code) => {
+            if !valid_timestamp(read_i64(record, 68)?) {
+                return Err(KinError::MalformedProtocol);
+            }
+            crate::album::decode_payload(code, payload)?
+        }
         // A member's private log (#489, kinds 100–199): private.rs decodes
         // its payloads strictly.
         (1, code) if crate::private::is_private_code(code) => {

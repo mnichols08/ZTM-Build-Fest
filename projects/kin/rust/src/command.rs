@@ -240,6 +240,10 @@ pub enum HouseholdCommand {
     /// `SitterPageState::check_command` decides whether it applies. Only an
     /// Adult may send it; the host checks that (sitter.rs).
     SitterPage(EventKind),
+    /// The family album (#673, kinds 75–76), carried whole like a meals
+    /// event; `AlbumState::check_command` decides whether it applies. Who
+    /// may remove a photo is the host's check (album.rs).
+    Album(EventKind),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -551,6 +555,12 @@ pub fn create_event(
             }
             kind.clone()
         }
+        Album(kind) => {
+            if !crate::album::is_album_code(crate::codec::kind_code(kind)) {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -812,6 +822,9 @@ pub fn execute_with(
         current
             .sitter_page
             .check_command(kind, current.sitter_records())?;
+    }
+    if let HouseholdCommand::Album(kind) = command {
+        current.album.check_command(kind)?;
     }
     if let HouseholdCommand::ChangeResponsibility {
         target_kind,
@@ -1445,6 +1458,14 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             HouseholdCommand::SitterPage(event_kind),
             command_context(bytes)?,
         ));
+    }
+    // The family album (#673): likewise.
+    if crate::album::is_album_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::album::decode_payload(kind, &bytes[128..])?;
+        return Ok((HouseholdCommand::Album(event_kind), command_context(bytes)?));
     }
     let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48..=50 | 65) {
         String::new()

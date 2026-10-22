@@ -104,6 +104,8 @@ export class RenderController {
     void this.ctx.week?.refresh();
     // The sitter page (#441) while its editor or For you is showing.
     void this.ctx.sitter?.refresh();
+    // Family photos (#673) while the page or its slideshow is showing.
+    void this.ctx.album?.refresh();
     // Taking turns (#437): whose turn it is, from Rust, after each render.
     void this.ctx.rotations?.refresh();
     // Store sections (#411) read from Rust after each render.

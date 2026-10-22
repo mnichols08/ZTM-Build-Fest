@@ -581,9 +581,9 @@ A household that never uses the fridge or meals shouldn't have to look past
 them. **Household › Features** lists the parts of Kin that can be switched
 off, each with one plain sentence: Chat, Fridge, Meals, Routines, Taking
 turns, This week, Talk later, Store sections, Shopping mode, Maintenance,
-Notes & reference, Sitter page, Journal and Just for me. Today, Lists (To do
-and Shopping), Updates (handoffs) and Household are always on, and the page
-says so.
+Notes & reference, Sitter page, Journal, Just for me and Family photos
+(#673). Today, Lists (To do and Shopping), Updates (handoffs) and Household
+are always on, and the page says so.
 
 - **Who:** a household admin turns switches on or off and taps **Save
   features**; Kin then asks them to confirm it's them (their passkey, or
@@ -3134,3 +3134,38 @@ and tab in easy mode at 320 px and on a desktop, with Fridge, Meals and
 Journal switched off, and fails on: a page without Help, a control under
 56 px, a glossary word on screen that Help doesn't explain, a switched-off
 feature still shown or linked, or sideways scrolling.
+
+# 43. Family photos (#673, [ADR 0022](decisions/0022-family-hub.md) §5)
+
+- **Where.** Household → **Family photos** (`#household/photos`), also on the
+  Household overview ("Photos for the whole family, and a slideshow.") and,
+  in easy mode, always in the Household tabs. The feature switch "Family
+  photos" (bit 16) hides it, the share-sheet destination and the chat action.
+- **The page.** "Family photos", a line saying who sees them and that they
+  are encrypted, "N photos (up to 500)", then **Add photos** and
+  **Slideshow**, then a grid of square thumbnails, newest first, each a
+  button named "Open “caption”, added by Sam" with the caption under it.
+  Empty: "No family photos yet. Add some from this phone or computer, share
+  photos into Kin from another app, or add one from Chat."
+- **Adding.** Add photos opens the system picker (several at once; a
+  temporary input, removed after). A dialog lists each chosen photo with a
+  small preview and "Caption (optional)" (up to 200 characters), then
+  **Add N photos**. It says "Adding photo 2 of 5…" while it works. Photos
+  are made screen-sized (at most 2048 px, about 600 KB) before they are
+  encrypted. Full at 500: Add photos is disabled and says why.
+- **From elsewhere.** A photo shared into Kin offers **Add to family photos**
+  on the share sheet; a photo in Chat has **Add to the family photos** in its
+  actions. Both open Family photos with the same dialog.
+- **The viewer.** Pressing a photo opens it large with its caption as the
+  title, "Added by Sam · 21 October 2026", **Previous**, **Next** (also the
+  arrow keys) and, for whoever added it or a household admin, **Remove**.
+  Removing closes the viewer, focus goes to the photo now in its place, and
+  the undo line offers **Undo** ("Photo removed."); Undo brings the photo
+  back (within an hour, while its image is still kept).
+- **Slideshow.** Fills the screen with `<kin-photo-frame>`: each photo for 8
+  seconds with its caption and "Added by Sam" over a dark gradient,
+  crossfading over 1.2 s; with reduced motion the photo changes in place.
+  **Pause**/**Play** and **Close** stay on screen; any other tap or key
+  closes it, and focus returns to Slideshow. It pauses while the page is
+  hidden. The kitchen display (#651) will host the same element as its
+  screensaver.

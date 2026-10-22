@@ -68,7 +68,7 @@ const DOWNLOAD_URL_MS = 60_000;
 const TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const DATE_TIME = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const FULL = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "short" });
-const ACTION_LABELS = { copy: "Copy text", reply: "Reply", details: "See who reacted", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin", hide: "Delete for me", pin: "Pin", unpin: "Unpin", "to-shopping": "Add to Shopping", "to-todo": "Add to To do", "to-handoff": "Make a handoff", "to-note": "Save as a note", "talk-later": "Talk later", "talk-resolve": "Mark talked about", "talk-reopen": "Talk about again" };
+const ACTION_LABELS = { copy: "Copy text", reply: "Reply", details: "See who reacted", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin", hide: "Delete for me", pin: "Pin", unpin: "Unpin", "to-shopping": "Add to Shopping", "to-todo": "Add to To do", "to-handoff": "Make a handoff", "to-note": "Save as a note", "to-photos": "Add to the family photos", "talk-later": "Talk later", "talk-resolve": "Mark talked about", "talk-reopen": "Talk about again" };
 /** How long a press on a reaction chip must last to list who reacted. */
 const LONG_PRESS_MS = 500;
 const NO_RECALL = "Copies people already saved, screenshotted or downloaded can't be recalled.";
@@ -2523,6 +2523,8 @@ class KinChat extends HTMLElement {
     }
     // Simple view (#341) adds nothing: no turning a message into a record.
     if (this.shareable(message) && !this.simple) actions.push("to-shopping", "to-todo", "to-handoff", "to-note");
+    // A chat photo into the family photos (#673).
+    if (!this.simple && message.contentKind === "attachment" && this.attachments.get(message.messageId)?.files?.some((file) => file.photo)) actions.push("to-photos");
     if ((room.access ?? "write") === "write") actions.push(this.pins.some((pin) => pin.messageId === message.messageId) ? "unpin" : "pin");
     // Read-only members (#123) can copy, hide and turn a message into a record
     // (#132), but not post, react, pin, edit or delete.

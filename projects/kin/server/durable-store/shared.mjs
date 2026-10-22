@@ -10,6 +10,21 @@ export const MAX_HOUSEHOLD_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
 export const MAX_HOUSEHOLD_ATTACHMENTS = 64;
 
+// The family album (#673, ADR 0022 §5): its photos are household attachment
+// blobs whose IDs start with "a1b0". They have a quota of their own, so the
+// album never crowds out item photos and PDFs (or the other way round): up
+// to 500 photos in the album, with room for recently removed ones a member
+// may still bring back with Undo. Devices downscale album photos before
+// encrypting them (web/album/album-image.js).
+export const ALBUM_ATTACHMENT_PREFIX = "a1b0";
+export const MAX_HOUSEHOLD_ALBUM_ATTACHMENTS = 600;
+export const MAX_HOUSEHOLD_ALBUM_BYTES = 400 * 1024 * 1024;
+
+/** Whether an attachment ID (hex) is a family-album photo's. */
+export function isAlbumAttachmentId(attachmentId) {
+  return typeof attachmentId === "string" && attachmentId.startsWith(ALBUM_ATTACHMENT_PREFIX);
+}
+
 // Chat content blobs (#110): one message's encrypted text or attachment,
 // addressed by the SHA-256 of its bytes. Format 1 is a version byte, a
 // 12-byte AES-GCM nonce and the sealed content with its 16-byte tag.

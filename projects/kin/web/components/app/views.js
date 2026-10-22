@@ -456,6 +456,13 @@ export class ViewBuilder {
     this.app.suggestSection.append(suggestHeading, suggestHint, suggestButton, suggestSent);
     appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance, this.app.personalSettings);
 
+    // Family photos (#673, ADR 0022 §5).
+    const photosPage = document.createElement("section");
+    photosPage.className = "household-subpage photos-page";
+    photosPage.setAttribute("aria-label", "Family photos");
+    this.app.albumView = document.createElement("kin-album");
+    this.app.albumView.controller = this.ctx.album;
+    photosPage.append(this.app.albumView);
     // For the sitter (#441, ADR 0017).
     const sitterPage = document.createElement("section");
     sitterPage.className = "household-subpage sitter-page";
@@ -470,8 +477,8 @@ export class ViewBuilder {
     this.app.householdFeatures = document.createElement("kin-household-features");
     this.app.householdFeatures.controller = this.ctx.features;
     featuresPage.append(this.app.householdFeatures, this.app.suggestSection);
-    household.append(hub, fridgePage, notesPage, sitterPage, areasPage, peoplePage, privacyPage, appearancePage, featuresPage);
-    this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["sitter", sitterPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage], ["features", featuresPage]]));
+    household.append(hub, fridgePage, photosPage, notesPage, sitterPage, areasPage, peoplePage, privacyPage, appearancePage, featuresPage);
+    this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["photos", photosPage], ["notes", notesPage], ["sitter", sitterPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage], ["features", featuresPage]]));
 
     // For you (#441): the page a Temporary member lands on.
     const foryou = page("foryou", "For you", "What the family left for you.");

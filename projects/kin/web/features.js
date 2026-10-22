@@ -35,6 +35,8 @@ export const FEATURES = Object.freeze([
   feature("sitter", 11, "Sitter page", "A welcome page for babysitters and guests, with what they need to know.", ["household/sitter", "foryou"]),
   feature("journal", 12, "Journal", "Each person's own private journal. Only they can see it.", ["journal"]),
   feature("mine", 13, "Just for me", "Each person's own private list. Only they can see it.", ["lists/mine"]),
+  // 14 is the Calendar and 15 the chore chart (ADR 0022, their own stories).
+  feature("photos", 16, "Family photos", "A shared album of family photos, with a slideshow.", ["household/photos"]),
 ]);
 
 /** The parts that can't be switched off, named for the Features page. */
@@ -159,9 +161,10 @@ export function searchableHousehold(household, off) {
 }
 
 /** Share sheet destinations (kin-share-sheet kinds) without switched-off
- * features: "chat" (Chat), "note" (Notes & reference), "journal". */
+ * features: "chat" (Chat), "note" (Notes & reference), "journal",
+ * "photos" (Family photos). */
 export function shareDestinations(allowed, off) {
-  const owners = { chat: "chat", note: "notes", journal: "journal" };
+  const owners = { chat: "chat", note: "notes", journal: "journal", photos: "photos" };
   return new Set([...allowed].filter((kind) => !owners[kind] || isFeatureOn(off, owners[kind])));
 }
 
@@ -171,12 +174,13 @@ export function availableCommands(commands, off) {
   return commands.filter((command) => !command.feature || isFeatureOn(off, command.feature));
 }
 
-/** Chat message actions without switched-off features: Talk later's and
- * "Save as a note". */
+/** Chat message actions without switched-off features: Talk later's,
+ * "Save as a note" and "Add to the family photos". */
 export function hiddenChatActions(off) {
   const hidden = [];
   if (!isFeatureOn(off, "talk")) hidden.push("talk-later", "talk-resolve", "talk-reopen");
   if (!isFeatureOn(off, "notes")) hidden.push("to-note");
+  if (!isFeatureOn(off, "photos")) hidden.push("to-photos");
   return hidden;
 }
 

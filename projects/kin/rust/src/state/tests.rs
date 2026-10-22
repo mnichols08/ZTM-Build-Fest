@@ -132,6 +132,8 @@ fn event(event_number: u8, logical_time: u64, kind: EventKind) -> EventEnvelope 
             panic!("Area tests use independent wire fixtures")
         }
         EventKind::SitterPageSet { .. }
+        | EventKind::AlbumPhotoAdded { .. }
+        | EventKind::AlbumPhotoRemoved { .. }
         | EventKind::PrivateNoteSet { .. }
         | EventKind::PrivateItem(_)
         | EventKind::ReminderSet { .. }

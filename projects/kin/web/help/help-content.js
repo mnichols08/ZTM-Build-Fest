@@ -135,6 +135,13 @@ export const HELP_TOPICS = Object.freeze({
       action("Draw with your finger or the mouse.", ".fridge-board"),
       action("Add a magnet with a picture or a word.", ".fridge-add-magnet"),
     ], "Everyone in your household who can use the Fridge."),
+  "household/photos": topic("Family photos",
+    "Photos for the whole family to enjoy, and a slideshow to play them one after another.",
+    [
+      action("Press Add photos and choose one or more from this phone or computer.", ".album-add"),
+      action("Press a photo to see it bigger. Whoever added it can remove it, and so can a household admin.", ".album-thumb"),
+      action("Press Slideshow to play them. Tap the screen to stop.", ".album-slideshow-button"),
+    ], EVERYONE),
   "household/notes": topic("Notes & reference",
     "Notes and useful details to keep, like a plumber's number or when the boiler was last serviced.",
     [

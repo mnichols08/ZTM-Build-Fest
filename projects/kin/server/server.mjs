@@ -1638,7 +1638,9 @@ async function api(request, response, url, context) {
   }
   const attachmentRoute = url.pathname.match(/^\/api\/sync\/attachments(?:\/([a-f0-9]{32}))?$/);
   if (attachmentRoute && request.method === "GET" && !attachmentRoute[1]) {
-    json(response, 200, { attachments: syncService.listAttachments(session) });
+    // ?album=1: a device that knows the family album (#673) asks for its
+    // photos too.
+    json(response, 200, { attachments: syncService.listAttachments(session, { album: url.searchParams.get("album") === "1" }) });
     return;
   }
   if (attachmentRoute && request.method === "POST" && attachmentRoute[1]) {

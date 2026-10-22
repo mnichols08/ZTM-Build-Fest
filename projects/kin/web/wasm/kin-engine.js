@@ -26,6 +26,7 @@ import { decodeWeek, encodeWeekQuery } from "./kin-week.js";
 import { SECTION_COMMANDS, SECTION_EVENT_KINDS, SectionFormatError, decodeShoppingSections, encodeSectionIntent } from "./kin-sections.js";
 import { ROTATION_COMMANDS, ROTATION_EVENT_KINDS, RotationFormatError, decodeRoutineRotations, encodeRotationIntent } from "./kin-rotations.js";
 import { SITTER_COMMANDS, SITTER_EVENT_KINDS, SitterFormatError, decodeSitterPage, encodeSitterIntent } from "./kin-sitter.js";
+import { ALBUM_COMMANDS, ALBUM_EVENT_KINDS, AlbumFormatError, FIRST_ALBUM_KIND, decodeAlbum, encodeAlbumIntent } from "./kin-album.js";
 import { FIRST_PRIVATE_KIND, MAX_PRIVATE_EVENT_COUNT, PRIVATE_EVENT_KINDS, decodePrivate } from "./kin-private.js";
 import { FIRST_JOURNAL_KIND, FIRST_PRIVATE_ITEM_KIND, JOURNAL_EVENT_KINDS, PRIVATE_ITEM_EVENT_KINDS, PrivateFormatError, encodePrivateIntent } from "./kin-private.js";
 import { encodePrefsIntent, PREFS_COMMANDS, PREFS_KIND_CODES, PrefsFormatError } from "./kin-prefs.js";
@@ -117,6 +118,7 @@ export function createEngine(instanceExports) {
     "kin_shopping_sections",
     "kin_routine_rotations",
     "kin_sitter_page",
+    "kin_album",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_audio_peaks",
@@ -357,6 +359,13 @@ export function createEngine(instanceExports) {
     sitterPage: (records, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodeSitterPage(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_sitter_page"),
+      )),
+    // The family album (#673, ADR 0022 §5): { photos: [{ photoId,
+    // attachmentId, addedBy, addedAt, caption }], removed: [{ photoId,
+    // attachmentId, removedAt }] }, both newest first.
+    album: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeAlbum(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_album"),
       )),
     // A member's things on `civilDate` (#344, ADR 0013): [{ kind: "item",
     // itemId } | { kind: "routine", routineId, occurrenceKey, done }].
@@ -1236,6 +1245,11 @@ PRIVATE_ITEM_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_PRIVATE_IT
 JOURNAL_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_JOURNAL_KIND + index] = kind; });
 // Reminders and settings (#520): kinds 120, 121 and 130.
 for (const [kind, code] of Object.entries(PREFS_KIND_CODES)) EVENT_KINDS[code] = kind;
+// The family album (#673): kinds and KCMD actions 75–76, encoded by
+// kin-album.js. Placed by number, so the kinds other stories add (71–74,
+// 77–82) can sit around them.
+ALBUM_COMMANDS.forEach((type, index) => { COMMAND_TYPES[FIRST_ALBUM_KIND + index] = type; });
+ALBUM_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_ALBUM_KIND + index] = kind; });
 
 // The command field that names each event's own entity (packet offset 92).
 // Other ID fields on a command are references to a different entity: a
@@ -1347,6 +1361,14 @@ function encodeIntentPacket(command, identity) {
     try { return encodeSitterIntent(command, identity); }
     catch (error) {
       if (error instanceof SitterFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // The family album (75–76) carries its canonical payloads (kin-album.js).
+  if (kind === FIRST_ALBUM_KIND || kind === FIRST_ALBUM_KIND + 1) {
+    try { return encodeAlbumIntent(command, identity); }
+    catch (error) {
+      if (error instanceof AlbumFormatError) throw new KinEngineError(2, error.message);
       throw error;
     }
   }

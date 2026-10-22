@@ -31,7 +31,8 @@ export const EASY_CORE = Object.freeze({
     lists: Object.freeze(["todo", "shopping"]),
     routines: Object.freeze(["all"]),
     updates: Object.freeze(["handoffs", "chat"]),
-    household: Object.freeze(["hub"]),
+    // Family photos (#673) stay on hand: it's for grandparents too.
+    household: Object.freeze(["hub", "photos"]),
   }),
 });
 

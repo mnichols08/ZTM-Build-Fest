@@ -326,6 +326,52 @@ record 2, note 1 with intro "Hi": `"KSIT"`, `01 00`, `00 00`, count 3, then
 then `02 00` "Hi". An empty history is `"KSIT"`, `01 00 00 00`, a zero count
 and a zero intro length.
 
+## The family album (#673)
+
+Written out by hand in `rust/src/album_tests.rs`: household `aa` × 16, Sam
+`01` × 16 and Alex `02` × 16, photo IDs `numbered_id(n)` and album
+attachment IDs `a1 b0` followed by `n` as u32 little-endian and ten zero
+bytes. Event `n` in a test household has timestamp 1,791,475,200,000 + 1000 +
+n. The numbers start at 175 to stay clear of the other family-hub stories'
+vectors. JavaScript mirrors 175 and 179 in `web/wasm/kin-album.test.mjs` and
+`abi-ownership.test.mjs`.
+
+**175 — Payloads.** Photo 1 with attachment 1 and the caption "Grandma's
+80th" encodes as photo 1, `a1 b0 01 00 00 00` + ten zero bytes, `0e 00` and
+the caption (48 bytes); with no caption it is 34 bytes. A 200-byte caption
+("é" × 100) encodes. Kind 76 is the photo ID alone (16 bytes). The captions
+" Hi", "Hi ", "\nHi", "a\nb", "a\tb", "a\u{7}b", " " and 201 × "x", a zero
+photo ID, an attachment without the `a1 b0` prefix or the prefix followed by
+zeros, a short or trailing byte, a missing caption length, invalid UTF-8, a
+zero or 15- or 17-byte removal, and another kind fail with code 2.
+
+**176 — Rules.** After Sam adds photo 1 (attachment 1, "Beach") and Alex
+photo 2: photo 1 again (with attachment 3) or attachment 1 again (as photo 3)
+fail with code 4, " x" with code 2, and removing photo 9 with code 4. Alex
+removes photo 1; removing it again fails (code 4), so does adding photo 1
+back, but photo 4 with attachment 1 and "Beach" works. The album is then
+photo 2 (added by Alex at +1002) and photo 4 (Sam), and photo 1 is the one
+recent removal (at +1003).
+
+**177 — Limit.** 500 photos fit; the 501st fails with code 4 until one is
+removed. Two adds made from the same 499-photo history both pass their
+command checks, but together they fail replay with code 4.
+
+**178 — Replay.** Two removals of photo 1 made from the same history replay
+as one: the album is empty with one removal. A removal of a photo the
+history never added fails replay (code 4). After 70 photos are each added
+and removed, the removals kept are photos 7–70 (64). A zero actor or device
+fails replay.
+
+**179 — KCMD and KALB.** Actions 75 and 76 carry the payloads as their text
+with zero entity, date, option and expiry; an untrimmed caption or an empty
+removal fails. After Sam adds photo 1 ("Beach"), Alex photo 2 (no caption),
+Sam photo 3 ("Zoo") and Alex removes photo 1: `"KALB"`, `01 00`, `00 00`,
+photo count 2, removal count 1, then photo 3 (attachment 3, Sam, +1003,
+`03 00` "Zoo"), photo 2 (attachment 2, Alex, +1002, `00 00`), then photo 1,
+attachment 1 and +1004. An empty history is `"KALB"`, `01 00 00 00` and two
+zero counts (16 bytes).
+
 ## A member's private log (#489)
 
 Written out by hand in `rust/src/private_tests.rs`: household `aa` × 16,

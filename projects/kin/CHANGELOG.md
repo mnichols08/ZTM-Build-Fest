@@ -7,6 +7,24 @@ documentation only.
 
 ## Unreleased
 
+### Added
+
+- **Family photos** (#673: #674, #675; epic #651,
+  [ADR 0022](docs/decisions/0022-family-hub.md) §5). A shared, encrypted
+  family album under Household › Family photos: add several photos at once
+  with captions, from the page, the share sheet ("Add to family photos") or
+  a chat photo ("Add to the family photos"); a grid of thumbnails, a viewer,
+  and removal by whoever added a photo or a household admin, with Undo. A
+  Slideshow shows the album in the new reusable `<kin-photo-frame>`, which
+  crossfades (not with reduced motion), shows captions and who added each
+  photo, pauses while hidden and returns on a tap; the kitchen display will
+  use it as its screensaver. Event kinds 75 `ALBUM_PHOTO_ADDED` and 76
+  `ALBUM_PHOTO_REMOVED`, the WASM export `kin_album` (KALB v1), at most 500
+  photos. Images are household attachment blobs, made screen-sized and
+  encrypted on the device, kept in their own device database and counted in
+  their own service quota. Household feature "Family photos" (bit 16), Help
+  and easy mode. Browser regression `scripts/photo-album-regression.mjs`.
+
 ## v1.6.0 — Kin for Everyone
 
 Released 2026-10-21 as `kin-v1.6.0`. This minor release makes Kin easier for
