@@ -39,9 +39,10 @@ export class NavigationController {
     // A switched-off feature (#625, ADR 0021): its routes, links and
     // shortcuts open Today with a calm line. Simple view has its own list.
     if (!this.app.simpleView && !this.ctx.features.routeAvailable(route)) {
-      // A switched-off segment of a page that has others on (the Week view
-      // with only the Calendar on, #661) opens the page's first one.
-      const segment = route.segment ? firstAvailableSegment(route.page, this.ctx.features.off) : null;
+      // The Calendar's views are one page (#661): a switched-off view (the
+      // Week view with only the Calendar on) opens the first one that is
+      // on. Other pages' segments are places of their own and open Today.
+      const segment = route.page === "week" ? firstAvailableSegment(route.page, this.ctx.features.off) : null;
       if (segment) {
         route = resolveRoute({ hash: routeHash(route.page, segment) });
       } else {
