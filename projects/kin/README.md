@@ -100,6 +100,17 @@ the first Node 24 release whose `node:sqlite` returns TEXT values with embedded
 NUL characters intact. CI runs Node 24.22.0 on Windows and Linux; other
 platform/runtime combinations are not yet certified.
 
+### Kin at home
+
+A household can run Kin on its own computer in home mode (`KIN_MODE=home`,
+[ADR 0025](docs/decisions/0025-kin-at-home.md)): `node scripts/build-sea.mjs`
+builds it as one executable for Linux x64 and arm64 (macOS and Windows
+follow), `--install-service` runs it as a service that starts with the
+computer, and `deploy/home/Dockerfile` is a container image for NAS and
+server users. Phones can't reach a home server by itself yet: the tunnel and
+certificates come with later stories. [HOME-SERVER](docs/HOME-SERVER.md)
+covers building, running, installing and the unsigned-build warnings.
+
 ### Test server with Docker
 
 To let testers use Kin from their own devices and networks, [deploy/](deploy/README.md)
@@ -336,6 +347,7 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [Testing contract](docs/TESTING.md)
 - [Accessibility contract](docs/ACCESSIBILITY.md)
 - [v1.0 compatibility and upgrade commitment](docs/V1.0-COMPATIBILITY.md)
+- [Kin at home: the home server](docs/HOME-SERVER.md)
 - [Persistent contract versioning](docs/VERSIONING.md)
 - [Migration safety](docs/MIGRATIONS.md)
 - [Portable household data](docs/PORTABILITY.md)

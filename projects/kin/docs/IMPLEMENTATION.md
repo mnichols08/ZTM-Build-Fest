@@ -66,8 +66,11 @@ Rust core is organised as follows:
 
 - `server.mjs`: the HTTP server and routes. `http-body.mjs` reads request
   bodies with their byte limit enforced as they stream. `start.mjs` starts it
-  inside Node's permission model, whose flags and startup check live in
-  `permissions.mjs`; `server.mjs` refuses to serve without that sandbox.
+  inside Node's permission model through the launcher, `launcher.mjs`, whose
+  flags and startup check live in `permissions.mjs`; `server.mjs` refuses to
+  serve without that sandbox. `mode.mjs` is `KIN_MODE` (hosted or home) and
+  `service-install.mjs` installs Kin as a service (ADR 0025,
+  [HOME-SERVER](HOME-SERVER.md)).
 - `durable-store.mjs`: the SQLite store's core (opening, locks,
   transactions, backup, restore). Its method groups live in `durable-store/`:
   `schema.mjs`, `validation.mjs`, `identity.mjs`, `lifecycle.mjs`,

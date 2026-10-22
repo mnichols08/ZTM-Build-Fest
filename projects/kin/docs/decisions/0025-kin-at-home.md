@@ -7,9 +7,14 @@ journeytocode.io and publishes the relay as open source; a free name
 `<name>.home.kin.journeytocode.io` by default, with the household's own
 domain as an option; the Play Store app stays bound to
 `kin.journeytocode.io` for now; the hosted service stays the easy default.
-Nothing in this ADR is built yet. The stories that build it are #713
+The stories that build it are #713
 (packaging), #718 (control panel), #723 (ACME client), #728 (relay), #733
-(tunnel, home side), #737 (moving a household) and #740 (acceptance).
+(tunnel, home side), #737 (moving a household) and #740 (acceptance). Built
+so far (#713, [HOME-SERVER](../HOME-SERVER.md)): `KIN_MODE` (§9), the
+executables for Linux x64 and arm64 with Kin's own ELF injector, the
+container image, and installing as a service, on Windows with the Task
+Scheduler fallback; the macOS and Windows executables (#747, #748) and the
+Rust service host (#749) follow.
 
 **A word on names.** Kin's documents already call the sync service "the
 relay" (it relays encrypted events; THREAT-MODEL S4, S5). This ADR adds a
@@ -628,7 +633,10 @@ package (a Kin build script that writes the executable's resource section, or
 Node's built-in builder where the build machine's Node has one). No
 dependency is added. The launcher stays the only part that starts processes,
 and the service still runs under the permission model; how a SEA passes those
-flags to its own service process is settled in #713.
+flags to its own service process is settled in #713: it starts a second
+copy of itself with them in `NODE_OPTIONS`, after unpacking its app files to
+a checked, read-only cache folder that becomes the service's app directory
+([HOME-SERVER](../HOME-SERVER.md)).
 
 **The data directory.** Defaults: `%ProgramData%\Kin` on Windows,
 `/Library/Application Support/Kin` on macOS, `/var/lib/kin` on Linux,
@@ -829,7 +837,9 @@ the installed web app from their own address (ADR 0020).
    (notarization) and a Windows code-signing certificate, macOS Gatekeeper
    and Windows SmartScreen warn on first open, which a non-technical person
    may not get past. Both cost money every year. Buy them, or document the
-   warnings?
+   warnings? *Answered 2026-10-22: builds stay unsigned for now and the
+   warnings are documented ([HOME-SERVER](../HOME-SERVER.md)); releases are
+   checksummed.*
 2. **Claims without an account.** Names are claimed by key, limited per
    source address. Should a claim also need an email address (more abuse
    protection, but the relay then holds a contact for each name)?
@@ -837,6 +847,7 @@ the installed web app from their own address (ADR 0020).
    PSL's months of lead time and sharing `journeytocode.io`'s reputation.
 4. **Automatic updates.** The default above installs patch and minor
    releases at night and waits for an admin on major ones. Is that right?
+   *Answered 2026-10-22: yes.*
 5. **Reports from home servers.** Should a home server be able to send
    reports to the Kin team (through a project endpoint rather than a GitHub
    token), or do they stay with the household's admins?
