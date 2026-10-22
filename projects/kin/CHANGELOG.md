@@ -245,6 +245,21 @@ documentation only.
   against an in-process ACME server with a real loopback TLS validation;
   started by home mode with the tunnel (#733, entry above).
   [HOME-CERTIFICATES](docs/HOME-CERTIFICATES.md), TEST-VECTORS.
+- **Kin at home: certificates follow ACME Renewal Information** (#751;
+  story #723, [ADR 0025](docs/decisions/0025-kin-at-home.md) §5, RFC 9773).
+  When the CA's directory has `renewalInfo`, the home server computes the
+  certificate's ARI identifier from its authorityKeyIdentifier and serial
+  with its own DER reader, polls the suggested window (the CA's
+  `Retry-After`, clamped to 1–24 hours), renews at a uniformly random time
+  in it (at once when the window has passed), and names the old certificate
+  in the new order's `replaces` (ordering again without it on
+  `alreadyReplaced`). Two thirds of the lifetime stays the fallback when the
+  CA has no ARI or a poll fails, and the renewal is never later than that
+  point. `status()` gains a `renewalInfo` object with the window, the CA's
+  `explanationURL` and the last poll's error; `renewAt` is now the planned
+  time. The test CA serves renewal information and checks `replaces`.
+  [HOME-CERTIFICATES](docs/HOME-CERTIFICATES.md#renewal-backoff-and-status),
+  TEST-VECTORS.
 
 ### Changed
 

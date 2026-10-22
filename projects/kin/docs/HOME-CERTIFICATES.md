@@ -1,6 +1,6 @@
 # Home server certificates (ACME client)
 
-Story #723 (tasks #724–#727), epic #708, following
+Story #723 (tasks #724–#727, and #751 for ARI), epic #708, following
 [ADR 0025](decisions/0025-kin-at-home.md) §5 (certificates), §6–7 (what the
 relay and the home server can learn and hold) and §10 (the `home/`
 directory).
@@ -17,14 +17,14 @@ and what the control panel (#718) still has to add.
 | File | Task | What it does |
 | --- | --- | --- |
 | `der.mjs` | #725 | DER writer (lengths, INTEGER, OID, strings, times, BIT/OCTET STRING, context tags), a bounded TLV reader, and ECDSA P1363 → DER signature encoding |
-| `x509.mjs` | #725, #726 | Names, extensions, subjectAltName, ecdsa-with-SHA256 signing, an X.509 v3 certificate builder, PEM |
+| `x509.mjs` | #725, #726, #751 | Names, extensions, subjectAltName, key identifiers, ecdsa-with-SHA256 signing, an X.509 v3 certificate builder, PEM; reads a certificate's serial and extensions and computes the ARI certificate identifier |
 | `csr.mjs` | #725 | The PKCS#10 CSR: CN (when ≤ 64 characters), the certificate key's SPKI, an extensionRequest with subjectAltName, signed by the certificate key |
 | `keys.mjs` | #725 | P-256 key generation, the JWK and its RFC 7638 thumbprint, and `CertificateStore` (files, modes, atomic writes) |
 | `transport.mjs` | #724 | The default outbound HTTPS transport (time limit, size cap). Any `fetch`-shaped function can be injected instead |
-| `client.mjs` | #724 | The RFC 8555 client and `obtainCertificate` (TLS-ALPN-01) |
+| `client.mjs` | #724, #751 | The RFC 8555 client, ARI's `renewalInfo` request, and `obtainCertificate` (TLS-ALPN-01, with `replaces`) |
 | `tls-alpn.mjs` | #726 | The RFC 8737 validation certificate and `ChallengeResponder` |
 | `tls-hook.mjs` | #726, #727 | The only server integration: `ALPNCallback`/`SNICallback` options, closing challenge connections, `applyCertificate` (hot swap) |
-| `renewal.mjs` | #727 | `CertificateManager`: schedule, backoff, hot swap, status, daily CT check, CAA records |
+| `renewal.mjs` | #727, #751 | `CertificateManager`: schedule (ARI or two thirds), backoff, hot swap, status, daily CT check, CAA records |
 | `ct-check.mjs` | #727 | The Certificate Transparency check |
 | `staging.mjs` | — | A manual run against Let's Encrypt staging (never run by tests or CI) |
 | `acme-test-server.mjs` | tests | The in-process ACME server the tests use |
@@ -52,6 +52,28 @@ and what the control panel (#718) still has to add.
    order, download the chain as `application/pem-certificate-chain`, and
    check the leaf certifies our key (`acme-key-mismatch` otherwise).
 8. The challenge answer is removed whatever happens.
+9. **ARI (RFC 9773).** When the directory has `renewalInfo`, the renewal
+   information for a certificate is an unauthenticated `GET
+   <renewalInfo>/<certificate identifier>` (no JWS, §4.1). Its
+   `suggestedWindow` must be two RFC 3339 times with `end` after `start`
+   (anything else is `acme-bad-response`); `explanationURL` is kept only
+   when it is `https:`. A renewal's `newOrder` carries `replaces: <the old
+   certificate's identifier>` (§5), and only to a CA whose directory has
+   `renewalInfo`. If the CA answers 409 `alreadyReplaced`, the order is
+   placed once more without `replaces`.
+
+### The ARI certificate identifier
+
+`base64url(AKI keyIdentifier) "." base64url(serial)` with no padding
+(RFC 9773 §4.1). The keyIdentifier is the `[0]` field (tag `0x80`) of the
+leaf's authorityKeyIdentifier extension (2.5.29.35); the serial is the
+content octets of the serialNumber INTEGER exactly as encoded, so a serial
+whose top bit is set keeps its leading `00`. Both are read by Kin's own DER
+reader (`readCertificate`, `authorityKeyIdentifier`,
+`certificateIdentifier` in `x509.mjs`) as views into the certificate, not
+by Node. A certificate without that keyIdentifier has no identifier, and is
+renewed by the two-thirds rule. The RFC's example is pinned in
+[TEST-VECTORS](TEST-VECTORS.md#home-server-certificates-723).
 
 ## TLS-ALPN-01
 
@@ -100,15 +122,37 @@ ignored: the installer's ACL (#713) restricts it there. Backups that include
 
 ## Renewal, backoff and status
 
-- Renew when two thirds of the lifetime has passed (day 60 of 90), or at once
-  when there is no certificate, it has expired, or it doesn't match its key
-  or the name.
+- **With ARI** (the CA's directory has `renewalInfo`): ask for the window
+  as soon as a certificate is loaded or obtained, then again after the CA's
+  `Retry-After`, clamped to 1 hour – 24 hours (6 hours when there is none).
+  With T = two thirds of the lifetime and the window [S, E):
+  - E has passed (an incident, a revocation coming): renew now;
+  - the whole window lies after T: renew at T. Never later than T is the
+    bound that keeps a wrong or hostile answer from pushing renewal towards
+    expiry, so it wins over the window here;
+  - otherwise a uniformly random time in [S, min(E, T)): never before the
+    window's start, never after T. A time already past means now.
+
+  The time is kept while polls return the same window and chosen again when
+  the window moves. A failed poll keeps the last window's time (two thirds
+  if there has been none) and polls again after its `Retry-After`, clamped
+  the same way. A failed poll is not a renewal failure: it doesn't count in
+  `failures` or start the backoff.
+- **Without ARI** (no `renewalInfo`, no identifier, or no answer yet):
+  renew when two thirds of the lifetime has passed (day 60 of 90). A CA
+  without `renewalInfo` is checked again daily (the directory only).
+- In every case, renew at once when there is no certificate, it has
+  expired, or it doesn't match its key or the name.
 - After a failure: 1 hour, doubling to 24 hours; a longer `Retry-After` from
-  the CA (rate limits) wins, up to 7 days.
+  the CA (rate limits) wins, up to 7 days. While backing off, the backoff
+  says when to try again, even when the ARI window says "now"; ARI polls go
+  on meanwhile. A success clears the backoff and starts ARI afresh for the
+  new certificate.
 - The new certificate is put on the running server with
   `tls.Server.setSecureContext` (`applyCertificate`): new connections get it,
   open ones keep theirs, nothing restarts.
 - Timers wake at least daily and re-plan, so a sleeping computer catches up.
+  One timer serves both renewal and ARI polls (whichever is due first).
 
 `CertificateManager.status()` is what the control panel (#718) shows. It
 holds no key and no secret:
@@ -118,16 +162,28 @@ holds no key and no secret:
   name, state: "none" | "valid" | "renewing" | "valid-retrying" | "failed" | "expired",
   certificate: { notBefore, notAfter, serial, issuer, daysLeft } | null,
   expiringSoon,              // under 14 days left
-  renewAt, nextAttemptAt, failures,
+  renewAt,                   // the planned renewal: the ARI choice, else two thirds
+  nextAttemptAt, failures,
   lastError: { code, detail, at } | null,
   lastRenewedAt, accountUrl,
   caa: [ '<name>. CAA 0 issue "letsencrypt.org; accounturi=…; validationmethods=tls-alpn-01"',
          '<name>. CAA 0 issuewild ";"' ] | null,
   transparency: { state: "not-checked" | "ok" | "alert", checkedAt, checked,
                   unexpected: [{ id, serial, issuer, notBefore, notAfter }],
-                  error: { code, at } | null }
+                  error: { code, at } | null },
+  renewalInfo: {             // ARI (#751); fields added, nothing above changed
+    state: "none" | "unknown" | "ok" | "failed" | "unsupported" | "no-identifier",
+    certificateId,           // the ARI identifier, or null
+    suggestedWindow: { start, end } | null,   // the last good window
+    explanationURL,          // the CA's https link about the window, or null
+    checkedAt, nextCheckAt,
+    error: { code, detail, at } | null        // the last poll's failure
+  }
 }
 ```
+
+`explanationURL` is for the control panel to offer as a link (RFC 9773 §4.2
+says to show it to the operator); it is never fetched by the server.
 
 `onEvent` reports `renewed`, `failed`, `expiring` (under 14 days) and
 `transparency-alert`; #718 turns `expiring` and `transparency-alert` into the
@@ -141,6 +197,7 @@ content-free push to admins (ADR 0025 §5).
 `acme-malformed`, `acme-bad-nonce`, `acme-no-account`,
 `acme-terms-changed`, `acme-account-binding-required`, `acme-bad-contact`,
 `acme-order-not-ready`, `acme-server-error`, `acme-already-revoked`,
+`acme-already-replaced` (handled by ordering again without `replaces`),
 `acme-bad-request`, `acme-compound` (taken from the first subproblem when
 there is one), `acme-error` (unknown types), and the client's own
 `acme-network`, `acme-timeout`, `acme-bad-response`, `acme-no-challenge`,
@@ -193,10 +250,6 @@ would be.
 
 ## Not done yet (deliberately)
 
-- **ACME Renewal Information (ARI, RFC 9773).** ADR 0025 §5 says to follow it
-  when Let's Encrypt offers it; this client renews by fraction of lifetime
-  only. ARI needs the certificate's Authority Key Identifier, so it will
-  reuse the DER reader. Tracked as a follow-up to #727.
 - Account key rollover, account deactivation and certificate revocation.
 - External account binding (Let's Encrypt doesn't use it).
 
@@ -222,6 +275,16 @@ validates TLS-ALPN-01 by connecting to the relay's port.
   for a pending name, no application data, nothing reaches HTTPS, hot swap.
 - `renewal.test.mjs`: two-thirds scheduling, backoff, Retry-After, hot swap,
   restart, status states, CAA, and the CT check (fake search service).
+- `renewal-info.test.mjs` (#751): the identifier against RFC 9773's example
+  in a real DER certificate, AKI shapes, the time chosen in, across and
+  after the window, Retry-After clamping, the client's GET and its
+  validation, and the manager against the test CA with `renewalInfo` on:
+  `replaces` sent and recorded, a passed window, a CA without ARI (which
+  refuses `replaces`, so not sending it is proven), failed polls falling
+  back, `alreadyReplaced`, backoff, and a restart. The test CA's
+  `renewalInfo` option serves a configurable window (`setRenewalInfo`,
+  Let's Encrypt's centred-on-two-thirds window by default), `Retry-After`
+  and `explanationURL`, and checks `replaces`.
 
 **CI must confirm on Node 24:** these ran on Node 22.22 locally. The things a
 Node change could break are the `ALPNCallback`-before-`SNICallback` order

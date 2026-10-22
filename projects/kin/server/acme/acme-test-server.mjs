@@ -17,35 +17,42 @@
 //   - finalize verifies the CSR's signature and that its names match the
 //     order, then issues from a test CA after one "processing" poll.
 //
+//   - with `renewalInfo` (ACME Renewal Information, RFC 9773): the directory
+//     names `renewalInfo`; an unauthenticated GET of `<renewalInfo>/<id>`
+//     answers `suggestedWindow` (and `explanationURL`) with Retry-After for
+//     a certificate it issued; newOrder's `replaces` must name a certificate
+//     this account was issued, share a name with the order and not be
+//     replaced already (409 `alreadyReplaced`); issuance marks it replaced.
+//     Without `renewalInfo`, `replaces` is refused as malformed, so a client
+//     that sends it to a CA without ARI fails the tests. Issued certificates
+//     carry authorityKeyIdentifier (and the CA subjectKeyIdentifier), as
+//     Let's Encrypt's do.
+//
 // Knobs for failure tests: `failNext(endpoint, problem, { status, retryAfter })`,
 // `badNonceOnce()`, `holdPolls` (authorization polls answered "pending" after
 // validation, with Retry-After: 3), and `lifetimeMs` / `now` for validity.
 // `accountBase` makes account URLs (the `kid`) start with another base, such
 // as "https://acme.test", for a caller that needs an https account URI (the
 // relay's CAA records accept only those); the client never fetches it.
+// `setRenewalInfo({ start, end, retryAfter, explanationURL, status })`
+// overrides the ARI answer (ms since epoch for the window; `status` answers
+// an error instead), and `state.renewalInfoRequests` lists the identifiers
+// asked for.
 import { X509Certificate, createHash, createPublicKey, generateKeyPairSync, randomBytes, verify } from "node:crypto";
 import { createServer } from "node:http";
 import { connect } from "node:tls";
-import { boolean, decodeObjectIdentifier, readChildren, readTlv, sequence } from "./der.mjs";
+import { boolean, decodeObjectIdentifier, integer, readChildren, readTlv, sequence } from "./der.mjs";
 import { jwkThumbprint } from "./keys.mjs";
-import { OID, buildCertificate, extension, spkiDer, subjectAltNameExtension, toPem } from "./x509.mjs";
+import {
+  OID, authorityKeyIdentifierExtension, buildCertificate, extension, randomSerial, readCertificate, spkiDer,
+  subjectAltNameExtension, subjectKeyIdentifierExtension, toPem,
+} from "./x509.mjs";
 
 const b64 = (value) => Buffer.from(value).toString("base64url");
 const token = () => b64(randomBytes(32));
 
 /** The extensions of a DER certificate: [{ oid, critical, value }]. */
-export function certificateExtensions(der) {
-  const certificate = readTlv(der);
-  const [tbs] = readChildren(certificate.value);
-  const extensionsField = readChildren(tbs.value).find((item) => item.tag === 0xa3);
-  if (!extensionsField) return [];
-  const [list] = readChildren(extensionsField.value);
-  return readChildren(list.value).map((item) => {
-    const parts = readChildren(item.value);
-    const critical = parts.length === 3 && parts[1].tag === 0x01 && parts[1].value[0] === 0xff;
-    return { oid: decodeObjectIdentifier(parts[0].value), critical, value: parts[parts.length - 1].value };
-  });
-}
+export const certificateExtensions = (der) => readCertificate(der).extensions;
 
 /** Parse a DER CSR: { info, publicKey, signature, names }. */
 export function parseCsr(der) {
@@ -92,15 +99,28 @@ export function validateTlsAlpn({ host = "127.0.0.1", port, name, keyAuthorizati
   });
 }
 
-export async function startAcmeTestServer({ validationPort, validationHost = "127.0.0.1", lifetimeMs = 90 * 24 * 60 * 60 * 1000, now = Date.now, holdPolls = 1, accountBase = null } = {}) {
+/** Let's Encrypt's (Boulder's) default suggested window: centred on two
+ * thirds of the lifetime, ± 1/100 of it. */
+export function defaultRenewalWindow({ notBefore, notAfter }) {
+  const lifetime = notAfter - notBefore;
+  const ideal = notAfter - Math.floor(lifetime / 3);
+  return { start: ideal - Math.floor(lifetime / 100), end: ideal + Math.floor(lifetime / 100) };
+}
+
+export async function startAcmeTestServer({ validationPort, validationHost = "127.0.0.1", lifetimeMs = 90 * 24 * 60 * 60 * 1000, now = Date.now, holdPolls = 1, accountBase = null, renewalInfo = false } = {}) {
   const ca = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
+  // keyIdentifier method (1) of RFC 5280 §4.2.1.2 would hash only the BIT
+  // STRING; any stable 20 bytes do for a test CA.
+  const caKeyIdentifier = createHash("sha1").update(spkiDer(ca)).digest();
   const caDer = buildCertificate({
     subjectPublicKeyInfo: spkiDer(ca), subject: "Kin Test ACME CA", notBefore: now() - 86_400_000, notAfter: now() + 3650 * 86_400_000,
-    extensions: [extension(OID.basicConstraints, sequence(boolean(true)), true)], signingKey: ca,
+    extensions: [extension(OID.basicConstraints, sequence(boolean(true)), true), subjectKeyIdentifierExtension(caKeyIdentifier)], signingKey: ca,
   });
   const state = {
     nonces: new Set(), accounts: new Map(), orders: new Map(), authorizations: new Map(), challenges: new Map(), certificates: new Map(),
     log: [], failures: [], badNonce: false, validationPort, validationHost, lifetimeMs, now, holdPolls, issued: [],
+    // ARI: identifier → { notBefore, notAfter, names, account }, replaced identifiers, the override and the GETs seen.
+    renewalInfo, ariCertificates: new Map(), replaced: new Set(), ariOverride: null, renewalInfoRequests: [],
   };
   let base = "";
   const nonce = () => { const value = b64(randomBytes(16)); state.nonces.add(value); return value; };
@@ -156,12 +176,33 @@ export async function startAcmeTestServer({ validationPort, validationHost = "12
     };
   };
 
+  /** The identifier as the CA computes it, independently of x509.mjs's
+   * reader: the keyIdentifier it wrote and the INTEGER content of the
+   * serial it chose. */
+  const ariIdentifier = (serial) => `${b64(caKeyIdentifier)}.${b64(integer(serial).subarray(2))}`;
+
+  function answerRenewalInfo(response, id) {
+    state.renewalInfoRequests.push(id);
+    const certificate = state.ariCertificates.get(id);
+    if (!certificate) { problem(response, 404, "malformed", "no such certificate"); return; }
+    const override = state.ariOverride ?? {};
+    if (override.status) { problem(response, override.status, "serverInternal", "injected", override.retryAfter !== undefined ? { "retry-after": String(override.retryAfter) } : {}); return; }
+    const window = override.start !== undefined ? { start: override.start, end: override.end } : defaultRenewalWindow(certificate);
+    const body = { suggestedWindow: { start: new Date(window.start).toISOString(), end: new Date(window.end).toISOString() }, ...(override.explanationURL ? { explanationURL: override.explanationURL } : {}) };
+    response.writeHead(200, { "content-type": "application/json", "retry-after": String(override.retryAfter ?? 21600) });
+    response.end(JSON.stringify(body));
+  }
+
   async function handle(request, response, raw) {
     const [, kind, id] = request.url.split("/");
     if (request.method === "GET" && request.url === "/directory") {
-      send(response, 200, { newNonce: `${base}/new-nonce`, newAccount: `${base}/new-account`, newOrder: `${base}/new-order`, meta: { termsOfService: `${base}/terms` } });
+      send(response, 200, {
+        newNonce: `${base}/new-nonce`, newAccount: `${base}/new-account`, newOrder: `${base}/new-order`,
+        ...(state.renewalInfo ? { renewalInfo: `${base}/renewal-info` } : {}), meta: { termsOfService: `${base}/terms` },
+      });
       return;
     }
+    if (request.method === "GET" && kind === "renewal-info" && state.renewalInfo && id) { answerRenewalInfo(response, id); return; }
     if ((request.method === "HEAD" || request.method === "GET") && request.url === "/new-nonce") { send(response, 200); return; }
     if (request.method !== "POST") { problem(response, 405, "malformed", "POST only"); return; }
     const auth = authenticate(request, raw);
@@ -186,6 +227,15 @@ export async function startAcmeTestServer({ validationPort, validationHost = "12
       case "new-order": {
         const orderId = token().slice(0, 12);
         const identifiers = auth.payload?.identifiers ?? [];
+        const replaces = auth.payload?.replaces;
+        if (replaces !== undefined) {
+          if (!state.renewalInfo) { problem(response, 400, "malformed", "this server does not support replaces"); return; }
+          const predecessor = state.ariCertificates.get(replaces);
+          if (!predecessor) { problem(response, 400, "malformed", "replaces names no certificate this server issued"); return; }
+          if (predecessor.account !== auth.header.kid) { problem(response, 403, "unauthorized", "replaces names another account's certificate"); return; }
+          if (!identifiers.some((item) => predecessor.names.includes(item.value))) { problem(response, 400, "malformed", "the order shares no name with the certificate it replaces"); return; }
+          if (state.replaced.has(replaces)) { problem(response, 409, "alreadyReplaced", "that certificate was already replaced"); return; }
+        }
         const authorizations = identifiers.map((identifier) => {
           const authorizationId = token().slice(0, 12);
           const challengeId = token().slice(0, 12);
@@ -193,7 +243,7 @@ export async function startAcmeTestServer({ validationPort, validationHost = "12
           state.authorizations.set(authorizationId, { status: "pending", identifier, challenge: challengeId, polls: 0, hold: state.holdPolls });
           return authorizationId;
         });
-        const order = { id: orderId, status: "pending", identifiers, authorizations, pollsUntilValid: 0 };
+        const order = { id: orderId, status: "pending", identifiers, authorizations, pollsUntilValid: 0, account: auth.header.kid, replaces };
         state.orders.set(orderId, order);
         send(response, 201, orderView(order), { location: `${base}/order/${orderId}` });
         return;
@@ -246,10 +296,15 @@ export async function startAcmeTestServer({ validationPort, validationHost = "12
         if (!verify("sha256", csr.info, csr.publicKey, csr.signature)) { problem(response, 400, "badCSR", "CSR signature does not verify"); return; }
         if (JSON.stringify([...csr.names].sort()) !== JSON.stringify(wanted)) { problem(response, 400, "badCSR", "CSR names do not match the order"); return; }
         const issuedAt = state.now();
+        const serial = randomSerial();
         const leafDer = buildCertificate({
-          subjectPublicKeyInfo: csr.publicKey.export({ type: "spki", format: "der" }), subject: wanted[0], issuer: "Kin Test ACME CA",
-          notBefore: issuedAt, notAfter: issuedAt + state.lifetimeMs, extensions: [subjectAltNameExtension(wanted)], signingKey: ca,
+          subjectPublicKeyInfo: csr.publicKey.export({ type: "spki", format: "der" }), subject: wanted[0], issuer: "Kin Test ACME CA", serial,
+          notBefore: issuedAt, notAfter: issuedAt + state.lifetimeMs, extensions: [subjectAltNameExtension(wanted), authorityKeyIdentifierExtension(caKeyIdentifier)], signingKey: ca,
         });
+        // Validity is written in whole seconds; keep what the certificate says.
+        const validity = new X509Certificate(leafDer);
+        state.ariCertificates.set(ariIdentifier(serial), { notBefore: Date.parse(validity.validFrom), notAfter: Date.parse(validity.validTo), names: wanted, account: order.account });
+        if (order.replaces) state.replaced.add(order.replaces);
         const certificateId = token().slice(0, 12);
         state.certificates.set(certificateId, `${toPem(leafDer, "CERTIFICATE")}${toPem(caDer, "CERTIFICATE")}`);
         state.issued.push(leafDer);
@@ -284,6 +339,10 @@ export async function startAcmeTestServer({ validationPort, validationHost = "12
     caPem: toPem(caDer, "CERTIFICATE"),
     failNext(endpoint, type, { status = 400, retryAfter, detail } = {}) { state.failures.push({ endpoint, type, status, retryAfter, detail }); },
     badNonceOnce() { state.badNonce = true; },
+    setRenewalInfo(override) { state.ariOverride = override ?? null; },
+    /** The ARI identifiers of the certificates issued so far, oldest first,
+     * as this CA computed them. */
+    issuedIdentifiers: () => [...state.ariCertificates.keys()],
     close: () => new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); }),
   };
 }
