@@ -1,5 +1,6 @@
 // The kitchen display's pure parts (#670, #671, #672): panels as data, the
-// night schedule and settings, the quiet timer, and how leaving is confirmed.
+// night schedule and settings, the quiet timer, and how leaving (and a
+// child's reward, #705) is confirmed.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PANELS, REGIONS, orientationOf, panelsByRegion, validPanel, visiblePanels } from "./panels.js";
@@ -8,7 +9,7 @@ import {
   normalizeSettings, parseClock, readDisplaySettings, writeDisplaySettings,
 } from "./schedule.js";
 import { IdleTimer } from "./idle.js";
-import { confirmOwner, leaveMethods, methodsText } from "./leave.js";
+import { ADULT_CHECKS, askAdult, confirmOwner, leaveMethods, methodsText } from "./leave.js";
 import { FEATURES, featureById, isFeatureOn, withFeature } from "../features.js";
 
 const memory = () => {
@@ -217,4 +218,45 @@ test("confirming opens this device's vault with the secret and locks that copy a
   assert.equal(await confirmOwner({ manifest, method: "backup-key", secret: new Uint8Array([7]), vaultId }, { unlock }), true);
   await assert.rejects(confirmOwner({ manifest, method: "password", secret: "right", vaultId: "cd".repeat(16) }, { unlock, passwordKeys }), (error) => error.code === "wrong_vault");
   await assert.rejects(confirmOwner({ manifest, method: "nothing", vaultId }, { unlock }), (error) => error.code === "unlock_failed");
+});
+
+test("one check for leaving and for a child's reward (#705): the device's methods, its own words, and only a real confirmation counts", async () => {
+  const vaultId = "ab".repeat(16);
+  const manifest = { vaultId, wrappers: [{ id: "w-pass", type: "password" }, { id: "w-rec", type: "recovery" }] };
+  const confirmed = [];
+  const confirm = async (options) => {
+    confirmed.push(options);
+    if (options.secret !== "right") throw Object.assign(new Error("no"), { code: "unlock_failed" });
+    return true;
+  };
+  let shown = null;
+  // The dialog: a wrong secret first (refused, it stays open), then the right one.
+  const ask = async (options) => {
+    shown = options;
+    await assert.rejects(options.check("password", "wrong"), (error) => error.code === "unlock_failed");
+    await options.check("password", "right");
+    return true;
+  };
+  assert.equal(await askAdult("reward", { readManifest: async () => manifest, vaultId, ask, confirm }), true);
+  assert.deepEqual(shown.methods, ["password"]);
+  assert.equal(shown.purpose, "reward");
+  assert.equal(shown.title, "Change a reward");
+  assert.match(shown.lead, /change a child's reward/);
+  assert.deepEqual(confirmed.map((entry) => [entry.method, entry.secret, entry.vaultId, entry.manifest === manifest]),
+    [["password", "wrong", vaultId, true], ["password", "right", vaultId, true]], "checked against this device's vault");
+
+  // Cancelled: false.
+  assert.equal(await askAdult("reward", { readManifest: async () => manifest, vaultId, ask: async () => false, confirm }), false);
+  // A device from before accounts: the backup key, as for leaving.
+  await askAdult("reward", { readManifest: async () => ({ vaultId, wrappers: [{ type: "recovery" }] }), ask: async (options) => { shown = options; return false; } });
+  assert.deepEqual(shown.methods, ["backup-key"]);
+  // No way to confirm (an unreadable manifest): never true, whatever the dialog says.
+  assert.equal(await askAdult("reward", { readManifest: async () => { throw new Error("storage"); }, ask: async (options) => { shown = options; return true; } }), false);
+  assert.deepEqual(shown.methods, []);
+  // Leaving keeps its words; an unknown purpose asks nothing.
+  assert.equal(ADULT_CHECKS.leave.title, "Leave kitchen display");
+  assert.equal(ADULT_CHECKS.leave.stay, "Stay in display mode");
+  let asked = false;
+  assert.equal(await askAdult("journal", { readManifest: async () => manifest, ask: async () => { asked = true; return true; } }), false);
+  assert.equal(asked, false);
 });

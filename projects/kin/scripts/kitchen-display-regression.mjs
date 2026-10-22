@@ -10,7 +10,9 @@
 // settings, navigation); routes stay on the display and auto-lock doesn't
 // apply; a household feature switched off takes its panel away; ticking the
 // child's chore earns the child's point; the Adult sets the child's reward
-// with big buttons and Undo puts it back (#699); the fridge has its wall
+// with big buttons and Undo puts it back (#699), each confirmed with the
+// device's secret first, and Cancel or a wrong one writes nothing (#705);
+// the fridge has its wall
 // layout with its notes in large type and big place buttons, and leaves with
 // its feature (#700); shopping adds and ticks; the
 // screen goes to the screensaver when quiet and dims at night, and a touch
@@ -138,8 +140,11 @@ async function checkPanels({ eventTitle, dinner, chore, milk }) {
   return true;
 }
 
-/** In the page: a child's reward from the display (#699), and Undo. */
-async function rewardOnDisplay() {
+/** In the page: a child's reward from the display (#699), and Undo. Saving
+ * it, and its Undo, ask for the device's own secret first (#705): here this
+ * household's backup key, as leaving does; Cancel and a wrong key write
+ * nothing. */
+async function rewardOnDisplay(recovery) {
   const app = document.querySelector("kin-app");
   const check = (condition, message, detail) => { if (!condition) throw new Error(`${message}${detail === undefined ? "" : ` ${JSON.stringify(detail)}`}`); };
   const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
@@ -153,30 +158,74 @@ async function rewardOnDisplay() {
   const { child, tag } = window.__kitchen;
   const card = () => display.querySelector(`.display-panel[data-panel="chores"] .chore-card[data-member-id="${child}"]`);
   const line = () => card()?.querySelector(".chore-points")?.textContent;
+  const charted = () => app.ctx.chores.chart.members.find((member) => member.memberId === child)?.reward ?? null;
+  const dialog = () => app.querySelector(".display-leave-dialog");
   const before = line();
   check(before === "1 point this week", "the child has the point from the tick", before);
+  const undos = app.ctx.undo.history.undoStack.length;
+
+  const form = () => card().querySelector(".chore-reward-form");
+  const reward = `Pancakes ${tag}`;
+  const fill = async () => {
+    card().querySelector(".chore-reward-toggle").click();
+    await until(() => card()?.querySelector(".chore-reward-form"), "the reward editor opens");
+    check(!dialog(), "opening the editor doesn't ask: only saving does (#705)");
+    [...form().querySelectorAll(".chore-goal-preset")].find((node) => node.dataset.goal === "5").click();
+    [...form().querySelectorAll(".chore-goal-step")].find((node) => node.dataset.step === "-1").click();
+    check(form().querySelector(".chore-goal-value").textContent === "4 points", "a one-tap goal, then one fewer", form().querySelector(".chore-goal-value").textContent);
+    const text = form().querySelector('input[type="text"]');
+    text.value = reward;
+    text.dispatchEvent(new Event("input", { bubbles: true }));
+    form().requestSubmit();
+    await until(() => dialog()?.open && dialog().dataset.purpose === "reward", "saving asks who you are (#705)");
+  };
+  // The adult's secret, in the dialog leaving uses: the backup key here.
+  const useKey = async (value) => {
+    const input = dialog().querySelector(".display-leave-form input");
+    if (dialog().querySelector(".display-leave-form").hidden) dialog().querySelector('[data-method="backup-key"]').click();
+    await until(() => !dialog().querySelector(".display-leave-form").hidden && document.activeElement === input && !input.disabled, "the secret box is open, with the focus");
+    input.value = value;
+    dialog().querySelector(".display-leave-form").requestSubmit();
+  };
+  const dialogTargets = () => [...dialog().querySelectorAll("button, input")].filter(visible).map((node) => [node, node.getBoundingClientRect()])
+    .filter(([node, rect]) => rect.height < 63.5 || (node.tagName === "BUTTON" && rect.width < 63.5)).map(([node, rect]) => `${node.className || node.tagName}:${Math.round(rect.width)}x${Math.round(rect.height)}`);
 
   card().querySelector(".chore-reward-toggle").click();
   await until(() => card()?.querySelector(".chore-reward-form"), "the reward editor opens");
-  const form = () => card().querySelector(".chore-reward-form");
   check(![...form().querySelectorAll("input")].some((input) => input.type === "number"), "no number to type: the goal is buttons");
   // Every control in it is a 64px target.
   const small = [...form().querySelectorAll("button, input")].filter(visible).map((node) => [node, node.getBoundingClientRect()])
     .filter(([, rect]) => rect.height < 63.5 || rect.width < 63.5).map(([node, rect]) => `${node.className || node.tagName}:${Math.round(rect.width)}x${Math.round(rect.height)}`);
   check(small.length === 0, "the reward editor's targets are 64px", small);
-  [...form().querySelectorAll(".chore-goal-preset")].find((node) => node.dataset.goal === "5").click();
-  [...form().querySelectorAll(".chore-goal-step")].find((node) => node.dataset.step === "-1").click();
-  check(form().querySelector(".chore-goal-value").textContent === "4 points", "a one-tap goal, then one fewer", form().querySelector(".chore-goal-value").textContent);
-  const reward = `Pancakes ${tag}`;
-  const text = form().querySelector('input[type="text"]');
-  text.value = reward;
-  text.dispatchEvent(new Event("input", { bubbles: true }));
-  form().requestSubmit();
+  form().querySelector(".chore-reward-cancel").click();
+  await until(() => !card()?.querySelector(".chore-reward-form"), "Cancel closes the editor");
+
+  // Saving asks; Cancel writes nothing.
+  await fill();
+  check(/Only the adult this device belongs to can change a child's reward/.test(dialog().textContent) && /backup key/.test(dialog().textContent), "and says with what", dialog().textContent);
+  check(dialogTargets().length === 0, "the dialog's targets are 64px", dialogTargets());
+  dialog().querySelector(".display-leave-cancel").click();
+  await until(() => !dialog(), "Don't change it closes the dialog");
+  // The display's check lets go as the dialog closes.
+  await until(() => !app.ctx.display.asking, "the cancelled save settles");
+  await idle();
+  check(line() === before && charted() === null, "cancelled: no reward", { line: line(), reward: charted() });
+  check(app.ctx.undo.history.undoStack.length === undos, "and nothing to undo");
+
+  // A wrong key is refused calmly, and writes nothing; the right one saves.
+  await fill();
+  await useKey("ab".repeat(32));
+  await until(() => /didn't work/.test(dialog()?.querySelector(".display-leave-message")?.textContent ?? ""), "a wrong key is refused", () => dialog()?.textContent);
+  check(dialogTargets().length === 0, "the secret box and its buttons are 64px", dialogTargets());
+  await idle();
+  check(line() === before && charted() === null, "refused: no reward", { line: line(), reward: charted() });
+  await useKey(recovery);
+  await until(() => !dialog(), "the right key closes the dialog", () => dialog()?.textContent);
   await idle();
   await until(() => line() === `1 of 4 for ${reward}`, "the reward shows on the child's card", () => line());
-  check(app.ctx.chores.chart.members.find((member) => member.memberId === child)?.reward?.goal === 4, "Rust's chart has it (kind 78)");
+  check(charted()?.goal === 4, "Rust's chart has it (kind 78)");
 
-  // Undo, as big as everything else on the display.
+  // Undo, as big as everything else on the display, asks as well.
   const toast = app.querySelector(".undo-toast");
   await until(() => visible(toast), "Undo is offered");
   check(/Reward saved/.test(toast.textContent), "it says what changed", toast.textContent);
@@ -184,10 +233,26 @@ async function rewardOnDisplay() {
     const rect = button.getBoundingClientRect();
     check(rect.height >= 63.5 && rect.width >= 63.5, "Undo's buttons are 64px", { className: button.className, width: rect.width, height: rect.height });
   }
+  const stacked = app.ctx.undo.history.undoStack.length;
   toast.querySelector(".undo-toast-action").click();
+  await until(() => dialog()?.open && dialog().dataset.purpose === "reward", "Undo asks who you are (#705)");
+  dialog().querySelector(".display-leave-cancel").click();
+  await until(() => !dialog(), "Don't change it closes the dialog");
+  // The cancelled Undo puts its entry back and lets go as the dialog closes,
+  // so the next press is a new Undo.
+  await until(() => !app.ctx.undo.running && app.ctx.undo.history.undoStack.length === stacked,
+    "the cancelled Undo settles", () => ({ status: app.status?.textContent, running: app.ctx.undo.running, entries: app.ctx.undo.history.undoStack.length, stacked }));
+  check(/^Not undone: the reward wasn't changed\./.test(app.status?.textContent ?? ""), "and says so", app.status?.textContent);
+  await idle();
+  check(line() === `1 of 4 for ${reward}` && charted()?.goal === 4, "cancelled: the reward stays", { line: line(), reward: charted() });
+  check(visible(toast) && toast.querySelector(".undo-toast-action").textContent === "Undo", "and Undo is still offered");
+  toast.querySelector(".undo-toast-action").click();
+  await until(() => dialog()?.open, "Undo asks again");
+  await useKey(recovery);
+  await until(() => !dialog(), "the right key closes the dialog", () => dialog()?.textContent);
   await idle();
   await until(() => line() === before, "Undo takes the reward away again", () => line());
-  check(app.ctx.chores.chart.members.find((member) => member.memberId === child)?.reward === null, "and Rust's chart agrees");
+  check(charted() === null, "and Rust's chart agrees");
   await until(() => toast.querySelector(".undo-toast-action")?.textContent === "Redo", "then Redo is offered");
   toast.querySelector(".undo-toast-dismiss").click();
   return true;
@@ -448,7 +513,7 @@ export async function kitchenDisplayRegressions(client, { until, recovery }) {
     const things = await run(enterDisplay);
     assert.equal(await run(checkPanels, things), true);
     assert.equal(await run(useDisplay), true);
-    assert.equal(await run(rewardOnDisplay), true);
+    assert.equal(await run(rewardOnDisplay, recovery), true);
     assert.equal(await run(fridgeOnDisplay), true);
     // A 10" tablet held sideways: the week on top, three columns.
     const landscape = await run(measureLayout);
@@ -473,5 +538,5 @@ export async function kitchenDisplayRegressions(client, { until, recovery }) {
   } finally {
     await client.send("Emulation.clearDeviceMetricsOverride");
   }
-  return "PASS kitchen display: set up from Household by an Adult; today, the week, meals, the child's chores in colour, shopping, the fridge and read-only messages, with nothing private or admin; routes and auto-lock held; a switched-off feature hides its panel; ticking earns the child's point; the child's reward set with 64px buttons and undone (#699); the fridge's wall layout with large notes, no hover titles or full screen and one-tap places, gone with its feature (#700); shopping adds and ticks; screensaver and night dimming wake on touch; offline keeps the last state; portrait and landscape tablets with 64px targets; unlock reopens it; leaving needs the device's secret (#669)";
+  return "PASS kitchen display: set up from Household by an Adult; today, the week, meals, the child's chores in colour, shopping, the fridge and read-only messages, with nothing private or admin; routes and auto-lock held; a switched-off feature hides its panel; ticking earns the child's point; the child's reward set with 64px buttons and undone (#699), each only with the device's secret, Cancel and a wrong key writing nothing (#705); the fridge's wall layout with large notes, no hover titles or full screen and one-tap places, gone with its feature (#700); shopping adds and ticks; screensaver and night dimming wake on touch; offline keeps the last state; portrait and landscape tablets with 64px targets; unlock reopens it; leaving needs the device's secret (#669)";
 }

@@ -182,8 +182,19 @@ export class ChoresController {
 
   /** A child's reward (kind 78): goal 0 and no text removes it. The same
    * path on the phone's chart and the kitchen display's; once saved, Undo
-   * offers the reward it replaced (web/undo.js choreRewardEntry). */
+   * offers the reward it replaced (web/undo.js choreRewardEntry). On the
+   * kitchen display (#705) the adult whose device it is confirms first,
+   * at the moment of saving; cancelled or refused, nothing is written. */
   async setReward({ memberId, goal, text }) {
+    if (this.app.displayMode === true && this.allows("set-chore-reward")) {
+      const confirmed = await this.confirmOnDisplay();
+      if (!confirmed) {
+        this.ctx.status.setStatus("The reward wasn't changed.");
+        this.app.choreChart?.focusReward?.(memberId);
+        return { ok: false, canceled: true };
+      }
+    }
+    // Read after any confirmation: the chart may have changed meanwhile.
     const from = this.rewardOf(memberId);
     const name = this.app.choreChart?.cards?.find?.((card) => card.memberId === memberId)?.name ?? null;
     const result = await this.run({ type: "set-chore-reward", memberId, goal, text: goal ? text : "" },
@@ -195,6 +206,19 @@ export class ChoresController {
       this.ctx.undo?.record(choreRewardEntry({ memberId, name, from, to }));
     }
     return result;
+  }
+
+  /** The kitchen display's check for a reward change (#705): the adult's
+   * passkey or password (app/display.js confirmAdult). Undo and Redo of a
+   * reward ask through here too (app/undo.js). Resolves true when
+   * confirmed, false otherwise. `onSettle(value)` is called synchronously
+   * as the dialog closes (app/display.js confirmAdult). */
+  async confirmOnDisplay({ onSettle = null } = {}) {
+    try {
+      return (await this.ctx.display?.confirmAdult?.("reward", { onSettle })) === true;
+    } catch {
+      return false;
+    }
   }
 
   /** The reward the chart showed for `memberId`, or null. */

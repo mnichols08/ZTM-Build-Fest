@@ -218,7 +218,7 @@ export const HELP_TOPICS = Object.freeze({
     "A screen for the kitchen wall: today, the week, chores, meals and shopping, for everyone to see and tap.",
     [
       action("Tick a child's job, or something on the shopping list, when it is done.", ".kitchen-display .chore-box, .display-check"),
-      action("Set or change a child's reward with the big buttons on their card. Undo puts it back.", ".kitchen-display .chore-reward-toggle"),
+      action("Set or change a child's reward with the big buttons. Saving it, and Undo, ask for your password or passkey.", ".kitchen-display .chore-reward-toggle"),
       action("Touch the screen to wake it. To leave, press Leave display mode and confirm with your password or passkey.", ".display-leave"),
     ], "Everyone in the kitchen. It never shows anyone's private things or admin settings."),
   "dialog:quick-add": topic("Quick add",

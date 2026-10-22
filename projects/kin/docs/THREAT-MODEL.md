@@ -760,7 +760,19 @@ use on the wall. The trade-off, stated to the adult before they turn it on:
 - **Leaving needs the adult's passkey or password** (on a device set up
   before accounts, the household's backup key, which is what unlocks it),
   checked on the device by opening its vault once more, so it works offline.
-  A wrong one is refused calmly. The display can still be **locked** like
+  A wrong one is refused calmly.
+- **A child's reward needs the same secret** (#705). Rewards (kind 78) are
+  the one setting the display offers, so saving or removing one there, and
+  Undo or Redo of one, first asks for the adult's passkey or password (or
+  the backup key) with the same on-device check as leaving; cancelled or
+  refused, nothing is written. This stops someone in the kitchen changing a
+  child's reward with the adult's authority; ticking chores, shopping and
+  the fridge stay open by design. It is a check in this device's Kin, not a
+  new authority: as above, someone with the unlocked device and developer
+  tools could still write a reward, and the service can't tell the
+  difference (rewards are end-to-end encrypted). The phone's chart doesn't
+  ask (the owner's decision): there the adult's own unlocked Kin already
+  allows every change, and automatic lock applies. The display can still be **locked** like
   any Kin (closing the browser, a lock from another tab), and unlocking
   needs the same secret; after an unlock it opens as the display again.
 - **Switching the feature off, or a member who isn't an Adult**: if the
