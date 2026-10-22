@@ -3176,3 +3176,47 @@ and tab in easy mode at 320 px and on a desktop, with Fridge, Meals and
 Journal switched off, and fails on: a page without Help, a control under
 56 px, a glossary word on screen that Help doesn't explain, a switched-off
 feature still shown or linked, or sideways scrolling.
+
+## The chore chart (#676, #677, #678)
+
+[ADR 0022](decisions/0022-family-hub.md) §6 and the owner's decision on #654:
+children may have points, totals and see each other's progress; adults are
+not on the chart unless a household admin allows it and they join
+themselves. Nothing new to maintain: the chart is built from routines,
+taking turns and items with a responsibility.
+
+- **Where.** "Chore chart" beside "This week" at the top of Today
+  (`#chores`, which keeps Today marked; no new destination). In Simple view a
+  child's Today has a big **My chore chart** link and the chart has **Back
+  to Today**. Household › Features has a **Chore chart** switch (bit 15); off,
+  the link, the page, the points on Routines and the admin setting go.
+- **A card per person** (`<kin-chore-chart>`, a self-contained element the
+  kitchen display will reuse with `size="display"`): a header in the
+  person's colour (the one they chose, event kind 74, else the default by
+  join order, from a 12-colour palette each with white text at 4.5:1) with
+  their name — colour is never the only signal — their points this week
+  ("3 points this week") or reward progress ("12 of 20 for Movie night",
+  with a progress bar, then "Movie night reached!"). Then **Today**: each
+  job with a big native tick box (44 px, 56 px in easy mode, 64 px on the
+  display), the item's picture (its emoji or first photo), its name and its
+  points; "All done for today!" when everything is ticked. **The rest of the
+  week** is a disclosure, by day, "✓ Done" or "Not done", read-only.
+- **Ticking** uses the ordinary complete and reopen commands, so Undo,
+  rotations and sync behave as everywhere else. Points go to the chore's
+  owner — whose turn it was, or the item's responsibility — never to whoever
+  ticked it, so a parent can tick off a child's chore. Unticking takes the
+  points back. Points start again every Monday; there is no history beyond
+  this week.
+- **Parents set it up.** Each routine on Routines has **Chore chart points**
+  (0–10, 1 by default) for Adults. On each child's card an Adult has **Set a
+  reward** / **Change reward**: points to reach this week and a short reward
+  ("Movie night"), and **Remove reward**.
+- **Adults.** A household admin turns on **Adults can join the chore chart**
+  under Household › Features (fresh passkey or password); everyone else sees
+  it read-only. Then each Adult sees **Join the chore chart** on the chart
+  ("for fun… you can leave at any time") and, once on it, **Leave the chore
+  chart**. No adult-only leaderboard, no streaks, and no reminders or
+  notifications about points.
+- **Help** on the chart says what it is, how to tick, set a reward and join;
+  easy mode makes the tick boxes and names bigger still.
+- `scripts/chore-chart-regression.mjs` checks the flow in the browser.

@@ -104,6 +104,8 @@ export class HouseholdApi {
         lifecycle: this.host.householdLifecycle?.state ?? null,
         // Household features (#625, ADR 0021): the switched-off set.
         features: this.host.identity ? this.host.syncStatus?.features ?? null : null,
+        // Whether adults may join the chore chart (#676).
+        choreChart: this.host.identity ? this.host.syncStatus?.choreChart ?? null : null,
         householdId: this.host.identity?.householdId ?? null,
       },
     }));

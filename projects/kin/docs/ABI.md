@@ -23,6 +23,7 @@ kin_week(ptr, len)                   KWKQ + KINE context -> KWKD (#417)
 kin_shopping_sections(ptr, len)      replay the history: KINE context -> KSHS (#411)
 kin_routine_rotations(ptr, len)      replay the history: KINE context -> KRRS (#429)
 kin_sitter_page(ptr, len)            replay the history: KINE context -> KSIT (#442)
+kin_chore_chart(ptr, len)            KCCQ + KINE context -> KCCD (#676)
 kin_calendar_range(ptr, len)         KCAQ + KINE context -> KCAL (#656)
 kin_ical_parse(ptr, len)             .ics file bytes -> KICS (#666); no household state
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
@@ -819,6 +820,46 @@ tuned for printed codes under heavy blur.
   Zones: `Z` is `UTC`; an IANA TZID (also inside a longer path) is kept; a
   Windows or Outlook display name maps through a small table; anything else
   is floating, flagged ([ADR 0022](decisions/0022-family-hub.md) §3).
+- <a id="the-chore-chart-676"></a>**The chore chart (kinds 77–79, #676,
+  `rust/src/chores.rs`).** Payloads are strict and re-encode to the same
+  bytes (code 2): 77 is routine ID [16], points u8 (0–10), 3 reserved; 78 is
+  member ID [16], goal u16 (0–1000), reserved u16, text (u16 + UTF-8: 1–120
+  bytes, trimmed, no control characters; empty exactly when the goal is 0);
+  79 is member ID [16], joined u8 (0 or 1), 3 reserved. KCMD actions 77–79
+  (`set-chore-points`, `set-chore-reward`, `set-chore-chart-joined`) carry
+  the exact payload as their text with a zero entity ID and no option, date
+  or expiry (`kin-chores.js`). Rust checks them against the current state
+  (`ChoresState::check_command`, code 4): points name a live routine, every
+  change changes something, and kind 79 comes from the member it names. The
+  host gates the rest (`canSendChoreCommand`): points and rewards are for
+  Adults, joining for an Adult while a household admin allows adults.
+- **KCCQ v1 / KCCD v1** (the chore chart, `kin_chore_chart`): the query
+  `"KCCQ"`, version 1, reserved u16, week start u32 (a Monday, YYYYMMDD),
+  flags u8 (bit 0: adults allowed), 3 reserved, eight i64 day boundaries (the
+  first instant of each day Monday–Sunday in the host's time zone, then the
+  next Monday's; each day 1–25 hours), member count u16 (≤ 32), reserved
+  u16 (84 bytes), then 20 bytes per member: ID [16] (non-zero, distinct),
+  kind u8 (1 child, 2 Adult), 3 reserved; then a record-less KINE context
+  whose civil date lies in the week. The result `"KCCD"`, version 1,
+  reserved u16, week start u32, today u32, flags u8 (bit 0: routines
+  paused), 3 reserved, member count u16, points-setting count u16 (24
+  bytes); then 20 bytes per live routine whose points aren't 1: routine ID
+  [16], points u8, 3 reserved; then each member on the chart (children
+  always, Adults only when allowed and joined), in the query's order: ID
+  [16], flags u8 (bit 0 Adult, bit 1 reward), reserved u8, points this week
+  u16, reward goal u16 (0 for none), chore count u16, reward text (u16 +
+  UTF-8), then 28 bytes per chore (by day, items before routines, then by
+  text; at most 200): kind u8 (1 item, 2 routine), flags u8 (bit 0 done,
+  bit 1 today: can be ticked or unticked now), points u8, reserved u8, ID
+  [16], date u32 (the day it shows on), occurrence key u32 (0 for an item).
+  Open items assigned to the member show on their planned day this week
+  (undated and overdue ones today); done items on the day they were done,
+  for whoever they're credited to; routine occurrences on the day they open,
+  done ones for their credited member, open ones for the owner (only the
+  current occurrence of a rotating routine). Points are the credited
+  completions whose time falls in the week. JavaScript decodes it as `{
+  start, today, routinesPaused, points: Map, members: [{ memberId, adult,
+  points, reward, chores }] }`.
 - **KMTQ v1 / KMTD v1** (a member's things today, `kin_my_things`): the
   24-byte query `"KMTQ"`, version 1, reserved u16, member ID [16] (non-zero),
   then a record-less KINE context. The result `"KMTD"`, version 1, reserved

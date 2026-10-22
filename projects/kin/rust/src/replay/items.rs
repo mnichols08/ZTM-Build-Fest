@@ -171,6 +171,15 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                     r.items[position].last_changed_at = event.timestamp;
                     r.item_completions
                         .insert(*item_id, (event.logical_time, event.device_id));
+                    // The chore chart (#676): the point goes to the item's
+                    // owner, whoever ticked it.
+                    let owner = item_owner(r, item_id);
+                    crate::chores::credit(
+                        &mut r.chores,
+                        crate::chores::CreditKey::Item(*item_id),
+                        owner,
+                        event.timestamp,
+                    );
                 }
                 ItemStatus::Completed => {}
                 ItemStatus::Archived => {
@@ -198,6 +207,10 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                     r.items[position].status = ItemStatus::Active;
                     r.items[position].last_changed_at = event.timestamp;
                     r.item_completions.remove(item_id);
+                    crate::chores::uncredit(
+                        &mut r.chores,
+                        crate::chores::CreditKey::Item(*item_id),
+                    );
                 }
                 ItemStatus::Archived => {
                     if r.item_archives
@@ -236,6 +249,16 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
         _ => return Err(KinError::Internal),
     }
     Ok(())
+}
+
+/// The member an item is assigned to now, if any.
+fn item_owner(r: &Replay, item_id: &ItemId) -> Option<ActorId> {
+    r.responsibilities
+        .iter()
+        .find(|entry| {
+            entry.target_kind == ResponsibilityTargetKind::Item && entry.target_id == item_id.0
+        })
+        .and_then(|entry| entry.member_id)
 }
 
 /// Another device archived this item, or completed it and has not reopened it.

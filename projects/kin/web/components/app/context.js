@@ -34,6 +34,7 @@ import { ShareController } from "./share.js";
 import { BadgeController } from "./badge.js";
 import { PrivatePrefsController } from "./private-prefs.js";
 import { WeekController } from "./week.js";
+import { ChoresController } from "./chores.js";
 import { EasyController } from "./easy.js";
 import { HelpController } from "./help.js";
 import { SitterController } from "./sitter.js";
@@ -93,6 +94,8 @@ export function createAppContext(app) {
   ctx.easy = new EasyController(ctx);
   ctx.help = new HelpController(ctx);
   ctx.week = new WeekController(ctx);
+  // The chore chart (#676, ADR 0022 §6).
+  ctx.chores = new ChoresController(ctx);
   ctx.sitter = new SitterController(ctx);
   // The member's journal (#496): private, never household state.
   ctx.journal = new JournalController(ctx);
@@ -168,7 +171,10 @@ export function initializeAppState(app) {
     app.passkeyPromptDismissed = false;
     app.onHouseholdStatus = (event) => { app.householdStatus = event.detail;
       // Household features (#625) ride along with the household's status.
-      if (event.detail?.features) app.ctx.features.receive(event.detail.features, { householdId: event.detail.householdId ?? null }); app.ctx.sitter.landTemporaryMember(); app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
+      if (event.detail?.features) app.ctx.features.receive(event.detail.features, { householdId: event.detail.householdId ?? null });
+      // Whether adults may join the chore chart (#676) rides along too.
+      if (event.detail?.choreChart) app.ctx.chores.receiveSetting(event.detail.choreChart);
+      app.ctx.sitter.landTemporaryMember(); app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
     app.onSecurityChanged = () => app.ctx.status.renderOnboarding();
     app.autoLockMinutes = readAutoLockPreference();
     app.autoLockTimer = null;
@@ -262,6 +268,11 @@ export function initializeAppState(app) {
     };
     app.onSetRoutineTurn = async (event) => {
       const outcome = await app.ctx.rotations.setTurn(event.detail.routineId, event.detail.memberId);
+      event.detail.done?.(outcome);
+    };
+    // Chore chart points per routine (#676), from Routines.
+    app.onSetChorePoints = async (event) => {
+      const outcome = await app.ctx.chores.setPoints(event.detail.routineId, event.detail.points);
       event.detail.done?.(outcome);
     };
     app.onSaveSitterPage = async (event) => {

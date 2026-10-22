@@ -33,6 +33,16 @@ export function activeResponsibilityMemberIds(devices, now = Date.now()) {
     .map((device) => device.memberId))];
 }
 
+/** memberId -> member kind ("adult", "limited", "temporary") for the members
+ * activeResponsibilityMemberIds lists, from their devices' directory rows. */
+export function activeMemberKinds(devices, now = Date.now()) {
+  const active = new Set(activeResponsibilityMemberIds(devices, now));
+  const kinds = new Map();
+  for (const device of devices)
+    if (active.has(device.memberId) && !kinds.has(device.memberId)) kinds.set(device.memberId, device.memberKind ?? "adult");
+  return kinds;
+}
+
 // Mirrors the server's requireTrustAuthority: only active Adults may rotate
 // epochs or provision keys. The sync status reports the session's member kind.
 export function memberHasTrustAuthority(status) {
@@ -184,7 +194,7 @@ function browserLiveChannel(options) {
 }
 
 export class SyncCoordinator {
-  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {}, onSimpleView = () => {}, onFeatures = () => {}, privateLog = openBrowserPrivateLog, onPrivateLog = () => {}, vaultKey = async () => null }) {
+  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {}, onSimpleView = () => {}, onFeatures = () => {}, onChoreChart = () => {}, privateLog = openBrowserPrivateLog, onPrivateLog = () => {}, vaultKey = async () => null }) {
     this.store = store;
     this.engine = engine;
     this.identity = identity;
@@ -240,6 +250,7 @@ export class SyncCoordinator {
     this.onSimpleView = onSimpleView;
     // Household features (ADR 0021): the switched-off set, from each status.
     this.onFeatures = onFeatures;
+    this.onChoreChart = onChoreChart;
     this.simpleView = null;
   }
 
@@ -701,6 +712,8 @@ export class SyncCoordinator {
       state: hasMore ? "syncing" : "ready",
       quarantineNotice: kept.length ? quarantineMessage(kept) : null,
       memberIds: activeResponsibilityMemberIds(devices),
+      // The chore chart (#676) needs to know who are children and Adults.
+      memberKinds: activeMemberKinds(devices),
       ...(attachmentRows === undefined ? {} : { attachmentRows }),
       ...update,
       message: quarantinedEvents
@@ -813,6 +826,8 @@ export class SyncCoordinator {
   noteFeatures(status) {
     if (!status?.features || this.stopped) return;
     try { this.onFeatures?.(status.features); } catch { /* the view's trouble isn't sync's */ }
+    // Whether adults may join the chore chart (#676) comes with them.
+    if (status.choreChart) try { this.onChoreChart?.(status.choreChart); } catch { /* likewise */ }
   }
 
   /** Opens the fridge once (#317); null where its storage isn't available.
