@@ -8,6 +8,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { PairingError, PairingService, CHAT_ACCESS, parseHouseholdPolicy, requireTrustAuthority } from "./pairing-service.mjs";
 import { deviceLabel } from "./pairing-service/device-label.mjs";
 import { configuredDatabasePath, permissionProblem } from "./permissions.mjs";
+import { applyServerMode, serverMode } from "./mode.mjs";
 import { builtInManifest, etagMatches, INSTALL_ICONS, publishedManifest } from "./install-identity.mjs";
 import { PushService } from "./push-service.mjs";
 import { ChatBlobService } from "./chat-blob-service.mjs";
@@ -54,24 +55,34 @@ export function createKinServer(options = {}) {
   const origin =
     options.origin ?? process.env.KIN_ORIGIN ?? `http://localhost:${port}`;
   assertSecureOrigin(host, origin);
+  // KIN_MODE (ADR 0025 §9): home mode refuses the Google Play settings and
+  // limits new households to the owner's unless a limit is configured.
+  const mode = serverMode(options.mode ?? process.env.KIN_MODE);
+  const androidPackage = options.androidPackage ?? process.env.KIN_ANDROID_PACKAGE;
+  const androidCertSha256 = options.androidCertSha256 ?? process.env.KIN_ANDROID_CERT_SHA256;
+  const modeSettings = applyServerMode(mode, {
+    KIN_ANDROID_PACKAGE: androidPackage,
+    KIN_ANDROID_CERT_SHA256: androidCertSha256,
+    KIN_MAX_HOUSEHOLDS: options.maxHouseholds ?? process.env.KIN_MAX_HOUSEHOLDS,
+  });
   const trustedProxies =
     options.trustedProxies instanceof Set
       ? options.trustedProxies
       : parseTrustedProxies(options.trustedProxies ?? process.env.KIN_TRUSTED_PROXIES);
   const householdSettings = {
     allowNewHouseholds: options.allowNewHouseholds ?? process.env.KIN_ALLOW_NEW_HOUSEHOLDS,
-    maxHouseholds: options.maxHouseholds ?? process.env.KIN_MAX_HOUSEHOLDS,
+    maxHouseholds: modeSettings.maxHouseholds,
   };
   const householdPolicy = parseHouseholdPolicy(householdSettings);
   // Google Play app link (#532): null unless both settings are given.
   const assetLinks = parseAssetLinks({
-    packageName: options.androidPackage ?? process.env.KIN_ANDROID_PACKAGE,
-    fingerprints: options.androidCertSha256 ?? process.env.KIN_ANDROID_CERT_SHA256,
+    packageName: androidPackage,
+    fingerprints: androidCertSha256,
   });
   // A passed-in service keeps its own policy unless a setting is given here.
   const householdPolicyConfigured = [householdSettings.allowNewHouseholds, householdSettings.maxHouseholds]
     .some((value) => value !== undefined && value !== null && value !== "");
-  const databasePath = configuredDatabasePath({ databasePath: options.databasePath, dataDirectory: options.dataDirectory });
+  const databasePath = configuredDatabasePath({ databasePath: options.databasePath, dataDirectory: options.dataDirectory, mode });
   const store =
     options.store === false
       ? null
@@ -331,6 +342,7 @@ export function createKinServer(options = {}) {
     return close(callback);
   };
   return {
+    mode,
     server,
     service,
     syncService,
@@ -408,7 +420,7 @@ if (
       process.exitCode = 1;
     });
     application.server.listen(port, host, () => {
-      console.log(JSON.stringify({ event: "service_ready", origin }));
+      console.log(JSON.stringify({ event: "service_ready", origin, mode: application.mode }));
     });
     installShutdown(application);
   } catch (error) {
@@ -417,10 +429,10 @@ if (
       JSON.stringify({
         event: "startup_failed",
         outcome:
-          error.code === "durable_lock_exists" || error.code === "permission_model_required" || error.code === "feedback_github_invalid"
+          ["durable_lock_exists", "permission_model_required", "feedback_github_invalid", "server_mode_invalid", "home_mode_setting_refused"].includes(error.code)
             ? error.code
             : "configuration_or_storage",
-        ...(["durable_lock_exists", "trusted_proxies_invalid", "household_policy_invalid", "permission_model_required", "feedback_github_invalid"].includes(error.code) ? { message: error.message } : {}),
+        ...(["durable_lock_exists", "trusted_proxies_invalid", "household_policy_invalid", "permission_model_required", "feedback_github_invalid", "server_mode_invalid", "home_mode_setting_refused"].includes(error.code) ? { message: error.message } : {}),
         ...(error.code === "ERR_ACCESS_DENIED" || error.cause?.code === "ERR_ACCESS_DENIED" ? { message: "Node's permission model denied access to a path the service needs. Start Kin with server/start.mjs, which allows the app and data directories." } : {}),
       }),
     );
@@ -2223,6 +2235,15 @@ function installShutdown({ server, store }) {
   // signal must not kill the service before it closes the store and its lock.
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
+  // A supervising launcher (server/launcher.mjs --supervise, used by the
+  // Windows scheduled task) holds this process's stdin open. Windows ends a
+  // task by terminating the launcher without a signal, so the closed pipe is
+  // how the service learns to close its store and lock.
+  if (process.env.KIN_STOP_WITH_LAUNCHER === "1") {
+    process.stdin.on("end", () => shutdown("launcher_exit"));
+    process.stdin.on("error", () => shutdown("launcher_exit"));
+    process.stdin.resume();
+  }
 }
 
 function defaultAnonymousCapacity(maximum) {

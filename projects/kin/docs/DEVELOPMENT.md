@@ -104,7 +104,12 @@ from its allowlist. `server/permissions.mjs` builds the flags.
   `start.mjs`. A data directory that is the app directory, or contains it, is
   refused.
 - Running `node server/server.mjs` directly (for example from a systemd unit)
-  is refused; use `node server/start.mjs`.
+  is refused; use `node server/start.mjs`, or `--install-service` to write
+  the unit (docs/HOME-SERVER.md).
+- The launcher itself is `server/launcher.mjs`; `start.mjs` and the home
+  server's single executable (`scripts/sea/main.cjs`) both use it. The
+  executable can't pass Node flags on its command line, so it starts its
+  service copy with the same flags in `NODE_OPTIONS`.
 - Node's permission model disables `fsync`, so the service's lock file is not
   fsynced (the exclusive create is the lock; its content is diagnostic). The
   database's own durability is SQLite's.

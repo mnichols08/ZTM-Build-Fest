@@ -361,3 +361,73 @@ jobs:
           path: ${{ runner.temp }}/kin-diagnostics
           if-no-files-found: ignore
           retention-days: 14
+
+  # Kin at home (ADR 0025 §10, #713, #714): the home server's single
+  # executables for Linux x64 and arm64, built from the official node
+  # binaries (checked against nodejs.org's SHASUMS256.txt) with this commit's
+  # engine, checksummed, started once to record the start time, and kept as
+  # the kin-home-executables artifact. macOS (#747) and Windows (#748) are
+  # follow-ups. No other job waits for this one.
+  home-executables:
+    needs: verify-linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: projects/kin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - name: Download this commit's engine
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kin-engine-wasm
+          path: projects/kin/web/wasm
+      - name: Check the engine against its recorded hash
+        run: sha256sum -c web/wasm/kin_engine.wasm.sha256
+      - name: Build the executables and record their size and start time
+        run: |
+          node scripts/build-sea.mjs --measure
+          cat target/sea/dist/SHA256SUMS target/sea/dist/build-info.json target/sea/dist/start-time.json
+          (cd target/sea/dist && sha256sum -c SHA256SUMS)
+      - name: Keep the executables
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kin-home-executables
+          path: projects/kin/target/sea/dist
+          if-no-files-found: error
+          retention-days: 7
+
+  # The home server's container image (#715): built from deploy/home and
+  # started until its own health check passes, as its unprivileged user.
+  home-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: projects/kin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image
+        run: docker build -f deploy/home/Dockerfile -t kin-home:ci .
+      - name: Start it and wait until it is healthy
+        run: |
+          docker run -d --name kin-home kin-home:ci
+          status=starting
+          for attempt in $(seq 1 40); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' kin-home)"
+            [ "$status" = starting ] || break
+            sleep 3
+          done
+          docker logs kin-home
+          echo "health: $status"
+          test "$(docker inspect -f '{{.Config.User}}' kin-home)" = "65532:65532"
+          test "$status" = healthy

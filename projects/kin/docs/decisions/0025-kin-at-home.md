@@ -8,10 +8,15 @@ journeytocode.io and publishes the relay as open source; a free name
 domain as an option; the Play Store app stays bound to
 `kin.journeytocode.io` for now; the hosted service stays the easy default.
 The connection relay (§1–§4) is built in `relay/` (#728; its deploy guide
-is `relay/README.md`); nothing else in this ADR is built yet. The stories
-that build it are #713
+is `relay/README.md`), and the packaging and `KIN_MODE` of §9–§10 in part
+(#713; [HOME-SERVER](../HOME-SERVER.md)). The stories that build it are #713
 (packaging), #718 (control panel), #723 (ACME client), #728 (relay), #733
-(tunnel, home side), #737 (moving a household) and #740 (acceptance).
+(tunnel, home side), #737 (moving a household) and #740 (acceptance). Built
+so far (#713, [HOME-SERVER](../HOME-SERVER.md)): `KIN_MODE` (§9), the
+executables for Linux x64 and arm64 with Kin's own ELF injector, the
+container image, and installing as a service, on Windows with the Task
+Scheduler fallback; the macOS and Windows executables (#747, #748) and the
+Rust service host (#749) follow.
 
 **A word on names.** Kin's documents already call the sync service "the
 relay" (it relays encrypted events; THREAT-MODEL S4, S5). This ADR adds a
@@ -630,7 +635,10 @@ package (a Kin build script that writes the executable's resource section, or
 Node's built-in builder where the build machine's Node has one). No
 dependency is added. The launcher stays the only part that starts processes,
 and the service still runs under the permission model; how a SEA passes those
-flags to its own service process is settled in #713.
+flags to its own service process is settled in #713: it starts a second
+copy of itself with them in `NODE_OPTIONS`, after unpacking its app files to
+a checked, read-only cache folder that becomes the service's app directory
+([HOME-SERVER](../HOME-SERVER.md)).
 
 **The data directory.** Defaults: `%ProgramData%\Kin` on Windows,
 `/Library/Application Support/Kin` on macOS, `/var/lib/kin` on Linux,
@@ -814,7 +822,7 @@ the installed web app from their own address (ADR 0020).
   limits and reputation from `journeytocode.io` from the first day, without
   waiting for the PSL. The owner chose the journeytocode.io subdomain; the
   PSL entry and `__Host-` cookies give the same separation once in place.
-  Listed under open questions.
+  See the owner's answers below.
 - **Tauri or Electron wrappers.** A desktop app around the server would add
   large third-party runtimes and npm or crate dependencies, against Kin's
   zero-dependency rule (AGENTS.md, ADR 0007), and still need a browser
@@ -828,7 +836,8 @@ the installed web app from their own address (ADR 0020).
 ## Owner answers to the open questions (2026-10-22, recorded on #708)
 
 1. **Signing for macOS and Windows:** unsigned for now. The guides show the
-   Gatekeeper and SmartScreen warnings and how to get past them. Buy an
+   Gatekeeper and SmartScreen warnings and how to get past them
+   ([HOME-SERVER](../HOME-SERVER.md)); releases are checksummed. Buy an
    Apple Developer ID and a Windows code-signing certificate when Kin at home
    is offered widely.
 2. **Claims without an account:** the home key only, with no email address,

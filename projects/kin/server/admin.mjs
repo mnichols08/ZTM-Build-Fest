@@ -1,4 +1,4 @@
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   acquireDatabaseMaintenanceLock,
@@ -6,22 +6,21 @@ import {
   DurableStoreError,
 } from "./durable-store.mjs";
 import { resolveDurablePath } from "./path-safety.mjs";
+import { configuredDatabasePath } from "./permissions.mjs";
 import { writeFileSync } from "node:fs";
 import { FeedbackService } from "./feedback-service.mjs";
 import { GitHubIssues, parseGitHubConfig } from "./feedback-github.mjs";
 import { FEEDBACK_KINDS, FEEDBACK_STATUSES, STATUS_LABELS, isReference } from "../web/feedback/format.js";
 
-const dataDirectory =
-  process.env.KIN_DATA_DIR ?? resolve(import.meta.dirname, "..", ".kin-data");
-const defaultDatabasePath = resolve(
-  process.env.KIN_DATABASE_PATH ?? join(dataDirectory, "kin.sqlite"),
-);
+// The service's own database: KIN_DATABASE_PATH, else kin.sqlite in
+// KIN_DATA_DIR, else the mode's default data directory (server/mode.mjs).
+const defaultDatabasePath = () => configuredDatabasePath();
 
 export async function runAdminCommand(args) {
   const [command, ...parameters] = args;
   if (command === "backup" && parameters.length === 1) {
     const destination = resolveDurablePath(parameters[0]);
-    const databasePath = resolveDurablePath(defaultDatabasePath);
+    const databasePath = resolveDurablePath(defaultDatabasePath());
     const result = await DurableStore.createBackup(
       databasePath,
       destination,
@@ -35,7 +34,7 @@ export async function runAdminCommand(args) {
     parameters[1] === "--acknowledge-deletion-history"
   ) {
     const source = resolveDurablePath(parameters[0]);
-    const databasePath = resolveDurablePath(defaultDatabasePath);
+    const databasePath = resolveDurablePath(defaultDatabasePath());
     const result = await DurableStore.restoreBackup(
       source,
       databasePath,
@@ -58,7 +57,7 @@ export async function runAdminCommand(args) {
       command === "household-verify-purged") &&
     parameters.length === 1
   ) {
-    const databasePath = resolveDurablePath(defaultDatabasePath);
+    const databasePath = resolveDurablePath(defaultDatabasePath());
     const store = new DurableStore(databasePath, { readonly: true });
     try {
       const status = store.householdPurgeStatus(parameters[0]);
@@ -79,7 +78,7 @@ export async function runAdminCommand(args) {
     parameters[0] === parameters[2]
   ) {
     const householdId = parameters[0];
-    const databasePath = resolveDurablePath(defaultDatabasePath);
+    const databasePath = resolveDurablePath(defaultDatabasePath());
     // Disposed in reverse: the store closes, then the lock is released,
     // whatever the purge throws (#106).
     using _maintenance = acquireDatabaseMaintenanceLock(databasePath, "household-purge");
@@ -119,7 +118,7 @@ async function feedbackCommand(command, parameters) {
   const usage = () => new DurableStoreError(`Usage: ${FEEDBACK_USAGE}`);
   if (!["feedback-list", "feedback-show", "feedback-set-status", "feedback-forward", "feedback-purge"].includes(command)) throw usage();
   if (command === "feedback-purge" && parameters.length === 0) return purgeExpiredFeedback();
-  const databasePath = resolveDurablePath(defaultDatabasePath);
+  const databasePath = resolveDurablePath(defaultDatabasePath());
   const writes = ["feedback-set-status", "feedback-forward", "feedback-purge"].includes(command);
   // Forwarding needs the operator's configuration; check it before opening.
   const github = command === "feedback-forward" ? parseGitHubConfig({
@@ -190,7 +189,7 @@ async function feedbackCommand(command, parameters) {
 }
 
 async function purgeExpiredFeedback() {
-  const databasePath = resolveDurablePath(defaultDatabasePath);
+  const databasePath = resolveDurablePath(defaultDatabasePath());
   using store = new DurableStore(databasePath, { acquireProcessLock: false });
   const purged = new FeedbackService({ store, log: () => {} }).purgeExpired();
   console.log(`Purged ${purged} report(s) and suggestion(s) older than 180 days.`);

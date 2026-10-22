@@ -22,6 +22,10 @@ Kin's database lives in a Docker volume, so restarts and updates keep it.
 > the [known limitations](../docs/THREAT-MODEL.md#known-limitations-at-v10)
 > still apply.
 
+For a household's own home server (one executable, a service, or the
+distroless image) rather than a test server, see
+[HOME-SERVER](../docs/HOME-SERVER.md).
+
 ## What you need
 
 - A Linux server with Docker Engine and the Compose plugin (a Hetzner cloud

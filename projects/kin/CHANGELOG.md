@@ -9,6 +9,24 @@ documentation only.
 
 ### Added
 
+- **Kin at home: the home server as one file you run** (#713: #714, #715,
+  #716; epic #708, [ADR 0025](docs/decisions/0025-kin-at-home.md) §9–§10,
+  [HOME-SERVER](docs/HOME-SERVER.md)). `KIN_MODE=home` refuses the Google
+  Play settings, limits new households to one unless `KIN_MAX_HOUSEHOLDS`
+  says otherwise, and keeps data in the platform's system folder.
+  `scripts/build-sea.mjs` builds a reproducible, checksummed single
+  executable for Linux x64 and arm64 with the server, web app and engine
+  inside, writing Node's SEA blob into the node binary with Kin's own ELF
+  injector (no postject); the service still runs inside Node's permission
+  model. `--install-service` and `--uninstall-service` install a systemd
+  unit, a launchd LaunchDaemon or, until the Rust service host (#749), a
+  Windows scheduled task at boot as LOCAL SERVICE; uninstalling keeps the
+  data. `deploy/home/Dockerfile` is a distroless image running as an
+  unprivileged user with `/data` as a volume and a health check. The
+  launcher moves into `server/launcher.mjs` and adds `--health`,
+  `--supervise`, `--log-file` and `admin`. CI builds the executables and the
+  image (`home-executables`, `home-container`). macOS (#747) and Windows
+  (#748) executables follow; builds are unsigned for now.
 - **The connection relay** (#728: #729, #730, #731, #732; epic #708,
   [ADR 0025](docs/decisions/0025-kin-at-home.md) §1–§4). A separate,
   dependency-free Node program in `relay/` that lets phones reach a home
