@@ -25,7 +25,7 @@ import {
 import { ClaimSketch, DAY, DEFAULT_LIMITS, HOUR, MINUTE, TokenBucket, WindowCounter, addressKey } from "./limits.mjs";
 import { Registry } from "./registry.mjs";
 import { HELLO_TIMEOUT_MS, MAX_HELLO_BYTES, UNRECOGNIZED_NAME_ALERT, readClientHello } from "./sni.mjs";
-import { RelayTunnel, normalizeAddress } from "./tunnel.mjs";
+import { RelayTunnel, SIGN_IN_TIMEOUT_MS, normalizeAddress } from "./tunnel.mjs";
 
 /**
  * Asks Certificate Transparency (crt.sh's JSON search by default) whether
@@ -103,7 +103,7 @@ export class ConnectionRelay {
     this.sockets = new Set();
 
     this.ownTls = createTlsServer({
-      key: tls.key, cert: tls.cert, ALPNProtocols: [ALPN, "http/1.1"], minVersion: "TLSv1.2",
+      key: tls.key, cert: tls.cert, ALPNProtocols: [ALPN, "http/1.1"], minVersion: "TLSv1.2", handshakeTimeout: SIGN_IN_TIMEOUT_MS,
     }, (socket) => this.#ownConnection(socket));
     this.ownTls.on("tlsClientError", (_error, socket) => { this.error("relay-tls"); socket.destroy(); });
     this.edge = createNetServer({ allowHalfOpen: true }, (socket) => this.#edgeConnection(socket));
@@ -182,8 +182,11 @@ export class ConnectionRelay {
       socket.pause();
       const hello = buffer.subarray(0, length);
       if (result.name === this.relayName) {
-        // The relay's own name: its own TLS server reads the same bytes.
-        this.sockets.delete(socket);
+        // The relay's own name: its own TLS server reads the same bytes. The
+        // raw socket stays in `sockets` so close() ends it: a client that
+        // aborts this handshake (it doesn't trust the certificate, say) is
+        // never noticed by the TLS server on a handed-over socket, so the
+        // handshake time limit below and close() are what free it (#733).
         socket.unshift(hello);
         this.ownTls.emit("connection", socket);
         return;

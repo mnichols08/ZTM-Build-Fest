@@ -523,3 +523,19 @@ test("the daily sweep frees names that never got a certificate and rechecks own 
     assert.equal(relay.stats().addressesHeld > 0, true);
   } finally { for (const server of servers) server.close(); await relay.close(); registry.close(); }
 });
+
+test("a tunnel handshake the client aborts (an untrusted certificate) doesn't keep the relay from closing", async () => {
+  const relay = await startRelay();
+  try {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      // No `ca`: the client refuses the relay's test certificate mid-handshake.
+      const socket = connect({ port: relay.ports.tls, host: "127.0.0.1", servername: "relay.home.test", ALPNProtocols: ["kin-tunnel/1"] });
+      const [error] = await once(socket, "error");
+      assert.match(error.code, /SELF_SIGNED|UNABLE_TO_VERIFY/);
+    }
+  } finally {
+    const started = Date.now();
+    await relay.close();
+    assert.ok(Date.now() - started < 2000, "close() ends the handed-over sockets at once");
+  }
+});
