@@ -13,15 +13,18 @@
 // No request input reaches SQL text, so that is not reachable today.
 import { dirname, join, resolve } from "node:path";
 import { canonicalPath, isInsideRoot, resolveDurablePath } from "./path-safety.mjs";
+import { homeDataDirectory, serverMode } from "./mode.mjs";
 
 export const APP_ROOT = resolve(import.meta.dirname, "..");
 
 /** The database path the service uses (createKinServer calls this too):
  * an explicit path, else KIN_DATABASE_PATH, else <data directory>/kin.sqlite
- * where the data directory is explicit, KIN_DATA_DIR or .kin-data in the app
- * directory. */
-export function configuredDatabasePath({ databasePath, dataDirectory } = {}, env = process.env) {
-  const directory = dataDirectory ?? env.KIN_DATA_DIR ?? join(APP_ROOT, ".kin-data");
+ * where the data directory is explicit, KIN_DATA_DIR, or the mode's default:
+ * .kin-data in the app directory when hosted, the platform's system location
+ * in home mode (ADR 0025 §10, server/mode.mjs). */
+export function configuredDatabasePath({ databasePath, dataDirectory, mode } = {}, env = process.env) {
+  const defaultDirectory = () => (serverMode(mode ?? env.KIN_MODE) === "home" ? homeDataDirectory(process.platform, env) : join(APP_ROOT, ".kin-data"));
+  const directory = dataDirectory ?? env.KIN_DATA_DIR ?? defaultDirectory();
   return resolveDurablePath(databasePath ?? env.KIN_DATABASE_PATH ?? join(directory, "kin.sqlite"));
 }
 
