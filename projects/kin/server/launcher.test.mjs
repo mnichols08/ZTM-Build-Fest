@@ -18,7 +18,7 @@ function temporary(t) {
   return directory;
 }
 
-test("the command line takes one command and the options that belong to it", () => {
+test("the command line takes one command and the options that belong to it", { timeout: 60_000 }, () => {
   const parse = parseLauncherArguments;
   assert.deepEqual(parse([]), { command: "run", supervise: false, logFile: null, user: null, platform: null, adminArgs: [] });
   assert.equal(parse(["--install-service"]).command, "install-service");
@@ -47,7 +47,7 @@ test("the command line takes one command and the options that belong to it", () 
     assert.throws(() => parse(argv), (error) => error instanceof LauncherUsageError && message.test(error.message), argv.join(" "));
 });
 
-test("the health check asks the service's own listener", async (t) => {
+test("the health check asks the service's own listener", { timeout: 60_000 }, async (t) => {
   assert.equal(healthUrl({}), "http://127.0.0.1:8000/health");
   assert.equal(healthUrl({ KIN_HOST: "::1", KIN_PORT: "9000" }), "http://[::1]:9000/health");
   assert.equal(healthUrl({ KIN_HOST: "localhost", KIN_PORT: "8080" }), "http://localhost:8080/health");
@@ -105,7 +105,7 @@ test("a supervised service that fails is started again; a stop ends supervision"
   assert.equal(signals.listenerCount("SIGTERM"), 0);
 });
 
-test("without supervision the launcher exits with the service's code", async (t) => {
+test("without supervision the launcher exits with the service's code", { timeout: 60_000 }, async (t) => {
   const root = temporary(t);
   const { spawnImpl, calls } = fakeSpawn([3]);
   const code = await runService({ serviceProcess: ({ env }) => ({ command: "kin-service", args: [], env }), env: { KIN_DATA_DIR: join(root, "data") }, spawnImpl, signals: new EventEmitter() });
@@ -119,19 +119,19 @@ test("--log-file appends the service's output to an owner-only file and rotates 
   const root = temporary(t);
   const log = join(root, "logs", "kin.log");
   const serviceProcess = ({ env }) => ({ command: process.execPath, args: ["-e", "console.log('hello from the service'); console.error('and its errors')"], env });
-  assert.equal(await runService({ serviceProcess, env: { KIN_DATA_DIR: join(root, "data") }, logFile: log }), 0);
-  assert.equal(await runService({ serviceProcess, env: { KIN_DATA_DIR: join(root, "data") }, logFile: log }), 0);
+  assert.equal(await runService({ serviceProcess, env: { ...process.env, KIN_DATA_DIR: join(root, "data") }, logFile: log }), 0);
+  assert.equal(await runService({ serviceProcess, env: { ...process.env, KIN_DATA_DIR: join(root, "data") }, logFile: log }), 0);
   const text = readFileSync(log, "utf8");
   assert.equal(text.match(/hello from the service/g).length, 2);
   assert.match(text, /and its errors/);
   if (process.platform !== "win32") assert.equal(statSync(log).mode & 0o777, 0o600);
   writeFileSync(log, Buffer.alloc(10 * 1024 * 1024 + 1, 0x2e));
-  assert.equal(await runService({ serviceProcess, env: { KIN_DATA_DIR: join(root, "data") }, logFile: log }), 0);
+  assert.equal(await runService({ serviceProcess, env: { ...process.env, KIN_DATA_DIR: join(root, "data") }, logFile: log }), 0);
   assert.equal(statSync(`${log}.1`).size, 10 * 1024 * 1024 + 1);
   assert.match(readFileSync(log, "utf8"), /^hello from the service/);
 });
 
-test("a configuration problem stops the launcher before it starts anything", async () => {
+test("a configuration problem stops the launcher before it starts anything", { timeout: 60_000 }, async () => {
   const { spawnImpl, calls } = fakeSpawn([]);
   const code = await runService({ serviceProcess: () => assert.fail("not started"), env: { KIN_MODE: "office" }, spawnImpl, signals: new EventEmitter() });
   assert.equal(code, 1);
@@ -141,7 +141,7 @@ test("a configuration problem stops the launcher before it starts anything", asy
   assert.equal(calls.length, 0);
 });
 
-test("runLauncher answers --help, --version and usage errors", async () => {
+test("runLauncher answers --help, --version and usage errors", { timeout: 60_000 }, async () => {
   const output = () => { const chunks = []; return { write: (chunk) => chunks.push(chunk), text: () => chunks.join("") }; };
   const stdout = output();
   const stderr = output();
@@ -153,8 +153,8 @@ test("runLauncher answers --help, --version and usage errors", async () => {
   assert.match(stderr.text(), /Unknown argument "--nope"[\s\S]*Usage:/);
 });
 
-test("server/start.mjs prints the service definition for this checkout", () => {
-  const run = (args) => spawnSync(process.execPath, [join(APP_ROOT, "server", "start.mjs"), ...args], { encoding: "utf8" });
+test("server/start.mjs prints the service definition for this checkout", { timeout: 60_000 }, () => {
+  const run = (args) => spawnSync(process.execPath, [join(APP_ROOT, "server", "start.mjs"), ...args], { encoding: "utf8", timeout: 30_000 });
   const unit = run(["--print-service", "--platform", "linux"]);
   assert.equal(unit.status, 0, unit.stderr);
   assert.match(unit.stdout, /^# \/etc\/systemd\/system\/kin\.service\n/);

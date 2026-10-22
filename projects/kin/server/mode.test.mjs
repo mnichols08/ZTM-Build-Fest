@@ -18,7 +18,7 @@ const FINGERPRINT = Array.from({ length: 32 }, () => "AB").join(":");
 const credential = (id) => ({ id, publicKey: `key-${id}`, algorithm: -7 });
 const server = (options) => createKinServer({ store: new DurableStore(":memory:"), origin: "http://localhost", ...options });
 
-test("KIN_MODE is hosted by default, home when asked, and nothing else", () => {
+test("KIN_MODE is hosted by default, home when asked, and nothing else", { timeout: 60_000 }, () => {
   assert.equal(serverMode(undefined), "hosted");
   assert.equal(serverMode(""), "hosted");
   assert.equal(serverMode(" hosted "), "hosted");
@@ -28,7 +28,7 @@ test("KIN_MODE is hosted by default, home when asked, and nothing else", () => {
     assert.throws(() => serverMode(value), (error) => error.code === "server_mode_invalid" && error.message.includes(value));
 });
 
-test("home mode refuses the Google Play settings; hosted mode keeps them", () => {
+test("home mode refuses the Google Play settings; hosted mode keeps them", { timeout: 60_000 }, () => {
   for (const settings of [{ KIN_ANDROID_PACKAGE: "io.example.kin" }, { KIN_ANDROID_CERT_SHA256: FINGERPRINT }])
     assert.throws(() => applyServerMode("home", settings), (error) =>
       error.code === "home_mode_setting_refused" && error.message.includes(Object.keys(settings)[0]));
@@ -43,7 +43,7 @@ test("home mode refuses the Google Play settings; hosted mode keeps them", () =>
   hosted.store.close();
 });
 
-test("home mode limits new households to one unless a limit is configured", () => {
+test("home mode limits new households to one unless a limit is configured", { timeout: 60_000 }, () => {
   assert.equal(applyServerMode("home", {}).maxHouseholds, HOME_MAX_HOUSEHOLDS);
   assert.equal(applyServerMode("home", { KIN_MAX_HOUSEHOLDS: "3" }).maxHouseholds, "3");
   assert.equal(applyServerMode("home", { KIN_MAX_HOUSEHOLDS: 0 }).maxHouseholds, 0);
@@ -75,7 +75,7 @@ test("home mode limits new households to one unless a limit is configured", () =
   hosted.store.close();
 });
 
-test("home mode keeps its data in the platform's system location unless KIN_DATA_DIR says otherwise", () => {
+test("home mode keeps its data in the platform's system location unless KIN_DATA_DIR says otherwise", { timeout: 60_000 }, () => {
   assert.equal(homeDataDirectory("linux"), "/var/lib/kin");
   assert.equal(homeDataDirectory("darwin"), "/Library/Application Support/Kin");
   assert.equal(homeDataDirectory("win32", { ProgramData: "D:\\Data" }), "D:\\Data\\Kin");
@@ -105,10 +105,22 @@ function startService(t, env) {
     env: { ...process.env, KIN_DATA_DIR: join(directory, "data"), KIN_PORT: "0", ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  // Never leave a service behind: a running child would keep this test
+  // file's process (and the whole gate) waiting.
+  t.after(() => new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
+    child.once("exit", resolve);
+    child.kill();
+  }));
   let output = "";
   child.stdout.setEncoding("utf8").on("data", (chunk) => { output += chunk; });
   child.stderr.setEncoding("utf8").on("data", (chunk) => { output += chunk; });
-  return new Promise((resolve) => child.on("exit", (code) => resolve({ code, output })));
+  // "close" waits for the output to drain; if a grandchild kept the pipes
+  // open after the launcher exited, give up waiting after five seconds.
+  return new Promise((resolve) => {
+    child.once("close", (code) => resolve({ code, output }));
+    child.once("exit", (code) => setTimeout(() => resolve({ code, output }), 5_000).unref());
+  });
 }
 
 test("the service refuses to start in home mode with a Google Play setting, or with an unknown mode", { timeout: 30_000 }, async (t) => {

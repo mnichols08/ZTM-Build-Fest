@@ -25,7 +25,7 @@ function temporary(t, prefix = "kin-sea-") {
   return directory;
 }
 
-test("the build takes the Linux targets and explains the ones that aren't built yet", () => {
+test("the build takes the Linux targets and explains the ones that aren't built yet", { timeout: 60_000 }, () => {
   assert.deepEqual(DEFAULT_TARGETS, ["linux-x64", "linux-arm64"]);
   const options = parseBuildArguments(["--target", "linux-arm64", "--node-binary", "node-arm64", "--node-version", "v24.22.0", "--measure"]);
   assert.deepEqual(options.targets, ["linux-arm64"]);
@@ -45,7 +45,7 @@ test("the build takes the Linux targets and explains the ones that aren't built 
     assert.throws(() => parseBuildArguments(argv), (error) => error instanceof BuildSeaError && message.test(error.message), argv.join(" "));
 });
 
-test("the executable holds the server, the web app, package.json and the engine, not tests", (t) => {
+test("the executable holds the server, the web app, package.json and the engine, not tests", { timeout: 60_000 }, (t) => {
   const wasm = join(temporary(t), "engine.wasm");
   writeFileSync(wasm, WASM);
   const files = collectAppFiles({ wasm });
@@ -95,6 +95,7 @@ function start(executable, env) {
 
 test("on Linux the executable builds reproducibly and serves Kin in home mode inside the sandbox", { timeout: 110_000 }, async (t) => {
   const target = hostTarget();
+  if (process.platform !== "linux") { t.skip("builds and runs only on Linux"); return; }
   let base;
   try {
     base = readFileSync(process.execPath);
@@ -126,7 +127,7 @@ test("on Linux the executable builds reproducibly and serves Kin in home mode in
   assert.equal(info.targets[0].node.sha256, sha256(base));
   assert.ok(bytes.includes(Buffer.from(`${SEA_FUSE}:1`)), "the fuse is flipped");
 
-  const run = (args, env = {}) => spawnSync(executable, args, { encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "", ...env } });
+  const run = (args, env = {}) => spawnSync(executable, args, { encoding: "utf8", timeout: 30_000, env: { ...process.env, NODE_OPTIONS: "", ...env } });
   assert.equal(run(["--version"]).stdout, `${VERSION}\n`);
 
   const cache = join(root, "cache");

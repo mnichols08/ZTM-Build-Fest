@@ -30,14 +30,14 @@ function tar(entries) {
 }
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-test("SHASUMS256.txt is read as file name to hash", () => {
+test("SHASUMS256.txt is read as file name to hash", { timeout: 60_000 }, () => {
   const sums = parseShasums(`${"a".repeat(64)}  node-v24.22.0-linux-x64.tar.gz\n${"b".repeat(64)} *win-x64/node.exe\r\nnot a line\n`);
   assert.equal(sums.get("node-v24.22.0-linux-x64.tar.gz"), "a".repeat(64));
   assert.equal(sums.get("win-x64/node.exe"), "b".repeat(64));
   assert.equal(sums.size, 2);
 });
 
-test("a tar entry is found by its plain, prefixed, pax or GNU long name", () => {
+test("a tar entry is found by its plain, prefixed, pax or GNU long name", { timeout: 60_000 }, () => {
   const long = `node-v24.22.0-linux-x64/${"deep/".repeat(30)}node`;
   const archive = tar([
     { name: "node-v24.22.0-linux-x64/README.md", data: Buffer.from("readme") },
@@ -63,7 +63,7 @@ function fakeDist(files) {
   };
 }
 
-test("a downloaded node is checked against SHASUMS256.txt before it is used", async () => {
+test("a downloaded node is checked against SHASUMS256.txt before it is used", { timeout: 60_000 }, async () => {
   const archive = gzipSync(tar([{ name: "node-v24.22.0-linux-arm64/bin/node", data: Buffer.from("arm64 node") }]));
   const shasums = `${sha256(archive)}  node-v24.22.0-linux-arm64.tar.gz\n`;
   const result = await downloadNode("linux-arm64", "24.22.0", { fetchImpl: fakeDist({ "SHASUMS256.txt": shasums, "node-v24.22.0-linux-arm64.tar.gz": archive }) });
@@ -82,7 +82,7 @@ test("a downloaded node is checked against SHASUMS256.txt before it is used", as
   assert.deepEqual(windows.binary, exe);
 });
 
-test("the targets are the five ADR 0025 names", () => {
+test("the targets are the five ADR 0025 names", { timeout: 60_000 }, () => {
   assert.deepEqual(Object.keys(TARGETS), ["linux-x64", "linux-arm64", "darwin-arm64", "darwin-x64", "win-x64"]);
   assert.equal(hostTarget("linux", "x64"), "linux-x64");
   assert.equal(hostTarget("win32", "x64"), "win-x64");

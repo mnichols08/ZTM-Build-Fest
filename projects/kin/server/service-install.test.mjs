@@ -22,7 +22,7 @@ function assertXmlComments(text) {
   for (const [, body] of text.matchAll(/<!--([\s\S]*?)-->/g)) assert.ok(!body.includes("--"), `comment holds "--": ${body}`);
 }
 
-test("systemd words are quoted and escaped as systemd reads them", () => {
+test("systemd words are quoted and escaped as systemd reads them", { timeout: 60_000 }, () => {
   assert.equal(systemdWord("/usr/local/lib/kin/kin"), "/usr/local/lib/kin/kin");
   assert.equal(systemdWord("/opt/kin app/start.mjs"), '"/opt/kin app/start.mjs"');
   assert.equal(systemdWord("50%"), "50%%");
@@ -30,7 +30,7 @@ test("systemd words are quoted and escaped as systemd reads them", () => {
   assert.equal(systemdWord('a"b\\c'), '"a\\"b\\\\c"');
 });
 
-test("the systemd unit runs Kin as the kin account, hardened, restarting on failure", () => {
+test("the systemd unit runs Kin as the kin account, hardened, restarting on failure", { timeout: 60_000 }, () => {
   const unit = systemdUnit({ execStart: ["/usr/local/lib/kin/kin"], sea: true });
   for (const line of [
     "User=kin", "Group=kin", "ExecStart=/usr/local/lib/kin/kin", "Environment=KIN_MODE=home", "Environment=KIN_DATA_DIR=/var/lib/kin",
@@ -45,20 +45,21 @@ test("the systemd unit runs Kin as the kin account, hardened, restarting on fail
   assert.ok(!node.includes("CacheDirectory="));
 });
 
-test("systemd accepts the unit", (t) => {
-  const analyze = spawnSync("systemd-analyze", ["--version"], { encoding: "utf8" });
+test("systemd accepts the unit", { timeout: 60_000 }, (t) => {
+  if (process.platform !== "linux") { t.skip("systemd is Linux only"); return; }
+  const analyze = spawnSync("systemd-analyze", ["--version"], { encoding: "utf8", timeout: 10_000 });
   if (analyze.status !== 0) { t.skip("systemd-analyze isn't available"); return; }
   const directory = mkdtempSync(join(tmpdir(), "kin-unit-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, "kin.service");
   // A node install's ExecStart names files that exist here.
   writeFileSync(path, serviceDefinition({ platform: "linux", program: { kind: "node", command: process.execPath, args: [join(APP_ROOT, "server", "start.mjs")] } }).content);
-  const result = spawnSync("systemd-analyze", ["verify", path], { encoding: "utf8" });
+  const result = spawnSync("systemd-analyze", ["verify", path], { encoding: "utf8", timeout: 30_000 });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr.split("\n").filter((line) => line.includes("kin.service")).join("\n"), "");
 });
 
-test("the LaunchDaemon plist starts Kin at boot as the installing user", () => {
+test("the LaunchDaemon plist starts Kin at boot as the installing user", { timeout: 60_000 }, () => {
   const plist = launchdPlist({
     programArguments: ["/usr/local/libexec/kin/kin"],
     userName: "mikey",
@@ -73,15 +74,16 @@ test("the LaunchDaemon plist starts Kin at boot as the installing user", () => {
   assert.match(plist, /<key>KeepAlive<\/key>\n {2}<true\/>/);
   assert.match(plist, /<key>Umask<\/key>\n {2}<integer>63<\/integer>/);
   assert.ok(plist.includes("<string>/Library/Application Support/Kin &amp; Co</string>"));
-  const python = spawnSync("python3", ["-I", "-c", "import plistlib,sys,json; print(json.dumps(plistlib.loads(sys.stdin.buffer.read())))"], { input: plist, encoding: "utf8" });
-  if (python.status === 0) {
+  const python = process.platform === "win32" ? { status: null } : spawnSync("python3", ["-I", "-c", "import plistlib,sys,json; print(json.dumps(plistlib.loads(sys.stdin.buffer.read())))"], { input: plist, encoding: "utf8", timeout: 20_000 });
+  // Not on Windows: "python3" there can be the Microsoft Store stub.
+  if (process.platform !== "win32" && python.status === 0) {
     const parsed = JSON.parse(python.stdout);
     assert.deepEqual(parsed.ProgramArguments, ["/usr/local/libexec/kin/kin"]);
     assert.equal(parsed.EnvironmentVariables.KIN_DATA_DIR, "/Library/Application Support/Kin & Co");
   }
 });
 
-test("Windows arguments are quoted as CommandLineToArgvW reads them", () => {
+test("Windows arguments are quoted as CommandLineToArgvW reads them", { timeout: 60_000 }, () => {
   assert.equal(windowsArgument("--supervise"), "--supervise");
   assert.equal(windowsArgument("C:\\ProgramData\\Kin\\logs\\kin.log"), "C:\\ProgramData\\Kin\\logs\\kin.log");
   assert.equal(windowsArgument("C:\\Program Files\\Kin"), '"C:\\Program Files\\Kin"');
@@ -90,7 +92,7 @@ test("Windows arguments are quoted as CommandLineToArgvW reads them", () => {
   assert.equal(windowsArgument(""), '""');
 });
 
-test("the scheduled task starts at boot as LOCAL SERVICE with no time limit", () => {
+test("the scheduled task starts at boot as LOCAL SERVICE with no time limit", { timeout: 60_000 }, () => {
   const task = scheduledTaskXml({ command: "C:\\Program Files\\Kin\\kin.exe", args: ["--supervise", "--log-file", "C:\\Data Dir\\kin.log"], workingDirectory: "C:\\ProgramData\\Kin" });
   assertXmlComments(task);
   assert.match(task, /<BootTrigger>\s*<Enabled>true<\/Enabled>/);
@@ -104,7 +106,7 @@ test("the scheduled task starts at boot as LOCAL SERVICE with no time limit", ()
   assert.ok(task.includes("<Arguments>--supervise --log-file &quot;C:\\Data Dir\\kin.log&quot;</Arguments>"));
 });
 
-test("each platform's definition names its file and the program to run", () => {
+test("each platform's definition names its file and the program to run", { timeout: 60_000 }, () => {
   assert.equal(serviceDefinition({ platform: "linux", program: SEA }).path, SYSTEMD_UNIT_PATH);
   assert.match(serviceDefinition({ platform: "linux", program: SEA }).content, /^ExecStart=\/usr\/local\/lib\/kin\/kin$/m);
   const mac = serviceDefinition({ platform: "darwin", program: SEA, user: "mikey" });
@@ -132,7 +134,7 @@ function assertKeepsData(plan) {
   assert.ok(plan.notes.some((note) => note.includes(data) && note.includes("kept")));
 }
 
-test("Linux: install creates the account, copies the executable, writes the unit and starts it", () => {
+test("Linux: install creates the account, copies the executable, writes the unit and starts it", { timeout: 60_000 }, () => {
   const plan = servicePlan("install", { platform: "linux", program: SEA });
   assert.deepEqual(plan.steps.map(({ kind, command, path, to }) => [kind, command ?? path ?? to ?? null]), [
     ["admin", null],
@@ -154,7 +156,7 @@ test("Linux: install creates the account, copies the executable, writes the unit
   assert.ok(!servicePlan("install", { platform: "linux", program: NODE }).steps.some(({ kind }) => kind === "copy" || kind === "mkdir"));
 });
 
-test("Linux: uninstall stops and removes the service and the executable, never the data", () => {
+test("Linux: uninstall stops and removes the service and the executable, never the data", { timeout: 60_000 }, () => {
   const plan = servicePlan("uninstall", { platform: "linux", program: SEA });
   assert.deepEqual(plan.steps.filter(({ kind }) => kind === "remove").map(({ path }) => path), [SYSTEMD_UNIT_PATH, "/usr/local/lib/kin"]);
   assert.deepEqual(plan.steps[1], { kind: "run", command: "systemctl", args: ["disable", "--now", "kin.service"], allowFailure: true });
@@ -162,7 +164,7 @@ test("Linux: uninstall stops and removes the service and the executable, never t
   assertKeepsData(servicePlan("uninstall", { platform: "linux", program: NODE }));
 });
 
-test("macOS: install runs Kin as the sudo user, never root, and uninstall keeps the data", () => {
+test("macOS: install runs Kin as the sudo user, never root, and uninstall keeps the data", { timeout: 60_000 }, () => {
   assert.throws(() => servicePlan("install", { platform: "darwin", program: SEA, env: {} }), /--user/);
   assert.throws(() => servicePlan("install", { platform: "darwin", program: SEA, env: { SUDO_USER: "root" } }), /doesn't run as root/);
   const plan = servicePlan("install", { platform: "darwin", program: SEA, env: { SUDO_USER: "mikey" } });
@@ -177,7 +179,7 @@ test("macOS: install runs Kin as the sudo user, never root, and uninstall keeps 
   assertKeepsData(servicePlan("uninstall", { platform: "darwin", program: SEA, env: {} }));
 });
 
-test("Windows: install limits the folders to LOCAL SERVICE and admins and registers the task; uninstall keeps the data", () => {
+test("Windows: install limits the folders to LOCAL SERVICE and admins and registers the task; uninstall keeps the data", { timeout: 60_000 }, () => {
   const plan = servicePlan("install", { platform: "win32", program: { kind: "sea", executable: "C:\\Downloads\\kin.exe" }, env: WINDOWS_ENV });
   const acls = plan.steps.filter(({ command }) => command === "icacls");
   assert.deepEqual(acls.map(({ args }) => args[0]), ["C:\\ProgramData\\Kin", "C:\\ProgramData\\Kin-app"]);
@@ -192,7 +194,7 @@ test("Windows: install limits the folders to LOCAL SERVICE and admins and regist
   assertKeepsData(uninstall);
 });
 
-test("a plan is carried out in order: admin check, skips, allowed failures and files", (t) => {
+test("a plan is carried out in order: admin check, skips, allowed failures and files", { timeout: 60_000 }, (t) => {
   const root = mkdtempSync(join(tmpdir(), "kin-plan-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, "source"), "executable");
@@ -234,7 +236,7 @@ test("a plan is carried out in order: admin check, skips, allowed failures and f
   assert.throws(() => executePlan({ steps: [{ kind: "remove", path: join(root, "busy") }] }, { run, fs: failingFs }), /busy/);
 });
 
-test("the scheduled task is registered from a UTF-16 file that is removed afterwards", () => {
+test("the scheduled task is registered from a UTF-16 file that is removed afterwards", { timeout: 60_000 }, () => {
   let registered = null;
   const run = (command, args) => {
     const file = args[args.indexOf("/XML") + 1];

@@ -8,7 +8,7 @@ import test from "node:test";
 
 const read = async (path) => (await readFile(new URL(path, import.meta.url), "utf8")).replace(/\r\n/g, "\n");
 
-test("the image runs the executable as an unprivileged user with /data as its volume", async () => {
+test("the image runs the executable as an unprivileged user with /data as its volume", { timeout: 60_000 }, async () => {
   const dockerfile = await read("../deploy/home/Dockerfile");
   const stages = [...dockerfile.matchAll(/^FROM (\S+)/gm)].map((match) => match[1]);
   assert.deepEqual(stages, ["rust:1.93.0-slim", "node:24.22.0-slim", "gcr.io/distroless/cc-debian12:nonroot"]);
@@ -26,7 +26,7 @@ test("the image runs the executable as an unprivileged user with /data as its vo
   assert.match(dockerfile, /KIN_APP_CACHE=\/opt\/kin\/app \/opt\/kin\/kin --prepare/);
 });
 
-test("the image builds on the node release and Rust toolchain the project pins", async () => {
+test("the image builds on the node release and Rust toolchain the project pins", { timeout: 60_000 }, async () => {
   const dockerfile = await read("../deploy/home/Dockerfile");
   const workflow = await read("../docs/ci/kin-verification.workflow.yml");
   const toolchain = await read("../rust-toolchain.toml");
@@ -35,7 +35,7 @@ test("the image builds on the node release and Rust toolchain the project pins",
   assert.equal(/FROM rust:(\S+)-slim/.exec(dockerfile)[1], /^channel\s*=\s*"([^"]+)"/m.exec(toolchain)[1]);
 });
 
-test("the build context keeps the executable's build script and leaves out tests", async () => {
+test("the build context keeps the executable's build script and leaves out tests", { timeout: 60_000 }, async () => {
   const ignore = (await read("../deploy/home/Dockerfile.dockerignore")).split(/\r?\n/).filter((line) => line && !line.startsWith("#"));
   for (const line of ["scripts", "!scripts/build-sea.mjs", "!scripts/sea", "**/*.test.mjs", ".git", ".kin-data", "web/wasm/kin_engine.wasm"])
     assert.ok(ignore.includes(line), line);

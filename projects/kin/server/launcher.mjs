@@ -211,7 +211,9 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
         signals.removeListener("SIGINT", onInt);
         finish(1);
       });
-      child.on("exit", (code, signal) => {
+      // With the output piped to the log, wait for "close" (exit and the
+      // pipes drained) so no output arrives after the log is closed.
+      child.on(piped ? "close" : "exit", (code, signal) => {
         const exitCode = code ?? 128 + (constants.signals[signal] ?? 0);
         if (!supervise || stopping || exitCode === 0) {
           signals.removeListener("SIGTERM", onTerm);

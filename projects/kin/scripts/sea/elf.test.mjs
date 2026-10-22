@@ -55,7 +55,7 @@ function syntheticElf({ type = 2, base = 0x400000n, machine = 62 } = {}) {
   return buffer;
 }
 
-test("the blob becomes a note in a new read-only segment with a moved program header table", () => {
+test("the blob becomes a note in a new read-only segment with a moved program header table", { timeout: 60_000 }, () => {
   const original = syntheticElf();
   const blob = Buffer.from("a SEA blob of odd length");
   const injected = injectElf(original, blob);
@@ -87,21 +87,21 @@ test("the blob becomes a note in a new read-only segment with a moved program he
   assert.ok(injected.subarray(original.length, 0x10000).every((byte) => byte === 0));
 });
 
-test("a position-independent executable gets the note at the same file offset and address", () => {
+test("a position-independent executable gets the note at the same file offset and address", { timeout: 60_000 }, () => {
   const injected = injectElf(syntheticElf({ type: 3, base: 0n }), Buffer.from("blob"));
   const added = readElf(injected).headers.filter(({ type }) => type === PT_LOAD).at(-1);
   assert.equal(added.offset, added.vaddr);
   assert.equal(added.offset, 0x10000n);
 });
 
-test("injection is deterministic and refuses a binary that already has a blob", () => {
+test("injection is deterministic and refuses a binary that already has a blob", { timeout: 60_000 }, () => {
   const blob = Buffer.alloc(100_000, 7);
   const first = injectElf(syntheticElf(), blob);
   assert.deepEqual(injectElf(syntheticElf(), blob), first);
   assert.throws(() => injectElf(first, blob), (error) => error instanceof ElfInjectError && /already contains/.test(error.message));
 });
 
-test("anything but a 64-bit little-endian executable is refused", () => {
+test("anything but a 64-bit little-endian executable is refused", { timeout: 60_000 }, () => {
   const blob = Buffer.from("x");
   assert.throws(() => injectElf(Buffer.from("MZ not an ELF file at all, padded to sixty-four bytes........"), blob), /not an ELF file/);
   const thirtyTwo = syntheticElf();
@@ -118,6 +118,7 @@ test("anything but a 64-bit little-endian executable is refused", () => {
 });
 
 test("a real node binary with an injected note still loads and runs", { timeout: 60_000 }, (t) => {
+  if (process.platform !== "linux") { t.skip("only Linux runs ELF executables"); return; }
   let binary;
   try {
     binary = readFileSync(process.execPath);
@@ -135,7 +136,7 @@ test("a real node binary with an injected note still loads and runs", { timeout:
   const copy = join(directory, "node");
   writeFileSync(copy, injectElf(binary, blob));
   chmodSync(copy, 0o755);
-  const result = spawnSync(copy, ["-p", "process.version"], { encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "" } });
+  const result = spawnSync(copy, ["-p", "process.version"], { encoding: "utf8", timeout: 30_000, env: { ...process.env, NODE_OPTIONS: "" } });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), process.version);
   assert.deepEqual(findSeaBlob(readFileSync(copy)), blob);
