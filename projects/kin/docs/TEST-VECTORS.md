@@ -1158,6 +1158,14 @@ the ES256 example key of RFC 7515 Appendix A.3 (`x`
   `65a26016d215e16034b7633337b91b4a4d2c7d17761998dac51a9a49300aea52` and the
   extension is
   `3031 06082b0601050507011f 0101ff 04220420` followed by that digest.
+- **ARI certificate identifier (RFC 9773 §4.1).** The RFC's own example,
+  pinned in `server/acme/renewal-info.test.mjs`: authorityKeyIdentifier
+  keyIdentifier `69:88:5B:6B:87:46:40:41:E1:B3:7B:84:7B:A0:AE:2C:DE:01:C8:D4`
+  and serial number `00:87:65:43:21` (the serialNumber INTEGER's content
+  octets, leading zero included; the INTEGER is `02 05 00 87 65 43 21`) give
+  `aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE`. The test builds a certificate with
+  that AKI extension (`30 16 80 14` followed by the 20 octets) and serial and
+  reads the identifier back with Kin's DER reader.
 - **DER primitives.** OID 1.3.6.1.5.5.7.1.31 is `06 08 2b 06 01 05 05 07 01
   1f`; INTEGER 128 is `02 02 00 80`; length 300 is `82 01 2c`; 2026-10-22
   08:05:09 UTC is UTCTime `261022080509Z`, and 2050-01-01 is GeneralizedTime
