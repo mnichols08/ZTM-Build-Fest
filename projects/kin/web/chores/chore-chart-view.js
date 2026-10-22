@@ -2,8 +2,9 @@
 // their colour, and each card's chores, built from Rust's chart (kin-chores.js
 // decodeChoreChart) and the household state. Pure: no DOM, no storage.
 //
-// Colours: a member's own colour (event kind 74, from the Calendar story)
-// when the household has one; until then a fallback palette by join order.
+// Colours: a member's own colour (event kind 74, MEMBER_COLOUR_SET: an index
+// into this 12-colour palette) when they chose one; otherwise the palette by
+// join order, as the Calendar's defaultMemberColour.
 // Colour is never the only signal: every card shows the name.
 //
 // Points are for children, and for an Adult only when a household admin

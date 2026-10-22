@@ -121,6 +121,9 @@ pub struct Replay {
     /// The sitter page (sitter.rs), shared with finalized states until it
     /// changes.
     pub(super) sitter_page: Arc<crate::sitter::SitterPageState>,
+    /// The family calendar (calendar.rs), shared with finalized states until
+    /// it changes.
+    pub(super) calendar: Arc<crate::calendar::CalendarState>,
     /// The chore chart (chores.rs): its settings and the completions in
     /// effect with who they are credited to (items.rs and routines.rs add
     /// and remove credits), shared with finalized states until it changes.
@@ -324,12 +327,19 @@ impl Replay {
             | K::RecipeArchived { .. }
             | K::DinnerSet { .. }
             | K::DinnerCleared { .. }
-            | K::DinnerCookSet { .. } => crate::meals::apply(&mut self.meals, event)?,
+            | K::DinnerCookSet { .. }
+            | K::MealSet { .. }
+            | K::MealCleared { .. }
+            | K::RecipeFavouriteSet { .. } => crate::meals::apply(&mut self.meals, event)?,
             K::ItemEmojiSet { .. } => crate::simple::apply(&mut self.pictures, event)?,
             K::ShoppingSectionsSet { .. } | K::ItemSectionSet { .. } => {
                 crate::store_sections::apply(&mut self.store_sections, event)?
             }
             K::SitterPageSet { .. } => crate::sitter::apply(&mut self.sitter_page, event)?,
+            K::CalendarEventSaved(_)
+            | K::CalendarEventCancelled { .. }
+            | K::CalendarEventRestored { .. }
+            | K::MemberColourSet { .. } => crate::calendar::apply(&mut self.calendar, event)?,
             K::ChorePointsSet { .. } | K::ChoreRewardSet { .. } | K::ChoreChartJoined { .. } => {
                 crate::chores::apply(&mut self.chores, event)?
             }
@@ -447,6 +457,7 @@ impl Replay {
             store_sections: Arc::clone(&self.store_sections),
             rotations: Arc::clone(&self.rotations),
             sitter_page: Arc::clone(&self.sitter_page),
+            calendar: Arc::clone(&self.calendar),
             chores: Arc::clone(&self.chores),
         })
     }

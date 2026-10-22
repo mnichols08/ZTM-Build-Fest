@@ -42,6 +42,8 @@ id_type!(RecipeId);
 id_type!(StoreSectionId);
 // A record in a member's private log (#489, private.rs).
 id_type!(PrivateRecordId);
+// A family calendar event (#656, calendar.rs).
+id_type!(CalendarEventId);
 
 /// What a chat message's content blob holds (#109).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -432,6 +434,24 @@ pub enum EventKind {
         date: CivilDate,
         member_id: Option<ActorId>,
     },
+    /// Fuller meal plans (#679, ADR 0022 §7, meals.rs): a breakfast, lunch
+    /// or snack for one civil date, as a recipe (with its name when planned)
+    /// or a one-off name. Never dinner: dinners keep kinds 61–63.
+    MealSet {
+        date: CivilDate,
+        slot: crate::meals::MealSlot,
+        recipe_id: Option<RecipeId>,
+        name: String,
+    },
+    MealCleared {
+        date: CivilDate,
+        slot: crate::meals::MealSlot,
+    },
+    /// A recipe marked as a favourite, or not.
+    RecipeFavouriteSet {
+        recipe_id: RecipeId,
+        favourite: bool,
+    },
     BoardClearUndone {
         clear_id: BoardId,
     },
@@ -467,6 +487,25 @@ pub enum EventKind {
     SitterPageSet {
         intro: String,
         entries: Vec<crate::sitter::SitterEntry>,
+    },
+    /// Family calendar (#656, calendar.rs, kind 71): the whole event,
+    /// replacing any earlier version with its ID.
+    CalendarEventSaved(Box<crate::calendar::CalendarEvent>),
+    /// Kind 72: one occurrence (by its original start) or, with `None`, the
+    /// whole series is cancelled.
+    CalendarEventCancelled {
+        event_id: CalendarEventId,
+        occurrence: Option<crate::calendar::CalendarTime>,
+    },
+    /// Kind 73: undoes a cancel of that occurrence, or of the series.
+    CalendarEventRestored {
+        event_id: CalendarEventId,
+        occurrence: Option<crate::calendar::CalendarTime>,
+    },
+    /// Kind 74: the event's own member's palette colour (0–11); `None` goes
+    /// back to the default.
+    MemberColourSet {
+        colour: Option<u8>,
     },
     /// The chore chart (#676, chores.rs): a routine's points per completed
     /// occurrence, 0–10 (1 when never set).

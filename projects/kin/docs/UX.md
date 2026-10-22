@@ -1552,6 +1552,48 @@ Lists → Meals plans the week's dinners, decided in
   system-coloured border. Planning works offline and is saved on the device;
   with sync on, the status says it will sync when connected.
 
+### Every meal of the day (#679)
+
+Fuller meal plans, decided in [ADR 0022](decisions/0022-family-hub.md) §7.
+They change the week above as follows.
+
+- **Each day card has a row per meal:** Breakfast, Lunch, Dinner and Snack,
+  in that order. Each row has its label ("Tonight" for today's dinner), what's
+  planned or "Nothing planned", and one **Plan** / **Change** button named
+  for the meal and day ("Plan breakfast for Monday 19 Oct"). Dinner keeps its
+  cook line. A row whose meal has a recipe offers **Add ingredients to
+  Shopping**. Today's card is marked **Today**.
+- **Show** is a row of checkboxes (Breakfast, Lunch, Dinner, Snack) that
+  folds meals away. Dinner always shows. On a phone, a meal nobody planned
+  this week starts folded, so the cards stay short. Ticking a box keeps the
+  choice on this device (`kin.meal-slots`).
+- **Planning breakfast, lunch or a snack** uses the same dialog, titled
+  "Breakfast for Monday 19 Oct", without **Who's cooking**. Picking a recipe
+  or **Use this** saves it and closes the dialog. **Clear this breakfast**
+  removes it. Favourites come first in the dialog's list, marked with a star
+  and named "(favourite)" for screen readers.
+- **Same as last week** fills each empty meal of the week shown with the
+  meal planned seven days earlier: a recipe still listed is planned as
+  itself, and one archived since is planned by name. Meals already planned
+  are left alone and cooks aren't copied. The status says "Copied 5 meals
+  from last week." When nothing is left to copy, it says so. If saving stops
+  part-way, **Try again** copies only what's missing.
+- **Add this week's ingredients to Shopping** puts every meal's recipe for
+  the week shown on Shopping in one go. A recipe planned twice counts once,
+  and so does an ingredient two recipes share. It reports the same way as one
+  recipe, and adding twice never duplicates. A week without recipes says
+  there's nothing to add.
+- **Favourites.** Each recipe has a star button (☆ / ★, `aria-pressed`, named
+  "Favourite: Tacos"). In easy mode it shows the word "Favourite" too.
+  **Favourites** (a toggle beside **Add a recipe**, shown once a recipe is a
+  favourite) lists only favourites.
+- **Today** keeps Tonight's line and lists today's other meals under it
+  ("Breakfast: Porridge", "Lunch: Sandwiches"). **This week** lists every
+  meal on its day, in order ("Breakfast: …", "Dinner: …").
+- **Layout** is unchanged: one card per day in one or two columns. Every
+  control is at least 44 px (56 px in easy mode) and nothing scrolls
+  sideways from 320 px up.
+
 ## 8.12 Simple view (#341)
 
 A calmer layout a household admin turns on for a Limited member, decided in
@@ -3150,8 +3192,8 @@ taking turns and items with a responsibility.
   the link, the page, the points on Routines and the admin setting go.
 - **A card per person** (`<kin-chore-chart>`, a self-contained element the
   kitchen display will reuse with `size="display"`): a header in the
-  person's colour (their own when the Calendar adds one; until then a
-  12-colour palette by join order, each with white text at 4.5:1) with
+  person's colour (the one they chose, event kind 74, else the default by
+  join order, from a 12-colour palette each with white text at 4.5:1) with
   their name — colour is never the only signal — their points this week
   ("3 points this week") or reward progress ("12 of 20 for Movie night",
   with a progress bar, then "Movie night reached!"). Then **Today**: each

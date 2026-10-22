@@ -240,6 +240,9 @@ pub enum HouseholdCommand {
     /// `SitterPageState::check_command` decides whether it applies. Only an
     /// Adult may send it; the host checks that (sitter.rs).
     SitterPage(EventKind),
+    /// The family calendar (#656, kinds 71–74), carried whole like a meals
+    /// event; `CalendarState::check_command` decides whether it applies.
+    Calendar(EventKind),
     /// The chore chart (#676, kinds 77–79), carried whole like a meals event;
     /// `ChoresState::check_command` decides whether it applies. Points and
     /// rewards are the host's to gate to Adults (chores.rs).
@@ -555,6 +558,12 @@ pub fn create_event(
             }
             kind.clone()
         }
+        Calendar(kind) => {
+            if !crate::calendar::is_calendar_code(crate::codec::kind_code(kind)) {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
         Chore(kind) => {
             if !crate::chores::is_chore_code(crate::codec::kind_code(kind)) {
                 return Err(KinError::InvalidEvent);
@@ -822,6 +831,9 @@ pub fn execute_with(
         current
             .sitter_page
             .check_command(kind, current.sitter_records())?;
+    }
+    if let HouseholdCommand::Calendar(kind) = command {
+        current.calendar.check_command(kind, context.actor_id)?;
     }
     if let HouseholdCommand::Chore(kind) = command {
         current
@@ -1458,6 +1470,17 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         let event_kind = crate::sitter::decode_payload(kind, &bytes[128..])?;
         return Ok((
             HouseholdCommand::SitterPage(event_kind),
+            command_context(bytes)?,
+        ));
+    }
+    // The family calendar (#656): likewise.
+    if crate::calendar::is_calendar_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::calendar::decode_payload(kind, &bytes[128..])?;
+        return Ok((
+            HouseholdCommand::Calendar(event_kind),
             command_context(bytes)?,
         ));
     }

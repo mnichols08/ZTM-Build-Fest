@@ -104,6 +104,17 @@ pub fn meals(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError>
     crate::meals::encode_meals(&state.meals, &state.items, context.civil_date)
 }
 
+/// Every meal of the day and favourites (`kin_meal_plans`, #679): the
+/// record-less KINE context against the household history; publishes KMLS
+/// v2 (meals.rs). `kin_meals` keeps publishing KMLS v1 unchanged.
+pub fn meal_plans(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    crate::meals::encode_meal_plans(&state.meals, &state.items, context.civil_date)
+}
+
 /// Item emoji (`kin_item_emojis`, #344): the record-less KINE context
 /// against the household history; publishes KIEM (simple.rs).
 pub fn item_emojis(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
@@ -154,6 +165,12 @@ pub fn sitter_page(context: &[u8], history: &mut History) -> Result<Vec<u8>, Kin
     ))
 }
 
+/// The calendar between two dates (`kin_calendar_range`, #656): KCAQ and
+/// the record-less KINE context; publishes KCAL (calendar_range.rs).
+pub fn calendar_range(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    crate::calendar_range::calendar_range_export(input, history)
+}
+
 /// A member's things today (`kin_my_things`, #344): KMTQ (simple.rs) and the
 /// record-less KINE context; publishes KMTD for the context's civil date.
 pub fn my_things(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
@@ -173,22 +190,42 @@ pub fn my_things(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinErro
 /// version u16 = 1, reserved u16, source u8 (1 recipe, 2 a date's dinner),
 /// 3 reserved, recipe ID [16] (zero for a date), date u32 (zero for a
 /// recipe); 32 bytes, then the record-less KINE context. Publishes KMSP.
+///
+/// KMPQ v2 (#679) is the same 32 bytes with version 2, where byte 9 is a
+/// slot (1 breakfast, 2 lunch, 3 dinner, 4 snack) for source 3 and zero
+/// otherwise, and two sources are added: 3 a date's meal in that slot, 4 every
+/// meal with a recipe in the seven days from the date (empty when there are
+/// none). v1 queries are read as before; sources 3 and 4 need v2.
 pub fn meal_shopping_plan(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    use crate::meals::{MealSlot, PlanSource};
+    use crate::recurrence::CivilDate;
     let query = input.get(..32).ok_or(KinError::MalformedProtocol)?;
-    if &query[..4] != b"KMPQ" || query[6..8] != [0, 0] || query[9..12] != [0, 0, 0] {
+    if &query[..4] != b"KMPQ" || query[6..8] != [0, 0] || query[10..12] != [0, 0] {
         return Err(KinError::MalformedProtocol);
     }
-    if u16::from_le_bytes([query[4], query[5]]) != 1 {
+    let version = u16::from_le_bytes([query[4], query[5]]);
+    if version != 1 && version != 2 {
         return Err(KinError::UnsupportedVersion);
     }
     let recipe = <[u8; 16]>::try_from(&query[12..28]).map_err(|_| KinError::MalformedProtocol)?;
     let date = u32::from_le_bytes([query[28], query[29], query[30], query[31]]);
-    let source = match query[8] {
-        1 if recipe != [0; 16] && date == 0 => {
-            crate::meals::PlanSource::Recipe(crate::event::RecipeId(recipe))
+    let slot = query[9];
+    let source = match (query[8], slot) {
+        (1, 0) if recipe != [0; 16] && date == 0 => {
+            PlanSource::Recipe(crate::event::RecipeId(recipe))
         }
-        2 if recipe == [0; 16] => {
-            crate::meals::PlanSource::Dinner(crate::recurrence::CivilDate::from_encoded(date)?)
+        (2, 0) if recipe == [0; 16] => PlanSource::Dinner(CivilDate::from_encoded(date)?),
+        (3, slot) if version == 2 && recipe == [0; 16] => PlanSource::Meal(
+            CivilDate::from_encoded(date)?,
+            MealSlot::from_code(slot).ok_or(KinError::MalformedProtocol)?,
+        ),
+        (4, 0) if version == 2 && recipe == [0; 16] => {
+            let start = CivilDate::from_encoded(date)?;
+            // Six more days must exist (as KWKQ).
+            start
+                .checked_add_days(6)
+                .ok_or(KinError::MalformedProtocol)?;
+            PlanSource::Week(start)
         }
         _ => return Err(KinError::MalformedProtocol),
     };

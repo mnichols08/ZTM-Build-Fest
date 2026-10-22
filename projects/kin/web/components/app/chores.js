@@ -11,7 +11,7 @@
 // (`app.activeMemberKinds`). A household that doesn't sync has one person,
 // who decides: adults are allowed there.
 import { SAVE_ERROR } from "./constants.js";
-import { buildChoreChart, chartMembers } from "../../chores/chore-chart-view.js";
+import { CHORE_PALETTE, buildChoreChart, chartMembers } from "../../chores/chore-chart-view.js";
 import { CHORES_FORBIDDEN, JOIN_FORBIDDEN, canSendChoreCommand } from "../../wasm/kin-chores.js";
 import { syncProgress } from "./feedback.js";
 
@@ -107,8 +107,16 @@ export class ChoresController {
     this.reading = (async () => {
       try {
         const chart = await session.store.choreChart({ members: this.members(), adultsAllowed: this.adultsAllowed });
+        // Members' own colours (event kind 74, the Calendar's), as palette
+        // indices; anyone without one keeps the default by join order.
+        let colours = null;
+        try {
+          const chosen = await session.store.memberColours?.();
+          if (chosen instanceof Map) colours = new Map([...chosen].map(([id, index]) => [id, CHORE_PALETTE[index % CHORE_PALETTE.length]]));
+        } catch { /* the defaults */ }
         if (!this.ctx.session.isCurrentSession(session)) return;
         this.chart = chart;
+        this.colours = colours;
         // Routines offers each routine's points to Adults while the chart
         // is on (#676).
         if (this.app.routines) {
@@ -136,7 +144,7 @@ export class ChoresController {
     view.editable = adult && !this.app.simpleView;
     view.cards = buildChoreChart(this.chart, {
       state: this.app.state, emojis: this.app.itemEmojis ?? new Map(), rows: this.app.attachmentRows ?? [],
-      order: context.memberIds, names: context.names, selfId: context.memberId,
+      order: context.memberIds, names: context.names, selfId: context.memberId, colours: this.colours ?? null,
     });
     const join = this.app.choreJoin;
     if (join) {

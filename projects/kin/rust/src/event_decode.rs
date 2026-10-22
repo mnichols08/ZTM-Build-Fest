@@ -593,6 +593,14 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
             }
             crate::sitter::decode_payload(code, payload)?
         }
+        // The family calendar (#656): calendar.rs decodes its payloads
+        // strictly.
+        (1, code) if crate::calendar::is_calendar_code(code) => {
+            if !valid_timestamp(read_i64(record, 68)?) {
+                return Err(KinError::MalformedProtocol);
+            }
+            crate::calendar::decode_payload(code, payload)?
+        }
         // The chore chart (#676): chores.rs decodes its payloads strictly.
         (1, code) if crate::chores::is_chore_code(code) => {
             if !valid_timestamp(read_i64(record, 68)?) {
