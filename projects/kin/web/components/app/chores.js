@@ -12,7 +12,8 @@
 // who decides: adults are allowed there.
 import { SAVE_ERROR } from "./constants.js";
 import { CHORE_PALETTE, buildChoreChart, chartMembers } from "../../chores/chore-chart-view.js";
-import { CHORES_FORBIDDEN, JOIN_FORBIDDEN, canSendChoreCommand } from "../../wasm/kin-chores.js";
+import { CHORES_FORBIDDEN, JOIN_FORBIDDEN, canSendChoreCommand, normalizeRewardText } from "../../wasm/kin-chores.js";
+import { choreRewardEntry } from "../../undo.js";
 import { syncProgress } from "./feedback.js";
 
 export class ChoresController {
@@ -142,8 +143,10 @@ export class ChoresController {
     if (!view || !this.chart) return;
     const context = this.ctx.detail.responsibilityContext();
     const adult = this.memberKind === "adult";
-    // No reward editing on Simple view or the kitchen display: ticking only.
-    view.editable = adult && !this.app.simpleView && !this.app.displayMode;
+    // No reward editing on Simple view: ticking only. The kitchen display
+    // (#699) offers it to the Adult whose device it is, touch-first
+    // (<kin-chore-chart size="display">), with Undo.
+    view.editable = adult && !this.app.simpleView;
     view.cards = buildChoreChart(this.chart, {
       state: this.app.state, emojis: this.app.itemEmojis ?? new Map(), rows: this.app.attachmentRows ?? [],
       order: context.memberIds, names: context.names, selfId: context.memberId, colours: this.colours ?? null,
@@ -177,10 +180,34 @@ export class ChoresController {
       joined ? "You joined the chore chart." : "You left the chore chart.");
   }
 
-  /** A child's reward (kind 78): goal 0 and no text removes it. */
-  setReward({ memberId, goal, text }) {
-    return this.run({ type: "set-chore-reward", memberId, goal, text: goal ? text : "" },
+  /** A child's reward (kind 78): goal 0 and no text removes it. The same
+   * path on the phone's chart and the kitchen display's; once saved, Undo
+   * offers the reward it replaced (web/undo.js choreRewardEntry). */
+  async setReward({ memberId, goal, text }) {
+    const from = this.rewardOf(memberId);
+    const name = this.app.choreChart?.cards?.find?.((card) => card.memberId === memberId)?.name ?? null;
+    const result = await this.run({ type: "set-chore-reward", memberId, goal, text: goal ? text : "" },
       goal ? "Reward saved." : "Reward removed.");
+    if (result.ok) {
+      let to = null;
+      // Rust stored the text trimmed; a text it refused never got here.
+      try { to = goal ? { goal, text: normalizeRewardText(text) } : null; } catch { return result; }
+      this.ctx.undo?.record(choreRewardEntry({ memberId, name, from, to }));
+    }
+    return result;
+  }
+
+  /** The reward the chart showed for `memberId`, or null. */
+  rewardOf(memberId) {
+    return this.chart?.members?.find((member) => member.memberId === memberId)?.reward ?? null;
+  }
+
+  /** Every charted member's reward as Rust works it out now: Map memberId
+   * → { goal, text } or null. For Undo, which must compare against the
+   * chart as it is, not as last drawn. */
+  async rewards() {
+    const chart = await this.app.store.choreChart({ members: this.members(), adultsAllowed: this.adultsAllowed });
+    return new Map(chart.members.map((member) => [member.memberId, member.reward ?? null]));
   }
 
   /** A routine's points per completion (kind 77). */

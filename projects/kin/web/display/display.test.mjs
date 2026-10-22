@@ -58,6 +58,16 @@ test("a switched-off feature takes its panel away, and the rest keep their order
   assert.deepEqual(regions.get("chores"), []);
 });
 
+test("the fridge panel is the fridge's own element on the board, and leaves with its feature or access (#700)", () => {
+  const fridge = PANELS.find((entry) => entry.id === "fridge");
+  assert.deepEqual({ component: fridge.component, region: fridge.region, featureId: fridge.featureId, size: fridge.size },
+    { component: "kin-fridge", region: "board", featureId: "fridge", size: "l" }, "laid out by display.css, not a copy of the fridge");
+  const off = withFeature(0, "fridge", false);
+  assert.ok(!visiblePanels(PANELS, { isOn: (id) => isFeatureOn(off, id) }).some((entry) => entry.id === "fridge"), "Fridge off: no panel");
+  assert.ok(!visiblePanels(PANELS, { unavailable: ["fridge"] }).some((entry) => entry.id === "fridge"), "no access: no panel");
+  assert.deepEqual(panelsByRegion(visiblePanels(PANELS, { isOn: (id) => isFeatureOn(off, id) })).get("board"), [], "and the board region is empty");
+});
+
 test("orientation follows the screen's shape", () => {
   assert.equal(orientationOf(800, 1280), "portrait");
   assert.equal(orientationOf(1280, 800), "landscape");

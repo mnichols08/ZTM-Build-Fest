@@ -9,7 +9,10 @@
 // administrative does (the journal, Just for me, Search, Household
 // settings, navigation); routes stay on the display and auto-lock doesn't
 // apply; a household feature switched off takes its panel away; ticking the
-// child's chore earns the child's point; shopping adds and ticks; the
+// child's chore earns the child's point; the Adult sets the child's reward
+// with big buttons and Undo puts it back (#699); the fridge has its wall
+// layout with its notes in large type and big place buttons, and leaves with
+// its feature (#700); shopping adds and ticks; the
 // screen goes to the screensaver when quiet and dims at night, and a touch
 // brings it back; offline says so; it lays out for portrait and landscape
 // tablets with 64px targets; locking and unlocking opens the display again;
@@ -96,7 +99,7 @@ async function checkPanels({ eventTitle, dinner, chore, milk }) {
   const card = () => panel("chores").querySelector(`.chore-card[data-member-id="${child}"]`);
   await until(() => card()?.textContent.includes(chore), "the child's chore shows on their card", () => panel("chores").textContent);
   check(card().style.getPropertyValue("--chore-colour").trim().startsWith("#"), "in the child's colour");
-  check(!panel("chores").querySelector(".chore-reward-toggle"), "no reward editing on the display");
+  check(visible(card().querySelector(".chore-reward-toggle")), "the Adult can set the child's reward on the display (#699)");
   await until(() => panel("shopping").textContent.includes(milk), "the shopping list shows", () => panel("shopping").textContent);
   check(!panel("chat").querySelector("form, textarea, input"), "recent messages are read-only");
   check(display.querySelector("h1")?.textContent.length > 0, "the display has a heading");
@@ -126,6 +129,124 @@ async function checkPanels({ eventTitle, dinner, chore, milk }) {
   check(visible(panel("today")) && visible(panel("chores")), "the others stay");
   features.changed({ off: before.off, revision: before.revision + 2 });
   await until(() => visible(panel("meals")), "Meals on again: its panel is back");
+  // The fridge's panel leaves with the Fridge feature too (#700).
+  features.changed({ off: withFeature(before.off, "fridge", false), revision: before.revision + 3 });
+  await until(() => !visible(panel("fridge")) && display.querySelector('.display-region[data-region="board"]').hidden, "Fridge off: its panel goes");
+  features.changed({ off: before.off, revision: before.revision + 4 });
+  await until(() => visible(panel("fridge")), "Fridge on again: its panel is back");
+  check(app.fridge.getAttribute("size") === "display" && app.fridge.dataset.layout === "display", "the fridge takes the display's layout", { size: app.fridge.getAttribute("size"), layout: app.fridge.dataset.layout });
+  return true;
+}
+
+/** In the page: a child's reward from the display (#699), and Undo. */
+async function rewardOnDisplay() {
+  const app = document.querySelector("kin-app");
+  const check = (condition, message, detail) => { if (!condition) throw new Error(`${message}${detail === undefined ? "" : ` ${JSON.stringify(detail)}`}`); };
+  const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  const until = async (test, message, detail) => {
+    for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
+    check(false, `Timed out: ${message}`, typeof detail === "function" ? detail() : detail);
+  };
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the work settles");
+  const visible = (node) => Boolean(node) && node.isConnected && node.getClientRects().length > 0 && !node.closest("[hidden]");
+  const display = app.kitchenDisplay;
+  const { child, tag } = window.__kitchen;
+  const card = () => display.querySelector(`.display-panel[data-panel="chores"] .chore-card[data-member-id="${child}"]`);
+  const line = () => card()?.querySelector(".chore-points")?.textContent;
+  const before = line();
+  check(before === "1 point this week", "the child has the point from the tick", before);
+
+  card().querySelector(".chore-reward-toggle").click();
+  await until(() => card()?.querySelector(".chore-reward-form"), "the reward editor opens");
+  const form = () => card().querySelector(".chore-reward-form");
+  check(![...form().querySelectorAll("input")].some((input) => input.type === "number"), "no number to type: the goal is buttons");
+  // Every control in it is a 64px target.
+  const small = [...form().querySelectorAll("button, input")].filter(visible).map((node) => [node, node.getBoundingClientRect()])
+    .filter(([, rect]) => rect.height < 63.5 || rect.width < 63.5).map(([node, rect]) => `${node.className || node.tagName}:${Math.round(rect.width)}x${Math.round(rect.height)}`);
+  check(small.length === 0, "the reward editor's targets are 64px", small);
+  [...form().querySelectorAll(".chore-goal-preset")].find((node) => node.dataset.goal === "5").click();
+  [...form().querySelectorAll(".chore-goal-step")].find((node) => node.dataset.step === "-1").click();
+  check(form().querySelector(".chore-goal-value").textContent === "4 points", "a one-tap goal, then one fewer", form().querySelector(".chore-goal-value").textContent);
+  const reward = `Pancakes ${tag}`;
+  const text = form().querySelector('input[type="text"]');
+  text.value = reward;
+  text.dispatchEvent(new Event("input", { bubbles: true }));
+  form().requestSubmit();
+  await idle();
+  await until(() => line() === `1 of 4 for ${reward}`, "the reward shows on the child's card", () => line());
+  check(app.ctx.chores.chart.members.find((member) => member.memberId === child)?.reward?.goal === 4, "Rust's chart has it (kind 78)");
+
+  // Undo, as big as everything else on the display.
+  const toast = app.querySelector(".undo-toast");
+  await until(() => visible(toast), "Undo is offered");
+  check(/Reward saved/.test(toast.textContent), "it says what changed", toast.textContent);
+  for (const button of toast.querySelectorAll("button")) {
+    const rect = button.getBoundingClientRect();
+    check(rect.height >= 63.5 && rect.width >= 63.5, "Undo's buttons are 64px", { className: button.className, width: rect.width, height: rect.height });
+  }
+  toast.querySelector(".undo-toast-action").click();
+  await idle();
+  await until(() => line() === before, "Undo takes the reward away again", () => line());
+  check(app.ctx.chores.chart.members.find((member) => member.memberId === child)?.reward === null, "and Rust's chart agrees");
+  await until(() => toast.querySelector(".undo-toast-action")?.textContent === "Redo", "then Redo is offered");
+  toast.querySelector(".undo-toast-dismiss").click();
+  return true;
+}
+
+/** In the page: the fridge on the wall (#700), with a board room of its own
+ * (this harness has no sync) holding two notes. */
+async function fridgeOnDisplay() {
+  const app = document.querySelector("kin-app");
+  const check = (condition, message, detail) => { if (!condition) throw new Error(`${message}${detail === undefined ? "" : ` ${JSON.stringify(detail)}`}`); };
+  const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  const until = async (test, message, detail) => {
+    for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
+    check(false, `Timed out: ${message}`, typeof detail === "function" ? detail() : detail);
+  };
+  const fridge = app.fridge;
+  const { tag } = window.__kitchen;
+  if (!fridge.room) {
+    const { BoardRoom } = await import("/board/board-room.js");
+    const { generateHouseholdKey, generateDeviceKeys } = await import("/sync/crypto.js");
+    const householdKey = await generateHouseholdKey();
+    const keys = await generateDeviceKeys();
+    const offline = async () => { throw Object.assign(new Error("Household sync could not be reached."), { code: "connection_unavailable" }); };
+    const hex = () => crypto.randomUUID().replaceAll("-", "");
+    const memberId = app.ctx.detail.responsibilityContext().memberId;
+    const room = await BoardRoom.open({
+      identity: { householdId: hex(), memberId, deviceId: hex() },
+      keyStore: { vault: { assertUnlocked() {} }, getEpoch: async (_, epoch) => epoch === 1 ? { keyEpoch: 1, householdKey } : null, listEpochs: async () => [{ keyEpoch: 1, householdKey }] },
+      deviceKeys: { keys }, request: offline, engine: app.engine,
+    });
+    window.__kitchen.fridgeRoom = room;
+    fridge.memberId = memberId;
+    fridge.room = room;
+  }
+  const { newBoardId } = await import("/board/board-room.js");
+  const notes = [`Milk please ${tag}`, `Dentist Thu ${tag}`];
+  for (const [index, text] of notes.entries())
+    await fridge.room.change({ type: "place-magnet", magnetId: newBoardId(), x: 800 + index * 2000, y: 1200, content: { kind: "note", text } });
+  await until(() => notes.every((text) => fridge.querySelector(".fridge-notes")?.textContent.includes(text)), "the notes show again in large type", () => fridge.querySelector(".fridge-notes")?.textContent);
+  check(!fridge.querySelector(".fridge-notes").hidden, "the notes list shows on the display");
+  check(fridge.querySelector(".fridge-fullscreen").hidden, "no full screen: the display is already");
+  const titled = [...fridge.querySelectorAll("button[title]")].map((node) => node.className);
+  check(titled.length === 0, "no hover-only titles on the fridge's buttons", titled);
+
+  // A magnet's menu: nine big places, one tap moves it.
+  const magnet = [...fridge.querySelectorAll(".fridge-magnet-note")].find((node) => node.textContent === notes[0]);
+  magnet.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 41, pointerType: "touch", isPrimary: true, bubbles: true, clientX: 10, clientY: 10 }));
+  magnet.dispatchEvent(new PointerEvent("pointerup", { pointerId: 41, pointerType: "touch", isPrimary: true, bubbles: true, clientX: 10, clientY: 10 }));
+  await until(() => fridge.querySelector(".fridge-magnet-menu"), "a tap opens the magnet's menu");
+  const menu = fridge.querySelector(".fridge-magnet-menu");
+  check(!menu.querySelector("select"), "places are buttons, not a drop-down");
+  const places = [...menu.querySelectorAll(".fridge-magnet-place")];
+  check(places.length === 9, "nine places", places.length);
+  const small = [...menu.querySelectorAll("button")].map((node) => node.getBoundingClientRect()).filter((rect) => rect.height < 63.5 || rect.width < 63.5);
+  check(small.length === 0, "every place is a 64px button", small.map((rect) => `${Math.round(rect.width)}x${Math.round(rect.height)}`));
+  const id = magnet.dataset.magnetId;
+  places.find((node) => node.dataset.region === "bottom-right").click();
+  await until(() => !fridge.querySelector(".fridge-magnet-menu") && fridge.room.board().magnets.find((entry) => entry.id === id)?.x > 3000, "one tap moves it", () => fridge.room.board().magnets.find((entry) => entry.id === id));
+  window.__kitchen.fridgeNotes = notes;
   return true;
 }
 
@@ -217,12 +338,23 @@ function measureLayout() {
   const display = app.kitchenDisplay;
   const box = (region) => display.querySelector(`.display-region[data-region="${region}"]`)?.getBoundingClientRect();
   const small = [];
-  for (const node of display.querySelectorAll(".display-tools button, .display-shopping-add button, .display-shopping-add input, .display-shopping-row label, .chore-tick")) {
+  for (const node of display.querySelectorAll(".display-tools button, .display-shopping-add button, .display-shopping-add input, .display-shopping-row label, .chore-tick, .chore-reward-toggle, kin-fridge .fridge-tools button:not([hidden]), kin-fridge .fridge-magnet")) {
     const rect = node.getBoundingClientRect();
     if (rect.width && (rect.height < 63.5 || rect.width < 63.5)) small.push(`${node.className || node.tagName}:${Math.round(rect.width)}x${Math.round(rect.height)}`);
   }
   const now = box("now"), lists = box("lists"), chores = box("chores"), week = box("week");
+  // The fridge (#700): its door whole and in its 3:4 shape, the tools beside
+  // it on a tablet, the notes big enough to read from across the kitchen.
+  const fridge = app.fridge;
+  const door = fridge.querySelector(".fridge-door").getBoundingClientRect();
+  const tools = fridge.querySelector(".fridge-tools").getBoundingClientRect();
+  const note = fridge.querySelector(".fridge-note-text");
   return {
+    // The display is the whole screen, not squeezed into Today's grid.
+    fills: display.getBoundingClientRect().width >= document.documentElement.clientWidth - 2,
+    door: { width: Math.round(door.width), height: Math.round(door.height), ratio: Math.round((door.width / door.height) * 100) / 100, inside: door.left >= 0 && door.right <= innerWidth + 1 },
+    toolsBesideDoor: tools.right <= door.left + 1 && tools.top < door.bottom,
+    noteSize: note ? parseFloat(getComputedStyle(note).fontSize) : 0,
     scroll: document.documentElement.scrollWidth <= innerWidth,
     small,
     nowLeftOfLists: now.right <= lists.left + 1,
@@ -289,7 +421,11 @@ async function leaveDisplay(recovery) {
   check(app.autoLockTimer !== null || !app.autoLockMinutes, "auto-lock applies again");
 
   // Tidy up what this suite added.
-  const { routineId, milk, bread, saved } = window.__kitchen;
+  const { routineId, milk, bread, saved, fridgeRoom } = window.__kitchen;
+  if (fridgeRoom) {
+    if (app.fridge?.room === fridgeRoom) app.fridge.room = null;
+    fridgeRoom.close();
+  }
   for (const text of [milk, bread]) {
     const item = app.state.items.find((entry) => entry.text === text && entry.status !== "archived");
     if (item) { await app.ctx.items.handleItemAction("archive", item.itemId); await until(() => !app.busy, "archived"); }
@@ -312,20 +448,30 @@ export async function kitchenDisplayRegressions(client, { until, recovery }) {
     const things = await run(enterDisplay);
     assert.equal(await run(checkPanels, things), true);
     assert.equal(await run(useDisplay), true);
+    assert.equal(await run(rewardOnDisplay), true);
+    assert.equal(await run(fridgeOnDisplay), true);
     // A 10" tablet held sideways: the week on top, three columns.
     const landscape = await run(measureLayout);
     assert.deepEqual({ scroll: landscape.scroll, small: landscape.small, side: landscape.nowLeftOfLists, beside: landscape.choresBesideNow, week: landscape.weekOnTop },
       { scroll: true, small: [], side: true, beside: true, week: true }, `landscape tablet layout: ${JSON.stringify(landscape)}`);
     assert.ok(landscape.fontSize >= 18 && landscape.timeSize >= 40, `readable from across the kitchen: ${JSON.stringify(landscape)}`);
+    const fridgeLayout = (view, label) => {
+      assert.ok(view.fills, `${label}: the display fills the screen's width: ${JSON.stringify(view)}`);
+      assert.ok(view.door.inside && view.door.width >= 300 && view.door.height >= 400 && Math.abs(view.door.ratio - 0.75) < 0.02, `${label}: the whole fridge door, in its shape: ${JSON.stringify(view.door)}`);
+      assert.ok(view.toolsBesideDoor, `${label}: the fridge's tools beside the door: ${JSON.stringify(view)}`);
+      assert.ok(view.noteSize >= 26, `${label}: fridge notes readable across the kitchen: ${view.noteSize}px`);
+    };
+    fridgeLayout(landscape, "landscape");
     // Upright: the chart below today and the lists.
     await setViewport(client, { width: 800, height: 1280, deviceScaleFactor: 1, mobile: false });
     await until(() => client.evaluate(`innerHeight > innerWidth`));
     const portrait = await run(measureLayout);
     assert.deepEqual({ scroll: portrait.scroll, small: portrait.small, side: portrait.nowLeftOfLists, below: portrait.choresBelowNow, week: portrait.weekOnTop },
       { scroll: true, small: [], side: true, below: true, week: true }, `portrait tablet layout: ${JSON.stringify(portrait)}`);
+    fridgeLayout(portrait, "portrait");
     assert.equal(await run(leaveDisplay, recovery), true);
   } finally {
     await client.send("Emulation.clearDeviceMetricsOverride");
   }
-  return "PASS kitchen display: set up from Household by an Adult; today, the week, meals, the child's chores in colour, shopping, the fridge and read-only messages, with nothing private or admin; routes and auto-lock held; a switched-off feature hides its panel; ticking earns the child's point; shopping adds and ticks; screensaver and night dimming wake on touch; offline keeps the last state; portrait and landscape tablets with 64px targets; unlock reopens it; leaving needs the device's secret (#669)";
+  return "PASS kitchen display: set up from Household by an Adult; today, the week, meals, the child's chores in colour, shopping, the fridge and read-only messages, with nothing private or admin; routes and auto-lock held; a switched-off feature hides its panel; ticking earns the child's point; the child's reward set with 64px buttons and undone (#699); the fridge's wall layout with large notes, no hover titles or full screen and one-tap places, gone with its feature (#700); shopping adds and ticks; screensaver and night dimming wake on touch; offline keeps the last state; portrait and landscape tablets with 64px targets; unlock reopens it; leaving needs the device's secret (#669)";
 }
