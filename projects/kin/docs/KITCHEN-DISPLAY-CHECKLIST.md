@@ -37,7 +37,19 @@ an issue for anything that fails.
       (not yours); it shows on the child's own device after sync.
 - [ ] Add something to Shopping with the on-screen keyboard; tick something
       off; both show on another device after sync.
-- [ ] Draw on the fridge.
+- [ ] **Set a reward** on a child's card with **+**, **−** and a one-tap
+      goal, type its name with the on-screen keyboard, and **Save reward**:
+      the card shows "N of G for …" and the child's own device shows it after
+      sync. **Undo** on the toast puts the old reward back; **Change reward**
+      and **Cancel** change nothing. The keyboard doesn't pop up until you
+      tap the reward's name.
+- [ ] The fridge, in portrait and landscape: the tools sit beside the door,
+      the whole door shows, and the notes under it are readable from 2–3 m.
+      Draw on the fridge with a finger; tap a magnet and move it with one
+      of the nine place buttons; nothing needs a long press, a hover or a
+      precise tap. With the fridge set to look only, its tools are gone.
+- [ ] Switch **Fridge** off under Household › Features on another device:
+      the fridge panel goes from the display; back on, it returns.
 - [ ] Recent messages show, with no way to write; reading them here doesn't
       mark them read on your phone.
 - [ ] Try to get elsewhere: the browser back button, a link, a shared item
