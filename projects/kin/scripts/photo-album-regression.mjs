@@ -120,7 +120,7 @@ export async function photoAlbumRegressions() {
   // A tap returns.
   album.frame.querySelector(".photo-frame-stage").dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await until(() => !album.slideshow.open, "a tap closes the slideshow");
-  check(document.activeElement === album.slideshowButton, "focus returns to Slideshow");
+  await until(() => document.activeElement === album.slideshowButton, "focus returns to Slideshow");
   check(album.frame.urls.every((url) => url === null), "the slideshow lets go of its images");
   delete document.hidden;
 
@@ -143,6 +143,7 @@ export async function photoAlbumRegressions() {
   check(fileInputs() === inputsBefore, "no persistent file input was added", { before: inputsBefore, after: fileInputs() });
 
   // Tidy up.
+  await idle();
   for (const photo of (await app.store.album()).photos.filter((entry) => [cake.attachmentId, beach.attachmentId].includes(entry.attachmentId))) {
     const result = await app.ctx.album.remove(photo);
     check(result.ok, "the test photos are removed", result);

@@ -419,7 +419,12 @@ class KinAlbum extends HTMLElement {
     this.slideshow.setAttribute("aria-label", "Slideshow of family photos");
     this.frame = document.createElement("kin-photo-frame");
     this.frame.setAttribute("controls", "");
-    this.frame.addEventListener("kin:photo-frame-exit", () => this.slideshow.close());
+    // The close event comes a moment later; focus goes back at once.
+    this.frame.addEventListener("kin:photo-frame-exit", () => {
+      this.slideshow.close();
+      this.frame.stop();
+      if (this.slideshowButton.isConnected) this.slideshowButton.focus();
+    });
     this.slideshow.append(this.frame);
     this.slideshow.addEventListener("close", () => {
       this.frame.stop();
