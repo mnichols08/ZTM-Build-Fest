@@ -213,10 +213,13 @@ class KinAlbum extends HTMLElement {
     const actions = document.createElement("div");
     actions.className = "album-add-actions";
     this.addSubmit = button("Add", "primary-action album-add-submit", () => void this.submitAdd());
-    this.addCancel = button("Cancel", "album-add-cancel", () => this.addDialog.close());
+    this.addCancel = button("Cancel", "album-add-cancel", () => this.closeAdd());
     actions.append(this.addSubmit, this.addCancel);
     this.addDialog.append(title, hint, this.addList, this.addMessage, actions);
-    this.addDialog.addEventListener("close", () => this.releaseAdd());
+    // Closing releases the photos at once, never later from the close
+    // event: a dialog opened again meanwhile (a chat photo right after a
+    // shared one) keeps its own.
+    this.addDialog.addEventListener("cancel", (event) => { event.preventDefault(); this.closeAdd(); });
     return this.addDialog;
   }
 
@@ -224,7 +227,7 @@ class KinAlbum extends HTMLElement {
    * chat photo). */
   openAdd(files, { opener = null } = {}) {
     if (!this.addDialog) this.connectedCallback();
-    if (this.addDialog.open) this.addDialog.close();
+    this.closeAdd({ restoreFocus: false });
     this.addOpener = opener ?? (this.contains(document.activeElement) ? document.activeElement : this.addButton);
     this.adding = files.slice(0, 50).map((file, index) => ({ file, url: URL.createObjectURL(file), index }));
     this.addList.replaceChildren(...this.adding.map((entry) => {
@@ -275,7 +278,7 @@ class KinAlbum extends HTMLElement {
       onProgress: (done, total) => { if (total > 1 && done < total) this.addMessage.textContent = `Adding photo ${done + 1} of ${total}…`; },
     });
     if (result.added > 0 && result.ok) {
-      this.addDialog.close();
+      this.closeAdd();
       this.feedback.textContent = result.message;
       return;
     }
@@ -285,20 +288,23 @@ class KinAlbum extends HTMLElement {
       this.addSubmit.textContent = "Done";
       this.addSubmit.disabled = false;
       this.adding = [];
-      this.addSubmit.onclick = () => this.addDialog.close();
+      this.addSubmit.onclick = () => this.closeAdd();
       return;
     }
     this.addSubmit.disabled = false;
   }
 
-  releaseAdd() {
+  /** Closes the add dialog and lets go of its photos; focus goes back to
+   * whatever opened it. */
+  closeAdd({ restoreFocus = true } = {}) {
+    if (this.addDialog.open) this.addDialog.close();
     for (const entry of this.adding) URL.revokeObjectURL(entry.url);
     this.adding = [];
     this.addList.replaceChildren();
     this.addSubmit.onclick = null;
     const opener = this.addOpener;
     this.addOpener = null;
-    if (opener?.isConnected) opener.focus();
+    if (restoreFocus && opener?.isConnected) opener.focus();
   }
 
   // ---- Viewer ------------------------------------------------------------
@@ -443,7 +449,8 @@ class KinAlbum extends HTMLElement {
 
   /** Lock or leaving: every dialog closes and its images go. */
   closeAll() {
-    for (const dialog of [this.addDialog, this.viewer, this.slideshow]) if (dialog?.open) dialog.close();
+    if (this.addDialog) this.closeAdd({ restoreFocus: false });
+    for (const dialog of [this.viewer, this.slideshow]) if (dialog?.open) dialog.close();
     this.frame?.stop();
     for (const tile of this.tiles.values()) { tile.image.removeAttribute("src"); tile.image.hidden = true; tile.placeholder.hidden = false; }
     this.tiles.clear();
