@@ -84,9 +84,13 @@ export function askAdultDialog({ methods, check, host = document.body, purpose =
           : method === "password" ? "That password didn't work. Check it and try again."
             : method === "backup-key" ? "That backup key didn't work. Check it and try again."
               : (error?.message || "Kin couldn't confirm that. Try again.");
-        if (method !== "passkey") { input.value = ""; input.focus(); }
+        if (method !== "passkey") input.value = "";
       } finally {
-        if (!settled) setBusy(false);
+        if (!settled) {
+          setBusy(false);
+          // Focused once enabled again: a disabled box can't take it.
+          if (method !== "passkey") input.focus();
+        }
       }
     };
     for (const entry of methods) {

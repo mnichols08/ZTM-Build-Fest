@@ -39,10 +39,15 @@ an issue for anything that fails.
       off; both show on another device after sync.
 - [ ] **Set a reward** on a child's card with **+**, **−** and a one-tap
       goal, type its name with the on-screen keyboard, and **Save reward**:
-      the card shows "N of G for …" and the child's own device shows it after
-      sync. **Undo** on the toast puts the old reward back; **Change reward**
-      and **Cancel** change nothing. The keyboard doesn't pop up until you
-      tap the reward's name.
+      opening the editor asks nothing, but saving asks for your passkey or
+      password (#705). **Don't change it** closes the question and the
+      reward stays as it was; a wrong password is refused calmly and nothing
+      changes; your passkey or password saves it, and the card shows "N of G
+      for …" and the child's own device shows it after sync. **Undo** on the
+      toast asks again, then puts the old reward back; **Remove reward** asks
+      too. **Change reward** and **Cancel** change nothing. The keyboard
+      doesn't pop up until you tap the reward's name. Ticking chores,
+      shopping and the fridge never ask.
 - [ ] The fridge, in portrait and landscape: the tools sit beside the door,
       the whole door shows, and the notes under it are readable from 2–3 m.
       Draw on the fridge with a finger; tap a magnet and move it with one
