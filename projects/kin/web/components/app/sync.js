@@ -112,6 +112,11 @@ export class SyncController {
         if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
         this.ctx.features.receive(features, { householdId: identity.householdId });
       },
+      // Whether adults may join the chore chart (#676).
+      onChoreChart: (value) => {
+        if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
+        this.ctx.chores.receiveSetting(value);
+      },
       // Simple view (#343, ADR 0013): the layout this member's admin chose.
       onSimpleView: (on, options) => {
         if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
@@ -233,6 +238,15 @@ export class SyncController {
         this.ctx.render.renderState();
       }
       void this.reconcileResponsibilityMembers();
+    }
+    // Who are children and Adults, for the chore chart (#676).
+    if (value.memberKinds instanceof Map) {
+      const previous = this.app.activeMemberKinds;
+      const same = previous && previous.size === value.memberKinds.size && [...value.memberKinds].every(([id, kind]) => previous.get(id) === kind);
+      if (!same) {
+        this.app.activeMemberKinds = value.memberKinds;
+        void this.ctx.chores?.refresh();
+      }
     }
     // The sync chip already shows routine progress. Toast only meaningful
     // incoming changes or an unusual state, not every five-second idle poll.

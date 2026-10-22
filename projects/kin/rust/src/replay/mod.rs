@@ -124,6 +124,10 @@ pub struct Replay {
     /// The family calendar (calendar.rs), shared with finalized states until
     /// it changes.
     pub(super) calendar: Arc<crate::calendar::CalendarState>,
+    /// The chore chart (chores.rs): its settings and the completions in
+    /// effect with who they are credited to (items.rs and routines.rs add
+    /// and remove credits), shared with finalized states until it changes.
+    pub(super) chores: Arc<crate::chores::ChoresState>,
     /// A member's private records (private.rs). Only a private log ever
     /// fills it, and `finalize` never copies it into a household state.
     pub(super) private: Arc<crate::private::PrivateState>,
@@ -336,6 +340,9 @@ impl Replay {
             | K::CalendarEventCancelled { .. }
             | K::CalendarEventRestored { .. }
             | K::MemberColourSet { .. } => crate::calendar::apply(&mut self.calendar, event)?,
+            K::ChorePointsSet { .. } | K::ChoreRewardSet { .. } | K::ChoreChartJoined { .. } => {
+                crate::chores::apply(&mut self.chores, event)?
+            }
             K::PrivateNoteSet { .. }
             | K::PrivateItem(_)
             | K::ReminderSet { .. }
@@ -451,6 +458,7 @@ impl Replay {
             rotations: Arc::clone(&self.rotations),
             sitter_page: Arc::clone(&self.sitter_page),
             calendar: Arc::clone(&self.calendar),
+            chores: Arc::clone(&self.chores),
         })
     }
 }

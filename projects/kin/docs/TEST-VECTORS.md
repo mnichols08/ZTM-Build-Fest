@@ -542,6 +542,55 @@ slot, a v2 week with a slot, slot 0 or 5 for source 3, or a week from
 9999-12-30 fail with code 2; version 3 fails with code 3; a lunch nobody
 planned fails with code 4.
 
+## The chore chart (#676)
+
+Written out by hand in `rust/src/chore_tests.rs`: members `01` × 16 (a
+parent), `02` × 16 (Mia), `03` × 16 (Leo); routines and items are
+`numbered_id(n)` (30 "Feed the cat", 31 "Bins out", daily from Monday
+2026-09-28). The test week's day boundaries are UTC midnights.
+`web/wasm/kin-chores.test.mjs` mirrors 085 and 089.
+
+**085 — Payloads.** Points 3 for routine 30: routine 30, `03 00 00 00`.
+Mia's reward of 20 for "Movie night": Mia, `14 00`, `00 00`, `0b 00`,
+"Movie night"; clearing it: Mia and six zero bytes. A parent joining: the
+parent, `01 00 00 00`. Points 11, a zero routine or member, goal 0 with
+text, goal 20 with no text, an untrimmed text, goal 1001, 121 bytes of text,
+a line break, a non-zero reserved byte, joined 2, a short or long payload
+and code 80 fail with code 2. Goal 1000 with "é" × 60 (120 bytes) encodes.
+
+**086 — Settings.** Points 1 on a routine that was never set, points for an
+unknown or archived routine, an unchanged value, and clearing a reward that
+isn't set fail with code 4. Points 3, then 0, then back to 1 (stored as no
+setting); a reward 20 then 25 "Movie night", then cleared.
+
+**087 — Joining.** Joining for another member, leaving before joining and
+joining twice fail with code 4, as does one member leaving for another. A
+kind-79 event authored by someone other than the member it names replays
+with no effect. The member who joined can leave.
+
+**088 — Credit.** Routine 30 is Mia's; Bins out (worth 3) rotates Mia, Leo.
+A parent ticks both on Monday: Mia 4 points, Leo 0, and Bins passes to Leo.
+Mia's device ticks Bins on Tuesday: Leo 3. Reopening it takes the 3 back and
+gives the turn back; ticking again gives them again. Items credit the
+item's owner when they are completed, and keep that credit if the item is
+reassigned. A completion at Sunday's last instant counts for that week, one
+at the next Monday's first instant for the next; with boundaries two hours
+earlier, the Sunday one belongs to the next week. Adults are on the chart
+only when the query allows adults and they joined. While the mode is
+Vacation only done occurrences show.
+
+**089 — KCCQ and KCCD.** Mia owns routine 30 worth 2, with reward 10 "Ice
+cream", done on Monday. The query for Monday's week with Mia (child) and
+the parent (Adult, not joined), on Tuesday: `"KCCD"`, `01 00 00 00`,
+20260928, 20260929, `00 00 00 00`, `01 00`, `01 00`; routine 30, `02 00 00
+00`; Mia, `02 00`, points `02 00`, goal `0a 00`, count `07 00`, `09 00`
+"Ice cream"; then seven routine-30 chores (`02`, flags, `02 00`, routine
+30, date, key = date) for Monday (flags 1, done) to Sunday, Tuesday's flags
+2 (today). A query whose start isn't a Monday, whose week doesn't hold the
+context's date, with an unknown flag, an empty day or one over 25 hours, a
+member twice, a zero member, kind 3 or 33 members fails with code 2;
+version 2 is unsupported.
+
 ## A member's private log (#489)
 
 Written out by hand in `rust/src/private_tests.rs`: household `aa` × 16,

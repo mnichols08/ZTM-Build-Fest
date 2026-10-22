@@ -44,6 +44,7 @@ export class StatusController {
     if (this.app.shoppingMode) this.app.shoppingMode.disabled = controlsDisabled;
     if (this.app.calendar) this.app.calendar.disabled = controlsDisabled;
     else if (this.app.week) this.app.week.disabled = controlsDisabled;
+    if (this.app.choreChart) this.app.choreChart.disabled = controlsDisabled;
     if (this.app.sitterEditor) this.app.sitterEditor.disabled = controlsDisabled;
     this.app.retryButton.disabled = isBusy;
     if (!controlsDisabled) {

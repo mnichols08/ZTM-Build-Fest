@@ -66,6 +66,14 @@ export const HELP_TOPICS = Object.freeze({
       action("Use Previous and Next to see other months.", ".cal-next"),
       action("Import a calendar file from another app.", ".cal-import"),
     ], EVERYONE),
+  // The chore chart (#676, ADR 0022 §6).
+  chores: topic("Chore chart",
+    "The children's jobs for today and the week, in their colours. Each job ticked off earns points; points start again every Monday.",
+    [
+      action("Tick the big box when a job is done. Tick it again to undo.", ".chore-box"),
+      action("Set a reward, like 20 points for movie night.", ".chore-reward-toggle"),
+      action("Adults can join in when a household admin allows it, and leave at any time.", ".chore-join-button"),
+    ], EVERYONE),
   foryou: topic("For you",
     "What the family left for you while you look after the home: notes, contacts and what to do.",
     [action("Read the notes from top to bottom; the most important ones come first.", "kin-sitter-page h2")],

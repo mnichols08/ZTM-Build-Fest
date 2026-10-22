@@ -104,6 +104,8 @@ export class RenderController {
     // (#660) reads Today's events and the view on screen.
     void this.ctx.week?.refresh();
     void this.ctx.calendar?.refresh();
+    // The chore chart (#676) likewise.
+    void this.ctx.chores?.refresh();
     // The sitter page (#441) while its editor or For you is showing.
     void this.ctx.sitter?.refresh();
     // Taking turns (#437): whose turn it is, from Rust, after each render.

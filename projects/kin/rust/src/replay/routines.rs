@@ -54,20 +54,22 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             }
             // Only a real change moves a rotation's turn (#429): a duplicate
             // completion, or reopening an open occurrence, changes nothing.
+            let credit_key = crate::chores::CreditKey::Routine(*routine_id, *key);
             let owner = if matches!(event.kind, EventKind::RoutineOccurrenceCompleted { .. }) {
-                r.completed_periods
-                    .insert((*routine_id, *key))
-                    .then(|| {
-                        crate::rotations::occurrence_completed(&mut r.rotations, *routine_id, *key)
-                    })
-                    .flatten()
+                if r.completed_periods.insert((*routine_id, *key)) {
+                    // The chore chart (#676): credited to the routine's owner
+                    // now, whose turn it was, before the turn passes on.
+                    let credited = routine_owner(r, routine_id);
+                    crate::chores::credit(&mut r.chores, credit_key, credited, event.timestamp);
+                    crate::rotations::occurrence_completed(&mut r.rotations, *routine_id, *key)
+                } else {
+                    None
+                }
+            } else if r.completed_periods.remove(&(*routine_id, *key)) {
+                crate::chores::uncredit(&mut r.chores, credit_key);
+                crate::rotations::occurrence_reopened(&mut r.rotations, *routine_id, *key)
             } else {
-                r.completed_periods
-                    .remove(&(*routine_id, *key))
-                    .then(|| {
-                        crate::rotations::occurrence_reopened(&mut r.rotations, *routine_id, *key)
-                    })
-                    .flatten()
+                None
             };
             if let Some(member) = owner {
                 set_routine_owner(r, *routine_id, member);
@@ -167,6 +169,18 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
         _ => return Err(KinError::Internal),
     }
     Ok(())
+}
+
+/// The member a routine is assigned to now (whose turn it is, while it
+/// rotates), if any.
+fn routine_owner(r: &Replay, routine_id: &RoutineId) -> Option<ActorId> {
+    r.responsibilities
+        .iter()
+        .find(|entry| {
+            entry.target_kind == ResponsibilityTargetKind::Routine
+                && entry.target_id == routine_id.0
+        })
+        .and_then(|entry| entry.member_id)
 }
 
 /// While a routine rotates, its responsibility follows the turn (#429,

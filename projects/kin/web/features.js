@@ -42,6 +42,8 @@ export const FEATURES = Object.freeze([
   // The family calendar (#660, ADR 0022 §2): events in each person's
   // colour, the Day and Month views, today's events and countdowns.
   feature("calendar", 14, "Calendar", "Family events in each person's colour, by day, week or month, with countdowns on Today.", ["week/day", "week/month"]),
+  // The chore chart (#676, ADR 0022 §6).
+  feature("chores", 15, "Chore chart", "The children's jobs for the week with big tick boxes, their points and rewards.", ["chores"]),
 ]);
 
 /** The parts that can't be switched off, named for the Features page. */

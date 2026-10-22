@@ -135,6 +135,8 @@ export const HOUSEHOLD_FEATURE_BITS = Object.freeze({
   journal: 12, mine: 13,
   // The family calendar (#660, ADR 0022 §2).
   calendar: 14,
+  // The chore chart (#676, ADR 0022 §6).
+  chores: 15,
 });
 export const KNOWN_FEATURE_MASK = Object.values(HOUSEHOLD_FEATURE_BITS).reduce((mask, bit) => mask | (2 ** bit), 0);
 
@@ -146,6 +148,18 @@ export function featuresOf(household) {
   return {
     off,
     revision: Number.isSafeInteger(features?.revision) && features.revision >= 0 ? features.revision : 0,
+  };
+}
+
+/** `{ adults, revision }`: whether a household admin allows adults on the
+ * children's chore chart (ADR 0022 §6, #676), off until one does, and its
+ * revision. Each adult still joins or leaves themselves, in the household
+ * history (event kind 79). */
+export function choreChartOf(household) {
+  const value = household?.choreChart;
+  return {
+    adults: value?.adults === true,
+    revision: Number.isSafeInteger(value?.revision) && value.revision >= 0 ? value.revision : 0,
   };
 }
 

@@ -1176,6 +1176,37 @@ A household admin can switch features off for everyone
   holders are derived, not stored, so switching Chat back on finds them as
   they were. Everything else is a layout on the devices
   ([THREAT-MODEL](THREAT-MODEL.md#household-features-are-a-layout-except-chat-and-fridge-623)).
+- **Bit 15** is the Chore chart (#676); bit 14 is reserved for the Calendar
+  ([ADR 0022](decisions/0022-family-hub.md) §2).
+
+## Adults on the chore chart (#676, ADR 0022 §6)
+
+Children are on the chore chart; adults join only if a household admin
+allows it, and then each adult opts in themselves in the household history
+(event kind 79, [EVENTS](EVENTS.md#the-chore-chart-676)).
+
+- **Stored on the service** like household features:
+  `households.chore_adults` (0 or 1, 0 by default) and
+  `chore_adults_revision` (server schema 28).
+- **Changed** with `POST /api/household/chore-chart/options` then `/finish`,
+  body `{ adults, expectedRevision }`: a household admin only, with a fresh
+  passkey or password, as for household features. A non-boolean or bad
+  revision is refused (`chore_chart_invalid`, 400), a revision that isn't
+  the current one (`chore_chart_stale`, 409) at both steps. The answer is
+  `{ adults, revision, changed }`; each change is audited as
+  `chore_chart_adults_changed`, and online devices are hinted to look.
+- **Delivered** to every member in `GET /api/sync/status` as `choreChart: {
+  adults, revision, admin }`. A device ignores an answer older than the
+  revision it holds; it keeps nothing on disk, so an offline device shows
+  adults only once it has heard the setting this session.
+- **Enforced on the devices only.** The service never sees the chart: it
+  can't read the history. Turning the setting off takes every adult off the
+  chart on the next read, without removing their own "joined" choice, so
+  they are back if it is turned on again. The host refuses "Join" while the
+  setting is off; "Leave" always works.
+- Which members are children and Adults comes from the device directory's
+  `memberKind`, which the sync coordinator hands the app as
+  `memberKinds`.
 
 ## Privacy boundary
 

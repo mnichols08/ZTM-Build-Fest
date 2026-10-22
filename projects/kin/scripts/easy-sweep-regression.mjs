@@ -42,7 +42,7 @@ async function measurePage({ key, offIds, offRoutes }) {
     .filter((node) => shown(node) && !node.closest(".visually-hidden, dialog:not([open])"));
   const small = controls.filter((node) => node.getBoundingClientRect().height < 55.5).map(describe);
   // Words: what the page shows (not the household's records) against Help.
-  const records = "kin-item, [data-item-id], [data-record-id], .item-text, .note-body, .chat-row, .handoff-text";
+  const records = "kin-item, [data-item-id], [data-record-id], .item-text, .note-body, .chat-row, .handoff-text, .chore-text, .chore-week-row";
   const texts = [];
   const walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {

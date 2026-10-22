@@ -64,7 +64,13 @@ export class ViewBuilder {
     weekLink.href = "#week";
     weekLink.textContent = "This week";
     weekLink.dataset.featureRoute = "week";
-    today.querySelector(".page-intro").append(this.app.todayDate, weekLink, fridgeLink);
+    // The chore chart (#676): the children's jobs, points and rewards.
+    const choresLink = document.createElement("a");
+    choresLink.className = "today-chores-link";
+    choresLink.href = "#chores";
+    choresLink.textContent = "Chore chart";
+    choresLink.dataset.featureRoute = "chores";
+    today.querySelector(".page-intro").append(this.app.todayDate, weekLink, choresLink, fridgeLink);
     this.app.compose.setAttribute("mode", "today");
     this.app.compose.setAttribute("scope", "today");
     this.app.catchUp.setAttribute("aria-label", "Catch up since you last looked");
@@ -162,6 +168,7 @@ export class ViewBuilder {
     this.app.calendar = document.createElement("kin-calendar");
     this.app.calendar.weekList = this.app.week;
     week.append(weekNav, this.app.calendar);
+    const chores = this.buildChoresPage(page);
 
     const routines = page("routines", "Routines", DESTINATION_DESCRIPTIONS.routines);
     const routinesNav = segmentNav("routines", "Routines");
@@ -481,7 +488,10 @@ export class ViewBuilder {
     featuresPage.setAttribute("aria-label", "Features");
     this.app.householdFeatures = document.createElement("kin-household-features");
     this.app.householdFeatures.controller = this.ctx.features;
-    featuresPage.append(this.app.householdFeatures, this.app.suggestSection);
+    // Whether adults may join the chore chart (#676): an admin's switch.
+    this.app.choreAdults = document.createElement("kin-chore-adults");
+    this.app.choreAdults.controller = this.ctx.chores;
+    featuresPage.append(this.app.householdFeatures, this.app.choreAdults, this.app.suggestSection);
     household.append(hub, fridgePage, notesPage, sitterPage, areasPage, peoplePage, privacyPage, appearancePage, featuresPage);
     this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["sitter", sitterPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage], ["features", featuresPage]]));
 
@@ -493,7 +503,7 @@ export class ViewBuilder {
     const journal = page("journal", "Journal", "Your own record of your days, on your own devices.");
     this.app.journal = document.createElement("kin-journal");
     journal.append(this.app.journal);
-    for (const section of [today, week, foryou, lists, search, routines, updates, household, journal]) {
+    for (const section of [today, week, chores, foryou, lists, search, routines, updates, household, journal]) {
       this.app.pages.set(section.id, section);
       main.append(section);
     }
@@ -506,6 +516,38 @@ export class ViewBuilder {
     this.ctx.journal?.render();
     this.ctx.navigation.showPageFromLocation();
     this.ctx.easy?.updateNavigation();
+  }
+
+  /** The chore chart page (#676): the chart, and for an Adult, Join or
+   * Leave. Simple view builds its own page around the same chart
+   * (app/simple.js). `page` is buildViews' page maker. */
+  buildChoresPage(page) {
+    const section = page("chores", "Chore chart", "Everyone's jobs for today and the week. Tick them off to earn points; points start again every Monday.");
+    section.append(this.choreChartElement());
+    const join = document.createElement("section");
+    join.className = "today-section chore-join";
+    join.setAttribute("aria-label", "You and the chore chart");
+    join.hidden = true;
+    const hint = document.createElement("p");
+    hint.className = "section-hint chore-join-hint";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary chore-join-button";
+    button.addEventListener("click", () => void this.ctx.chores.setJoined(!this.ctx.chores.joined));
+    join.append(hint, button);
+    this.app.choreJoin = join;
+    section.append(join);
+    return section;
+  }
+
+  /** A fresh <kin-chore-chart> wired to the chores controller. */
+  choreChartElement() {
+    const chart = document.createElement("kin-chore-chart");
+    chart.previews = this.app.previewProvider;
+    chart.addEventListener("kin:chore-toggle", (event) => void this.ctx.chores.toggle(event.detail));
+    chart.addEventListener("kin:chore-reward", (event) => void this.ctx.chores.setReward(event.detail));
+    this.app.choreChart = chart;
+    return chart;
   }
 
   /** Shows "Suggest something" to a household admin only. */
