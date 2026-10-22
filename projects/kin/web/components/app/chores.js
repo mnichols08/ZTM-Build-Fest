@@ -93,7 +93,8 @@ export class ChoresController {
 
   /** Whether the chart page is showing (in either layout). */
   showing() {
-    return this.app.route?.page === "chores" && Boolean(this.app.choreChart);
+    // The kitchen display (#671) shows the chart too.
+    return (this.app.route?.page === "chores" || this.app.displayMode === true) && Boolean(this.app.choreChart);
   }
 
   /** Reads and draws the chart while it's showing, and the points per
@@ -141,7 +142,8 @@ export class ChoresController {
     if (!view || !this.chart) return;
     const context = this.ctx.detail.responsibilityContext();
     const adult = this.memberKind === "adult";
-    view.editable = adult && !this.app.simpleView;
+    // No reward editing on Simple view or the kitchen display: ticking only.
+    view.editable = adult && !this.app.simpleView && !this.app.displayMode;
     view.cards = buildChoreChart(this.chart, {
       state: this.app.state, emojis: this.app.itemEmojis ?? new Map(), rows: this.app.attachmentRows ?? [],
       order: context.memberIds, names: context.names, selfId: context.memberId, colours: this.colours ?? null,

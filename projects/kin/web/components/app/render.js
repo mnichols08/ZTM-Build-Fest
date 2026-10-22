@@ -106,6 +106,8 @@ export class RenderController {
     void this.ctx.calendar?.refresh();
     // The chore chart (#676) likewise.
     void this.ctx.chores?.refresh();
+    // The kitchen display's own panels (#671).
+    this.ctx.display?.refresh();
     // The sitter page (#441) while its editor or For you is showing.
     void this.ctx.sitter?.refresh();
     // Family photos (#673) while the page or its slideshow is showing.

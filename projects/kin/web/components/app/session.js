@@ -84,6 +84,8 @@ export class SessionController {
       this.assertCurrentSession(session);
       // Household features (#625): what this device last knew was off.
       this.ctx.features.restore(snapshot.syncIdentity);
+      // Kitchen display mode (#670): a display for this vault opens as one.
+      this.ctx.display.restore(session.vault);
       // Outside calendars (#668): what this device kept shows, then they
       // refresh. Only a household that syncs has any.
       void this.ctx.calendarSync.start(snapshot.syncIdentity, session);
@@ -276,6 +278,7 @@ export class SessionController {
     this.ctx.status.clearAlert();
     clearLegacyDrafts();
     this.ctx.simple?.reset();
+    this.ctx.display?.reset();
     this.ctx.features?.reset();
     this.ctx.chores?.reset();
     // Synced calendars' decrypted occurrences leave memory (#668).
@@ -349,7 +352,9 @@ export class SessionController {
     // After a refresh the inactivity deadline carries over (#351), once.
     const resumedDeadline = this.app.resumeAutoLockAt;
     this.app.resumeAutoLockAt = null;
-    if (!this.app.vault || this.app.vault.locked || !this.app.autoLockMinutes) {
+    // A kitchen display (#670) doesn't lock by itself (ADR 0022 §4;
+    // THREAT-MODEL): leaving it needs the adult's password or passkey.
+    if (!this.app.vault || this.app.vault.locked || !this.app.autoLockMinutes || this.app.displayMode) {
       this.app.lastActivityAt = null;
       return;
     }

@@ -294,6 +294,11 @@ export class ViewBuilder {
       personalLinks.append(item);
     }
     hub.append(this.app.householdGlance, hubLinks, personalHeading, personalLinks);
+    // Kitchen display mode (#670): Adults make this device a wall screen.
+    this.app.displaySetup = document.createElement("kin-display-setup");
+    this.app.displaySetup.dataset.feature = "display";
+    hub.append(this.app.displaySetup);
+    this.ctx.display?.renderSetup();
     const hubTools = document.createElement("div");
     hubTools.className = "hub-tools";
     this.app.installButton = document.createElement("button");

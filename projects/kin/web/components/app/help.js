@@ -174,6 +174,8 @@ export class HelpController {
 
   /** Simple view has no Handoffs, so there it needs Chat. */
   canMessageAdmin() {
+    // The kitchen display (#670) has no Chat to write in or Handoffs.
+    if (this.app.displayMode) return false;
     return Boolean(this.app.state) && (this.chatOn() || !this.app.simpleView);
   }
 
@@ -211,6 +213,7 @@ export class HelpController {
 
   /** Whether something in Kin takes problem reports (see the top). */
   reportAvailable() {
+    if (this.app.displayMode) return false;
     // Kin's own report dialog (#630, app/report.js) takes them.
     if (typeof this.ctx.report?.open === "function") return true;
     const probe = new CustomEvent(REPORT_PROBLEM_EVENT, { bubbles: true, composed: true, cancelable: true, detail: { probe: true } });

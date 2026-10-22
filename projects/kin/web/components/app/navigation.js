@@ -15,6 +15,8 @@ export class NavigationController {
 
   /** The route for a location; Simple view allows only its pages (#345). */
   routeFor(where) {
+    // The kitchen display (#670) is one page: every route is it.
+    if (this.app.displayMode) return resolveRoute({ hash: "#today" });
     return this.app.simpleView ? this.ctx.simple.route(where) : resolveRoute(where);
   }
 
@@ -38,7 +40,7 @@ export class NavigationController {
     let route = this.routeFor({ hash: location.hash, pathname: location.pathname });
     // A switched-off feature (#625, ADR 0021): its routes, links and
     // shortcuts open Today with a calm line. Simple view has its own list.
-    if (!this.app.simpleView && !this.ctx.features.routeAvailable(route)) {
+    if (!this.app.simpleView && !this.app.displayMode && !this.ctx.features.routeAvailable(route)) {
       // The Calendar's views are one page (#661): a switched-off view (the
       // Week view with only the Calendar on) opens the first one that is
       // on. Other pages' segments are places of their own and open Today.
@@ -67,7 +69,7 @@ export class NavigationController {
       history.replaceState(null, "", route.hash);
     }
     // Simple view keeps the address on an allowed page.
-    if (this.app.simpleView && location.hash !== route.hash) history.replaceState(null, "", route.hash);
+    if ((this.app.simpleView || this.app.displayMode) && location.hash !== route.hash) history.replaceState(null, "", route.hash);
     const previous = this.app.route ?? null;
     const changed = previous?.canonical !== route.canonical;
     if (previous && changed) this.app.pageScroll.set(previous.canonical, window.scrollY);
@@ -131,7 +133,7 @@ export class NavigationController {
   }
   handleShortcutKeydown(event) {
     // Simple view has no keyboard shortcuts or command palette (#345).
-    if (event.defaultPrevented || this.app.simpleView || !this.ctx.navigation.workspaceReady()) return;
+    if (event.defaultPrevented || this.app.simpleView || this.app.displayMode || !this.ctx.navigation.workspaceReady()) return;
     const shortcut = shortcutForKey(event, { mac: this.app.macShortcuts });
     if (!shortcut) return;
     const openDialogs = [...this.app.querySelectorAll("dialog[open]")];

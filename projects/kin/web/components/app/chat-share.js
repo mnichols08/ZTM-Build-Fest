@@ -17,7 +17,7 @@ export class ChatShareController {
   open(detail) {
     const dialog = this.app.chatShare;
     // Simple view (#341, ADR 0013) adds nothing.
-    if (!dialog || !detail || this.app.simpleView) return;
+    if (!dialog || !detail || this.app.simpleView || this.app.displayMode) return;
     dialog.open({ ...detail, submit: (payload) => this.save(payload) });
   }
 

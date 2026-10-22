@@ -48,6 +48,10 @@ import "./kin-help.js";
 import "./kin-household-defaults.js";
 import "./kin-report.js";
 import "./kin-household-features.js";
+import "./kin-kitchen-display.js";
+import "./display/kin-display-setup.js";
+import "./display/kin-display-shopping.js";
+import "./display/kin-display-chat.js";
 import { createAppContext, initializeAppState } from "./app/context.js";
 import { captureInvitationCode } from "../pairing-link.js";
 import { takeSignInLink } from "../device-link.js";
@@ -88,7 +92,7 @@ const ELEMENT_EVENTS = [
   ["kin:pick-attachment", "onPickAttachment"], ["kin:open-attachment", "onOpenAttachment"],
   ["kin:view-attachment", "onViewAttachment"], ["kin:remove-attachment", "onRemoveAttachment"],
   ["kin:household-status", "onHouseholdStatus"], ["kin:security-changed", "onSecurityChanged"],
-  ["kin:retry-attachments", "onRetryAttachments"], ["kin:change-responsibility", "onChangeResponsibility"], ["kin:simple-done", "onSimpleDone"], ["kin:set-item-emoji", "onSetItemEmoji"],
+  ["kin:retry-attachments", "onRetryAttachments"], ["kin:change-responsibility", "onChangeResponsibility"], ["kin:simple-done", "onSimpleDone"], ["kin:display-enter", "onDisplayEnter"], ["kin:set-item-emoji", "onSetItemEmoji"],
   ["kin:replenish-staple", "onReplenishStaple"], ["kin:complete-item", "onCompleteItem"], ["kin:start-shopping", "onStartShopping"], ["kin:save-sitter-page", "onSaveSitterPage"], ["kin:set-routine-rotation", "onSetRoutineRotation"], ["kin:set-routine-turn", "onSetRoutineTurn"], ["kin:set-chore-points", "onSetChorePoints"], ["kin:set-item-section", "onSetItemSection"], ["kin:save-shopping-sections", "onSaveShoppingSections"], ["kin:import-list", "onImportList"],
   ["kin:reopen-item", "onReopenItem"], ["kin:archive-item", "onArchiveItem"],
   ["kin:toggle-private-item", "onTogglePrivateItem"], ["kin:make-item-private", "onMakeItemPrivate"],
