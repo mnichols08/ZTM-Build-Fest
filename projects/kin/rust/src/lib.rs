@@ -2,6 +2,9 @@ pub mod abi;
 pub mod archive;
 pub mod audio;
 pub mod board;
+pub mod calendar;
+pub mod calendar_range;
+pub mod calendar_recur;
 pub mod chat;
 pub mod chat_search;
 pub mod codec;
@@ -11,6 +14,7 @@ pub mod error;
 pub mod event;
 pub mod event_decode;
 pub mod history;
+pub mod ical;
 pub mod journal;
 pub mod meals;
 pub mod private;
@@ -81,6 +85,10 @@ mod chat_tests;
 
 #[cfg(test)]
 mod board_tests;
+#[cfg(test)]
+mod calendar_tests;
+#[cfg(test)]
+mod ical_tests;
 #[cfg(test)]
 mod journal_tests;
 #[cfg(test)]

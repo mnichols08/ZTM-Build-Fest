@@ -1296,6 +1296,31 @@ export class EventStore {
     return this.engine.sitterPage(events, asOf, civilDate, syncIdentity);
   }
 
+  /** The calendar from `from` to `to` (#656, ADR 0022; civil dates, at most
+   * 400 days): event occurrences merged with dated items, routines and
+   * meals, the next countdown and member colours (kin-calendar.js
+   * decodeCalendarRange). Options: { allEvents, includeCancelled }. */
+  async calendarRange(from, to, options = {}) {
+    if (!this.engine) throw new EventStoreError("Kin could not read the calendar.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.calendarRange(from, to, events, asOf, civilDate, syncIdentity, options);
+  }
+
+  /** Members' chosen calendar colours (#656): a Map memberId -> 0–11. Members
+   * without one use kin-calendar.js defaultMemberColour by join order. */
+  async memberColours() {
+    const { civilDate } = projectionContext();
+    return (await this.calendarRange(civilDate, civilDate)).colours;
+  }
+
+  /** An .ics file's events, parsed on this device (#666; kin-calendar.js
+   * decodeICalendar). Reads no history; saving them is the caller's job. */
+  parseICalendar(bytes) {
+    if (!this.engine) throw new EventStoreError("Kin could not read that calendar file.");
+    return this.engine.parseICalendar(bytes);
+  }
+
   /** `memberId`'s things today (#344, ADR 0013), in Rust's order. */
   async myThings(memberId) {
     if (!this.engine) throw new EventStoreError("Kin could not read your things for today.");

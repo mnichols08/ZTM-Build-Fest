@@ -121,6 +121,9 @@ pub struct Replay {
     /// The sitter page (sitter.rs), shared with finalized states until it
     /// changes.
     pub(super) sitter_page: Arc<crate::sitter::SitterPageState>,
+    /// The family calendar (calendar.rs), shared with finalized states until
+    /// it changes.
+    pub(super) calendar: Arc<crate::calendar::CalendarState>,
     /// A member's private records (private.rs). Only a private log ever
     /// fills it, and `finalize` never copies it into a household state.
     pub(super) private: Arc<crate::private::PrivateState>,
@@ -329,6 +332,10 @@ impl Replay {
                 crate::store_sections::apply(&mut self.store_sections, event)?
             }
             K::SitterPageSet { .. } => crate::sitter::apply(&mut self.sitter_page, event)?,
+            K::CalendarEventSaved(_)
+            | K::CalendarEventCancelled { .. }
+            | K::CalendarEventRestored { .. }
+            | K::MemberColourSet { .. } => crate::calendar::apply(&mut self.calendar, event)?,
             K::PrivateNoteSet { .. }
             | K::PrivateItem(_)
             | K::ReminderSet { .. }
@@ -443,6 +450,7 @@ impl Replay {
             store_sections: Arc::clone(&self.store_sections),
             rotations: Arc::clone(&self.rotations),
             sitter_page: Arc::clone(&self.sitter_page),
+            calendar: Arc::clone(&self.calendar),
         })
     }
 }

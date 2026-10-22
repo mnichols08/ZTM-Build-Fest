@@ -38,6 +38,8 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_shopping_sections: status,
       kin_routine_rotations: status,
       kin_sitter_page: status,
+      kin_calendar_range: status,
+      kin_ical_parse: status,
       kin_event_metadata: status,
       kin_event_metadata_batch: status,
       kin_audio_peaks: status,
@@ -715,4 +717,90 @@ test("the sitter page decodes from KSIT and its command encodes as KCMD 70", () 
     assert.throws(() => engine.executeCommand(bad, identity, [], 1_760_000_000_000, null, 20261003),
       (error) => error instanceof KinEngineError && error.code === 2);
   }
+});
+
+// The family calendar (#656, #666): KCAL decodes through calendarRange,
+// "save-calendar-event" travels as KCMD 71 carrying its canonical payload,
+// kinds 71–74 name their events in metadata, and parseICalendar sends the
+// file's bytes as they are and decodes KICS.
+test("the calendar decodes from KCAL, its commands encode as KCMD 71–74 and .ics files parse through KICS", () => {
+  const text = new TextEncoder();
+  const idOf = (byte) => new Uint8Array(16).fill(byte);
+  const hexOf = (byte) => byte.toString(16).padStart(2, "0").repeat(16);
+  const u32 = (value) => [value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, value >>> 24];
+  const empty = Uint8Array.from([...text.encode("KCAL"), 1, 0, 0, 0, ...u32(20261005), ...u32(20261011), ...u32(20261003), ...new Array(48).fill(0)]);
+  let sent = null;
+  const fake = substituteExports({ operation: () => 0, result: empty });
+  const reader = createEngine({ ...fake.exports, kin_calendar_range: () => {
+    sent = new Uint8Array(fake.exports.memory.buffer.slice(POINTER, POINTER + fake.allocations.at(-1)));
+    return 0;
+  } });
+  const range = reader.calendarRange(20261005, 20261011, [], 1_760_000_000_000, 20261003, null, { allEvents: true });
+  assert.deepEqual(range.occurrences, []);
+  assert.equal(range.nextCountdown, null);
+  assert.deepEqual([...sent.subarray(0, 20)], [...text.encode("KCAQ"), 1, 0, 0, 0, ...u32(20261005), ...u32(20261011), 1, 0, 0, 0]);
+  assert.deepEqual(fake.frees.at(-1), [POINTER, fake.allocations.at(-1)], "the query is freed");
+  assert.throws(() => reader.calendarRange(20261005, 20271111, [], 1_760_000_000_000, 20261003),
+    (error) => error instanceof KinEngineError && error.code === 2, "more than 400 days");
+  for (const broken of [empty.slice(0, -1), Uint8Array.of(...empty, 0)]) {
+    assert.throws(() => createEngine(substituteExports({ operation: () => 0, result: broken }).exports)
+      .calendarRange(20261005, 20261011, [], 1_760_000_000_000, 20261003), (error) => error instanceof KinEngineError && error.code === 6);
+  }
+
+  for (const [kind, name] of [[71, "CALENDAR_EVENT_SAVED"], [72, "CALENDAR_EVENT_CANCELLED"], [73, "CALENDAR_EVENT_RESTORED"], [74, "MEMBER_COLOUR_SET"]]) {
+    const kmet = new Uint8Array(92);
+    kmet.set(text.encode("KMET"));
+    kmet[4] = 1;
+    new DataView(kmet.buffer).setUint16(90, kind, true);
+    assert.equal(createEngine(substituteExports({ operation: () => 0, result: kmet }).exports).eventMetadata(new Uint8Array(92)).kind, name);
+  }
+
+  let request = null;
+  const commandFake = substituteExports({ operation: () => 0 });
+  const engine = createEngine({ ...commandFake.exports, kin_execute: () => {
+    request = new Uint8Array(commandFake.exports.memory.buffer.slice(POINTER, POINTER + commandFake.allocations.at(-1)));
+    return 0;
+  } });
+  const identity = { eventId: idOf(1), householdId: idOf(2), actorId: idOf(3), deviceId: idOf(4), timestamp: 1, logicalTime: 1n };
+  const packetOf = (command) => {
+    request = null;
+    // The substitute returns no KCMT, so the call fails after sending.
+    assert.throws(() => engine.executeCommand(command, identity, [], 1_760_000_000_000, null, 20261003), KinEngineError);
+    const length = new DataView(request.buffer).getUint32(0, true);
+    return request.subarray(4, 4 + length);
+  };
+  const save = packetOf({ type: "save-calendar-event", event: {
+    eventId: hexOf(0x22), title: " Dentist ", allDay: false, start: { date: 20261006, minute: 600 }, end: { date: 20261006, minute: 630 }, zone: "Europe/London",
+  } });
+  const view = new DataView(save.buffer, save.byteOffset);
+  assert.equal(String.fromCharCode(...save.subarray(0, 4)), "KCMD");
+  assert.equal(view.getUint16(8, true), 71);
+  assert.ok(save.subarray(92, 124).every((byte) => byte === 0), "no entity, date, option or expiry");
+  assert.deepEqual([...save.subarray(128, 144)], [...idOf(0x22)]);
+  assert.deepEqual([...save.subarray(128 + 72, 128 + 81)], [7, 0, ...text.encode("Dentist")]);
+  const colour = packetOf({ type: "set-member-colour", colour: 3 });
+  assert.equal(new DataView(colour.buffer, colour.byteOffset).getUint16(8, true), 74);
+  assert.deepEqual([...colour.subarray(128)], [3, 0, 0, 0]);
+  for (const bad of [
+    { type: "save-calendar-event", event: { eventId: hexOf(0x22), title: "", start: { date: 20261006, minute: 0 } } },
+    { type: "cancel-calendar-event", eventId: hexOf(0), occurrence: null },
+    { type: "set-member-colour", colour: 12 },
+  ]) {
+    assert.throws(() => engine.executeCommand(bad, identity, [], 1_760_000_000_000, null, 20261003),
+      (error) => error instanceof KinEngineError && error.code === 2);
+  }
+
+  const kics = Uint8Array.from([...text.encode("KICS"), 1, 0, 0, 0, ...new Array(12).fill(0), 4, 0, ...text.encode("Kids")]);
+  let file = null;
+  const icsFake = substituteExports({ operation: () => 0, result: kics });
+  const parser = createEngine({ ...icsFake.exports, kin_ical_parse: () => {
+    file = new Uint8Array(icsFake.exports.memory.buffer.slice(POINTER, POINTER + icsFake.allocations.at(-1)));
+    return 0;
+  } });
+  const ics = text.encode("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n");
+  assert.deepEqual(parser.parseICalendar(ics), { name: "Kids", skipped: 0, truncated: false, events: [] });
+  assert.deepEqual([...file], [...ics], "the bytes go as they are");
+  assert.deepEqual(icsFake.frees.at(-1), [POINTER, ics.length]);
+  assert.deepEqual(parser.parseICalendar(new Uint8Array(0)).events, [], "an empty file has no events");
+  assert.throws(() => parser.parseICalendar(new Uint8Array(2 * 1024 * 1024 + 1)), (error) => error instanceof KinEngineError && error.code === 5);
 });
