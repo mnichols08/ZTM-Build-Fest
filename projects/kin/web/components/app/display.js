@@ -450,6 +450,13 @@ export class DisplayController {
     this.layout();
   }
 
+  /** The night hours `{ from, to }` (kept on this device), applied now. */
+  setNight(night) {
+    writeDisplaySettings({ ...this.settings, night });
+    this.nightWoken = false;
+    this.followNight();
+  }
+
   /** The photo frame's wait, in minutes (kept on this device). */
   setIdleMinutes(minutes) {
     const settings = this.settings;

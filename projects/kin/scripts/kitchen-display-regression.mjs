@@ -145,6 +145,12 @@ async function useDisplay() {
   const card = () => panel("chores").querySelector(`.chore-card[data-member-id="${child}"]`);
   const row = () => [...(card()?.querySelectorAll(".chore-row") ?? [])].find((node) => node.dataset.key.startsWith(`routine:${routineId}:`));
 
+  // Whatever the time where the test runs: no night until the night check.
+  const night = app.ctx.display.settings.night;
+  check(night.from === 21 * 60 && night.to === 6 * 60 + 30, "the night is 21:00 to 06:30 by default", night);
+  app.ctx.display.setNight({ from: 0, to: 0 });
+  check(!display.night, "with no night hours it doesn't dim");
+
   // Ticking the child's chore earns the child's point.
   check(card().querySelector(".chore-points").textContent === "0 points this week", "no points yet", card().querySelector(".chore-points").textContent);
   row().querySelector("input.chore-box").click();
