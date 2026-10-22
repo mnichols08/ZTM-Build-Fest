@@ -280,10 +280,9 @@ export class DisplayController {
     if (!this.on || !this.elements || !this.app.state) return;
     this.layout();
     const shopping = this.elements.get("shopping");
-    if (shopping) {
-      shopping.items = this.app.state.items;
-      shopping.disabled = Boolean(this.app.busy);
-    }
+    // Not disabled while saving: a render mid-save would leave it so. A
+    // tick or add while Kin is busy is told to try again (chores.run).
+    if (shopping) shopping.items = this.app.state.items;
     const chat = this.elements.get("chat");
     if (chat) chat.room = this.ctx.features.isOn("chat") ? this.app.chat?.room ?? null : null;
     if (this.app.kitchenDisplay) this.app.kitchenDisplay.offline = this.app.offline === true || navigator.onLine === false;
