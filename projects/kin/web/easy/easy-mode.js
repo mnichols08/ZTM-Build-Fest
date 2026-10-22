@@ -30,6 +30,8 @@ export const EASY_CORE = Object.freeze({
   segments: Object.freeze({
     lists: Object.freeze(["todo", "shopping"]),
     routines: Object.freeze(["all"]),
+    // The Calendar (#661): Week and Day; Month waits until it is used.
+    week: Object.freeze(["week", "day"]),
     updates: Object.freeze(["handoffs", "chat"]),
     household: Object.freeze(["hub"]),
   }),

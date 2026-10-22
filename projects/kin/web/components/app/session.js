@@ -275,6 +275,10 @@ export class SessionController {
     this.ctx.journal?.reset();
     this.app.quickAdd?.reset();
     this.app.chatShare?.reset();
+    // The calendar (#660): drafts, an import's file and what was read.
+    this.app.eventEditor?.reset();
+    this.app.calendarImport?.reset();
+    this.ctx.calendar?.reset();
     if (this.app.main) {
       this.app.nav.hidden = true;
       this.app.shell.before(this.app.security);

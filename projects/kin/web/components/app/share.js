@@ -78,12 +78,18 @@ export class ShareController {
     // nothing shared there touches household data.
     const journalOpen = this.ctx.journal?.status() === "ready";
     // Destinations of switched-off features leave the sheet (#625).
-    const allowed = shareDestinations(["todo", "shopping", "note", "handoff", ...(chatOpen ? ["chat"] : []), ...(journalOpen ? ["journal"] : [])], this.ctx.features.off);
+    // A calendar file (#660) can go to the calendar, after a preview.
+    const calendarFile = (shared.files ?? []).find((file) => file.type === "text/calendar" || /\.ics$/i.test(file.name ?? "")) ?? null;
+    const allowed = shareDestinations(["todo", "shopping", "note", "handoff", ...(chatOpen ? ["chat"] : []), ...(journalOpen ? ["journal"] : []), ...(calendarFile ? ["calendar"] : [])], this.ctx.features.off);
     const sheet = this.app.shareSheet;
     if (!sheet) return;
     const kind = await sheet.choose({ text, link, files, allowed });
     if (!kind) {
       this.ctx.status.setStatus("Nothing was added.");
+      return;
+    }
+    if (kind === "calendar") {
+      this.ctx.calendar.openImport({ file: calendarFile });
       return;
     }
     if (kind === "journal") {

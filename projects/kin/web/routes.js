@@ -29,6 +29,14 @@ export const SEGMENTS = Object.freeze({
     Object.freeze({ id: "handoffs", label: "Handoffs" }),
     Object.freeze({ id: "chat", label: "Chat" }),
   ]),
+  // The Calendar (#661, ADR 0022 §2): This week grew into it. Its views
+  // are segments; Week (This week's list) is the default, so `#week` still
+  // opens it.
+  week: Object.freeze([
+    Object.freeze({ id: "week", label: "Week" }),
+    Object.freeze({ id: "day", label: "Day" }),
+    Object.freeze({ id: "month", label: "Month" }),
+  ]),
   household: Object.freeze([
     Object.freeze({ id: "hub", label: "Household" }),
     // The family fridge (#317): a shared drawing board.
@@ -52,8 +60,9 @@ const PAGE_TITLES = Object.freeze({
   updates: "Updates",
   household: "Household",
   search: "Search",
-  // This week (#416): reached from Today; it marks Today in the navigation.
-  week: "This week",
+  // This week (#416), grown into the Calendar (#661): reached from Today;
+  // it marks Today in the navigation. There is no sixth destination.
+  week: "Calendar",
   // For you (#441): a Temporary member's landing page; it marks Today.
   foryou: "For you",
   // A member's journal (#497): reached from Household (the More place), not
@@ -102,7 +111,7 @@ export function routeHash(page, segment = null) {
   if (!segments) return `#${page}`;
   const chosen = segments.find((entry) => entry.id === segment) ?? segments[0];
   // The hub and the first list are the page's default and stay short.
-  if (chosen === segments[0] && (page === "household" || page === "routines")) return `#${page}`;
+  if (chosen === segments[0] && (page === "household" || page === "routines" || page === "week")) return `#${page}`;
   return `#${page}/${chosen.id}`;
 }
 

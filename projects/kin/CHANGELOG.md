@@ -9,6 +9,31 @@ documentation only.
 
 ### Added
 
+- **Calendar views in each person's colour** (#660: #661, #662, #663, #664;
+  epic #651, [ADR 0022](docs/decisions/0022-family-hub.md) §1–2). This week
+  grows into the **Calendar** with **Week**, **Day** and **Month** views
+  (`#week`, `#week/day`, `#week/month`), still reached from Today, which
+  stays marked. Events show in each attendee's colour with their names,
+  in the viewer's own time (`Intl`; floating times as written), beside
+  meals, planned items and routines; an all-day row, a day timeline with
+  overlaps side by side, a month grid, and keyboard navigation between days,
+  weeks and months. **Add event** (what, when, who; place, notes, repeats
+  and a countdown under More details), change this one or all, cancel this
+  one or all, Undo and Redo, and a calm message when the event changed on
+  another device. **My calendar colour** (twelve colours, or Kin's choice
+  by join order) under Identity & appearance. **Today** shows today's
+  events and the next countdown. **Import a calendar file** (and **Add to
+  the calendar** from the share sheet for `.ics` files) previews the count,
+  then saves; importing again updates by source UID. Household feature
+  **Calendar** (bit 14); This week (bit 5) stays the Week view's switch.
+  `kin_calendar_range` now lists breakfast, lunch and snacks beside dinners
+  (no format change). Components `<kin-calendar>`, `<kin-calendar-today>`,
+  `<kin-event-editor>`, `<kin-member-colour>`, `<kin-calendar-import>`;
+  `ctx.calendar.setExternalOccurrences(sourceId, list)` for outside
+  calendars (#665). Unit tests for zones (DST), ranges, layout, colours,
+  repeats, import plans and undo; browser regression
+  `scripts/calendar-regression.mjs`. UX §8.16, Help.
+
 - **Family calendar events in the engine** (#656: #657, #658, #659; epic
   #651, [ADR 0022](docs/decisions/0022-family-hub.md) §1). Event kinds 71
   `CALENDAR_EVENT_SAVED`, 72 `CALENDAR_EVENT_CANCELLED`, 73

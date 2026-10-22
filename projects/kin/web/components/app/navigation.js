@@ -5,7 +5,7 @@ import { recordDiagnostic } from "../../diagnostics/ring-buffer.js";
 import { errorName } from "../../diagnostics/global.js";
 import { listSegmentForClassification, resolveRoute, ROUTE_CHANGE_EVENT, routeHash } from "../../routes.js";
 import { isTypingContext, shortcutForKey } from "../../keyboard-commands.js";
-import { unavailableLine } from "../../features.js";
+import { firstAvailableSegment, unavailableLine } from "../../features.js";
 
 export class NavigationController {
   constructor(ctx) {
@@ -39,10 +39,17 @@ export class NavigationController {
     // A switched-off feature (#625, ADR 0021): its routes, links and
     // shortcuts open Today with a calm line. Simple view has its own list.
     if (!this.app.simpleView && !this.ctx.features.routeAvailable(route)) {
-      const blocked = this.ctx.features.blocking(route);
-      route = resolveRoute({ hash: "#today" });
+      // A switched-off segment of a page that has others on (the Week view
+      // with only the Calendar on, #661) opens the page's first one.
+      const segment = route.segment ? firstAvailableSegment(route.page, this.ctx.features.off) : null;
+      if (segment) {
+        route = resolveRoute({ hash: routeHash(route.page, segment) });
+      } else {
+        const blocked = this.ctx.features.blocking(route);
+        route = resolveRoute({ hash: "#today" });
+        this.ctx.status.setStatus(unavailableLine(blocked));
+      }
       history.replaceState(null, "", route.hash);
-      this.ctx.status.setStatus(unavailableLine(blocked));
     }
     // Old Talk links with Talk later off open Chat without its list.
     if (route.topics && !this.ctx.features.isOn("talk")) {
@@ -84,7 +91,11 @@ export class NavigationController {
     this.ctx.easy?.routeShown(route);
     this.ctx.help?.routeShown(route);
     if (route.page === "routines") this.app.routines.view = route.segment;
-    if (route.page === "week") void this.ctx.week?.refresh();
+    // The Calendar (#661): its view is the route's segment.
+    if (route.page === "week") {
+      this.ctx.calendar?.routeShown(route);
+      void this.ctx.week?.refresh();
+    }
     void this.ctx.sitter?.refresh();
     // Details stay open only within the page that opened them.
     if (this.app.selection && this.app.selection.page !== route.page) this.ctx.detail.closeItemDetail({ restoreFocus: false });

@@ -54,6 +54,10 @@ const SHELL = [
   // Reports and suggestions to the Kin team (ADR 0021 §3).
   "/components/kin-report.js", "/components/app/report.js", "/diagnostics/registry.js", "/diagnostics/ring-buffer.js", "/diagnostics/global.js",
   "/feedback/format.js", "/feedback/collect.js", "/feedback/channel.js", "/feedback/outbox.js", "/feedback/screenshot.js",
+  // The family calendar (#660, ADR 0022 §2).
+  "/styles/calendar.css", "/components/app/calendar.js",
+  ...["calendar-time", "calendar-layout", "member-colours", "repeat", "ics-import"].map((name) => `/calendar/${name}.js`),
+  ...["event-chip", "kin-calendar", "kin-calendar-today", "kin-event-editor", "kin-member-colour", "kin-calendar-import"].map((name) => `/components/calendar/${name}.js`),
 ];
 const ALLOWED = new Set(SHELL);
 

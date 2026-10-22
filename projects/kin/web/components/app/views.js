@@ -93,7 +93,10 @@ export class ViewBuilder {
     this.app.todayTip = document.createElement("section");
     this.app.todayTip.className = "today-section today-tip";
     this.app.todayTip.hidden = true;
-    today.append(this.app.featuresNote, this.app.compose, this.app.tonight, this.app.catchUp, this.app.onboarding, this.app.today, this.app.todayTip);
+    // Today's events and the next countdown (#663); the Calendar's.
+    this.app.calendarToday = document.createElement("kin-calendar-today");
+    this.app.calendarToday.dataset.feature = "calendar";
+    today.append(this.app.featuresNote, this.app.compose, this.app.tonight, this.app.calendarToday, this.app.catchUp, this.app.onboarding, this.app.today, this.app.todayTip);
 
     // Lists: one list at a time, each with its own quick-add; export lives in
     // the list actions with its warning at the point of use.
@@ -150,9 +153,15 @@ export class ViewBuilder {
 
     const search = page("search", "Search");
     search.append(this.app.search);
-    const week = page("week", "This week", "The next seven days: planned items, routines, dinners and maintenance due. Move an item to another day from here.");
+    // The Calendar (#661, ADR 0022 §2): This week grown into Day, Week and
+    // Month views; the views are the page's segments.
+    const week = page("week", "Calendar", DESTINATION_DESCRIPTIONS.week);
+    const weekNav = segmentNav("week", "Calendar views");
+    this.app.segmentNavs.set("week", weekNav);
     this.app.week = document.createElement("kin-week");
-    week.append(this.app.week);
+    this.app.calendar = document.createElement("kin-calendar");
+    this.app.calendar.weekList = this.app.week;
+    week.append(weekNav, this.app.calendar);
 
     const routines = page("routines", "Routines", DESTINATION_DESCRIPTIONS.routines);
     const routinesNav = segmentNav("routines", "Routines");
@@ -454,7 +463,10 @@ export class ViewBuilder {
     suggestSent.textContent = "What I've sent";
     suggestSent.addEventListener("click", () => this.ctx.report.open("sent", { opener: suggestSent }));
     this.app.suggestSection.append(suggestHeading, suggestHint, suggestButton, suggestSent);
-    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance, this.app.personalSettings);
+    // My calendar colour (#663): the Calendar's.
+    this.app.memberColour = document.createElement("kin-member-colour");
+    this.app.memberColour.dataset.feature = "calendar";
+    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance, this.app.memberColour, this.app.personalSettings);
 
     // For the sitter (#441, ADR 0017).
     const sitterPage = document.createElement("section");
