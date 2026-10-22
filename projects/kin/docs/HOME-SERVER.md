@@ -14,7 +14,7 @@ server**. A plain guide for households comes with #740.
 | One executable for macOS arm64 and x64 | Not yet: needs Mach-O injection (#747). |
 | One executable for Windows x64 | Not yet: needs PE injection (#748). |
 | Container image for NAS and server users | Built (#715): `deploy/home/Dockerfile`. |
-| Running as a service: systemd, launchd, Windows | Built (#716). Windows uses the ADR's Task Scheduler fallback until the Rust service host (#749). |
+| Running as a service: systemd, launchd, Windows | Built (#716). On Windows a real service run by Kin's Rust service host, `kin-service-host.exe` (#749); a scheduled task when the host is missing. |
 | Device checks on each platform | #717. |
 | Control panel and first-run setup page (§11) | #718. |
 | Certificates (ACME, §5) | Built (#723), started by home mode (#733): [HOME-CERTIFICATES](HOME-CERTIFICATES.md). |
@@ -287,28 +287,90 @@ LaunchDaemon `/Library/LaunchDaemons/io.journeytocode.kin.plist` with
 `/Library/Logs/Kin/kin.log`. The macOS executable needs #747; until then the
 same commands work with `node server/start.mjs` from a checkout.
 
-### Windows (Task Scheduler, for now)
+### Windows (a service, with Kin's service host)
 
 ```powershell
 # in a terminal opened with "Run as administrator"
 .\kin.exe --install-service
+sc.exe query Kin
 .\kin.exe --uninstall-service
 ```
 
-A program registered with `sc.exe` must answer the Service Control Manager,
-which a console program can't. ADR 0025 plans a small Rust service host for
-that (#749); until it exists Kin uses the ADR's fallback: a scheduled task
-`\Kin` that starts at boot as the low-privilege **LOCAL SERVICE** account,
-with no time limit, and the launcher restarting the service itself if it
-fails (`--supervise`). Installing copies the executable to
-`%ProgramFiles%\Kin\kin.exe`, creates `%ProgramData%\Kin` (data) and
-`%ProgramData%\Kin-app` (app files) with access for LOCAL SERVICE, SYSTEM and
-Administrators only, and registers and starts the task. Its log is
-`%ProgramData%\Kin\logs\kin.log` (moved to `kin.log.1` past 10 MiB). Stopping
-the task closes the pipe the service watches, so it closes its database
-cleanly. The Windows executable needs #748; until then
-`node server\start.mjs --install-service` from a checkout installs the same
-task for node.
+A program registered with `sc.exe` must answer the Service Control Manager
+within seconds, which a Node program can't (Windows gives up with error
+1053). So the service runs Kin's **service host**, `kin-service-host.exe`, a
+small program written in Rust with only the standard library
+(`tools/kin-service-host`, ADR 0025 §10, #749). It ships beside the Windows
+executable; keep the two files in the same folder when you install.
+
+Installing:
+
+- stops an earlier Kin service or scheduled task, so files can be replaced;
+- copies `kin.exe` and the host to `%ProgramFiles%\Kin\`;
+- creates `%ProgramData%\Kin` (data) and `%ProgramData%\Kin-app` (app
+  files) with access for LOCAL SERVICE, SYSTEM and Administrators only;
+- registers the service `Kin` with `sc.exe create` (or `sc.exe config` when
+  it exists): started automatically at boot, as the low-privilege
+  **LOCAL SERVICE** account;
+- sets its recovery with `sc.exe failure` (restart after 5 seconds, then 30,
+  then every minute; the count resets after a day) and `sc.exe failureflag`
+  (so a stop with an error counts too), and starts it.
+
+The service's command line (`sc.exe qc Kin` shows it) is the host, its own
+options, then `--` and the launcher's arguments:
+
+```text
+"C:\Program Files\Kin\kin-service-host.exe" --program "C:\Program Files\Kin\kin.exe"
+  --working-directory C:\ProgramData\Kin --env KIN_DATA_DIR=C:\ProgramData\Kin
+  --stop-timeout 40 --log-file C:\ProgramData\Kin\logs\service-host.log
+  -- --stop-on-stdin-close --log-file C:\ProgramData\Kin\logs\kin.log
+  --app-cache C:\ProgramData\Kin-app
+```
+
+`kin-service-host.exe --help` lists the options. The host:
+
+- reports *start pending*, starts `kin.exe`, and reports *running*;
+- starts `kin.exe` again if it exits on its own, after 1 second, doubling
+  to a minute (back to 1 second after a minute up); Windows' own restart
+  covers the host itself;
+- on **stop**, **shutdown** or **preshutdown**, reports *stop pending* and
+  **closes `kin.exe`'s stdin**. A service has no console, so Ctrl+C can't be
+  sent, and ending a process gives it no chance to close its database. The
+  launcher, started with `--stop-on-stdin-close`, passes the stop on to the
+  service the same way, and the service closes its database (30 seconds at
+  most) and exits. If the host itself dies, the pipe closes too.
+- ends `kin.exe` if it is still running after `--stop-timeout` (40 seconds);
+  the service process goes with it (Node keeps the processes it starts in a
+  job that ends with it);
+- reports *stopped* with Kin's exit code (0, or a service-specific error
+  with the code; `sc.exe query Kin` shows it).
+
+Logs: `%ProgramData%\Kin\logs\kin.log` for Kin (moved to `kin.log.1` past
+10 MiB) and `service-host.log` beside it for the host, one JSON line per
+event, plus anything `kin.exe` prints before its own log opens (moved to
+`service-host.log.1` past 1 MiB). Uninstalling stops the service and waits
+for it, deletes it with `sc.exe delete`, removes an old scheduled task and
+`%ProgramFiles%\Kin`, and keeps `%ProgramData%\Kin`.
+
+**Without the host** (a `kin.exe` downloaded on its own), installing falls
+back to the ADR's alternative from #716 and says so: a scheduled task `\Kin`
+that starts at boot as LOCAL SERVICE, with no time limit, and the launcher
+restarting the service itself if it fails (`--supervise`). Stopping the task
+ends the launcher, which closes the pipe the service watches, so it still
+closes its database. Put `kin-service-host.exe` beside `kin.exe` and install
+again to switch to the service; `KIN_SERVICE_HOST` can name a host elsewhere.
+
+**Building the host.** `cargo build --release --manifest-path
+tools/kin-service-host/Cargo.toml` on Windows (the `x86_64-pc-windows-msvc`
+target the Rust installer sets up), or with `--target x86_64-pc-windows-gnu`
+elsewhere (with mingw-w64). `scripts/build-sea.mjs` builds it with the
+Windows executable and ships it beside it as
+`kin-service-host-<version>-win-x64.exe` (listed in `SHA256SUMS`;
+`KIN_SERVICE_HOST_EXE` gives a host built elsewhere), which
+`--install-service` also finds. The Windows executable needs #748; until
+then `node server\start.mjs --install-service` from a checkout installs the
+service with node and the host from
+`tools\kin-service-host\target\release\`, or the task without it.
 
 ## The container image
 
@@ -370,5 +432,10 @@ the executable and restart the service (`sudo systemctl restart kin`).
 The tests here ran on Linux x64 with Node 24.22.0. CI on Node 24.22.0 must
 confirm the Linux build, the arm64 build (built, not run, in CI), the
 container image (`home-container`) and `systemd-analyze verify` of the unit.
+The CI job `service-host` lints and tests the Windows service host on Linux
+and Windows, and on Windows builds it and runs it as a real service
+(`scripts/service-host-smoke.mjs`): it must start without error 1053,
+restart a failed child, stop gracefully with exit code 0, and end a child
+that ignores the stop.
 #717 records install, reboot and uninstall on Windows, macOS, Linux and a
 Raspberry Pi.

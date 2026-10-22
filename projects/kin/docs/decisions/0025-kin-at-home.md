@@ -14,9 +14,11 @@ is `relay/README.md`), and the packaging and `KIN_MODE` of §9–§10 in part
 (tunnel, home side), #737 (moving a household) and #740 (acceptance). Built
 so far (#713, [HOME-SERVER](../HOME-SERVER.md)): `KIN_MODE` (§9), the
 executables for Linux x64 and arm64 with Kin's own ELF injector, the
-container image, and installing as a service, on Windows with the Task
-Scheduler fallback; the macOS and Windows executables (#747, #748) and the
-Rust service host (#749) follow. Built by #733 (`server/home/`,
+container image, and installing as a service, on Windows as a real
+service run by the Rust service host (#749, `tools/kin-service-host`: std
+only, stopping Kin by closing its stdin), with the Task Scheduler fallback
+when the host is missing; the macOS and Windows executables (#747, #748)
+follow. Built by #733 (`server/home/`,
 [HOME-SERVER](../HOME-SERVER.md#reaching-it-from-anywhere-the-tunnel)): the
 home side of the tunnel (§2) with the home key, name claiming and
 `SET_CAA` (§3, §5), reconnecting with backoff, on wake and on network

@@ -20,15 +20,17 @@ function temporary(t) {
 
 test("the command line takes one command and the options that belong to it", { timeout: 60_000 }, () => {
   const parse = parseLauncherArguments;
-  assert.deepEqual(parse([]), { command: "run", supervise: false, logFile: null, user: null, platform: null, adminArgs: [] });
+  assert.deepEqual(parse([]), { command: "run", supervise: false, stopOnStdinClose: false, logFile: null, user: null, platform: null, adminArgs: [] });
   assert.equal(parse(["--install-service"]).command, "install-service");
   assert.equal(parse(["--uninstall-service"]).command, "uninstall-service");
   assert.equal(parse(["--health"]).command, "health");
   assert.equal(parse(["-h"]).command, "help");
-  assert.deepEqual(parse(["--print-service", "--platform", "win32"]), { command: "print-service", supervise: false, logFile: null, user: null, platform: "win32", adminArgs: [] });
+  assert.deepEqual(parse(["--print-service", "--platform", "win32"]), { command: "print-service", supervise: false, stopOnStdinClose: false, logFile: null, user: null, platform: "win32", adminArgs: [] });
   assert.equal(parse(["--print-service", "--platform=darwin", "--user=mikey"]).user, "mikey");
-  assert.deepEqual(parse(["--supervise", "--log-file", "C:\\Kin\\kin.log"]), { command: "run", supervise: true, logFile: "C:\\Kin\\kin.log", user: null, platform: null, adminArgs: [] });
+  assert.deepEqual(parse(["--supervise", "--log-file", "C:\\Kin\\kin.log"]), { command: "run", supervise: true, stopOnStdinClose: false, logFile: "C:\\Kin\\kin.log", user: null, platform: null, adminArgs: [] });
   assert.deepEqual(parse(["admin", "backup", "--to", "x"]).adminArgs, ["backup", "--to", "x"]);
+  // The Windows service host's command line (server/service-install.mjs).
+  assert.equal(parse(["--stop-on-stdin-close", "--log-file", "C:\\Kin\\kin.log"]).stopOnStdinClose, true);
 
   for (const [argv, message] of [
     [["--install-service", "--uninstall-service"], /one command/],
@@ -38,6 +40,8 @@ test("the command line takes one command and the options that belong to it", { t
     [["--log-file", "--supervise"], /needs a value/],
     [["--log-file="], /needs a path/],
     [["--health", "--supervise"], /for running Kin/],
+    [["--version", "--stop-on-stdin-close"], /for running Kin/],
+    [["--stop-on-stdin-close=1"], /Unknown argument/],
     [["--user", "mikey"], /--user is for/],
     [["--install-service", "--user", "bad name"], /isn't an account name/],
     [["--platform", "linux"], /--platform is for --print-service/],
@@ -113,6 +117,55 @@ test("without supervision the launcher exits with the service's code", { timeout
   assert.equal(calls.length, 1);
   assert.equal(calls[0].options.stdio[0], "inherit");
   assert.equal(calls[0].options.env.KIN_STOP_WITH_LAUNCHER, undefined);
+});
+
+// A stdin the test closes, as the service host closes the launcher's.
+function fakeStdin() {
+  const stdin = new EventEmitter();
+  stdin.paused = true;
+  stdin.resume = () => { stdin.paused = false; return stdin; };
+  stdin.pause = () => { stdin.paused = true; return stdin; };
+  return stdin;
+}
+
+test("--stop-on-stdin-close: the end of stdin closes the service's stdin and the launcher exits with its code", { timeout: 20_000 }, async (t) => {
+  const root = temporary(t);
+  const calls = [];
+  const spawnImpl = (command, args, options) => {
+    const child = new EventEmitter();
+    child.exitCode = null;
+    child.signalCode = null;
+    // The service closes its database when its stdin ends, then exits 0.
+    child.stdin = { end: () => { child.stdinEnded = true; setImmediate(() => { child.exitCode = 0; child.emit("exit", 0, null); }); } };
+    child.kill = (signal) => { child.killedWith = signal; };
+    calls.push({ command, args, options, child });
+    return child;
+  };
+  const stdin = fakeStdin();
+  const signals = new EventEmitter();
+  const running = runService({ serviceProcess: ({ env }) => ({ command: "kin-service", args: [], env }), env: { KIN_DATA_DIR: join(root, "data") }, stopOnStdinClose: true, spawnImpl, signals, stdin, platform: "win32" });
+  assert.equal(stdin.paused, false, "the launcher reads its stdin");
+  assert.equal(calls[0].options.stdio[0], "pipe");
+  assert.equal(calls[0].options.env.KIN_STOP_WITH_LAUNCHER, "1");
+  stdin.emit("end");
+  assert.equal(await running, 0);
+  assert.equal(calls[0].child.stdinEnded, true);
+  assert.equal(calls[0].child.killedWith, undefined, "nothing is killed on Windows");
+  assert.equal(calls.length, 1);
+  assert.equal(stdin.paused, true, "a finished launcher stops reading");
+  assert.equal(stdin.listenerCount("end"), 0);
+  assert.equal(signals.listenerCount("SIGTERM"), 0);
+});
+
+test("--stop-on-stdin-close: a service that fails on its own ends the launcher, for the host to restart", { timeout: 20_000 }, async (t) => {
+  const root = temporary(t);
+  const { spawnImpl, calls } = fakeSpawn([5]);
+  const stdin = fakeStdin();
+  const code = await runService({ serviceProcess: ({ env }) => ({ command: "kin-service", args: [], env }), env: { KIN_DATA_DIR: join(root, "data") }, stopOnStdinClose: true, spawnImpl, signals: new EventEmitter(), stdin, platform: "win32" });
+  assert.equal(code, 5);
+  assert.equal(calls.length, 1);
+  assert.equal(stdin.paused, true);
+  assert.equal(stdin.listenerCount("error"), 0);
 });
 
 test("--log-file appends the service's output to an owner-only file and rotates a large one", { timeout: 20_000 }, async (t) => {
