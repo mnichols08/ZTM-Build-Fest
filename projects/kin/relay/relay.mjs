@@ -394,7 +394,7 @@ export class ConnectionRelay {
     this.claimsToday.sweep();
     for (const [id, bucket] of this.buckets) if (bucket.tokens >= bucket.burstBytes) this.buckets.delete(id);
     for (const tunnel of [...this.tunnels.values()]) {
-      if (this.registry.signedIn(tunnel.keyHash).suspended) { this.#unroute(tunnel); this.tunnels.delete(tunnel.keyHex); tunnel.goaway(Code.SUSPENDED); }
+      if (this.registry.keySuspended(tunnel.keyHash)) { this.#unroute(tunnel); this.tunnels.delete(tunnel.keyHex); tunnel.goaway(Code.SUSPENDED); }
       else this.#refresh(tunnel);
     }
   }
@@ -417,6 +417,9 @@ export class ConnectionRelay {
       const proofs = await this.#txtProofs(domain);
       if (proofs.has(hash.toString("base64url"))) this.registry.domainVerified(domain);
     }
+    // A home server connected all day still "connected" today (§3: a name
+    // stops routing only after 365 days without its key).
+    for (const tunnel of this.tunnels.values()) this.registry.signedIn(tunnel.keyHash);
     this.minuteTick();
   }
 

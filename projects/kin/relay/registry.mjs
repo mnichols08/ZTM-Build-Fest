@@ -199,6 +199,8 @@ export class Registry {
   }
 
   isSuspended(name) { return Boolean(this.sql.nameRow.get(name)?.suspended); }
+  /** Whether `keyHash`'s free name is suspended (read only). */
+  keySuspended(keyHash) { return Boolean(this.sql.nameOfKey.get(keyHash)?.suspended); }
 
   /**
    * CLAIM (§3). Returns a KTUN code: NONE when `name` is now (or already
