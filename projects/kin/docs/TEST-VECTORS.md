@@ -970,6 +970,161 @@ drift from the encoder:
 `scripts/qr-regression.mjs` reads a QR code through a real browser camera
 (a fake video device) and the engine.
 
+## The KTUN tunnel (#730)
+
+KTUN version 1 is the framing between a home server and a connection relay
+([ADR 0025](decisions/0025-kin-at-home.md) §2). Both ends use the one codec,
+`relay/ktun.mjs`; `relay/ktun.test.mjs` builds every value below and checks
+that this section carries the same hex. Integers are little-endian. Each
+frame is a 12-byte header (`type:u8 flags:u8 reserved:u16 stream:u32
+length:u32`) and its payload. Hex is wrapped at 64 digits.
+
+Private keys are Ed25519 keys whose 32-byte seed is one repeated byte: the
+**home key** is seed `01` × 32, the **new key** seed `02` × 32. Signatures are
+Ed25519 (deterministic). The relay's name is `relay.home.test`.
+
+**186 — Preface and HELLO.** The preface is `"KTUN"`, version 1, flags 0.
+HELLO with nonce `11` × 32 and the defaults (256 streams, 256 KiB per stream,
+4 MiB per tunnel, PING after 25 s, dead after 75 s):
+
+```text
+4b54554e01000000
+0100000000000000340000001111111111111111111111111111111111111111
+11111111111111111111111100010000000004000000400019004b0000000000
+```
+
+A preface with version 2, non-zero flags or other magic is refused. HELLO's
+reserved field must be zero; windows under 16,384, `maxStreams` 0, or
+`idleSeconds` not above `pingSeconds` ≥ 1 are protocol errors.
+
+**187 — Signing in.** The home key's public key, the signed message
+`"kin-tunnel-auth/1" 00 "relay.home.test" 00 nonce exporter` for nonce `aa`
+× 32 and TLS exporter value `bb` × 32 (in a real tunnel, 32 bytes exported
+with label `EXPORTER-kin-tunnel-auth` and no context), its signature, and
+AUTH with software version `0x00010600`:
+
+```text
+8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c
+6b696e2d74756e6e656c2d617574682f310072656c61792e686f6d652e746573
+7400aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+aaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbb
+ec493467e5400d087b84cfb357a302228979eab44257b05d003e5793c7ad37b6
+2578f9558552f402f09966443662ac5e29af9a67a738d5749c0f97a486f0440f
+0200000000000000680000008a88e3dd7409f195fd52db2d3cba5d72ca6709bf
+1d94121bf3748801b40f6f5cec493467e5400d087b84cfb357a302228979eab4
+4257b05d003e5793c7ad37b62578f9558552f402f09966443662ac5e29af9a67
+a738d5749c0f97a486f0440f0006010000000000
+```
+
+The signature must fail for another relay name or another exporter value.
+The home key's own-domain TXT value (base64url SHA-256 of the public key) is
+`NHUPmL1Z_PyUbaRaqr6TO-FUpLUJThxKv0KGZQXzyX4`.
+
+**188 — READY.** Names `x.home.test` and `kin.family.test`, then none:
+
+```text
+030000000000000020000000020000000b782e686f6d652e746573740f6b696e
+2e66616d696c792e74657374
+03000000000000000400000000000000
+```
+
+Each name is a lowercase host name of 1 to 253 bytes; a non-zero reserved
+field, a short list or bytes after the last entry are protocol errors. The
+relay sends READY after sign-in and again whenever the names routed to the
+tunnel change; each READY replaces the previous list.
+
+**189 — OPEN.** Stream 1 for `x.home.test` from `203.0.113.7` (IPv4 fills
+the first 4 address bytes; `::ffff:203.0.113.7` encodes the same), and
+stream 2 from `2001:db8::1`:
+
+```text
+04000000010000001f000000040b0000cb007107000000000000000000000000
+782e686f6d652e74657374
+04000000020000001f000000060b000020010db8000000000000000000000001
+782e686f6d652e74657374
+```
+
+Family other than 4 or 6, a non-zero reserved field, IPv4 with bytes after
+the first 4, or a name length that doesn't match are protocol errors.
+
+**190 — DATA, WINDOW and RESET.** DATA on stream 1 carrying `16 03 01`;
+an empty DATA with FIN; WINDOW 2 MiB for the tunnel (stream 0) and 128 KiB
+for stream 1; RESET of stream 3 with code 0:
+
+```text
+050000000100000003000000160301
+050100000100000000000000
+06000000000000000400000000002000
+06000000010000000400000000000200
+07000000030000000400000000000000
+```
+
+A WINDOW increment of 0 and credit past 2³²−1 are protocol errors.
+
+**191 — PING and GOAWAY.** PING with `01 02 … 08`, its ACK (flag bit 0),
+and GOAWAY with last stream 7 and code 3 (replaced by a newer tunnel):
+
+```text
+0800000000000000080000000102030405060708
+0801000000000000080000000102030405060708
+0900000000000000080000000700000003000000
+```
+
+**192 — CONTROL.** CLAIM `x.home.test` as request 1; the relay's answer on
+success, whose body is the name list now routed to the tunnel; the answer
+"name taken" (status 9, no body); SET_CAA request 2 for account
+`https://acme.test/acct/1`:
+
+```text
+0a00000000000000140000000100000001000c000b782e686f6d652e74657374
+0a00000000000000180000000100000001001000010000000b782e686f6d652e
+74657374
+0a00000000000000080000000100000001090000
+0a000000000000002e00000002000000030026000b782e686f6d652e74657374
+180068747470733a2f2f61636d652e746573742f616363742f31
+```
+
+Request bodies: CLAIM, RELEASE, ADD_DOMAIN and REMOVE_DOMAIN carry
+`nameLength:u8 name`; SET_CAA adds `uriLength:u16 accountUri` (1 to 512
+bytes); TRANSFER adds `newKey:32 signature:64`. Names are full host names
+(`x.home.test`, not `x`). A request whose status isn't 0 is a protocol
+error; an unknown op or a malformed body is answered with status 1.
+
+**193 — TRANSFER.** The new key's public key, the message
+`"kin-tunnel-transfer/1" 00 "x.home.test" 00 oldKey newKey` and the new
+key's signature over it:
+
+```text
+8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394
+6b696e2d74756e6e656c2d7472616e736665722f3100782e686f6d652e746573
+74008a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f
+6f5c8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9
+b394
+747c6bed27ac0d4abe631d8995062d6afaf17cd9e2b27c0f475ce3e914719eaf
+33cebf2cc575ff9e4db5d72de280c82651a34744c63e9db76b432c08ffe1d20d
+```
+
+**Checks every receiver makes (§2).** An unknown type, a flag bit the type
+doesn't define (only DATA's FIN and PING's ACK exist), a non-zero reserved
+field, a stream number wrong for the type (HELLO, AUTH, READY, PING, GOAWAY
+and CONTROL on 0; OPEN, DATA and RESET on 1 or more; WINDOW either), a type
+sent the wrong way (HELLO, READY and OPEN only from the relay, AUTH only from
+the home server), a payload over 16,384 bytes or of the wrong fixed size are
+protocol errors: GOAWAY with code 1, and the tunnel closes. So is DATA past
+the credit given, DATA after FIN, and DATA, WINDOW or RESET for a stream
+never opened (a stream already finished is ignored, its DATA still counted
+against the tunnel's window and given straight back).
+
+**Relay behaviour** (`relay/relay.test.mjs`, on loopback): a tunnel signs in
+and a phone's TLS handshake completes with the home server through it; the
+relay stops reading a phone whose stream has no credit and resumes on
+WINDOW; it sends PING after `pingSeconds` of silence and closes a tunnel
+silent for `idleSeconds`; a second tunnel with the same key replaces the
+first (GOAWAY 3), and the phones on the old tunnel are closed; near the
+stream limit the relay sends GOAWAY 0 and routes new phones only once the
+home server reconnects.
+
 ## Home server certificates (#723)
 
 The home server's ACME client (`server/acme/`, [HOME-CERTIFICATES](HOME-CERTIFICATES.md))

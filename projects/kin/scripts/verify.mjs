@@ -109,9 +109,10 @@ export async function collectNodeTests(root = PROJECT_ROOT) {
       else if (entry.isFile() && entry.name.endsWith(".test.mjs")) files.push(fullPath);
     }
   }
-  // scripts/ holds the runner's own tests and the documentation and
-  // compatibility checks; they are part of the gate too (#328).
-  for (const directory of ["server", "web", "scripts"]) await visit(join(root, directory));
+  // relay/ is the connection relay (ADR 0025, #728). scripts/ holds the
+  // runner's own tests and the documentation and compatibility checks; they
+  // are part of the gate too (#328).
+  for (const directory of ["server", "web", "relay", "scripts"]) await visit(join(root, directory));
   return files;
 }
 

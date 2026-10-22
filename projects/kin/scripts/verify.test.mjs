@@ -163,6 +163,7 @@ test("test discovery is deterministic and works from repository and Kin director
   assert.deepEqual(fromRepository, fromProject);
   assert.ok(fromProject.some((path) => path.endsWith(join("server", "durable-sync-integrity.test.mjs"))));
   assert.ok(fromProject.some((path) => path.endsWith(join("scripts", "v1-compatibility.test.mjs"))));
+  assert.ok(fromProject.some((path) => path.endsWith(join("relay", "sni.test.mjs"))), "the connection relay's tests are in the gate (#728)");
   assert.ok(fromProject.every((path) => path.endsWith(".test.mjs")));
 
   const temporary = await mkdtemp(join(tmpdir(), "kin-test-discovery-"));

@@ -7,7 +7,9 @@ journeytocode.io and publishes the relay as open source; a free name
 `<name>.home.kin.journeytocode.io` by default, with the household's own
 domain as an option; the Play Store app stays bound to
 `kin.journeytocode.io` for now; the hosted service stays the easy default.
-Nothing in this ADR is built yet. The stories that build it are #713
+The connection relay (§1–§4) is built in `relay/` (#728; its deploy guide
+is `relay/README.md`); nothing else in this ADR is built yet. The stories
+that build it are #713
 (packaging), #718 (control panel), #723 (ACME client), #728 (relay), #733
 (tunnel, home side), #737 (moving a household) and #740 (acceptance).
 

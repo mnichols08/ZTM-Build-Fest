@@ -442,11 +442,13 @@ exception and have their own section above.
 
 ## Unreleased (Kin at home, ADR 0025): a home server and the connection relay
 
-**Planned, not built.** [ADR 0025](decisions/0025-kin-at-home.md) (epic
+**Partly built.** The connection relay is built in `relay/` (#728) and not
+yet deployed; it keeps exactly what is listed below. The home server's side
+is not built. [ADR 0025](decisions/0025-kin-at-home.md) (epic
 #708) decides how a household can run Kin on its own computer, reached
 through a **connection relay** (a cloud program that forwards encrypted
 connections; not the sync service, which Kin's documents call "the relay").
-Nothing below exists yet; this section records what was decided, so the
+Nothing below is in use yet; this section records what was decided, so the
 built version can be checked against it.
 
 - **The home server** is the Kin service running in the household's home. It
