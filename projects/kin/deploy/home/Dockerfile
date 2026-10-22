@@ -7,9 +7,10 @@
 #   docker build -f deploy/home/Dockerfile -t kin-home .
 #   docker run -d --name kin --restart unless-stopped -v kin-data:/data kin-home
 #
-# Kin listens on loopback inside the container (home mode opens no public
-# listener; the connection relay's tunnel, #733, is how phones will reach
-# it). docs/HOME-SERVER.md has the details.
+# Kin listens on loopback inside the container and opens no public
+# listener: with a name set (KIN_HOME_NAME, or the setup page), it dials out
+# to the connection relay and phones reach it through that tunnel (#733).
+# docs/HOME-SERVER.md has the details.
 
 # Stage 1 builds the Rust domain engine to WebAssembly with the toolchain
 # pinned in rust-toolchain.toml.
@@ -28,6 +29,8 @@ WORKDIR /kin
 COPY package.json ./
 COPY server ./server
 COPY web ./web
+# The KTUN codec the home server's tunnel shares with the relay (#733).
+COPY relay/ktun.mjs ./relay/ktun.mjs
 COPY scripts/build-sea.mjs ./scripts/
 COPY scripts/sea ./scripts/sea
 COPY --from=wasm /kin/target/wasm32-unknown-unknown/release/kin.wasm /tmp/kin_engine.wasm

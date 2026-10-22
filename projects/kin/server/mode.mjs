@@ -15,7 +15,9 @@
 //
 // Everything else is the same in both modes. KIN_FEEDBACK_GITHUB_* stays
 // available in home mode and, as in hosted mode, is off unless configured.
-// Ending TLS in the service and the tunnel come with #723 and #733.
+// With a name in the home settings, home mode also dials the connection
+// relay and ends TLS in the service (server/home/, #733); server.mjs starts
+// that after the loopback listener is up.
 import { win32 } from "node:path";
 
 export const SERVER_MODES = Object.freeze(["hosted", "home"]);

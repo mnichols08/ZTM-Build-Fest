@@ -7,6 +7,7 @@ rust/fixtures/golden/** binary
 # byte-identical to one built on Linux or macOS (#748). text=auto leaves
 # binary files (images, the engine) alone.
 server/** text=auto eol=lf
+relay/ktun.mjs text eol=lf
 web/** text=auto eol=lf
 package.json text eol=lf
 scripts/sea/main.cjs text eol=lf
