@@ -83,15 +83,17 @@ export async function photoAlbumRegressions() {
   await idle();
   await until(() => !tileOf(beach), "the photo leaves the grid");
   check((await app.store.album()).removed.some((entry) => entry.photoId === beach.photoId), "the removal is recorded");
-  const toast = app.querySelector(".undo-toast");
-  check(toast && !toast.hidden, "Undo is offered");
-  app.querySelector(".undo-toast-action").click();
-  await idle();
+  const undo = app.ctx.undo;
+  check(!undo.toast.hidden && undo.toastAction.textContent === "Undo", "Undo is offered", undo.toastText.textContent);
+  await until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !undo.running, "Kin is idle before Undo");
+  undo.toastAction.click();
+  await until(() => !undo.running && !app.busy, "Undo finishes");
   let restored = null;
-  await until(async () => {
+  for (let tries = 0; tries < 300 && !restored; tries++) {
     restored = (await app.store.album()).photos.find((photo) => photo.attachmentId === beach.attachmentId) ?? null;
-    return restored;
-  }, "Undo brings the photo back");
+    if (!restored) await frame();
+  }
+  check(restored, "Undo brings the photo back", { status: app.status?.textContent, alert: app.querySelector("[role=alert]")?.textContent, toast: undo.toastText.textContent });
   check(restored.photoId !== beach.photoId && restored.caption === `Beach ${tag}`, "under a new photo ID, with its caption", restored);
   await until(() => tileOf(restored), "it is back in the grid");
 
