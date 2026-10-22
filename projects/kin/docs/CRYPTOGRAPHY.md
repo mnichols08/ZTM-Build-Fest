@@ -62,7 +62,7 @@ Browser-side encryption protects against some server/database exposure but not m
 
 ## v0.10 local key hierarchy
 
-The [v0.10 contract](V0.10.0.md) adds a random household storage root, HKDF-separated
+The [v0.10 contract](planning/V0.10.0.md) adds a random household storage root, HKDF-separated
 local-storage/archive keys, and independent credential/recovery KEKs. Root wrappers
 are AES-GCM authenticated and bind household/vault, wrapper ID, type and version.
 Adding a wrapper never re-encrypts the event corpus. Removing a wrapper prevents
@@ -150,7 +150,7 @@ independently wrap this installation's root. Each installation has its own local
 root; device pairing provisions separate sync epoch keys.
 
 Legacy nonextractable transport keys require the signed successor migration in
-[V0.10.0](V0.10.0.md), rather than pretending they can be exported/wrapped. New
+[V0.10.0](planning/V0.10.0.md), rather than pretending they can be exported/wrapped. New
 transport private serializations and sync epoch secrets are protected by the local
 root; no private decryption capability remains outside that protection. Do not
 claim the new boundary until legacy epoch CryptoKeys, self-wrapped copies and

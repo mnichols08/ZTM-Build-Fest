@@ -451,7 +451,7 @@ Rust 1.93.0, and Edge 155.0.4283.45. The complete Node server/web suite,
 173 Rust tests, formatting, Clippy, release WASM, household authority drill
 (103 assertions), browser, security storage, security UI, and passkey
 regressions passed. Detailed results and limitations are recorded in
-[`V0.40.2`](../releases/V0.40.2.md). No tag or release was created. Physical
+[`V0.40.2`](../planning/releases/V0.40.2.md). No tag or release was created. Physical
 devices, human fingerprint comparison, non-Chromium/mobile environments, and
 CI on a pushed final head remain unverified; R-3's honest-relay assumption is
 unchanged.

@@ -297,7 +297,7 @@ guard archive phases and the final native transaction aborts on lock.
 
 This reduces avoidable copies without introducing KARC v2. Web Crypto's complete
 AES-GCM payload and the bounded full canonical replay still require whole buffers;
-desktop measurements in [V0.10.0](V0.10.0.md) quantify the practical limit.
+desktop measurements in [V0.10.0](planning/V0.10.0.md) quantify the practical limit.
 
 > Household members should be able to obtain a usable copy of their Kin data.
 

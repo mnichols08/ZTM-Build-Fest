@@ -104,19 +104,19 @@ A change after another device's archive or completion is kept in history and has
 
 ## v0.4.0 Talk
 
-HouseholdState adds talks: Vec<TalkState> beside items and handoffs. Each is ordered by its original creation event. TalkState has talk_id, text, created_by, created_at and status; no duplicated resolution metadata. Archived tombstones stay in projection/history but are hidden in normal lists. See [V0.4.0](V0.4.0.md).
+HouseholdState adds talks: Vec<TalkState> beside items and handoffs. Each is ordered by its original creation event. TalkState has talk_id, text, created_by, created_at and status; no duplicated resolution metadata. Archived tombstones stay in projection/history but are hidden in normal lists. See [V0.4.0](planning/V0.4.0.md).
 
 ## v0.5.0 Pulse
 
-HouseholdState adds pulses sorted by actor ID. Explicit rebuild_at(events, as_of) projects active iff as_of < expires_at, otherwise expired. SET replaces per actor; CLEAR removes, including absent no-op. Clock rollback may reactivate latest expired context; source events stay unchanged. See [V0.5.0](V0.5.0.md).
+HouseholdState adds pulses sorted by actor ID. Explicit rebuild_at(events, as_of) projects active iff as_of < expires_at, otherwise expired. SET replaces per actor; CLEAR removes, including absent no-op. Clock rollback may reactivate latest expired context; source events stay unchanged. See [V0.5.0](planning/V0.5.0.md).
 
 ## v0.6.0 Since You Last Looked
 
-Protocol v6 derives a structured summary after an optional stable event-ID cursor. Rust validates the cursor against the supplied ordered stream, deduplicates exact repeated delivery, excludes Pulse entries, retains the latest eight entries in event order, counts all meaningful events, and reports the actual last stream event as the through-boundary. This summary is not a second authoritative household state and contains no actor attribution. See [V0.6.0](V0.6.0.md).
+Protocol v6 derives a structured summary after an optional stable event-ID cursor. Rust validates the cursor against the supplied ordered stream, deduplicates exact repeated delivery, excludes Pulse entries, retains the latest eight entries in event order, counts all meaningful events, and reports the actual last stream event as the through-boundary. This summary is not a second authoritative household state and contains no actor attribution. See [V0.6.0](planning/V0.6.0.md).
 
 ## v0.7.0 Routines
 
-HouseholdState adds Routine definitions/tombstones and their current occurrence key/status. Rust replay retains historical completion by Routine ID and period key in transient memory, then projects the supplied civil date. Same events, as_of, civil_date and cursor yield identical results. Dates before creation have no occurrence; old completion never carries over. See [V0.7.0](V0.7.0.md).
+HouseholdState adds Routine definitions/tombstones and their current occurrence key/status. Rust replay retains historical completion by Routine ID and period key in transient memory, then projects the supplied civil date. Same events, as_of, civil_date and cursor yield identical results. Dates before creation have no occurrence; old completion never carries over. See [V0.7.0](planning/V0.7.0.md).
 
 ## v0.17.0 Checklist Steps
 
@@ -138,7 +138,7 @@ as_of for Pulse. JS obtains local year/month/day from one browser clock sample;
 timers only request replay. Inside occurrence append transactions, JS compares
 the frozen intent key with Rust’s fresh canonical current key before candidate
 replay. This is identity checking, not a browser recurrence reducer. See
-[V0.7.0](V0.7.0.md) and [V0.18.0](releases/V0.18.0.md).
+[V0.7.0](planning/V0.7.0.md) and [V0.18.0](planning/releases/V0.18.0.md).
 
 ## v0.19.0 Shared Shopping Lists
 
@@ -147,7 +147,7 @@ It shares Item identity, status transitions, deterministic replay, encrypted
 local persistence, and household synchronization. Protocols 1–12 fail closed
 on Shopping-bearing history; existing Today/Needs projections remain
 compatible. No new state entity or storage migration is introduced. See
-[V0.19.0](releases/V0.19.0.md).
+[V0.19.0](planning/releases/V0.19.0.md).
 
 ## v0.20.0 Staples & Replenishment
 
@@ -155,7 +155,7 @@ Staples are active Items classified with code 3 under protocol 14. A
 user-triggered replenish action appends a new Shopping Item with copied text;
 the staple remains active and the two Item lifecycles are independent. Older
 protocols fail closed rather than omit or remap Staples. No reducer entity or
-storage migration is added. See [V0.20.0](releases/V0.20.0.md).
+storage migration is added. See [V0.20.0](planning/releases/V0.20.0.md).
 
 ## v0.21.0 Household Modes
 

@@ -42,7 +42,7 @@ Freeze A does not make documentation immutable. Implementation must not silently
 
 ## v0.1.0 readiness
 
-The v0.1.0 scope remains limited to the local add-item, complete-item, reload/replay loop. Handoff, Talk, Pulse, pairing, passkeys, sync, encryption, routines, AI, and notifications remain excluded. Canonical specification vectors are in [TEST-VECTORS](TEST-VECTORS.md); requirement authority and future validation are mapped in [TRACEABILITY](TRACEABILITY.md).
+The v0.1.0 scope remains limited to the local add-item, complete-item, reload/replay loop. Handoff, Talk, Pulse, pairing, passkeys, sync, encryption, routines, AI, and notifications remain excluded. Canonical specification vectors are in [TEST-VECTORS](../TEST-VECTORS.md); requirement authority and future validation are mapped in [TRACEABILITY](TRACEABILITY.md).
 
 **Readiness result at v0.0.9:** The specification was implementation-ready for the bounded v0.1.0 scope. Implementation had not begun at that historical point; it began after v0.0.12.
 
@@ -63,4 +63,4 @@ v0.1.0 is specification-ready when:
 - [x] Privacy constraints are specified.
 - [x] No unresolved architecture contradiction blocks the local-only v0.1.0 scope.
 
-At the time, this readiness result did not mean implementation, testing, or release acceptance had occurred. The later implementation and release checks are documented in [V0.1.0](V0.1.0.md) and [CHANGELOG](../CHANGELOG.md).
+At the time, this readiness result did not mean implementation, testing, or release acceptance had occurred. The later implementation and release checks are documented in [V0.1.0](V0.1.0.md) and [CHANGELOG](../../CHANGELOG.md).
