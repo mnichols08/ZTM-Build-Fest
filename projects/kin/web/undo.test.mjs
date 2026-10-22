@@ -269,3 +269,35 @@ test("pin, owner and area are restored when they can be; skipped ones are passed
   assert.equal(isOptionalStep(entry, { type: "add" }), false);
   assert.equal(isOptionalStep(itemStatusEntry("complete", A, state({ items: [item({ status: "completed" })] })), { type: "pin" }), false);
 });
+
+// The family album (#673): removing a photo is undone by adding its image
+// again under a new photo ID, while its blob is still kept; redo removes
+// that new photo.
+test("a removed family photo comes back under a new ID, and redo removes it again", async () => {
+  const { albumRemovedEntry } = await import("./undo.js");
+  const attachmentId = `a1b0${"1".repeat(28)}`;
+  const photo = { photoId: A, attachmentId, caption: "Beach", addedBy: ME };
+  const entry = albumRemovedEntry(photo);
+  assert.equal(entry.kind, "album-removed");
+  assert.equal(entry.label, "remove the photo “Beach”");
+  assert.equal(albumRemovedEntry({ ...photo, caption: "" }).label, "remove a photo");
+  assert.match(entry.replacementId, /^[a-f0-9]{32}$/);
+  const removedState = { album: { photos: [], removed: [{ photoId: A, attachmentId, removedAt: 1 }] }, albumKeep: new Set([attachmentId]) };
+  assert.equal(reversalStatus(entry, removedState), "ready");
+  assert.deepEqual(nextReversalStep(entry, removedState), { type: "add-album-photo", photoId: entry.replacementId, attachmentId, caption: "Beach" });
+  // The blob is gone (after the grace): nothing to bring back.
+  assert.equal(reversalStatus(entry, { ...removedState, albumKeep: new Set() }), "gone");
+  // Someone else already put the same image back.
+  assert.equal(reversalStatus(entry, { ...removedState, album: { photos: [{ ...photo, photoId: B }], removed: [] } }), "conflict");
+
+  const back = { album: { photos: [{ ...photo, photoId: entry.replacementId }], removed: removedState.album.removed }, albumKeep: new Set([attachmentId]) };
+  assert.equal(nextReversalStep(entry, back), null, "done once it is back");
+  const redo = inverseEntry(entry, removedState, back);
+  assert.deepEqual(redo, { kind: "album-added", photoId: entry.replacementId, attachmentId, caption: "Beach", label: entry.label });
+  assert.equal(reversalStatus(redo, back), "ready");
+  assert.deepEqual(nextReversalStep(redo, back), { type: "remove-album-photo", photoId: entry.replacementId });
+  assert.equal(reversalStatus(redo, removedState), "gone");
+  const again = inverseEntry(redo, back, removedState);
+  assert.equal(again.kind, "album-removed");
+  assert.notEqual(again.replacementId, entry.replacementId);
+});

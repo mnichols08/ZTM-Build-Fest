@@ -25,6 +25,7 @@ export const DESTINATION_DESCRIPTIONS = Object.freeze({
 // The Household overview's links (#266), with one plain line each.
 export const HOUSEHOLD_HUB_LINKS = Object.freeze([
   Object.freeze(["fridge", "A shared board to draw on together."]),
+  Object.freeze(["photos", "Photos for the whole family, and a slideshow."]),
   Object.freeze(["notes", "Notes and useful details, like when the boiler was last serviced."]),
   Object.freeze(["areas", "Parts of your home, the household's mode, and how everyone is doing."]),
   Object.freeze(["people", "Who is in your household, and adding a phone or computer."]),

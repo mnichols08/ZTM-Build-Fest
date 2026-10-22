@@ -166,6 +166,22 @@ export function routineOccurrenceEntry(type, routineId, after) {
   });
 }
 
+// ---- The family album (#673) ---------------------------------------------
+// The album isn't part of the projection: for these entries the undo
+// controller passes the state with `album` (store.album()) and `albumKeep`
+// (the attachments still kept, album-blobs.js albumKeep). Removing a photo
+// is undone by adding its image again under a new photo ID; once the Undo
+// grace has passed and its blob is gone, it can't be.
+
+const albumPhotoIn = (state, photoId) => state?.album?.photos?.find((photo) => photo.photoId === photoId) ?? null;
+const albumLabel = (caption) => (caption ? `remove the photo ${name(caption)}` : "remove a photo");
+
+export function albumRemovedEntry(photo) {
+  if (!photo?.photoId || !photo.attachmentId) return null;
+  const caption = photo.caption ?? "";
+  return Object.freeze({ kind: "album-removed", photoId: photo.photoId, attachmentId: photo.attachmentId, caption, replacementId: newId(), label: albumLabel(caption) });
+}
+
 // ---- Running ------------------------------------------------------------
 
 /**
@@ -221,6 +237,15 @@ export function reversalStatus(entry, state) {
       const replacement = routineIn(state, entry.replacementId);
       return replacement?.status === "archived" ? "gone" : "ready";
     }
+    case "album-removed": {
+      if (albumPhotoIn(state, entry.replacementId)) return "ready";
+      if (state?.album?.removed?.some((removed) => removed.photoId === entry.replacementId)) return "gone";
+      // Someone else put the image back meanwhile, or its blob is gone.
+      if (state?.album?.photos?.some((photo) => photo.attachmentId === entry.attachmentId)) return "conflict";
+      return state?.albumKeep?.has(entry.attachmentId) ? "ready" : "gone";
+    }
+    case "album-added":
+      return albumPhotoIn(state, entry.photoId) ? "ready" : "gone";
     default:
       return "gone";
   }
@@ -269,6 +294,11 @@ export function nextReversalStep(entry, state, { memberIds = null, skip = null }
       return recreateItemStep(entry, state, memberIds, skip);
     case "routine-archived":
       return recreateRoutineStep(entry, state, memberIds, skip);
+    case "album-removed":
+      return albumPhotoIn(state, entry.replacementId) ? null
+        : { type: "add-album-photo", photoId: entry.replacementId, attachmentId: entry.attachmentId, caption: entry.caption };
+    case "album-added":
+      return albumPhotoIn(state, entry.photoId) ? { type: "remove-album-photo", photoId: entry.photoId } : null;
     default:
       return null;
   }
@@ -342,6 +372,10 @@ export function inverseEntry(entry, before, after) {
       return keep({ kind: "routine-created", routineId: entry.replacementId, mark: routineMark(after, entry.replacementId) });
     case "routine-occurrence":
       return keep({ ...entry, to: entry.to === "completed" ? "open" : "completed" });
+    case "album-removed":
+      return keep({ kind: "album-added", photoId: entry.replacementId, attachmentId: entry.attachmentId, caption: entry.caption });
+    case "album-added":
+      return keep({ kind: "album-removed", photoId: entry.photoId, attachmentId: entry.attachmentId, caption: entry.caption, replacementId: newId() });
     default:
       return null;
   }

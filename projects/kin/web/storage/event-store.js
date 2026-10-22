@@ -443,6 +443,8 @@ export class EventStore {
       store.removeLockListener = vault.onLock(() => store.arena.wipe());
       const context = await store.ensureContext();
       store.actorId = idToHex(context.sync_member_id ?? context.actor_id);
+      // Names this device's family-album database (#673, album/album-store.js).
+      store.localHouseholdId = context.household_id ? idToHex(context.household_id) : null;
       return store;
     } catch (error) {
       if (store) store.close();
@@ -1295,6 +1297,16 @@ export class EventStore {
     const { events, syncIdentity } = await this.recentHistory();
     const { asOf, civilDate } = projectionContext();
     return this.engine.sitterPage(events, asOf, civilDate, syncIdentity);
+  }
+
+  /** The family album (#673, ADR 0022 §5): { photos, removed }, both
+   * newest first (kin-album.js). Removing a photo is for whoever added it or
+   * a household admin; the command append path checks that. */
+  async album() {
+    if (!this.engine) throw new EventStoreError("Kin could not read the family photos.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.album(events, asOf, civilDate, syncIdentity);
   }
 
   /** The calendar from `from` to `to` (#656, ADR 0022; civil dates, at most

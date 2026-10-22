@@ -16,7 +16,8 @@ test("easy mode keeps Today, Lists (To do, Shopping), Updates and Household", ()
   assert.deepEqual([...pages], ["today", "lists", "updates", "household"]);
   assert.deepEqual([...segments.lists], ["todo", "shopping"]);
   assert.deepEqual([...segments.updates], ["handoffs", "chat"]);
-  assert.deepEqual([...segments.household], ["hub"]);
+  // Family photos (#673) stay on hand too.
+  assert.deepEqual([...segments.household], ["hub", "photos"]);
   // Every place it names exists.
   const ids = new Set(PRIMARY_DESTINATIONS.map((entry) => entry.id));
   for (const page of pages) assert.ok(ids.has(page), page);

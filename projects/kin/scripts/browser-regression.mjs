@@ -44,6 +44,7 @@ import { weekRegressions } from "./week-regression.mjs";
 import { calendarRegressions } from "./calendar-regression.mjs";
 import { importRegressions } from "./import-regression.mjs";
 import { sitterRegressions } from "./sitter-regression.mjs";
+import { photoAlbumRegressions } from "./photo-album-regression.mjs";
 import { householdFeaturesRegressions } from "./household-features-regression.mjs";
 import { CALENDAR_HARNESS_HOUSEHOLD, calendarSyncHarness, calendarSyncRegressions, expectedCalendarRefusal } from "./calendar-sync-regression.mjs";
 import { rotationsRegressions } from "./rotations-regression.mjs";
@@ -1564,6 +1565,7 @@ try {
   await visit(first, "today");
   console.log(await calendarRegressions(first, { until }));
   console.log(await first.evaluate(`(${sitterRegressions.toString()})()`));
+  console.log(await first.evaluate(`(${photoAlbumRegressions.toString()})()`));
   console.log(await first.evaluate(`(${rotationsRegressions.toString()})()`));
   // The chore chart (#676): a child's card, points, rewards, adults joining.
   console.log(await first.evaluate(`(${choreChartRegressions.toString()})()`));

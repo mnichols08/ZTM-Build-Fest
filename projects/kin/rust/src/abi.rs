@@ -370,6 +370,13 @@ pub extern "C" fn kin_sitter_page(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::sitter_page, None)
 }
 
+/// The family album (KALB v1, #673) of the instance's history, in the
+/// context of a record-less KINE request.
+#[no_mangle]
+pub extern "C" fn kin_album(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::album, None)
+}
+
 /// The calendar between two dates (KCAQ + KINE context -> KCAL v1, #656)
 /// against the instance's history.
 #[cfg_attr(target_arch = "wasm32", no_mangle)]

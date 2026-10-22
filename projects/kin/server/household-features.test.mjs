@@ -52,9 +52,9 @@ test("the service and the devices name the same feature bits", () => {
     { ...HOUSEHOLD_FEATURE_BITS },
     "web/features.js and pairing-service/shared.mjs agree",
   );
-  const count = Object.keys(HOUSEHOLD_FEATURE_BITS).length;
-  assert.equal(KNOWN_FEATURE_MASK, 2 ** count - 1);
-  assert.equal(new Set(Object.values(HOUSEHOLD_FEATURE_BITS)).size, count, "no bit is used twice");
+  // Derived from the list: bits are added by stories (ADR 0022), never reused.
+  assert.equal(KNOWN_FEATURE_MASK, Object.values(HOUSEHOLD_FEATURE_BITS).reduce((mask, bit) => mask + 2 ** bit, 0));
+  assert.equal(new Set(Object.values(HOUSEHOLD_FEATURE_BITS)).size, Object.keys(HOUSEHOLD_FEATURE_BITS).length, "no bit is used twice");
 });
 
 bothStores("everything is on until an admin switches something off, and status says so to every member", (h) => {

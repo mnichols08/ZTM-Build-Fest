@@ -46,6 +46,7 @@ export class StatusController {
     else if (this.app.week) this.app.week.disabled = controlsDisabled;
     if (this.app.choreChart) this.app.choreChart.disabled = controlsDisabled;
     if (this.app.sitterEditor) this.app.sitterEditor.disabled = controlsDisabled;
+    this.app.albumView?.update?.({ disabled: controlsDisabled });
     this.app.retryButton.disabled = isBusy;
     if (!controlsDisabled) {
       for (const component of [this.app.today, this.app.needs, this.app.shopping, this.app.staples, this.app.areas, this.app.notes, this.app.detail, this.app.chat, this.app.meals, this.app.simpleToday])

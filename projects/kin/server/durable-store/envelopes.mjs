@@ -20,6 +20,10 @@ import {
   MAX_ATTACHMENT_BYTES,
   MAX_HOUSEHOLD_ATTACHMENT_BYTES,
   MAX_HOUSEHOLD_ATTACHMENTS,
+  MAX_HOUSEHOLD_ALBUM_ATTACHMENTS,
+  MAX_HOUSEHOLD_ALBUM_BYTES,
+  ALBUM_ATTACHMENT_PREFIX,
+  isAlbumAttachmentId,
   parseJson,
   parseStoredJson,
   stringifyStored,
@@ -434,9 +438,12 @@ export const envelopeMethods = {
         if (existing.key_epoch === keyEpoch && existing.digest === digest && Buffer.from(existing.ciphertext).equals(ciphertext)) return { accepted: false };
         throw new DurableConflictError("attachment_conflict", "That attachment ID already has different encrypted content.");
       }
-      const quota = this.db.prepare("SELECT COUNT(*) AS count, COALESCE(SUM(size_bytes), 0) AS bytes FROM sync_attachments WHERE household_id = ?").get(householdId);
-      if (quota.count >= MAX_HOUSEHOLD_ATTACHMENTS || quota.bytes + ciphertext.length > MAX_HOUSEHOLD_ATTACHMENT_BYTES)
-        throw new DurableConflictError("attachment_limit", "This household reached its encrypted attachment limit.");
+      // Album photos (#673) and other attachments each have their own quota.
+      const album = isAlbumAttachmentId(attachmentId);
+      const quota = this.db.prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(size_bytes), 0) AS bytes FROM sync_attachments WHERE household_id = ? AND ${album ? "" : "NOT "}substr(attachment_id, 1, 4) = ?`).get(householdId, ALBUM_ATTACHMENT_PREFIX);
+      if (album ? quota.count >= MAX_HOUSEHOLD_ALBUM_ATTACHMENTS || quota.bytes + ciphertext.length > MAX_HOUSEHOLD_ALBUM_BYTES
+        : quota.count >= MAX_HOUSEHOLD_ATTACHMENTS || quota.bytes + ciphertext.length > MAX_HOUSEHOLD_ATTACHMENT_BYTES)
+        throw new DurableConflictError("attachment_limit", album ? "This household's family photos are full." : "This household reached its encrypted attachment limit.");
       this.db.prepare("INSERT INTO sync_attachments(household_id, attachment_id, key_epoch, ciphertext, size_bytes, digest, created_at, uploader_member_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(householdId, attachmentId, keyEpoch, ciphertext, ciphertext.length, digest, createdAt, isId(uploaderMemberId) ? uploaderMemberId : null);
       return { accepted: true };
     });
@@ -451,9 +458,13 @@ export const envelopeMethods = {
     return { ...row, ciphertext };
   },
 
-  listAttachments(householdId) {
+  /** The household's attachments; album photos (#673) only when `album`
+   * is true, so devices that don't know the album never see them. */
+  listAttachments(householdId, { album = false } = {}) {
     this.assertAvailable();
-    return this.db.prepare("SELECT attachment_id AS attachmentId, key_epoch AS keyEpoch, size_bytes AS size, digest FROM sync_attachments WHERE household_id = ? ORDER BY attachment_id LIMIT ?").all(householdId, MAX_HOUSEHOLD_ATTACHMENTS);
+    const rows = this.db.prepare("SELECT attachment_id AS attachmentId, key_epoch AS keyEpoch, size_bytes AS size, digest FROM sync_attachments WHERE household_id = ? AND NOT substr(attachment_id, 1, 4) = ? ORDER BY attachment_id LIMIT ?").all(householdId, ALBUM_ATTACHMENT_PREFIX, MAX_HOUSEHOLD_ATTACHMENTS);
+    if (!album) return rows;
+    return rows.concat(this.db.prepare("SELECT attachment_id AS attachmentId, key_epoch AS keyEpoch, size_bytes AS size, digest FROM sync_attachments WHERE household_id = ? AND substr(attachment_id, 1, 4) = ? ORDER BY attachment_id LIMIT ?").all(householdId, ALBUM_ATTACHMENT_PREFIX, MAX_HOUSEHOLD_ALBUM_ATTACHMENTS));
   },
 
   /** Whether the attachment exists and who uploaded it (null for rows stored before uploaders were recorded). */

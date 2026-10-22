@@ -44,6 +44,7 @@ export const FEATURES = Object.freeze([
   feature("calendar", 14, "Calendar", "Family events in each person's colour, by day, week or month, with countdowns on Today.", ["week/day", "week/month"]),
   // The chore chart (#676, ADR 0022 §6).
   feature("chores", 15, "Chore chart", "The children's jobs for the week with big tick boxes, their points and rewards.", ["chores"]),
+  feature("photos", 16, "Family photos", "A shared album of family photos, with a slideshow.", ["household/photos"]),
 ]);
 
 /** The parts that can't be switched off, named for the Features page. */
@@ -181,9 +182,9 @@ export function searchableHousehold(household, off) {
 
 /** Share sheet destinations (kin-share-sheet kinds) without switched-off
  * features: "chat" (Chat), "note" (Notes & reference), "journal",
- * "calendar" (an .ics file, #660). */
+ * "calendar" (an .ics file, #660), "photos" (Family photos, #673). */
 export function shareDestinations(allowed, off) {
-  const owners = { chat: "chat", note: "notes", journal: "journal", calendar: "calendar" };
+  const owners = { chat: "chat", note: "notes", journal: "journal", calendar: "calendar", photos: "photos" };
   return new Set([...allowed].filter((kind) => !owners[kind] || isFeatureOn(off, owners[kind])));
 }
 
@@ -193,12 +194,13 @@ export function availableCommands(commands, off) {
   return commands.filter((command) => !command.feature || isFeatureOn(off, command.feature));
 }
 
-/** Chat message actions without switched-off features: Talk later's and
- * "Save as a note". */
+/** Chat message actions without switched-off features: Talk later's,
+ * "Save as a note" and "Add to the family photos". */
 export function hiddenChatActions(off) {
   const hidden = [];
   if (!isFeatureOn(off, "talk")) hidden.push("talk-later", "talk-resolve", "talk-reopen");
   if (!isFeatureOn(off, "notes")) hidden.push("to-note");
+  if (!isFeatureOn(off, "photos")) hidden.push("to-photos");
   return hidden;
 }
 
