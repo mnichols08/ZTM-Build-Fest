@@ -430,10 +430,11 @@ export function executePlan(plan, { run = defaultRun, isAdmin = defaultIsAdmin, 
       }
       case "run": {
         if (step.unless && run(step.unless.command, step.unless.args).code === 0) break;
-        log(`Running ${step.command} ${step.args.join(" ")}`);
+        const line = [step.command, ...step.args].join(" ");
+        log(`Running ${line}`);
         const result = run(step.command, step.args);
         if (result.code !== 0 && !step.allowFailure)
-          throw new ServiceInstallError(`${step.command} ${step.args.join(" ")} failed${result.stderr || result.stdout ? `: ${(result.stderr || result.stdout).trim()}` : "."}`);
+          throw new ServiceInstallError(`${line} failed${result.stderr || result.stdout ? `: ${(result.stderr || result.stdout).trim()}` : "."}`);
         break;
       }
       default:

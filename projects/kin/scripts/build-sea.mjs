@@ -210,10 +210,11 @@ export async function measureStart(executable, { appCache, timeoutMs = 60_000 } 
   }
 }
 
-/** Builds every requested target; returns the build information. */
+/** Builds every requested target; returns the build information. `work`
+ * (default target/sea) holds the downloaded node binaries and the blob. */
 export async function buildSea(options, { log = (line) => console.log(line) } = {}) {
   const version = JSON.parse(readFileSync(join(PROJECT_ROOT, "package.json"), "utf8")).version;
-  const work = join(PROJECT_ROOT, "target", "sea");
+  const work = options.work ?? join(PROJECT_ROOT, "target", "sea");
   const files = collectAppFiles({ wasm: options.wasm });
   const host = hostTarget();
   const bases = new Map();
