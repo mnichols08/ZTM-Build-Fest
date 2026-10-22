@@ -3384,3 +3384,71 @@ taking turns and items with a responsibility.
 - **Help** on the chart says what it is, how to tick, set a reward and join;
   easy mode makes the tick boxes and names bigger still.
 - `scripts/chore-chart-regression.mjs` checks the flow in the browser.
+
+## The kitchen display (#669: #670, #671, #672)
+
+[ADR 0022](decisions/0022-family-hub.md) §4: a **device mode of an Adult's
+device**, not a new member kind. A tablet on the kitchen wall that always
+shows today, the week, chores, dinner and the shopping list, and that anyone
+can tap.
+
+- **Turning it on.** Household › Overview has **Kitchen display** for
+  Adults (Limited and Temporary members see that only an adult's device can
+  be one): what it shows, what it never shows, that Kin doesn't lock by
+  itself while it is a display and that leaving needs the adult's password
+  or passkey; **Dim the screen at night** From/Until (21:00–06:30 by
+  default; the same time twice means never); **Show family photos after this
+  many quiet minutes** (1–30, 5 by default); and **Use this device as a
+  kitchen display**. The choice is this device's (local storage, for this
+  household's vault only), so it comes back after a lock and unlock. A
+  household feature switch, **Kitchen display** (bit 17), hides the section;
+  switched off while a device is a display, that device locks.
+- **The shell.** Like Simple view's separate shell, the workspace is
+  replaced by `<kin-kitchen-display>`: no header, navigation, Quick add,
+  Search, palette, shortcuts, item details or shares, and every address
+  opens the display. At the top: the time (large), the date (the page's
+  heading), an offline line ("Offline. Showing what this display last
+  knew."), **Help** and **Leave display mode**.
+- **Panels are data** (`web/display/panels.js`: `id`, `component`, `region`,
+  `featureId`, `size`, `label`), the seam for future add-ons (#688). Each
+  panel stacks in its region; a switched-off feature takes its panel away
+  (and Chat or the Fridge without access); an empty region collapses:
+  - **week** — the week strip and agenda (`<kin-calendar views="day week"
+    compact readonly>`, synced calendars included); a day opens the Day view;
+  - **now** — today's events and countdown (`<kin-calendar-today>`),
+    today's meals (`<kin-tonight>`, without its link) and the newest four
+    chat messages, read-only (`<kin-display-chat>`; it never marks them
+    read);
+  - **chores** — each child's card in their colour (`<kin-chore-chart
+    size="display">`); ticking records it on this device with the points to
+    the chore's owner; no rewards or Join here;
+  - **lists** — the shopping list (`<kin-display-shopping>`): one big box to
+    add, big rows to tick off;
+  - **board** — the fridge.
+- **Layout.** Landscape (10"+ tablet sideways): the week across the top,
+  then today, the chart and the lists in three columns, the fridge below.
+  Portrait: the week, then today beside the lists, the chart, the fridge.
+  Below 720 px everything stacks. Text from 18 px (the time from 40 px) for
+  reading at 2–3 m; every control at least 64 px. Dark mode follows the
+  appearance; reduced motion, "more contrast" and forced colours are
+  honoured.
+- **Screen.** Screen Wake Lock keeps it on, asked for again when the page
+  shows. After the quiet minutes the **screensaver** shows: Family photos in
+  `<kin-photo-frame>` when the household has photos and the feature on,
+  otherwise a calm clock; a touch brings the panels back, and that touch
+  lands on the screensaver, never on a panel beneath. In the night hours the
+  screen **dims** (a dark cover, "Good night. Touch the screen to wake it.");
+  a touch wakes it until the next quiet spell. Offline it keeps showing the
+  last known state.
+- **Leaving.** **Leave display mode** opens a dialog: "Only the adult this
+  device belongs to can leave. Confirm with your passkey or your password"
+  (or, on a device set up before accounts, the backup key), with **Use my
+  passkey**, **Use my password** and **Stay in display mode**. The secret is
+  checked on the device; a wrong one says so and keeps the dialog; the right
+  one turns display mode off and Kin reloads into the full layout (still
+  unlocked, #351).
+- **Help** on the display says what it is, how to tick and wake it, and how
+  to leave; "Message an admin" and "Report a problem" aren't offered there.
+- `scripts/kitchen-display-regression.mjs` checks the flow in the browser at
+  tablet sizes; [KITCHEN-DISPLAY-CHECKLIST](KITCHEN-DISPLAY-CHECKLIST.md) is
+  the owner's check on a real wall tablet.

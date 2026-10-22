@@ -68,6 +68,7 @@ import { UndoController } from "./undo.js";
 import { ViewBuilder } from "./views.js";
 import { ReportController } from "./report.js";
 import { CalendarSyncController } from "./calendar-sync.js";
+import { DisplayController } from "./display.js";
 import { LocalReminders } from "../../reminders.js";
 import { EventStore } from "../../storage/event-store.js";
 import { readAutoLockPreference } from "./constants.js";
@@ -126,6 +127,8 @@ export function createAppContext(app) {
   ctx.report = new ReportController(ctx);
   // Outside calendars synced through the service (ADR 0022 §3, #668).
   ctx.calendarSync = new CalendarSyncController(ctx);
+  // Kitchen display mode (#669, ADR 0022 §4).
+  ctx.display = new DisplayController(ctx);
   return ctx;
 }
 
@@ -183,7 +186,7 @@ export function initializeAppState(app) {
       if (event.detail?.features) app.ctx.features.receive(event.detail.features, { householdId: event.detail.householdId ?? null });
       // Whether adults may join the chore chart (#676) rides along too.
       if (event.detail?.choreChart) app.ctx.chores.receiveSetting(event.detail.choreChart);
-      app.ctx.sitter.landTemporaryMember(); app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
+      app.ctx.sitter.landTemporaryMember(); app.ctx.display.statusChanged(); app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
     app.onSecurityChanged = () => app.ctx.status.renderOnboarding();
     app.autoLockMinutes = readAutoLockPreference();
     app.autoLockTimer = null;
@@ -196,6 +199,8 @@ export function initializeAppState(app) {
     app.onChangeResponsibility = (event) => app.ctx.items.handleChangeResponsibility(event);
     // Simple view (#346): Done and Undo on a card.
     app.onSimpleDone = (event) => void app.ctx.simple.markDone(event.detail);
+    // Kitchen display mode (#670): Household › Overview's setup.
+    app.onDisplayEnter = (event) => app.ctx.display.start(event.detail ?? {});
     // Item picture (#347), from the item details.
     app.onSetItemEmoji = (event) => void app.ctx.simple.setItemEmoji(event.detail);
     app.onReplenishStaple = (event) => app.ctx.items.handleReplenishStaple(event);
@@ -289,7 +294,7 @@ export function initializeAppState(app) {
       event.detail?.done?.(outcome);
     };
     app.onStartShopping = (event) => {
-      if (!app.simpleView && app.state && app.ctx.features.isOn("shopping-mode")) app.shoppingMode?.open({ opener: event.detail?.opener ?? null });
+      if (!app.simpleView && !app.displayMode && app.state && app.ctx.features.isOn("shopping-mode")) app.shoppingMode?.open({ opener: event.detail?.opener ?? null });
     };
     app.onRoutineIntent = (event) => app.ctx.routines.saveRoutine({ ...event.detail, type: event.type.slice(4) });
     app.onChangeRoutineSchedule = (event) => app.ctx.routines.changeRoutineSchedule(event.detail);

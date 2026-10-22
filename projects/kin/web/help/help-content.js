@@ -153,6 +153,7 @@ export const HELP_TOPICS = Object.freeze({
     [
       action("Choose a place below to open it.", ".hub-link"),
       action("Use Search to find anything.", ".more-search-link"),
+      action("Make a tablet a kitchen display for the wall.", ".display-setup-start", "display"),
     ], EVERYONE),
   "household/fridge": topic("Fridge",
     "A shared drawing board, like the door of a real fridge.",
@@ -212,6 +213,14 @@ export const HELP_TOPICS = Object.freeze({
       action("Read what each part does.", ".features-item"),
       action("A household admin switches parts on or off and saves.", ".features-switch"),
     ], "Everyone in your household sees the list. Only a household admin can change it."),
+  // Kitchen display mode (#670, ADR 0022 §4).
+  "dialog:kitchen-display": topic("Kitchen display",
+    "A screen for the kitchen wall: today, the week, chores, meals and shopping, for everyone to see and tap.",
+    [
+      action("Tick a child's job, or something on the shopping list, when it is done.", ".kitchen-display .chore-box, .display-check"),
+      action("Touch the screen to wake it at night or to put the photos away."),
+      action("To leave, press Leave display mode and confirm with your password or passkey.", ".display-leave"),
+    ], "Everyone in the kitchen. It never shows anyone's private things or admin settings."),
   "dialog:quick-add": topic("Quick add",
     "Write something down fast, from any page.",
     [

@@ -161,6 +161,8 @@ export class FeaturesController {
     this.ctx.sections?.publish?.();
     this.ctx.rotations?.publish?.({ force: true });
     this.ctx.simple?.updateAccess?.();
+    // The kitchen display's panels, or the display itself, leave (#670).
+    this.ctx.display?.featuresChanged?.();
     this.ctx.views?.placeTalks?.();
     if (this.app.state && this.app.vault && !this.app.vault.locked) {
       this.ctx.render.renderState();
@@ -179,7 +181,7 @@ export class FeaturesController {
     if (!note) return;
     const unseen = offFeatures(this.off & ~this.noticed);
     const text = turnedOffNote(unseen);
-    note.hidden = !text || this.app.simpleView === true;
+    note.hidden = !text || this.app.simpleView === true || this.app.displayMode === true;
     if (note.querySelector(".features-note-text")?.textContent !== text)
       note.querySelector(".features-note-text").textContent = text;
   }

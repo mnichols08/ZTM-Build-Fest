@@ -45,6 +45,9 @@ export const FEATURES = Object.freeze([
   // The chore chart (#676, ADR 0022 §6).
   feature("chores", 15, "Chore chart", "The children's jobs for the week with big tick boxes, their points and rewards.", ["chores"]),
   feature("photos", 16, "Family photos", "A shared album of family photos, with a slideshow.", ["household/photos"]),
+  // Kitchen display mode (#669, ADR 0022 §4): an adult's device as a wall
+  // screen.
+  feature("display", 17, "Kitchen display", "Use a tablet on the wall to show today, the week, chores, meals and shopping.", []),
 ]);
 
 /** The parts that can't be switched off, named for the Features page. */

@@ -63,6 +63,10 @@ const SHELL = [
   "/feedback/format.js", "/feedback/collect.js", "/feedback/channel.js", "/feedback/outbox.js", "/feedback/screenshot.js",
   // The family calendar (#660, ADR 0022 §2).
   "/styles/calendar.css", "/components/app/calendar.js",
+  // Kitchen display mode (#669, ADR 0022 §4).
+  "/styles/display.css", "/components/app/display.js", "/components/kin-kitchen-display.js",
+  ...["panels", "schedule", "idle", "leave"].map((name) => `/display/${name}.js`),
+  ...["kin-display-setup", "kin-display-shopping", "kin-display-chat", "leave-dialog"].map((name) => `/components/display/${name}.js`),
   ...["calendar-time", "calendar-layout", "member-colours", "repeat", "ics-import"].map((name) => `/calendar/${name}.js`),
   ...["event-chip", "kin-calendar", "kin-calendar-today", "kin-event-editor", "kin-member-colour", "kin-calendar-import"].map((name) => `/components/calendar/${name}.js`),
 ];

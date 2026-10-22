@@ -9,6 +9,24 @@ documentation only.
 
 ### Added
 
+- **Kitchen display mode** (#669: #670, #671, #672; epic #651,
+  [ADR 0022](docs/decisions/0022-family-hub.md) §4). An Adult turns a tablet
+  into a kitchen display from Household › Overview. It stays unlocked and
+  signed in as that adult (auto-lock doesn't apply; THREAT-MODEL says what
+  that means), replaces the workspace with a touch-first shell that locks
+  navigation, and shows today's events and countdown, the week strip, each
+  child's chore chart in their colour (ticks credit the chore's owner),
+  today's meals, the shopping list (add and tick), the fridge and recent chat
+  messages read-only; never the journal, Just for me, reminders, Search,
+  admin actions, Household settings or Chat composition. Panels are data
+  (`web/display/panels.js`) for future add-ons (#688). Screen Wake Lock,
+  dimming on a night schedule (21:00–06:30 by default), Family photos in
+  `<kin-photo-frame>` (or a clock) after a quiet spell, portrait and
+  landscape layouts with 64 px targets, and the last known state offline.
+  Leaving needs the adult's passkey or password, checked on the device.
+  Household feature "Kitchen display" (bit 17), Help, browser regression
+  `scripts/kitchen-display-regression.mjs` and a wall-tablet checklist.
+
 - **Family photos** (#673: #674, #675; epic #651,
   [ADR 0022](docs/decisions/0022-family-hub.md) §5). A shared, encrypted
   family album under Household › Family photos: add several photos at once

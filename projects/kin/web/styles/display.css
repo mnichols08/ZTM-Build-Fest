@@ -1,0 +1,195 @@
+/* Kitchen display mode (#669: #670, #671, ADR 0022 §4).
+   A wall tablet, read from two or three metres away and touched by wet or
+   small fingers: big type, nothing to press smaller than 64px, a grid of
+   regions (display/panels.js) laid out for portrait and landscape 10"+
+   tablets, a night dimmer and a screensaver. Uses app.css's tokens, so dark
+   mode follows the appearance; reduced motion, forced colours and "more
+   contrast" are honoured below. */
+
+:root { --display-tap: 64px; --display-gap: clamp(12px, 1.6vw, 24px); }
+
+/* A household that switched the Kitchen display off hides its setup. */
+:root[data-kin-features-off~="display"] [data-feature~="display"] { display: none !important; }
+
+/* ---- Household › Overview: the setup section ---------------------------- */
+.display-setup { margin-block-start: var(--space-4); }
+.display-setup h2 { margin-block-end: var(--space-1); }
+.display-setup-shows { margin-block: var(--space-2); padding-inline-start: 1.25rem; }
+.display-setup-shows li + li { margin-block-start: 4px; }
+.display-setup-lock { font-weight: 600; }
+.display-setup-form { display: grid; gap: var(--space-2); margin-block-start: var(--space-2); }
+.display-setup-form[hidden], .display-setup-unavailable[hidden] { display: none; }
+.display-setup-form fieldset { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--r-row); }
+.display-setup-form legend { padding-inline: 4px; font-weight: 600; }
+.display-setup-time, .display-setup-field { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin: 0; }
+.display-setup-form input, .display-setup-form select { min-block-size: var(--tap); font: inherit; }
+.display-setup-start { justify-self: start; min-block-size: var(--display-tap); padding-inline: 24px; font-size: 1.1rem; }
+
+/* ---- The shell: no header, no navigation, no Quick add ------------------- */
+:root[data-kin-display="on"] .site-header,
+:root[data-kin-display="on"] .primary-nav,
+:root[data-kin-display="on"] .report-button,
+:root[data-kin-display="on"] .fridge-kitchen-note,
+:root[data-kin-display="on"] .tonight-link,
+:root[data-kin-display="on"] .today-tip { display: none !important; }
+:root[data-kin-display="on"] .application-shell { display: block; max-width: none; padding: 0; margin: 0; }
+:root[data-kin-display="on"] main { max-width: none; margin: 0; padding: 0; }
+:root[data-kin-display="on"] body { overscroll-behavior: none; }
+.display-view { padding: 0; }
+.display-background[hidden] { display: none; }
+
+.kitchen-display {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--display-gap);
+  min-block-size: 100dvh;
+  padding: var(--display-gap);
+  box-sizing: border-box;
+  font-size: clamp(18px, 1.55vw, 24px);
+  line-height: 1.35;
+}
+
+.display-header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--display-gap); }
+.display-when { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--display-gap); flex: 1 1 auto; }
+.display-time { margin: 0; font-size: clamp(2.6rem, 5.5vw, 4.5rem); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.display-date { margin: 0; font-size: clamp(1.4rem, 2.6vw, 2.2rem); font-weight: 600; }
+.display-date:focus { outline: none; }
+.display-notice { margin: 0; padding: 8px 14px; border-radius: var(--r-control); background: var(--warm-soft); color: var(--ink); font-weight: 600; }
+.display-notice[hidden] { display: none; }
+.display-tools { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.kitchen-display button,
+.kitchen-display input[type="text"],
+.kitchen-display .cal-strip-day,
+.kitchen-display summary { min-block-size: var(--display-tap); min-inline-size: var(--display-tap); font-size: 1rem; }
+.display-tools button { padding-inline: 22px; border-radius: var(--r-control); }
+
+/* ---- Regions: landscape by default, portrait below ----------------------- */
+.display-grid {
+  flex: 1 1 auto;
+  display: grid;
+  gap: var(--display-gap);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr);
+  grid-template-areas:
+    "week week week"
+    "now chores lists"
+    "board board lists";
+  align-content: start;
+}
+.display-region { display: flex; flex-direction: column; gap: var(--display-gap); min-inline-size: 0; }
+.display-region[hidden] { display: none; }
+.display-region[data-region="week"] { grid-area: week; }
+.display-region[data-region="now"] { grid-area: now; }
+.display-region[data-region="chores"] { grid-area: chores; }
+.display-region[data-region="lists"] { grid-area: lists; }
+.display-region[data-region="board"] { grid-area: board; }
+/* Without the chart, the other columns share the row. */
+.display-grid:not([data-regions~="chores"]) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "week week" "now lists" "board lists"; }
+
+@media (orientation: portrait) {
+  .display-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "week week"
+      "now lists"
+      "chores chores"
+      "board board";
+  }
+  .display-grid:not([data-regions~="chores"]) { grid-template-areas: "week week" "now lists" "board board"; }
+}
+/* A narrow screen (a phone held as a display) stacks everything. */
+@media (max-width: 719px) {
+  .display-grid, .display-grid:not([data-regions~="chores"]) { grid-template-columns: minmax(0, 1fr); grid-template-areas: "week" "now" "chores" "lists" "board"; }
+}
+
+.display-panel {
+  min-inline-size: 0;
+  padding: var(--display-gap);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-sizing: border-box;
+}
+.display-panel[data-size="l"] { flex: 2 1 auto; }
+.display-panel[data-size="m"] { flex: 1 1 auto; }
+.display-panel[data-size="s"] { flex: 0 1 auto; }
+.display-panel h2, .display-panel-title { margin: 0 0 var(--space-2); font-size: 1.35em; line-height: 1.2; }
+.display-empty { margin: 0; color: var(--ink-muted); }
+.display-empty[hidden] { display: none; }
+.kitchen-display .section-hint { font-size: 0.9em; }
+
+/* The reused panels at display size. */
+.kitchen-display .today-section { margin: 0; padding: 0; border: 0; background: none; box-shadow: none; }
+.kitchen-display .tonight-line { font-size: 1.15em; font-weight: 600; }
+.kitchen-display .cal-toolbar { flex-wrap: wrap; gap: var(--space-2); }
+.kitchen-display .cal-period { font-size: 1.35em; }
+.kitchen-display .cal-strip { gap: 8px; }
+.kitchen-display .cal-strip-day { font-size: 1.05em; }
+.kitchen-display .cal-agenda { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: var(--space-2); }
+.kitchen-display .cal-agenda-day h3 { margin: 0 0 4px; font-size: 1em; }
+.kitchen-display .cal-event, .kitchen-display .cal-extra { font-size: 0.95em; }
+.kitchen-display .chore-cards { grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); }
+.kitchen-display .chore-tick { min-block-size: var(--display-tap); }
+.kitchen-display .chore-box { inline-size: 3rem; block-size: 3rem; }
+.kitchen-display kin-fridge { display: block; }
+
+/* The shopping list. */
+.display-shopping-add { display: flex; gap: var(--space-2); margin-block-end: var(--space-2); }
+.display-shopping-add input { flex: 1 1 auto; min-inline-size: 0; padding-inline: 14px; border: 2px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+.display-shopping-add button { padding-inline: 24px; }
+.display-shopping-list { margin: 0; padding: 0; list-style: none; }
+.display-shopping-list[hidden] { display: none; }
+.display-shopping-row + .display-shopping-row { border-block-start: 1px solid var(--line); }
+.display-shopping-row label { display: flex; align-items: center; gap: var(--space-2); min-block-size: var(--display-tap); cursor: pointer; }
+.display-check { flex: 0 0 auto; inline-size: 2.75rem; block-size: 2.75rem; margin: 0; accent-color: var(--accent); }
+.display-shopping-text { font-size: 1.1em; font-weight: 600; overflow-wrap: anywhere; }
+.display-shopping-row.is-done .display-shopping-text { color: var(--ink-muted); text-decoration: line-through; }
+
+/* Recent messages, read-only. */
+.display-chat-list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.display-chat-list[hidden] { display: none; }
+.display-chat-author { font-weight: 700; }
+.display-chat-time { color: var(--ink-muted); font-size: 0.85em; }
+.display-chat-text { margin: 2px 0 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ---- Night and the screensaver ------------------------------------------ */
+.display-dimmer, .display-screensaver {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.display-dimmer[hidden], .display-screensaver[hidden] { display: none; }
+.display-dimmer { background: rgb(0 0 0 / 0.88); color: #d9d2cc; transition: opacity 600ms ease; }
+.display-dimmer p { margin: 0; padding: var(--display-gap); font-size: 1.25rem; text-align: center; }
+.display-screensaver { background: #0f0f0f; color: #f6f1ec; }
+.display-screensaver kin-photo-frame { inline-size: 100%; block-size: 100%; }
+.display-clock { display: grid; justify-items: center; gap: var(--space-2); text-align: center; }
+.display-clock:focus { outline: none; }
+.display-clock-time { margin: 0; font-size: clamp(4rem, 14vw, 10rem); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.display-clock-date { margin: 0; font-size: clamp(1.5rem, 4vw, 3rem); }
+.display-clock-hint { margin: var(--space-3) 0 0; color: #c9bfb6; font-size: 1.1rem; }
+
+/* Leaving: the adult's passkey or password. */
+.display-leave-dialog { max-inline-size: min(34rem, calc(100vw - 32px)); }
+.display-leave-dialog .dialog-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.display-leave-dialog button, .display-leave-dialog input { min-block-size: var(--display-tap); font-size: 1.05rem; }
+.display-leave-dialog button { padding-inline: 20px; }
+.display-leave-form { display: grid; gap: var(--space-1); margin-block-start: var(--space-2); }
+.display-leave-form[hidden] { display: none; }
+.display-leave-message:empty { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .display-dimmer { transition: none; }
+}
+@media (prefers-contrast: more) {
+  .display-panel { border: 2px solid var(--ink); }
+  .display-empty, .display-chat-time { color: var(--ink); }
+  .display-dimmer { background: #000; color: #fff; }
+}
+@media (forced-colors: active) {
+  .display-panel, .display-notice { border: 1px solid CanvasText; }
+  .display-dimmer, .display-screensaver { background: Canvas; color: CanvasText; }
+}

@@ -16,7 +16,7 @@ export class ImportController {
 
   /** Opens "Bring a list into Kin", optionally with pasted text. */
   open({ text = "", classification = "need", opener = null } = {}) {
-    if (this.app.simpleView || !this.app.importer || !this.ctx.navigation.workspaceReady()) return false;
+    if (this.app.simpleView || this.app.displayMode || !this.app.importer || !this.ctx.navigation.workspaceReady()) return false;
     const existing = (this.app.state?.items ?? []).filter((item) => item.status === "active").map((item) => item.text);
     return this.app.importer.open({ text, classification, opener, existing, submit: (rows) => this.save(rows) });
   }

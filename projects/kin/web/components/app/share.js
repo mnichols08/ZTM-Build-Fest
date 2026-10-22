@@ -18,6 +18,11 @@ export class ShareController {
     const action = consumeLaunchAction();
     const shared = await consumeShare();
     if (!this.ctx.navigation.workspaceReady()) return;
+    // A kitchen display (#670) takes no shortcut or share.
+    if (this.app.displayMode) {
+      if (action || shared) this.ctx.status.setStatus("Sharing into Kin isn't available on a kitchen display.");
+      return;
+    }
     if (action) this.land(action);
     if (this.app.simpleView) {
       if (shared) this.ctx.status.setStatus("Sharing into Kin isn't available in Simple view.");
@@ -32,7 +37,7 @@ export class ShareController {
    * address was a shortcut action. */
   handleLaunchAddress() {
     if (!captureLaunchAction()) return false;
-    if (this.ctx.navigation.workspaceReady()) this.land(consumeLaunchAction());
+    if (this.ctx.navigation.workspaceReady() && !this.app.displayMode) this.land(consumeLaunchAction());
     return true;
   }
 
