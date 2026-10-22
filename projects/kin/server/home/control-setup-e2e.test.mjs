@@ -19,7 +19,7 @@ import { request as httpsRequest } from "node:https";
 import test from "node:test";
 import { keyHash } from "../../relay/ktun.mjs";
 import { homeSettingsPath } from "./settings.mjs";
-import { startHomeHarness } from "./test-harness.mjs";
+import { startHomeHarness } from "./home-test-utils.mjs";
 
 const TIMEOUT = { timeout: 90_000 };
 
@@ -97,7 +97,7 @@ test("setup on loopback: code, name check, terms, connect, restart, certificate,
   const taken = await post(first, "setup/check-name", { name: "taken" });
   assert.equal(taken.status, 200, JSON.stringify(taken.body));
   assert.deepEqual(taken.body, { name: "taken.home.test", freeName: true, answer: "taken" });
-  assert.equal((await post(first, "setup/check-name", { name: "www" })).body.error, "setup-name-reserved");
+  assert.equal((await post(first, "setup/check-name", { name: "www" })).body.answer, "not-allowed", "the relay's reserved names");
   assert.equal((await post(first, "setup/check-name", { name: "fern" })).body.answer, "available");
   assert.equal(relay.registry.keyOf("fern.home.test"), null, "checking claims nothing");
   assert.equal((await post(first, "setup/name", { name: "taken" })).body.error, "setup-name-taken");

@@ -398,7 +398,7 @@ test("a passing browser suite runs once (#328)", async () => {
   const { execute, calls } = scriptedExecute(() => ({ code: 0, stdout: "", stderr: "" }));
   const result = await runVerification({ browser: true, browserExecutable: process.execPath, execute, nodeVersion: "24.16.0", output: () => {} });
   assert.equal(result.code, 0);
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 6);
   assert.ok(calls.every(({ attempt }) => attempt === 1));
 });
 

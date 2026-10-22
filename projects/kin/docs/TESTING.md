@@ -653,7 +653,7 @@ levels, all on loopback with nothing reaching the internet:
   checks and chooses a name, agrees, connects, follows Kin's restart on the
   same port and the certificate to "Kin is ready" and the status page,
   checking labels, focus, live regions, 40 px targets and 320 px reflow on
-  each screen. It uses `server/home/test-harness.mjs`, the same harness as
+  each screen. It uses `server/home/home-test-utils.mjs`, the same harness as
   the end-to-end test.
 
 ```sh

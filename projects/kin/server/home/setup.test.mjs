@@ -135,9 +135,10 @@ test("names: a word becomes a free name; a dotted name outside the zone is an ow
   assert.deepEqual(interpretName(" Fern ", zone), { name: `fern.${zone}`, freeName: true });
   assert.deepEqual(interpretName(`fern.${zone}`, zone), { name: `fern.${zone}`, freeName: true });
   assert.deepEqual(interpretName("Kin.Smith.Family.", zone), { name: "kin.smith.family", freeName: false });
+  assert.deepEqual(interpretName("www", zone), { name: `www.${zone}`, freeName: true }, "reserved names are the relay's to refuse");
   for (const [input, code] of [
     ["", "setup-name-empty"], ["ab", "setup-name-length"], ["-fern", "setup-name-invalid"], ["fe--rn", "setup-name-invalid"],
-    ["www", "setup-name-reserved"], ["a.b.home.kin.journeytocode.io", "setup-name-invalid"], ["fern_home", "setup-name-invalid"],
+["a.b.home.kin.journeytocode.io", "setup-name-invalid"], ["fern_home", "setup-name-invalid"],
     [zone, "setup-name-invalid"],
   ]) assert.throws(() => interpretName(input, zone), (error) => error instanceof SetupError && error.code === code, input);
 });

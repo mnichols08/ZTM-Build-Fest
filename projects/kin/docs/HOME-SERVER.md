@@ -186,8 +186,14 @@ pages: no separate app, no terminal needed after the first start.
    it in plain words and, started in a terminal (not as a service), opens the
    browser at that address. `KIN_OPEN_BROWSER=0` stops that. On a computer
    without a screen, open the address from a browser on the same computer,
-   or read the code from the log (`journalctl -u kin`, the log file, or
-   `docker logs`).
+   or read the code from the log (`journalctl -u kin` or the log file).
+
+   **In the container** "this computer" is the container itself: its
+   loopback can't be reached from the host's browser, and the loopback
+   panel refuses anything else. Set the name and the agreement in the
+   environment instead (`KIN_HOME_NAME`, `KIN_HOME_ACME_TERMS_AGREED=true`;
+   [Settings](#settings)), then use the control panel at
+   `https://<name>/control/` as a household admin.
 2. **Enter the code.** It is 10 letters and digits without look-alikes, works
    once, for an hour, and five wrong tries destroy it. "Print a new code"
    prints another (at most one every 30 seconds). The browser then keeps a

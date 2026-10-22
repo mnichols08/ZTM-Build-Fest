@@ -13,11 +13,19 @@ import { createSocket } from "node:dgram";
 import { getServers } from "node:dns";
 import { randomInt } from "node:crypto";
 import { isIP } from "node:net";
-import { encodeName } from "../../relay/dns.mjs";
 
 const TYPE_HTTPS = 65;
 const CLASS_IN = 1;
 const KEY_ECH = 5;
+
+/** A host name in DNS wire form, uncompressed. (relay/dns.mjs has the same
+ * encoder, but only relay/ktun.mjs ships with the home server.) */
+function encodeName(name) {
+  const bytes = [];
+  for (const label of name.split(".")) bytes.push(label.length, ...Buffer.from(label, "latin1"));
+  bytes.push(0);
+  return Buffer.from(bytes);
+}
 
 /** The query bytes for `name`'s HTTPS records, recursion desired. */
 export function httpsQuery(name, id = randomInt(0x10000)) {

@@ -7,6 +7,9 @@
 //
 // - name: a free name `<label>.<zone>` or the household's own domain, with a
 //   live check through the relay (CONTROL CHECK) over a sign-in-only tunnel.
+//   The relay's reserved names (www, relay, admin …) are the relay's to
+//   refuse: its list lives in relay/registry.mjs, which a home server
+//   doesn't ship, and an operator can extend it.
 // - terms: the person agrees to the CA's terms (shown with a link). Until
 //   then no ACME account exists and no certificate is ordered. For an own
 //   domain the account is made here, because its CAA record names it.
@@ -27,7 +30,6 @@
 import { AcmeClient } from "../acme/client.mjs";
 import { CertificateStore } from "../acme/keys.mjs";
 import { createHttpsTransport } from "../acme/transport.mjs";
-import { freeLabelAllowed } from "../../relay/registry.mjs";
 import { Resolver } from "node:dns/promises";
 import { rawEd25519PublicKey } from "../../relay/ktun.mjs";
 import { checkDomainRecords, expectedRecords } from "./domain-records.mjs";
@@ -70,7 +72,6 @@ export function interpretName(input, zone) {
     if (label.includes(".")) throw new SetupError("setup-name-invalid", "A free name is one word, without dots.");
     if (!/^[a-z0-9](?:[a-z0-9-]{1,38})[a-z0-9]$/.test(label)) throw new SetupError("setup-name-length", "A free name is 3 to 40 letters, digits or hyphens, not starting or ending with a hyphen.");
     if (label[2] === "-" && label[3] === "-") throw new SetupError("setup-name-invalid", "A name can't have hyphens in both the third and fourth places.");
-    if (!freeLabelAllowed(label)) throw new SetupError("setup-name-reserved", "That name is kept for the relay itself.");
     return { name, freeName: true };
   }
   if (!name.includes(".")) throw new SetupError("setup-name-invalid", "An own domain has at least two parts, like kin.example.org.");

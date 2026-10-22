@@ -23,7 +23,7 @@ test("every code the home server sends has plain words of its own", TIMEOUT, () 
     ...TUNNEL_ERRORS, ...ACME_ERROR_CODES, ...DOMAIN_PROBLEMS,
     "tunnel-caa-name-taken", "tunnel-caa-name-not-allowed", "tunnel-caa-name-limit", "tunnel-caa-name-unknown", "tunnel-caa-suspended", "tunnel-caa-refused",
     "tunnel-not-ready", "tunnel-timeout", "tunnel-lost", "tunnel-stopped",
-    "setup-name-empty", "setup-name-invalid", "setup-name-length", "setup-name-reserved", "setup-name-taken", "setup-name-not-allowed",
+    "setup-name-empty", "setup-name-invalid", "setup-name-length", "setup-name-taken", "setup-name-not-allowed",
     "setup-name-limit", "setup-name-first", "setup-name-from-environment", "setup-finished", "setup-restarting", "setup-terms-required",
     "setup-records-not-needed", "setup-records-not-ready", "setup-not-connected",
     "control-code-wrong", "control-code-expired", "control-code-locked", "control-code-none", "control-code-malformed", "control-code-too-soon",

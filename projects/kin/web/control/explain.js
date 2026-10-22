@@ -97,7 +97,6 @@ const SETUP_ERRORS = {
   "setup-name-empty": "Type a name.",
   "setup-name-invalid": "Use only letters a–z, digits and hyphens, with dots only between parts of your own domain.",
   "setup-name-length": "A free name is 3 to 40 letters, digits or hyphens, and doesn't start or end with a hyphen.",
-  "setup-name-reserved": "That name is kept for the relay itself. Choose another.",
   "setup-name-taken": "That name belongs to another home server. Choose another.",
   "setup-name-not-allowed": "The relay doesn't allow that name. Choose another.",
   "setup-name-limit": "This server already has a free name, or the relay's limit was reached. Try again later.",

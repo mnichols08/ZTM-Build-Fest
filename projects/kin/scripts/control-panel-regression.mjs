@@ -1,6 +1,6 @@
 // The home server's setup page in a real browser (#719, #720): a Kin
 // server in home mode with its control panel, the real connection relay in
-// test mode and the in-process ACME server (server/home/test-harness.mjs).
+// test mode and the in-process ACME server (server/home/home-test-utils.mjs).
 // The browser opens the address the launcher prints, enters the printed
 // code, checks and chooses a name, agrees to the terms and connects; the
 // runner restarts Kin on the same port as the launcher would; the page
@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { startHomeHarness } from "../server/home/test-harness.mjs";
+import { startHomeHarness } from "../server/home/home-test-utils.mjs";
 
 const POLL_MS = 50;
 const STEP_TIMEOUT_MS = 30_000;

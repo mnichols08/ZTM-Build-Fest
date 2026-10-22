@@ -369,3 +369,15 @@ test("certificate alerts: expiring and transparency alerts push to admins, at mo
   assert.deepEqual(logged.map((event) => event.reason), ["expiring", "transparency-alert", "expiring"]);
   certificateAlerts(null)({ type: "expiring" });
 });
+
+test("home mode's modules import nothing from the relay but its shared codec (the executable ships only relay/ktun.mjs)", TIMEOUT, async () => {
+  const { readdirSync, readFileSync } = await import("node:fs");
+  const directory = new URL("./", import.meta.url);
+  const shipped = readdirSync(directory).filter((name) => name.endsWith(".mjs") && !name.endsWith(".test.mjs") && !name.endsWith("-test-utils.mjs"));
+  assert.ok(shipped.includes("control-panel.mjs"));
+  for (const name of shipped) {
+    const source = readFileSync(new URL(name, directory), "utf8");
+    for (const [, path] of source.matchAll(/(?:from|import\()\s*"(\.\.\/\.\.\/relay\/[^"]+)"/g))
+      assert.equal(path, "../../relay/ktun.mjs", `${name} imports ${path}`);
+  }
+});

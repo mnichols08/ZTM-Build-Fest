@@ -8,9 +8,11 @@
 #   docker run -d --name kin --restart unless-stopped -v kin-data:/data kin-home
 #
 # Kin listens on loopback inside the container and opens no public
-# listener: with a name set (KIN_HOME_NAME, or the setup page), it dials out
-# to the connection relay and phones reach it through that tunnel (#733).
-# docs/HOME-SERVER.md has the details.
+# listener: with a name set, it dials out to the connection relay and phones
+# reach it through that tunnel (#733). The setup page is on the container's
+# own loopback, out of the host browser's reach, so set KIN_HOME_NAME and
+# KIN_HOME_ACME_TERMS_AGREED=true here; household admins then use the control
+# panel at https://<name>/control/. docs/HOME-SERVER.md has the details.
 
 # Stage 1 builds the Rust domain engine to WebAssembly with the toolchain
 # pinned in rust-toolchain.toml.
