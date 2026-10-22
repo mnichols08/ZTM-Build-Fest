@@ -75,7 +75,7 @@ button.cal-event:hover:not(:disabled) { background: var(--surface-secondary); }
 /* The calendar: toolbar, row of days, body. */
 kin-calendar { display: grid; gap: 14px; min-width: 0; }
 .cal-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.cal-period { flex: 1 1 100%; margin: 0; font-size: 20px; }
+.cal-period { flex: 1 1 100%; margin: 0; font-family: var(--font-display); font-size: 22px; font-weight: 600; letter-spacing: -.015em; }
 .cal-moves { display: flex; flex-wrap: wrap; gap: 6px; }
 .cal-add { margin-inline-start: auto; }
 .cal-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
@@ -89,7 +89,7 @@ kin-calendar { display: grid; gap: 14px; min-width: 0; }
 .cal-empty { margin: 0; color: var(--ink-muted); }
 .cal-agenda, .cal-day { display: grid; gap: 14px; }
 .cal-agenda-day, .cal-allday, .cal-timed-list, .cal-timeline {
-  padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); min-width: 0;
+  padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); box-shadow: var(--shadow-1); min-width: 0;
 }
 .cal-agenda-day h3, .cal-allday h3, .cal-timed-list h3 { margin: 0 0 8px; font-size: 17px; }
 .cal-agenda-day.cal-is-today h3 { color: var(--accent); }
@@ -113,7 +113,7 @@ kin-calendar { display: grid; gap: 14px; min-width: 0; }
 /* Month grid. */
 .cal-month { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 2px; }
 .cal-month th { padding: 4px 0; color: var(--ink-muted); font-size: 12.5px; font-weight: 600; }
-.cal-month-cell { height: 64px; padding: 4px; vertical-align: top; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); cursor: pointer; overflow: hidden; }
+.cal-month-cell { height: 64px; padding: 4px; vertical-align: top; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); cursor: pointer; overflow: hidden; }
 .cal-month-cell:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
 .cal-month-cell.cal-other-month { background: transparent; color: var(--ink-muted); }
 .cal-month-cell.cal-is-today { border: 2px solid var(--accent); }

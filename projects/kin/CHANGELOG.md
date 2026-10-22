@@ -172,6 +172,27 @@ documentation only.
   not yet started by any server (home mode and the tunnel, #733, wire it).
   [HOME-CERTIFICATES](docs/HOME-CERTIFICATES.md), TEST-VECTORS.
 
+### Changed
+
+- **A design pass over the whole interface**, in the stylesheets only: no
+  feature, control, route, markup or persistent format changes. One token
+  layer (`web/styles/app.css`) now derives surfaces, shadows, focus rings and
+  radii from the household's palette, so custom colours carry through. The
+  header is lighter and translucent with pill controls; page titles, the
+  detail title and the lock screen use one display serif, and Today's date
+  reads as an eyebrow above the heading. The desktop rail has a wider pill
+  for the current page; a tablet held upright (720–959 px) gets a compact
+  rail of icons over their words; the phone's bottom bar is frosted with the
+  current icon in a pill. Cards, chips, rows, dialogs, toasts and the
+  Household hub (now with chevrons) share one elevation scale; every field
+  gets the same base style at the lowest specificity; Quick add, the command
+  palette and Help rise as bottom sheets on phones, as Report, Meals and the
+  fridge dialogs already did. The lock screen is a centred card with
+  full-width choices. Targets stay 48 px, focus rings 3 px, the 320 px,
+  forced-colours, reduced-motion, text-spacing and easy-mode contracts are
+  unchanged, and `--bg`, `--line-strong` and the other palette values are
+  as before.
+
 ## v1.6.0 — Kin for Everyone
 
 Released 2026-10-21 as `kin-v1.6.0`. This minor release makes Kin easier for
