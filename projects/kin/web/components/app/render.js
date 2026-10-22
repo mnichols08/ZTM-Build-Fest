@@ -100,8 +100,10 @@ export class RenderController {
       });
     }
     if (this.app.shoppingMode) this.app.shoppingMode.items = this.app.state.items;
-    // This week (#416) reads from Rust while it's showing.
+    // This week (#416) reads from Rust while it's showing; the calendar
+    // (#660) reads Today's events and the view on screen.
     void this.ctx.week?.refresh();
+    void this.ctx.calendar?.refresh();
     // The chore chart (#676) likewise.
     void this.ctx.chores?.refresh();
     // The sitter page (#441) while its editor or For you is showing.

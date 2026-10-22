@@ -1462,6 +1462,7 @@ kin-app > .security-panel {
     grid-template-areas:
       "intro intro"
       "capture tonight"
+      "capture events"
       "capture quick"
       "catchup routines"
       "onboarding updates"
@@ -1481,12 +1482,15 @@ kin-app > .security-panel {
   #today > kin-compose { grid-area: capture; min-width: 0; }
   #today > kin-catch-up { grid-area: catchup; min-width: 0; }
   #today > kin-tonight { grid-area: tonight; min-width: 0; }
+  /* Today's events and the next countdown (#663), under Tonight. */
+  #today > kin-calendar-today { grid-area: events; min-width: 0; }
   #today .tonight-section { margin-bottom: 16px; }
   #today > .onboarding-card { grid-area: onboarding; }
   #today.compact-onboarding {
     grid-template-areas:
       "intro intro"
       "capture tonight"
+      "capture events"
       "capture quick"
       "catchup routines"
       "summary summary"
@@ -2663,6 +2667,7 @@ kin-journal { display: grid; gap: var(--space-3); min-width: 0; }
 :root[data-kin-features-off~="sitter"] [data-feature~="sitter"],
 :root[data-kin-features-off~="journal"] [data-feature~="journal"],
 :root[data-kin-features-off~="mine"] [data-feature~="mine"],
+:root[data-kin-features-off~="calendar"] [data-feature~="calendar"],
 :root[data-kin-features-off~="chores"] [data-feature~="chores"] { display: none !important; }
 .features-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .features-note[hidden] { display: none; }

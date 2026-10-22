@@ -52,9 +52,9 @@ test("the service and the devices name the same feature bits", () => {
     { ...HOUSEHOLD_FEATURE_BITS },
     "web/features.js and pairing-service/shared.mjs agree",
   );
-  // Bits 0–13, and 15 for the chore chart (#676); 14 is the Calendar's.
-  assert.equal(KNOWN_FEATURE_MASK, 2 ** 14 - 1 + 2 ** 15);
-  assert.equal(new Set(Object.values(HOUSEHOLD_FEATURE_BITS)).size, 15, "no bit is used twice");
+  const count = Object.keys(HOUSEHOLD_FEATURE_BITS).length;
+  assert.equal(KNOWN_FEATURE_MASK, 2 ** count - 1);
+  assert.equal(new Set(Object.values(HOUSEHOLD_FEATURE_BITS)).size, count, "no bit is used twice");
 });
 
 bothStores("everything is on until an admin switches something off, and status says so to every member", (h) => {
@@ -89,7 +89,7 @@ bothStores("a change made from a stale revision is refused", (h) => {
 });
 
 bothStores("unknown bits and malformed sets are rejected", (h) => {
-  for (const off of [2 ** 14, KNOWN_FEATURE_MASK + 1, -1, 1.5, "3", null, 2 ** 40, Number.MAX_SAFE_INTEGER])
+  for (const off of [2 ** 30, KNOWN_FEATURE_MASK + 1, -1, 1.5, "3", null, 2 ** 40, Number.MAX_SAFE_INTEGER])
     assert.throws(() => h.pairing.setFeatures(h.admin.sessionToken, { off, expectedRevision: 0 }, h.admin.memberId), rejects("features_invalid", 400), `off ${off}`);
   for (const expectedRevision of [-1, "0", undefined, 0.5])
     assert.throws(() => h.pairing.setFeatures(h.admin.sessionToken, { off: 0, expectedRevision }, h.admin.memberId), rejects("features_invalid", 400));

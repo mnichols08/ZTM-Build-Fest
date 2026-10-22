@@ -41,6 +41,7 @@ import { shareRegressions } from "./share-regression.mjs";
 import { shortcutsBadgeRegressions } from "./shortcuts-badge-regression.mjs";
 import { shoppingModeRegressions } from "./shopping-mode-regression.mjs";
 import { weekRegressions } from "./week-regression.mjs";
+import { calendarRegressions } from "./calendar-regression.mjs";
 import { importRegressions } from "./import-regression.mjs";
 import { sitterRegressions } from "./sitter-regression.mjs";
 import { householdFeaturesRegressions } from "./household-features-regression.mjs";
@@ -1559,6 +1560,9 @@ try {
   console.log(await first.evaluate(`(${shareRegressions.toString()})()`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${weekRegressions.toString()})()`));
+  // The family calendar (#660): views, editing, Undo, colours, import.
+  await visit(first, "today");
+  console.log(await calendarRegressions(first, { until }));
   console.log(await first.evaluate(`(${sitterRegressions.toString()})()`));
   console.log(await first.evaluate(`(${rotationsRegressions.toString()})()`));
   // The chore chart (#676): a child's card, points, rewards, adults joining.

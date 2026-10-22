@@ -16,9 +16,8 @@
 //! - **Dated items, routines and meals**, as This week has them (week.rs):
 //!   active items planned on a date in the range, the routine occurrences
 //!   that open in it (none while the household mode pauses routines), and
-//!   the dinners planned in it. Meals carry a slot so breakfast, lunch and
-//!   snack (kinds 80–82, a later story) merge in `meals_in` without a format
-//!   change.
+//!   the meals planned in it: dinners and, since #660, breakfast, lunch and
+//!   snacks (kinds 80–81), each with its slot (no format change).
 //!
 //! Every event an occurrence names is included once, with its canonical
 //! kind-71 payload and its cancelled occurrences, so the host decodes events
@@ -123,7 +122,8 @@ pub struct RangeRoutine {
     pub owner: Option<ActorId>,
 }
 
-/// A meal's slot. Dinner (kinds 61–63) is the only one written today.
+/// A meal's slot in KCAL (its own codes; meals.rs numbers them in planner
+/// order). Dinner comes from kinds 61–63, the others from kinds 80–81.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 #[repr(u8)]
 pub enum MealSlot {
@@ -341,21 +341,46 @@ fn routines_in(
     )
 }
 
-/// The meals planned in the range, by date then slot. The merge point for
-/// meal slots: today only dinners (kinds 61–63) exist; breakfast, lunch and
-/// snack (kinds 80–82) join here, and KCAL already carries the slot.
+/// The meals planned in the range, by date then slot (breakfast, lunch,
+/// snack, dinner): dinners (kinds 61–63) with their cook, and breakfast,
+/// lunch and snacks (kinds 80–81, #679), each under its recipe's current
+/// name as the meals view shows it. KCAL has carried the slot from v1, so
+/// the other slots joined without a format change (#660).
 pub fn meals_in(state: &HouseholdState, from: CivilDate, to: CivilDate) -> Vec<RangeMeal> {
-    state
-        .meals
+    let meals = &state.meals;
+    let dinners = meals
         .dinners
         .range(from.encoded()..=to.encoded())
-        .filter_map(|(date, dinner)| {
+        .map(|(date, dinner)| (*date, MealSlot::Dinner, dinner));
+    let others = meals
+        .slot_meals
+        .range(
+            (from.encoded(), crate::meals::MealSlot::Breakfast)
+                ..=(to.encoded(), crate::meals::MealSlot::Snack),
+        )
+        .filter_map(|((date, slot), meal)| {
+            let slot = match slot {
+                crate::meals::MealSlot::Breakfast => MealSlot::Breakfast,
+                crate::meals::MealSlot::Lunch => MealSlot::Lunch,
+                crate::meals::MealSlot::Snack => MealSlot::Snack,
+                // Dinners live in `dinners`; kinds 80–81 never carry one.
+                crate::meals::MealSlot::Dinner => return None,
+            };
+            Some((*date, slot, meal))
+        });
+    let mut planned: Vec<(u32, MealSlot, &crate::meals::Dinner)> = dinners.chain(others).collect();
+    planned.sort_by_key(|(date, slot, _)| (*date, *slot));
+    planned
+        .into_iter()
+        .filter_map(|(date, slot, meal)| {
             Some(RangeMeal {
-                date: CivilDate::from_encoded(*date).ok()?,
-                slot: MealSlot::Dinner,
-                recipe_id: dinner.recipe_id.map(|id| id.0),
-                cook: state.meals.cooks.get(date).copied(),
-                name: state.meals.dinner_name(dinner),
+                date: CivilDate::from_encoded(date).ok()?,
+                slot,
+                recipe_id: meal.recipe_id.map(|id| id.0),
+                cook: (slot == MealSlot::Dinner)
+                    .then(|| meals.cooks.get(&date).copied())
+                    .flatten(),
+                name: meals.dinner_name(meal),
             })
         })
         .collect()
