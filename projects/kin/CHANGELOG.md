@@ -27,6 +27,24 @@ documentation only.
   `--supervise`, `--log-file` and `admin`. CI builds the executables and the
   image (`home-executables`, `home-container`). macOS (#747) and Windows
   (#748) executables follow; builds are unsigned for now.
+- **The connection relay** (#728: #729, #730, #731, #732; epic #708,
+  [ADR 0025](docs/decisions/0025-kin-at-home.md) §1–§4). A separate,
+  dependency-free Node program in `relay/` that lets phones reach a home
+  server without open ports: it reads only the server name from each TLS
+  ClientHello (16 KiB, 4 records, 10 seconds; fuzz-tested) and splices the
+  still-encrypted bytes into the home server's KTUN v1 tunnel, never ending
+  TLS for a home server's name. Home servers sign in with an Ed25519 home
+  key over a signature bound to the tunnel's TLS session (exporter); a
+  newer tunnel replaces an older one. Names are claimed with the key only
+  (no email address), bound to it forever, retired on release and never
+  reassigned except a name that got no certificate within 7 days; own
+  domains are proven by a `_kin-relay` TXT record. Per-name connection and
+  bandwidth limits, per-source claim and sign-in limits, an authoritative
+  DNS server for the zone (no HTTPS records, so no ECH), port 80
+  redirects, a SQLite registry with 30 days of hourly counters, and client
+  addresses in memory only. KTUN vectors are TEST-VECTORS 186–193; the
+  deploy and operator guide is `relay/README.md`. The home server's side
+  of the tunnel is #733.
 
 - **Kitchen display mode** (#669: #670, #671, #672; epic #651,
   [ADR 0022](docs/decisions/0022-family-hub.md) §4). An Adult turns a tablet

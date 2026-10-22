@@ -20,8 +20,8 @@ function scripts(directory) {
   return found;
 }
 
-test("every web and server script parses", () => {
-  const files = [...scripts(join(root, "web")), ...scripts(join(root, "server"))];
+test("every web, server and relay script parses", () => {
+  const files = [...scripts(join(root, "web")), ...scripts(join(root, "server")), ...scripts(join(root, "relay"))];
   assert.ok(files.length > 100, "found the scripts");
   const failures = [];
   for (const file of files) {
