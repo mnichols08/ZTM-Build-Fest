@@ -2,6 +2,8 @@
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { routeHash } from "../../../routes.js";
 import { SITTER_PAGE_FORBIDDEN, canChangeSitterPage } from "../../../wasm/kin-sitter.js";
+import { ALBUM_REMOVE_FORBIDDEN, canRemoveAlbumPhoto } from "../../../wasm/kin-album.js";
+import { CHORES_FORBIDDEN, JOIN_FORBIDDEN } from "../../../wasm/kin-chores.js";
 
 export class AppendCommands {
   constructor(ctx) {
@@ -17,8 +19,31 @@ export class AppendCommands {
     if (command?.type === "set-sitter-page" &&
       !canChangeSitterPage(this.app.householdStatus?.memberKind ?? (this.app.hasLocalSyncBinding ? null : "adult")))
       throw Object.assign(new Error(SITTER_PAGE_FORBIDDEN), { code: "forbidden", userMessage: SITTER_PAGE_FORBIDDEN });
+    // The chore chart (#676): points and rewards are for Adults, joining for
+    // an Adult while a household admin allows adults. Rust can't tell.
+    if (typeof command?.type === "string" && command.type.startsWith("set-chore") && this.ctx.chores && !this.ctx.chores.allows(command.type)) {
+      const message = command.type === "set-chore-chart-joined" ? JOIN_FORBIDDEN : CHORES_FORBIDDEN;
+      throw Object.assign(new Error(message), { code: "forbidden", userMessage: message });
+    }
     const session = this.ctx.session.captureSession();
     this.ctx.session.assertCurrentSession(session);
+    // A family photo (#673, ADR 0022 §5) is removed by whoever added it or a
+    // household admin. Rust knows who added it but not who is an admin, so
+    // the album is read here first; a device with no server membership is
+    // its own admin.
+    if (command?.type === "remove-album-photo") {
+      const album = await session.store.album();
+      this.ctx.session.assertCurrentSession(session);
+      const photo = album.photos.find((entry) => entry.photoId === command.photoId) ?? null;
+      const allowed = canRemoveAlbumPhoto(photo, {
+        memberId: this.app.syncCoordinator?.identity?.memberId ?? null,
+        admin: this.app.householdAdmin === true,
+        local: !this.app.hasLocalSyncBinding,
+      });
+      // A photo that's already gone is Rust's to refuse (code 4).
+      if (photo && !allowed)
+        throw Object.assign(new Error(ALBUM_REMOVE_FORBIDDEN), { code: "forbidden", userMessage: ALBUM_REMOVE_FORBIDDEN });
+    }
     // A new change replaces the undo toast (#315); undo itself keeps it.
     this.ctx.undo?.beforeChange();
     const result = await session.store.append(command, session.engine);

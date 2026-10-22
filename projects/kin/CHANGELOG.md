@@ -7,6 +7,146 @@ documentation only.
 
 ## Unreleased
 
+### Added
+
+- **Kitchen display mode** (#669: #670, #671, #672; epic #651,
+  [ADR 0022](docs/decisions/0022-family-hub.md) §4). An Adult turns a tablet
+  into a kitchen display from Household › Overview. It stays unlocked and
+  signed in as that adult (auto-lock doesn't apply; THREAT-MODEL says what
+  that means), replaces the workspace with a touch-first shell that locks
+  navigation, and shows today's events and countdown, the week strip, each
+  child's chore chart in their colour (ticks credit the chore's owner),
+  today's meals, the shopping list (add and tick), the fridge and recent chat
+  messages read-only; never the journal, Just for me, reminders, Search,
+  admin actions, Household settings or Chat composition. Panels are data
+  (`web/display/panels.js`) for future add-ons (#688). Screen Wake Lock,
+  dimming on a night schedule (21:00–06:30 by default), Family photos in
+  `<kin-photo-frame>` (or a clock) after a quiet spell, portrait and
+  landscape layouts with 64 px targets, and the last known state offline.
+  Leaving needs the adult's passkey or password, checked on the device.
+  Household feature "Kitchen display" (bit 17), Help, browser regression
+  `scripts/kitchen-display-regression.mjs` and a wall-tablet checklist.
+
+- **Family photos** (#673: #674, #675; epic #651,
+  [ADR 0022](docs/decisions/0022-family-hub.md) §5). A shared, encrypted
+  family album under Household › Family photos: add several photos at once
+  with captions, from the page, the share sheet ("Add to family photos") or
+  a chat photo ("Add to the family photos"); a grid of thumbnails, a viewer,
+  and removal by whoever added a photo or a household admin, with Undo. A
+  Slideshow shows the album in the new reusable `<kin-photo-frame>`, which
+  crossfades (not with reduced motion), shows captions and who added each
+  photo, pauses while hidden and returns on a tap; the kitchen display will
+  use it as its screensaver. Event kinds 75 `ALBUM_PHOTO_ADDED` and 76
+  `ALBUM_PHOTO_REMOVED`, the WASM export `kin_album` (KALB v1), at most 500
+  photos. Images are household attachment blobs, made screen-sized and
+  encrypted on the device, kept in their own device database and counted in
+  their own service quota. Household feature "Family photos" (bit 16), Help
+  and easy mode. Browser regression `scripts/photo-album-regression.mjs`.
+- **Calendar views in each person's colour** (#660: #661, #662, #663, #664;
+  epic #651, [ADR 0022](docs/decisions/0022-family-hub.md) §1–2). This week
+  grows into the **Calendar** with **Week**, **Day** and **Month** views
+  (`#week`, `#week/day`, `#week/month`), still reached from Today, which
+  stays marked. Events show in each attendee's colour with their names,
+  in the viewer's own time (`Intl`; floating times as written), beside
+  meals, planned items and routines; an all-day row, a day timeline with
+  overlaps side by side, a month grid, and keyboard navigation between days,
+  weeks and months. **Add event** (what, when, who; place, notes, repeats
+  and a countdown under More details), change this one or all, cancel this
+  one or all, Undo and Redo, and a calm message when the event changed on
+  another device. **My calendar colour** (twelve colours, or Kin's choice
+  by join order) under Identity & appearance. **Today** shows today's
+  events and the next countdown. **Import a calendar file** (and **Add to
+  the calendar** from the share sheet for `.ics` files) previews the count,
+  then saves; importing again updates by source UID. Household feature
+  **Calendar** (bit 14); This week (bit 5) stays the Week view's switch.
+  `kin_calendar_range` now lists breakfast, lunch and snacks beside dinners
+  (no format change). Components `<kin-calendar>`, `<kin-calendar-today>`,
+  `<kin-event-editor>`, `<kin-member-colour>`, `<kin-calendar-import>`.
+  Synced outside calendars (#668, `web/calendar/external.js`) show
+  read-only with their source label in every view and on Today, and their
+  settings follow the Calendar switch. Unit tests for zones (DST), ranges, layout, colours,
+  repeats, import plans and undo; browser regression
+  `scripts/calendar-regression.mjs`. UX §8.16, Help.
+
+- **The chore chart** (#676: #677, #678; epic #651,
+  [ADR 0022](docs/decisions/0022-family-hub.md) §6). From Today (and Simple
+  view for children): a card per child in their colour with today's jobs —
+  their routines (whose turn it is) and items — as big tick boxes with
+  pictures, the rest of the week, points this week and reward progress ("12
+  of 20 for Movie night"). Points go to the chore's owner, never to whoever
+  ticked it, and start again every Monday; children see each other's
+  totals. Parents set points per routine (0–10) on Routines and a reward per
+  child on the chart. Adults join only when a household admin allows it
+  (Household › Features, fresh confirmation) and then only if they choose
+  to; they can leave at any time. No streaks, no adult-only leaderboard, no
+  notifications about points. Event kinds 77 `CHORE_POINTS_SET`, 78
+  `CHORE_REWARD_SET`, 79 `CHORE_CHART_JOINED`; WASM export `kin_chore_chart`
+  (KCCQ → KCCD); **server schema 28** (`households.chore_adults`,
+  `chore_adults_revision`) with routes `POST
+  /api/household/chore-chart/options` and `/finish` and `choreChart` in the
+  sync status; household feature bit 15 "Chore chart". The element
+  `<kin-chore-chart>` is self-contained for the kitchen display.
+  PRODUCT-BOUNDARIES now allows weekly points for the children's chart.
+  EVENTS, ABI, TEST-VECTORS 085–089, SYNC, UX, V1.0-COMPATIBILITY.
+- **Family calendar events in the engine** (#656: #657, #658, #659; epic
+  #651, [ADR 0022](docs/decisions/0022-family-hub.md) §1). Event kinds 71
+  `CALENDAR_EVENT_SAVED`, 72 `CALENDAR_EVENT_CANCELLED`, 73
+  `CALENDAR_EVENT_RESTORED` and 74 `MEMBER_COLOUR_SET` (KCMD actions 71–74):
+  all-day or timed events with a local time and an IANA zone, a place,
+  notes, attendees, a countdown flag and a source UID; repeats (daily,
+  weekly on chosen days, monthly or yearly by day or nth weekday, with an
+  interval and a count or end date) expanded in local civil time in Rust;
+  cancelling and restoring one occurrence or the series; a changed
+  occurrence as a linked standalone event; each member's palette colour.
+  `kin_calendar_range` (KCAQ → KCAL) reads up to 400 days, merging event
+  occurrences with dated items, routines and meals, the next countdown and
+  member colours. JavaScript: `web/wasm/kin-calendar.js`,
+  `engine.calendarRange`, the four commands and the store's
+  `calendarRange`, `memberColours` and `parseICalendar`. No views yet.
+- **iCalendar import in the engine** (#666; ADR 0022 §3). A native RFC 5545
+  subset parser (`rust/src/ical.rs`, `kin_ical_parse` → KICS) for Google,
+  Apple and Outlook exports: unfolding, escapes, DATE and DATE-TIME with
+  TZID (IANA, Windows names), `Z` or floating times, DURATION, RRULE mapped
+  onto Kin's repeats (the first occurrence only, flagged, when it can't
+  be), EXDATE, RECURRENCE-ID overrides and STATUS:CANCELLED; at most 2 MB
+  and 5,000 events. `engine.parseICalendar(bytes)`.
+- **Google, Apple and Outlook calendars, synced** (#665: #667, #668; epic
+  #651, [ADR 0022](docs/decisions/0022-family-hub.md) §3). Under Household ›
+  Identity & appearance › Outside calendars, an Adult pastes a calendar's
+  private iCal link (`https://` or `webcal://`), chooses **Just me** or
+  **Everyone in the household**, reads "Your Kin server will download this
+  calendar about every 30 minutes and can read it while it does." and turns
+  sync on. The list shows each calendar, who sees it, when it was updated
+  or why it couldn't be, and what's next; its owner or a household admin
+  turns it off for everyone. The service keeps only the link, owner,
+  audience, last fetch's status and ETag (server schema 29,
+  `calendar_subscriptions`), holds a downloaded feed in memory for at most
+  30 minutes, and fetches it with Node's own `https` and `dns` behind SSRF
+  protections (public unicast IPv4 and IPv6 only, re-checked on every
+  redirect, at most 5 redirects, port 443, 2 MB, 15 seconds, backoff on
+  errors; 10 calendars per member, 30 per household). Devices in the
+  audience fetch it through an authenticated route, parse it with
+  `parseICalendar`, keep it sealed in `kin-calendar-feeds:<household>`,
+  expand its repeats on the device and hand read-only occurrences labelled
+  "From Google" to the calendar views (`web/calendar/external.js`). They
+  never enter the household history.
+- **Fuller meal plans** (#679: #680, #681; epic #651,
+  [ADR 0022](docs/decisions/0022-family-hub.md) §7). Meals plans breakfast,
+  lunch, dinner and a snack for each day. Each day card has a row per meal,
+  and **Show** folds meals away (on phones, unplanned ones start folded).
+  **Same as last week** copies last week's meals into the empty slots.
+  **Add this week's ingredients to Shopping** covers every meal and never
+  duplicates. A star marks a favourite recipe, and **Favourites** filters the
+  list. Favourites lead the planning dialog. Today lists today's other meals
+  under Tonight, and This week lists every meal on its day. New household
+  event kinds 80 `MEAL_SET`, 81 `MEAL_CLEARED` and 82 `RECIPE_FAVOURITE_SET`.
+  Dinner keeps kinds 61–63, so planned dinners stay valid. New WASM export
+  `kin_meal_plans` (KMLS v2) beside an unchanged `kin_meals` (KMLS v1), and
+  KMPQ v2 (a slot's meal or a week). Older devices pause sync with "update
+  Kin" when they meet the new kinds. Rust tests, test vectors 180–185 and
+  browser regression `scripts/meal-plan-regression.mjs`. UX §8.11, EVENTS,
+  ABI, V1.0-COMPATIBILITY.
+
 ## v1.6.0 — Kin for Everyone
 
 Released 2026-10-21 as `kin-v1.6.0`. This minor release makes Kin easier for

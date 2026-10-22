@@ -12,6 +12,20 @@ them, and the "start fresh" rule for v0.x data are in
 reference; a CI test keeps it in step with the code. The table below is
 historical.
 
+**v2.0.0 (the family hub, [ADR 0022](decisions/0022-family-hub.md)):** a
+product milestone, not a format break. The major number marks what changes
+for people (the Calendar with Today and This week reworked, the kitchen
+display, the chore chart, the family album and fuller meal plans). Every
+format change is additive: event kinds 71–82 (schema 1, replay protocol
+still 24), new read exports beside the existing ones, server schema 29
+(28 for the chore chart's adult setting, 29 for calendar subscriptions) with
+forward migrations, new device databases `kin-album:<household>` and
+`kin-calendar-feeds:<household>` beside the frozen event and key databases,
+and household feature bits 14–17. KINS, the sync envelope, the key database
+and export package formats are unchanged. Devices on v1.x pause household
+sync on the new kinds ("update Kin") and keep their data. The rows are in
+[V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md#additions-since-v10).
+
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
@@ -19,7 +33,7 @@ Kin version numbers describe product releases; they do not version every persist
 | Version axis | v1.6.0 | Governs |
 | --- | --- | --- |
 | Application | `1.6.0` | The product release; the service-worker cache name advances with the release |
-| Server database schema | `27` (`PRAGMA user_version`; migrates 9→10→11→…→27, adding chat relay, content blobs, delete-for-me, receipts, access policy and the dedicated chat key in 12–17, the fridge relay and its access policy in 18–19, Simple view in 20, account vaults in 21, the private relay in 22, usernames in 23, private blobs in 24, household features in 25, reports to the team in 26 and prepared invitations in 27) | SQLite identity, authorization, recorded founder/admin authority, opaque relay, coordination, lifecycle, encrypted settings/attachment records and their uploaders, member kind, Temporary expiry, authoritative membership status, installed-app identity, and push subscriptions |
+| Server database schema | `28` (`PRAGMA user_version`; migrates 9→10→11→…→28, adding chat relay, content blobs, delete-for-me, receipts, access policy and the dedicated chat key in 12–17, the fridge relay and its access policy in 18–19, Simple view in 20, account vaults in 21, the private relay in 22, usernames in 23, private blobs in 24, household features in 25, reports to the team in 26, prepared invitations in 27 and the chore chart's adult setting in 28) | SQLite identity, authorization, recorded founder/admin authority, opaque relay, coordination, lifecycle, encrypted settings/attachment records and their uploaders, member kind, Temporary expiry, authoritative membership status, installed-app identity, and push subscriptions |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v24; writes v24 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |

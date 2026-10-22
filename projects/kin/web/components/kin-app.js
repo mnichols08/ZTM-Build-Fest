@@ -7,8 +7,16 @@ import "./kin-chat-share.js";
 import "./kin-share-sheet.js";
 import "./kin-shopping-mode.js";
 import "./kin-week.js";
+import "./calendar/kin-calendar.js";
+import "./calendar/kin-calendar-today.js";
+import "./calendar/kin-event-editor.js";
+import "./calendar/kin-member-colour.js";
+import "./calendar/kin-calendar-import.js";
+import "./kin-chore-chart.js";
+import "./kin-chore-adults.js";
 import "./kin-just-for-me.js";
 import "./kin-sitter-editor.js";
+import "./kin-album.js";
 import "./kin-journal.js";
 import "./kin-import.js";
 import "./kin-command-palette.js";
@@ -35,10 +43,15 @@ import "./kin-app-badge.js";
 import "./kin-security.js";
 import "./kin-appearance.js";
 import "./kin-personal-settings.js";
+import "./kin-calendar-subscriptions.js";
 import "./kin-help.js";
 import "./kin-household-defaults.js";
 import "./kin-report.js";
 import "./kin-household-features.js";
+import "./kin-kitchen-display.js";
+import "./display/kin-display-setup.js";
+import "./display/kin-display-shopping.js";
+import "./display/kin-display-chat.js";
 import { createAppContext, initializeAppState } from "./app/context.js";
 import { captureInvitationCode } from "../pairing-link.js";
 import { takeSignInLink } from "../device-link.js";
@@ -79,8 +92,8 @@ const ELEMENT_EVENTS = [
   ["kin:pick-attachment", "onPickAttachment"], ["kin:open-attachment", "onOpenAttachment"],
   ["kin:view-attachment", "onViewAttachment"], ["kin:remove-attachment", "onRemoveAttachment"],
   ["kin:household-status", "onHouseholdStatus"], ["kin:security-changed", "onSecurityChanged"],
-  ["kin:retry-attachments", "onRetryAttachments"], ["kin:change-responsibility", "onChangeResponsibility"], ["kin:simple-done", "onSimpleDone"], ["kin:set-item-emoji", "onSetItemEmoji"],
-  ["kin:replenish-staple", "onReplenishStaple"], ["kin:complete-item", "onCompleteItem"], ["kin:start-shopping", "onStartShopping"], ["kin:save-sitter-page", "onSaveSitterPage"], ["kin:set-routine-rotation", "onSetRoutineRotation"], ["kin:set-routine-turn", "onSetRoutineTurn"], ["kin:set-item-section", "onSetItemSection"], ["kin:save-shopping-sections", "onSaveShoppingSections"], ["kin:import-list", "onImportList"],
+  ["kin:retry-attachments", "onRetryAttachments"], ["kin:change-responsibility", "onChangeResponsibility"], ["kin:simple-done", "onSimpleDone"], ["kin:display-enter", "onDisplayEnter"], ["kin:set-item-emoji", "onSetItemEmoji"],
+  ["kin:replenish-staple", "onReplenishStaple"], ["kin:complete-item", "onCompleteItem"], ["kin:start-shopping", "onStartShopping"], ["kin:save-sitter-page", "onSaveSitterPage"], ["kin:set-routine-rotation", "onSetRoutineRotation"], ["kin:set-routine-turn", "onSetRoutineTurn"], ["kin:set-chore-points", "onSetChorePoints"], ["kin:set-item-section", "onSetItemSection"], ["kin:save-shopping-sections", "onSaveShoppingSections"], ["kin:import-list", "onImportList"],
   ["kin:reopen-item", "onReopenItem"], ["kin:archive-item", "onArchiveItem"],
   ["kin:toggle-private-item", "onTogglePrivateItem"], ["kin:make-item-private", "onMakeItemPrivate"],
   ["kin:add-item-step", "onAddItemStep"], ["kin:complete-item-step", "onCompleteItemStep"],
@@ -107,6 +120,12 @@ const ELEMENT_EVENTS = [
   ["kin:publish-install-identity", "onPublishInstallIdentity"], ["kin:withdraw-install-identity", "onWithdrawInstallIdentity"],
   ["keydown", "onDetailKeydown"], ["kin:change-routine-schedule", "onChangeRoutineSchedule"],
   ["kin:open-routine-schedule", "onOpenRoutineSchedule"],
+  // The family calendar (#660).
+  ["kin:calendar-focus", "onCalendarFocus"], ["kin:calendar-open-event", "onCalendarOpenEvent"],
+  ["kin:calendar-new-event", "onCalendarNewEvent"], ["kin:calendar-import", "onCalendarImport"],
+  ["kin:calendar-save", "onCalendarSave"], ["kin:calendar-cancel", "onCalendarCancel"],
+  ["kin:set-member-colour", "onSetMemberColour"], ["kin:calendar-import-file", "onCalendarImportFile"],
+  ["kin:calendar-import-confirm", "onCalendarImportConfirm"],
 ];
 // Document listeners: activity resets auto-lock; shortcuts; visibility wake.
 const DOCUMENT_EVENTS = [

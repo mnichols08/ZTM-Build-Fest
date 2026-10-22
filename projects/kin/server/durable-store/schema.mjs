@@ -15,6 +15,7 @@ import {
 } from "./shared.mjs";
 import { FEEDBACK_TABLES_SQL } from "./feedback.mjs";
 import { PREPARED_INVITATIONS_SQL } from "./prepared-invitations.mjs";
+import { CALENDAR_SUBSCRIPTIONS_SQL } from "./calendar-subscriptions.mjs";
 
 export const schemaMethods = {
   migrate(migrationFault) {
@@ -1010,6 +1011,45 @@ export const schemaMethods = {
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;
         throw new DurableStoreError("Kin could not complete the prepared invitation migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 27) {
+      try {
+        this.transaction(() => {
+          // ADR 0022 §6 (#676): whether a household admin allows adults on
+          // the children's chore chart, and its revision. Plaintext
+          // authorization metadata like household features; off by default.
+          // Each adult still joins themselves, in the household history.
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN chore_adults INTEGER NOT NULL DEFAULT 0
+              CHECK (chore_adults IN (0, 1));
+            ALTER TABLE households ADD COLUMN chore_adults_revision INTEGER NOT NULL DEFAULT 0
+              CHECK (chore_adults_revision >= 0);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(28, Date.now());
+          sqlitePragma(this.db, "user_version = 28");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the chore chart migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 28) {
+      try {
+        this.transaction(() => {
+          // ADR 0022 §3 (#667): outside calendars members sync
+          // (durable-store/calendar-subscriptions.mjs). The link, owner,
+          // audience and last fetch's status and ETag; never the calendar's
+          // contents, which the service holds only in memory.
+          this.db.exec(CALENDAR_SUBSCRIPTIONS_SQL);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(29, Date.now());
+          sqlitePragma(this.db, "user_version = 29");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the calendar subscription migration.", { cause: error });
       }
     }
   },

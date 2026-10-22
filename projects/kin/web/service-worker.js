@@ -18,7 +18,7 @@ const SHELL = [
   ...["add-shopping", "add-task", "new-journal-entry", "week", "shopping", "chat", "today"].flatMap((name) => [96, 192].map((size) => `/icons/shortcut-${name}-${size}.png`)),
   // The start-up guard index.html runs before the app's modules (#594).
   "/boot-guard.js",
-  "/browser-time.js", "/sitter-view.js", "/platform.js", "/pairing-link.js", "/share-target.js", "/app-badge.js", "/device-link.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin-board.js", "/wasm/kin-meals.js", "/wasm/kin-simple.js", "/wasm/kin-sections.js", "/wasm/kin-rotations.js", "/wasm/kin-sitter.js", "/wasm/kin-week.js", "/wasm/kin_engine.wasm", "/wasm/kin-qr.js", "/wasm/kin-private.js", "/wasm/kin-prefs.js",
+  "/browser-time.js", "/sitter-view.js", "/platform.js", "/pairing-link.js", "/share-target.js", "/app-badge.js", "/device-link.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin-board.js", "/wasm/kin-meals.js", "/wasm/kin-simple.js", "/wasm/kin-sections.js", "/wasm/kin-rotations.js", "/wasm/kin-sitter.js", "/wasm/kin-calendar.js", "/wasm/kin-week.js", "/wasm/kin_engine.wasm", "/wasm/kin-qr.js", "/wasm/kin-private.js", "/wasm/kin-prefs.js",
   "/wasm/wire.js", "/wasm/history-mirror.js", "/wasm/projection-decode.js", "/wasm/projection/reader.js", "/wasm/projection/items.js",
   "/wasm/projection/conversations.js", "/wasm/projection/routines.js", "/wasm/projection/records.js",
   "/routes.js", "/today-view.js", "/reminder-time.js", "/capture-plan.js", "/keyboard-commands.js", "/bulk-actions.js", "/undo.js", "/import/list-import.js", "/wake-lock.js", "/recurrence.js",
@@ -30,8 +30,15 @@ const SHELL = [
   // Set up Kin for someone (#613, #615).
   "/security/prepared-card.js", "/components/household/prepared.js",
   "/private/member-key.js", "/private/private-envelope.js", "/private/private-log-store.js", "/private/private-log.js", "/private/synced-prefs.js", "/private/private-blobs.js", "/private/journal.js", "/private/journal-view.js",
+  // Outside calendars (#668, ADR 0022 §3).
+  "/calendar/external.js", "/calendar/feed-cache.js", "/calendar/feed-expand.js", "/calendar/feed-link.js", "/calendar/feed-refresh.js", "/components/app/calendar-sync.js", "/components/kin-calendar-subscriptions.js",
   // Household features (#625, ADR 0021).
   "/features.js", "/features-cache.js", "/components/app/features.js", "/components/kin-household-features.js",
+  // Family photos (#673).
+  "/wasm/kin-album.js", "/album/album-blobs.js", "/album/album-image.js", "/album/album-session.js", "/album/album-store.js",
+  "/components/kin-album.js", "/components/kin-photo-frame.js", "/components/app/album.js",
+  // The chore chart (#676, ADR 0022 §6).
+  "/wasm/kin-chores.js", "/chores/chore-chart-view.js", "/components/app/chores.js", "/components/kin-chore-chart.js", "/components/kin-chore-adults.js",
   // Just for me (#510).
   "/private-items.js", "/components/kin-just-for-me.js", "/components/app/private-items.js", "/components/shared/private-marker.js",
   "/appearance/palette.js", "/appearance/display-prefs.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js", "/appearance/install-icons.js",
@@ -54,6 +61,14 @@ const SHELL = [
   // Reports and suggestions to the Kin team (ADR 0021 §3).
   "/components/kin-report.js", "/components/app/report.js", "/diagnostics/registry.js", "/diagnostics/ring-buffer.js", "/diagnostics/global.js",
   "/feedback/format.js", "/feedback/collect.js", "/feedback/channel.js", "/feedback/outbox.js", "/feedback/screenshot.js",
+  // The family calendar (#660, ADR 0022 §2).
+  "/styles/calendar.css", "/components/app/calendar.js",
+  // Kitchen display mode (#669, ADR 0022 §4).
+  "/styles/display.css", "/components/app/display.js", "/components/kin-kitchen-display.js",
+  ...["panels", "schedule", "idle", "leave"].map((name) => `/display/${name}.js`),
+  ...["kin-display-setup", "kin-display-shopping", "kin-display-chat", "leave-dialog"].map((name) => `/components/display/${name}.js`),
+  ...["calendar-time", "calendar-layout", "member-colours", "repeat", "ics-import"].map((name) => `/calendar/${name}.js`),
+  ...["event-chip", "kin-calendar", "kin-calendar-today", "kin-event-editor", "kin-member-colour", "kin-calendar-import"].map((name) => `/components/calendar/${name}.js`),
 ];
 const ALLOWED = new Set(SHELL);
 

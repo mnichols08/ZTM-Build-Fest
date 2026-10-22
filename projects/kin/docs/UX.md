@@ -581,9 +581,9 @@ A household that never uses the fridge or meals shouldn't have to look past
 them. **Household › Features** lists the parts of Kin that can be switched
 off, each with one plain sentence: Chat, Fridge, Meals, Routines, Taking
 turns, This week, Talk later, Store sections, Shopping mode, Maintenance,
-Notes & reference, Sitter page, Journal and Just for me. Today, Lists (To do
-and Shopping), Updates (handoffs) and Household are always on, and the page
-says so.
+Notes & reference, Sitter page, Journal, Just for me and Family photos
+(#673). Today, Lists (To do and Shopping), Updates (handoffs) and Household
+are always on, and the page says so.
 
 - **Who:** a household admin turns switches on or off and taps **Save
   features**; Kin then asks them to confirm it's them (their passkey, or
@@ -1552,6 +1552,48 @@ Lists → Meals plans the week's dinners, decided in
   system-coloured border. Planning works offline and is saved on the device;
   with sync on, the status says it will sync when connected.
 
+### Every meal of the day (#679)
+
+Fuller meal plans, decided in [ADR 0022](decisions/0022-family-hub.md) §7.
+They change the week above as follows.
+
+- **Each day card has a row per meal:** Breakfast, Lunch, Dinner and Snack,
+  in that order. Each row has its label ("Tonight" for today's dinner), what's
+  planned or "Nothing planned", and one **Plan** / **Change** button named
+  for the meal and day ("Plan breakfast for Monday 19 Oct"). Dinner keeps its
+  cook line. A row whose meal has a recipe offers **Add ingredients to
+  Shopping**. Today's card is marked **Today**.
+- **Show** is a row of checkboxes (Breakfast, Lunch, Dinner, Snack) that
+  folds meals away. Dinner always shows. On a phone, a meal nobody planned
+  this week starts folded, so the cards stay short. Ticking a box keeps the
+  choice on this device (`kin.meal-slots`).
+- **Planning breakfast, lunch or a snack** uses the same dialog, titled
+  "Breakfast for Monday 19 Oct", without **Who's cooking**. Picking a recipe
+  or **Use this** saves it and closes the dialog. **Clear this breakfast**
+  removes it. Favourites come first in the dialog's list, marked with a star
+  and named "(favourite)" for screen readers.
+- **Same as last week** fills each empty meal of the week shown with the
+  meal planned seven days earlier: a recipe still listed is planned as
+  itself, and one archived since is planned by name. Meals already planned
+  are left alone and cooks aren't copied. The status says "Copied 5 meals
+  from last week." When nothing is left to copy, it says so. If saving stops
+  part-way, **Try again** copies only what's missing.
+- **Add this week's ingredients to Shopping** puts every meal's recipe for
+  the week shown on Shopping in one go. A recipe planned twice counts once,
+  and so does an ingredient two recipes share. It reports the same way as one
+  recipe, and adding twice never duplicates. A week without recipes says
+  there's nothing to add.
+- **Favourites.** Each recipe has a star button (☆ / ★, `aria-pressed`, named
+  "Favourite: Tacos"). In easy mode it shows the word "Favourite" too.
+  **Favourites** (a toggle beside **Add a recipe**, shown once a recipe is a
+  favourite) lists only favourites.
+- **Today** keeps Tonight's line and lists today's other meals under it
+  ("Breakfast: Porridge", "Lunch: Sandwiches"). **This week** lists every
+  meal on its day, in order ("Breakfast: …", "Dinner: …").
+- **Layout** is unchanged: one card per day in one or two columns. Every
+  control is at least 44 px (56 px in easy mode) and nothing scrolls
+  sideways from 320 px up.
+
 ## 8.12 Simple view (#341)
 
 A calmer layout a household admin turns on for a Limited member, decided in
@@ -1763,6 +1805,99 @@ included, and not the service.
 - **Never.** No streaks, prompts to write, word counts, moods or reminders
   to journal (PRODUCT-BOUNDARIES). Entries never appear in household
   search, Today, chat, catch-up or household exports.
+
+## 8.16 The family calendar (#660, ADR 0022 §1–2)
+
+This week grew into the **Calendar**. It is reached from Today (the This
+week link, `#week`) and keeps **Today** marked in the navigation: there is
+no sixth destination.
+
+- **Three views** as the page's tabs: **Week** (`#week`, the default),
+  **Day** (`#week/day`) and **Month** (`#week/month`). A toolbar names the
+  period ("This week", "Week of Monday 12 October", "Tuesday 6 October",
+  "October 2026") with **‹ Previous**, **Today** and **Next ›**, and
+  **Add event**.
+  - **Week** is This week's list: seven days from today ("today first"),
+    each starting with its events, then meals, planned items (tick, Move
+    to…, Details), routines and maintenance. Weeks step by seven days.
+  - **Day** has an **All day** box (all-day events, meals, planned items and
+    routines) above the day hour by hour (from 7:00 to 21:00, or wider to
+    fit). Overlapping events sit side by side. An empty hour is a button
+    that adds an event there; a line marks the time now.
+  - **Month** is a grid of six weeks. Each day shows up to three events
+    with their colours (on a phone, colours and a count), "+2 more", and
+    how many other things fall on it. Pressing a day opens it in Day.
+  - A **row of the seven days** sits above Week and Day: each says its date,
+    "today" and how many events it has. In Week it brings that day into
+    view; in Day it shows it.
+- **Keyboard.** In the row of days and the month grid, one day is in the
+  tab order. The arrow keys move between days (up and down by a week in
+  the grid), Home and End go to the start and end of the week, Page Up and
+  Page Down to the previous or next week (month in Month), Enter opens a
+  month day.
+- **Screen readers** hear each event as "title, date, time, for whom, at
+  where", plus "Repeats", "Cancelled", "your time; set in Europe/London" or
+  the outside calendar's name when they apply. Month days are read as
+  "Tuesday 6 October, today, 3 events, …".
+- **Times.** An event keeps its own zone; Kin shows it in the viewer's own
+  time (`Intl`), so 9:00 in London is 4:00 for someone in New York. Times
+  set without a zone (some imported ones) are shown as written. All-day
+  events are dates and never move.
+- **Colours by person.** Every event shows a small bar in each attendee's
+  colour **and their names** ("You and Sam"); an event for nobody in
+  particular is "Everyone", with a striped neutral bar. Colour is never the
+  only signal. **My calendar colour** (Household › Identity & appearance)
+  offers twelve named colours and **Kin's choice** (a default by join
+  order); everyone's colours are listed beneath. Each colour has a light-
+  and a dark-theme value with at least 3:1 against Kin's surfaces; in
+  forced colours they become outlined system colours.
+- **Adding** is a few taps: **What**, **Day**, **All day** or **Starts** and
+  **Ends**, and **Who** (you are ticked; nobody means everyone). **More
+  details** holds **Last day** (several days), **Where**, **Notes**,
+  **Repeat** and **Count down to this on Today**.
+- **Repeat** follows the engine's subset: every N days, weeks (on chosen
+  weekdays), months (on day 13, the second Tuesday, the last Tuesday or the
+  last day, as the start date allows) or years; ending never, after a number
+  of times or on a date. A line says it in words ("Every week on Monday and
+  Wednesday, 10 times").
+- **Changing** a repeating event asks **Change: Just this one / All of
+  them**. "Just this one" cancels that occurrence and saves a linked event
+  for it; "All of them" moves the series by as many days as the occurrence
+  moved. **Cancel…** asks **Just this one** or **All of them** (a one-off
+  event: **Cancel it**). Every change offers **Undo** (and then Redo).
+- **Changed elsewhere.** If someone changed the event on another device
+  while the editor was open, nothing is saved; the editor says so and offers
+  **Show the latest** or **Keep my changes**. A change the household refused
+  meanwhile (cancelled elsewhere) is said plainly, and the calendar shows
+  what is there now.
+- **Today** shows **Today's events** (all-day first, then by time) under
+  Tonight, and the next countdown: "12 days until Trip", "1 day until
+  Trip", "Trip is today". With nothing on, "Nothing on the calendar today."
+  and **Open the calendar**.
+- **Importing a calendar file.** **Import a calendar file…** under the
+  calendar, or sharing an `.ics` file to Kin (**Add to the calendar** in the
+  share sheet), opens a dialog: choose the file, see "12 events from Kids:
+  10 new, 2 changed." (and what is left out or simplified) before anything
+  is saved, then **Import 12 events**. The file is read on this device.
+  Importing the same file again updates the events by their source UID and
+  never doubles them ("12 already in Kin"); an imported event the household
+  had cancelled comes back. One Undo takes back the whole import.
+- **Outside calendars** synced by the service (#668) show read-only in
+  every view and on Today (`web/calendar/external.js`): dashed, with their
+  source label ("From Google"), never editable here. Their settings
+  (Identity & appearance) leave with the Calendar switch.
+- **Easy mode** shows the Day view as a list ("All day", "At set times")
+  instead of hours, with bigger text and day buttons; Month waits in the
+  tabs until it is used. **Help** has a topic for each view, for the event
+  editor and for importing.
+- **Feature switches.** **Calendar** (bit 14) owns Day, Month, events,
+  Today's events and countdown, the colour setting and importing. **This
+  week** (bit 5) owns the Week view. With only the Calendar on, `#week`
+  opens Day; with only This week on, Week is This week as before.
+- **Reuse.** `<kin-calendar>` (with `views="day week"`, `compact` and
+  `readonly`) and `<kin-calendar-today>` only draw what they are given and
+  ask for the rest with events, so the kitchen display (#669) can embed
+  them.
 
 # 9. States every relevant screen must handle
 
@@ -2408,6 +2543,42 @@ without signing in aren't listed.
 The dialog is a native modal (a bottom sheet under 480 px) with a focused
 heading, labelled fields, 48 px targets and no sideways scrolling at 320 px.
 Locking closes it and drops the draft and the picture.
+
+## Outside calendars (ADR 0022 §3, #665, #668)
+
+Household › Identity & appearance › **Outside calendars**, below Text,
+motion and reminders.
+
+- **Lead:** "Show a Google, Apple or Outlook calendar beside your family's.
+  Its events appear read-only, marked with where they came from, and stay
+  out of your household's history."
+- **A household that doesn't sync** sees one line saying calendars sync
+  through the household's Kin server, and that importing a file still works.
+  Offline, the calendars the device kept are listed with a line saying so.
+- **Adding (Adults):** "Private calendar link" (`https://` or `webcal://`)
+  with where to find it in Google, Apple iCloud and Outlook; "Who sees it":
+  **Just me** (default) or **Everyone in the household**; **Continue**. A
+  link Kin can't sync is caught before anything is sent, with the reason
+  under the field (`aria-invalid`, focused). Continue opens "Before you turn
+  it on", focused, with the ADR's words, "Your Kin server will download this
+  calendar about every 30 minutes and can read it while it does.", who will
+  see it, and that the link must stay private; **Turn on sync** or
+  **Cancel**. The service downloads the calendar once before saving it, so
+  a link that doesn't work is refused at once with the calendar server's
+  reason in plain words.
+- **Limited and Temporary members** see the shared calendars and a line
+  that adults can add theirs.
+- **The list:** each calendar by its own name and source ("Swim club
+  (Google)"), who sees it and who added it ("Everyone in the household ·
+  Added by you"), and "Updated 12 minutes ago. Next: Swim practice, Mon 2
+  Nov." or, in the danger colour, why it couldn't be updated, with when it
+  last was (the last good copy keeps showing). **Turn off** (its owner or a
+  household admin) asks first, saying for whom the events disappear.
+- **In the calendar:** occurrences come through `web/calendar/external.js`
+  with a "From Google" label and no editing; the Calendar's views (#660)
+  draw them in their own style beside the household's events.
+- Results are announced in a polite status line; 48 px targets; no
+  sideways scrolling at 320 px; forced colours keep the borders.
 
 ## Test with real people
 
@@ -3134,3 +3305,150 @@ and tab in easy mode at 320 px and on a desktop, with Fridge, Meals and
 Journal switched off, and fails on: a page without Help, a control under
 56 px, a glossary word on screen that Help doesn't explain, a switched-off
 feature still shown or linked, or sideways scrolling.
+
+# 43. Family photos (#673, [ADR 0022](decisions/0022-family-hub.md) §5)
+
+- **Where.** Household → **Family photos** (`#household/photos`), also on the
+  Household overview ("Photos for the whole family, and a slideshow.") and,
+  in easy mode, always in the Household tabs. The feature switch "Family
+  photos" (bit 16) hides it, the share-sheet destination and the chat action.
+- **The page.** "Family photos", a line saying who sees them and that they
+  are encrypted, "N photos (up to 500)", then **Add photos** and
+  **Slideshow**, then a grid of square thumbnails, newest first, each a
+  button named "Open “caption”, added by Sam" with the caption under it.
+  Empty: "No family photos yet. Add some from this phone or computer, share
+  photos into Kin from another app, or add one from Chat."
+- **Adding.** Add photos opens the system picker (several at once; a
+  temporary input, removed after). A dialog lists each chosen photo with a
+  small preview and "Caption (optional)" (up to 200 characters), then
+  **Add N photos**. It says "Adding photo 2 of 5…" while it works. Photos
+  are made screen-sized (at most 2048 px, about 600 KB) before they are
+  encrypted. Full at 500: Add photos is disabled and says why.
+- **From elsewhere.** A photo shared into Kin offers **Add to family photos**
+  on the share sheet; a photo in Chat has **Add to the family photos** in its
+  actions. Both open Family photos with the same dialog.
+- **The viewer.** Pressing a photo opens it large with its caption as the
+  title, "Added by Sam · 21 October 2026", **Previous**, **Next** (also the
+  arrow keys) and, for whoever added it or a household admin, **Remove**.
+  Removing closes the viewer, focus goes to the photo now in its place, and
+  the undo line offers **Undo** ("Photo removed."); Undo brings the photo
+  back (within an hour, while its image is still kept).
+- **Slideshow.** Fills the screen with `<kin-photo-frame>`: each photo for 8
+  seconds with its caption and "Added by Sam" over a dark gradient,
+  crossfading over 1.2 s; with reduced motion the photo changes in place.
+  **Pause**/**Play** and **Close** stay on screen; any other tap or key
+  closes it, and focus returns to Slideshow. It pauses while the page is
+  hidden. The kitchen display (#651) will host the same element as its
+  screensaver.
+
+## The chore chart (#676, #677, #678)
+
+[ADR 0022](decisions/0022-family-hub.md) §6 and the owner's decision on #654:
+children may have points, totals and see each other's progress; adults are
+not on the chart unless a household admin allows it and they join
+themselves. Nothing new to maintain: the chart is built from routines,
+taking turns and items with a responsibility.
+
+- **Where.** "Chore chart" beside "This week" at the top of Today
+  (`#chores`, which keeps Today marked; no new destination). In Simple view a
+  child's Today has a big **My chore chart** link and the chart has **Back
+  to Today**. Household › Features has a **Chore chart** switch (bit 15); off,
+  the link, the page, the points on Routines and the admin setting go.
+- **A card per person** (`<kin-chore-chart>`, a self-contained element the
+  kitchen display will reuse with `size="display"`): a header in the
+  person's colour (the one they chose, event kind 74, else the default by
+  join order, from a 12-colour palette each with white text at 4.5:1) with
+  their name — colour is never the only signal — their points this week
+  ("3 points this week") or reward progress ("12 of 20 for Movie night",
+  with a progress bar, then "Movie night reached!"). Then **Today**: each
+  job with a big native tick box (44 px, 56 px in easy mode, 64 px on the
+  display), the item's picture (its emoji or first photo), its name and its
+  points; "All done for today!" when everything is ticked. **The rest of the
+  week** is a disclosure, by day, "✓ Done" or "Not done", read-only.
+- **Ticking** uses the ordinary complete and reopen commands, so Undo,
+  rotations and sync behave as everywhere else. Points go to the chore's
+  owner — whose turn it was, or the item's responsibility — never to whoever
+  ticked it, so a parent can tick off a child's chore. Unticking takes the
+  points back. Points start again every Monday; there is no history beyond
+  this week.
+- **Parents set it up.** Each routine on Routines has **Chore chart points**
+  (0–10, 1 by default) for Adults. On each child's card an Adult has **Set a
+  reward** / **Change reward**: points to reach this week and a short reward
+  ("Movie night"), and **Remove reward**.
+- **Adults.** A household admin turns on **Adults can join the chore chart**
+  under Household › Features (fresh passkey or password); everyone else sees
+  it read-only. Then each Adult sees **Join the chore chart** on the chart
+  ("for fun… you can leave at any time") and, once on it, **Leave the chore
+  chart**. No adult-only leaderboard, no streaks, and no reminders or
+  notifications about points.
+- **Help** on the chart says what it is, how to tick, set a reward and join;
+  easy mode makes the tick boxes and names bigger still.
+- `scripts/chore-chart-regression.mjs` checks the flow in the browser.
+
+## The kitchen display (#669: #670, #671, #672)
+
+[ADR 0022](decisions/0022-family-hub.md) §4: a **device mode of an Adult's
+device**, not a new member kind. A tablet on the kitchen wall that always
+shows today, the week, chores, dinner and the shopping list, and that anyone
+can tap.
+
+- **Turning it on.** Household › Overview has **Kitchen display** for
+  Adults (Limited and Temporary members see that only an adult's device can
+  be one): what it shows, what it never shows, that Kin doesn't lock by
+  itself while it is a display and that leaving needs the adult's password
+  or passkey; **Dim the screen at night** From/Until (21:00–06:30 by
+  default; the same time twice means never); **Show family photos after this
+  many quiet minutes** (1–30, 5 by default); and **Use this device as a
+  kitchen display**. The choice is this device's (local storage, for this
+  household's vault only), so it comes back after a lock and unlock. A
+  household feature switch, **Kitchen display** (bit 17), hides the section;
+  switched off while a device is a display, that device locks.
+- **The shell.** Like Simple view's separate shell, the workspace is
+  replaced by `<kin-kitchen-display>`: no header, navigation, Quick add,
+  Search, palette, shortcuts, item details or shares, and every address
+  opens the display. At the top: the time (large), the date (the page's
+  heading), an offline line ("Offline. Showing what this display last
+  knew."), **Help** and **Leave display mode**.
+- **Panels are data** (`web/display/panels.js`: `id`, `component`, `region`,
+  `featureId`, `size`, `label`), the seam for future add-ons (#688). Each
+  panel stacks in its region; a switched-off feature takes its panel away
+  (and Chat or the Fridge without access); an empty region collapses:
+  - **week** — the week strip and agenda (`<kin-calendar views="day week"
+    compact readonly>`, synced calendars included); a day opens the Day view;
+  - **now** — today's events and countdown (`<kin-calendar-today>`),
+    today's meals (`<kin-tonight>`, without its link) and the newest four
+    chat messages, read-only (`<kin-display-chat>`; it never marks them
+    read);
+  - **chores** — each child's card in their colour (`<kin-chore-chart
+    size="display">`); ticking records it on this device with the points to
+    the chore's owner; no rewards or Join here;
+  - **lists** — the shopping list (`<kin-display-shopping>`): one big box to
+    add, big rows to tick off;
+  - **board** — the fridge.
+- **Layout.** Landscape (10"+ tablet sideways): the week across the top,
+  then today, the chart and the lists in three columns, the fridge below.
+  Portrait: the week, then today beside the lists, the chart, the fridge.
+  Below 720 px everything stacks. Text from 18 px (the time from 40 px) for
+  reading at 2–3 m; every control at least 64 px. Dark mode follows the
+  appearance; reduced motion, "more contrast" and forced colours are
+  honoured.
+- **Screen.** Screen Wake Lock keeps it on, asked for again when the page
+  shows. After the quiet minutes the **screensaver** shows: Family photos in
+  `<kin-photo-frame>` when the household has photos and the feature on,
+  otherwise a calm clock; a touch brings the panels back, and that touch
+  lands on the screensaver, never on a panel beneath. In the night hours the
+  screen **dims** (a dark cover, "Good night. Touch the screen to wake it.");
+  a touch wakes it until the next quiet spell. Offline it keeps showing the
+  last known state.
+- **Leaving.** **Leave display mode** opens a dialog: "Only the adult this
+  device belongs to can leave. Confirm with your passkey or your password"
+  (or, on a device set up before accounts, the backup key), with **Use my
+  passkey**, **Use my password** and **Stay in display mode**. The secret is
+  checked on the device; a wrong one says so and keeps the dialog; the right
+  one turns display mode off and Kin reloads into the full layout (still
+  unlocked, #351).
+- **Help** on the display says what it is, how to tick and wake it, and how
+  to leave; "Message an admin" and "Report a problem" aren't offered there.
+- `scripts/kitchen-display-regression.mjs` checks the flow in the browser at
+  tablet sizes; [KITCHEN-DISPLAY-CHECKLIST](KITCHEN-DISPLAY-CHECKLIST.md) is
+  the owner's check on a real wall tablet.

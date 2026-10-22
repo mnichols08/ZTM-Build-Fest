@@ -442,6 +442,37 @@ Nothing here is counted or compared: who cooked is never totalled. Meals are
 not part of the KINS projection; hosts read them through `kin_meals` and plan
 Shopping additions through `kin_meal_shopping_plan`.
 
+### Fuller meal plans (kinds 80–82)
+
+Kinds 80–82 (#679, [ADR 0022](decisions/0022-family-hub.md) §7) are schema 1
+events in the household history, with the same rules as the meals kinds above.
+Dinner keeps kinds 61–63, so every dinner planned before them stays valid;
+the slot byte of kinds 80–81 is 1 breakfast, 2 lunch or 4 snack, and 3
+(dinner) is malformed there.
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 80 | `MEAL_SET` | The breakfast, lunch or snack for one civil date: a recipe with its name when planned, or a one-off name (1–80 characters) |
+| 81 | `MEAL_CLEARED` | That date has no meal in that slot |
+| 82 | `RECIPE_FAVOURITE_SET` | A recipe is a favourite, or no longer one |
+
+Replay never fails on a decoded event:
+
+- One meal per date and slot: the latest `MEAL_SET` in replay order wins, as
+  for dinners. A breakfast, lunch or snack has no cook.
+- A favourite is a flag per recipe; the latest event wins. A meal or
+  favourite naming a recipe the history lacks changes nothing.
+- Clearing a dinner (kind 62) leaves the other meals of that date, and the
+  other way round.
+- Commands: a meal names an active recipe by its current name, a favourite
+  names an active recipe, and every change must change something.
+
+Hosts read every slot and the favourites through `kin_meal_plans` (KMLS v2);
+`kin_meals` (KMLS v1) still lists dinners only. "Add this week's ingredients
+to Shopping" is a KMPQ v2 query over every meal with a recipe in the week.
+Devices from before this addition pause household sync with "unsupported"
+("update Kin") and keep their data until they update.
+
 ## Item pictures (Simple view)
 
 Kind 64 (#344, [ADR 0013](decisions/0013-simple-view.md)) is a schema 1 event
@@ -538,6 +569,112 @@ member kinds. Entries point at records and copy nothing, so editing a note
 updates the page. Hosts read it through `kin_sitter_page`, which is not part
 of the KINS projection. Older devices pause sync with "unsupported" and keep
 their data until they update.
+
+## The family album
+
+Kinds 75 and 76 (#673, [ADR 0022](decisions/0022-family-hub.md) §5) are schema
+1 events in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 75 | `ALBUM_PHOTO_ADDED` | A photo in the family album: its photo ID, the album attachment holding the encrypted image (an ID starting `a1 b0`), and a caption (0–200 UTF-8 bytes, one line, empty for none) |
+| 76 | `ALBUM_PHOTO_REMOVED` | Takes a photo out of the album |
+
+Replay (rust/src/album.rs) refuses an add that reuses a live or recently
+removed photo ID, an attachment a live photo already uses, or would make more
+than 500 photos. Removing a live photo keeps it among the last 64 removals
+with its time, so a second removal of it (two devices at once) changes
+nothing; removing a photo the album never had is refused. The image is a
+household attachment blob encrypted under the household key like an item's
+photo, but it isn't bound with kind 39: the photo event names it. Undo puts a
+removed photo's image back under a new photo ID while devices still keep its
+blob (an hour after the removal). Whoever added a photo, or a household
+admin, may remove it; the host checks that, because replay doesn't know who
+is an admin. Hosts read the album through `kin_album`, which is not part of
+the KINS projection. Older devices pause sync with "unsupported" and keep
+their data until they update.
+
+## The family calendar
+
+Kinds 71–74 (#656, [ADR 0022](decisions/0022-family-hub.md) §1) are schema 1
+events in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 71 | `CALENDAR_EVENT_SAVED` | The whole event, replacing any earlier version with its ID |
+| 72 | `CALENDAR_EVENT_CANCELLED` | One occurrence, named by its original start, or the whole series |
+| 73 | `CALENDAR_EVENT_RESTORED` | Undoes a cancel of that occurrence or of the series |
+| 74 | `MEMBER_COLOUR_SET` | The event's own member's colour: one of 12 palette entries, or back to the default |
+
+**An event** has an ID, a title (1–200 bytes), a place (0–200), notes
+(0–2,000, lines kept), up to 16 attendees (member IDs, accepted as given:
+Rust doesn't know membership), a countdown flag, a source UID for imported
+events (0–255), and either an all-day span (first and last civil date) or a
+timed span (start and end local date-time to the minute, and an IANA zone
+name checked as text only; an empty zone is a floating time). It lasts at
+most 366 days.
+
+**Repeats** are a subset of RFC 5545 RRULE: daily; weekly on chosen weekdays
+(with the week's first day, WKST); monthly on a day of the month (1–31 or the
+last) or the 1st–5th or last weekday; yearly the same way in the start's
+month; every 1–1,000 periods; ending never, after 1–1,000 occurrences or on a
+date. As in RFC 5545 the start is always the first occurrence, and a month
+without the chosen day (the 31st, a 5th Tuesday, February 29) is skipped
+rather than moved. Rust expands repeats in the event's local civil time
+(rust/src/calendar_recur.rs), so a 9:00 event stays at 9:00 across daylight
+saving time; the browser turns local times into instants with `Intl`.
+
+**A changed occurrence** is a cancel of that occurrence plus a standalone
+event linked to the series and the occurrence's original start. Cancelling a
+series cancels its linked events too.
+
+Replay (rust/src/calendar.rs) never fails on a decoded event. The latest save
+of an ID wins; a cancel or restore is kept by event ID even before the event
+arrives; past 2,000 events or 1,000 cancelled occurrences of one event,
+further ones are recorded no-ops. Payloads are strict (they re-encode to the
+same bytes). Commands are stricter: a save changes something and stays under
+2,000 events; a cancelled series can't be edited until it is restored; a link
+names a repeating, unlinked series that has an occurrence at the original
+start; a cancel names a real occurrence that isn't cancelled yet; a restore
+undoes a cancel in effect; a colour changes the sender's own colour. Hosts
+read the calendar through `kin_calendar_range` (KCAQ → KCAL), which merges
+the occurrences between two dates with dated items, routine occurrences and
+meals, and gives the next countdown and member colours; it is not part of
+KINS. `kin_ical_parse` turns an `.ics` file into kind-71 payloads for import
+(#666). Older devices pause sync with "unsupported" and keep their data until
+they update.
+
+## The chore chart (#676)
+
+Kinds 77–79 ([ADR 0022](decisions/0022-family-hub.md) §6) are schema 1
+events in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 77 | `CHORE_POINTS_SET` | A routine's points per completed occurrence, 0–10. A routine nobody set is worth 1; items are always worth 1 |
+| 78 | `CHORE_REWARD_SET` | A member's reward: a goal of 1–1000 points this week and a text of 1–120 UTF-8 bytes ("Movie night"), trimmed, no control characters. Goal 0 with no text clears it |
+| 79 | `CHORE_CHART_JOINED` | A member joins (true) or leaves (false) the chart. Only the member it names may send it |
+
+Replay (rust/src/chores.rs) never fails on a decoded event from a real
+member and device; the latest setting wins. A kind-79 event whose author
+isn't the member it names is kept in the history with no effect. Commands
+are stricter (code 4): points name a routine that exists and isn't
+archived, and every change must change something; kind 79 must come from
+the member it names. Who may set points and rewards (Adults) and who may
+join (an Adult, while a household admin allows adults on the chart, a
+service setting) are the host's checks: replay doesn't know member kinds.
+
+The chart counts no new events for completions. Replay remembers each
+completion in effect (`ITEM_COMPLETED`, `ROUTINE_OCCURRENCE_COMPLETED`) with
+the member it's credited to: the item's responsibility, or the routine's
+owner when it was completed — for a rotating routine, whose turn it was,
+before the turn passes on — never the member who ticked it. Reopening
+removes the credit. Points are counted per week (Monday to Sunday in the
+host's time zone, whose day boundaries the host passes in) from the
+completions inside it, so the totals start again every Monday and nothing
+older is reported. Hosts read the chart through `kin_chore_chart`, which is
+not part of the KINS projection. Older devices pause sync with
+"unsupported" and keep their data until they update.
 
 ## v1.1.0 Household chat
 

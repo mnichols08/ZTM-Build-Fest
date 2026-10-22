@@ -8,7 +8,9 @@
 // never times out (WCAG 2.2.1). Ctrl/Cmd+Z and Shift+Ctrl/Cmd+Z (or Ctrl+Y)
 // do the same outside text fields (navigation.js). Nothing is persisted or
 // synced; locking clears it.
-import { describeReversal, inverseEntry, isOptionalStep, nextReversalStep, reversalStatus, UndoHistory } from "../../undo.js";
+import {
+  calendarInverse, calendarReversalStatus, describeReversal, inverseEntry, isOptionalStep, nextReversalStep, reversalStatus, UndoHistory,
+} from "../../undo.js";
 import { SAVE_ERROR } from "./constants.js";
 
 // A reversal is a handful of commands; this only stops a runaway loop.
@@ -103,7 +105,19 @@ export class UndoController {
       this.ctx.status.setStatus(describeReversal(null, direction, "empty"));
       return;
     }
-    const outcome = reversalStatus(entry, this.app.state);
+    // Calendar changes (#660) carry their own steps (web/undo.js).
+    if (entry.kind === "calendar") return this.runCalendar(entry, direction);
+    // Family-album entries (#673) also need the album, which isn't part of
+    // the projection; it is read again after each step.
+    const album = typeof entry.kind === "string" && entry.kind.startsWith("album-");
+    const read = async () => (album ? { ...this.app.state, ...(await this.ctx.album.undoState()) } : this.app.state);
+    let current = this.app.state;
+    if (album) {
+      // Held while the album is read, so a second press waits its turn.
+      this.running = true;
+      try { current = await read(); } catch { /* the album check below refuses */ } finally { this.running = false; }
+    }
+    const outcome = reversalStatus(entry, current);
     if (outcome !== "ready") {
       // Refused, so it is dropped: trying again would meet the same change.
       this.hideToast();
@@ -111,7 +125,7 @@ export class UndoController {
       return;
     }
     const session = this.ctx.session.captureSession();
-    const before = this.app.state;
+    const before = current;
     const memberIds = this.ctx.detail.responsibilityContext?.()?.memberIds ?? null;
     let appended = 0;
     // Pin, owner and area are restored when they can be; a refusal there
@@ -122,7 +136,7 @@ export class UndoController {
     this.ctx.status.clearAlert();
     this.ctx.status.setStatus(direction === "redo" ? "Redoing…" : "Undoing…");
     try {
-      for (let command, steps = 0; steps < MAX_STEPS && (command = nextReversalStep(entry, this.app.state, { memberIds, skip })); steps++) {
+      for (let command, steps = 0; steps < MAX_STEPS && (command = nextReversalStep(entry, await read(), { memberIds, skip })); steps++) {
         try {
           await this.ctx.append.appendCommand(command);
           appended++;
@@ -140,7 +154,8 @@ export class UndoController {
       if (entry.kind === "routine-created") void this.ctx.privatePrefs?.endReminder(`routine:${entry.routineId}`, "canceled").catch(() => {});
       this.ctx.render.renderState();
       this.ctx.peers.broadcastEventChange();
-      const inverse = inverseEntry(entry, before, this.app.state);
+      const inverse = inverseEntry(entry, before, await read());
+      if (album) void this.ctx.album.refresh();
       if (inverse) this.history.settle(direction, inverse);
       const message = `${describeReversal(entry, direction, "done")}${this.ctx.sync.offlineSyncSuffix?.() ?? ""}`;
       this.ctx.status.setStatus(message);
@@ -161,6 +176,78 @@ export class UndoController {
       }
       // Back on its stack (storage or a lost connection): the steps resume
       // where they stopped.
+      this.history.restore(direction, entry);
+      this.ctx.status.showAlert(
+        appended ? `Only partly ${direction === "redo" ? "redone" : "undone"}. Try again to finish.` : (error.userMessage ?? SAVE_ERROR),
+        () => this.run(direction),
+      );
+      this.ctx.status.setStatus("");
+    } finally {
+      this.running = false;
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
+        this.ctx.peers.flushPeerRefresh();
+      }
+    }
+  }
+
+  /** Undo or redo of a calendar change (#660): its steps run in order
+   * against the calendar's current marks (app/calendar.js). */
+  async runCalendar(entry, direction) {
+    const session = this.ctx.session.captureSession();
+    const calendar = this.ctx.calendar;
+    let marks;
+    try {
+      marks = await calendar.marks();
+      this.ctx.session.assertCurrentSession(session);
+    } catch (error) {
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      this.history.restore(direction, entry);
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.run(direction));
+      return;
+    }
+    const outcome = calendarReversalStatus(entry, marks);
+    if (outcome !== "ready") {
+      this.hideToast();
+      this.ctx.status.setStatus(describeReversal(entry, direction, outcome));
+      return;
+    }
+    let appended = 0;
+    this.running = true;
+    this.ctx.status.setBusy(true);
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus(direction === "redo" ? "Redoing…" : "Undoing…");
+    try {
+      for (; entry.next < entry.steps.length; entry.next++) {
+        const { command, optional } = entry.steps[entry.next];
+        try {
+          await this.ctx.append.appendCommand(command);
+          appended++;
+        } catch (error) {
+          if (error.code !== 4 || !optional) throw error;
+        }
+        this.ctx.session.assertCurrentSession(session);
+      }
+      this.ctx.render.renderState();
+      this.ctx.peers.broadcastEventChange();
+      const after = await calendar.marks();
+      this.ctx.session.assertCurrentSession(session);
+      this.history.settle(direction, calendarInverse(entry, after));
+      void calendar.refresh();
+      const message = `${describeReversal(entry, direction, "done")}${this.ctx.sync.offlineSyncSuffix?.() ?? ""}`;
+      this.ctx.status.setStatus(message);
+      this.showToast(message, direction === "redo" ? "undo" : "redo");
+    } catch (error) {
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      if (appended) { this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange(); void calendar.refresh(); }
+      this.hideToast();
+      if (error.code === 4) {
+        this.app.pendingRefresh = true;
+        this.ctx.status.setStatus(appended
+          ? `Only partly ${direction === "redo" ? "redone" : "undone"}: the rest changed since, maybe on another device.`
+          : describeReversal(entry, direction, "conflict"));
+        return;
+      }
       this.history.restore(direction, entry);
       this.ctx.status.showAlert(
         appended ? `Only partly ${direction === "redo" ? "redone" : "undone"}. Try again to finish.` : (error.userMessage ?? SAVE_ERROR),

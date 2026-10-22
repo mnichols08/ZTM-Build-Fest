@@ -329,8 +329,15 @@ pub extern "C" fn kin_meals(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::meals, None)
 }
 
-/// A Shopping plan for a recipe or a date's dinner (KMPQ + KINE context ->
-/// KMSP v1, #333) against the instance's history.
+/// Every meal of the day and favourites (KMLS v2, #679) in the instance's
+/// history, in the context of a record-less KINE request.
+#[no_mangle]
+pub extern "C" fn kin_meal_plans(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::meal_plans, None)
+}
+
+/// A Shopping plan for a recipe, a date's meal or a week (KMPQ v1/v2 + KINE
+/// context -> KMSP v1, #333, #679) against the instance's history.
 #[no_mangle]
 pub extern "C" fn kin_meal_shopping_plan(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::meal_shopping_plan, None)
@@ -361,6 +368,34 @@ pub extern "C" fn kin_routine_rotations(pointer: u32, length: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn kin_sitter_page(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::sitter_page, None)
+}
+
+/// The family album (KALB v1, #673) of the instance's history, in the
+/// context of a record-less KINE request.
+#[no_mangle]
+pub extern "C" fn kin_album(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::album, None)
+}
+
+/// The calendar between two dates (KCAQ + KINE context -> KCAL v1, #656)
+/// against the instance's history.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_calendar_range(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::calendar_range, None)
+}
+
+/// An iCalendar file's events as Kin event payloads (.ics bytes -> KICS v1,
+/// #666, ical.rs). Touches no household state.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_ical_parse(pointer: u32, length: u32) -> i32 {
+    operate(pointer, length, crate::ical::parse_request)
+}
+
+/// The chore chart for a week (KCCQ + KINE context -> KCCD v1, #676,
+/// chores.rs) against the instance's history.
+#[no_mangle]
+pub extern "C" fn kin_chore_chart(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::chores::chart_export, None)
 }
 
 /// A member's things today (KMTQ + KINE context -> KMTD v1, #344) against

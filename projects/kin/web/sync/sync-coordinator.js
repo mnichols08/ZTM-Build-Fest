@@ -21,6 +21,8 @@ import { LIVE_TYPE, LiveChannel, liveUrl } from "./live-channel.js";
 import { QUARANTINE_MESSAGE, quarantineMessage } from "../storage/quarantine.js";
 import { idToHex } from "../wasm/kin-engine.js";
 import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
+import { reconcileAlbum } from "../album/album-blobs.js";
+import { openAlbumStore } from "../album/album-session.js";
 import { decryptHouseholdSettings, encryptHouseholdSettings } from "../appearance/household.js";
 import { openBrowserChatRoom } from "../chat/chat-room.js";
 import { openBrowserBoardRoom } from "../board/board-room.js";
@@ -31,6 +33,16 @@ export function activeResponsibilityMemberIds(devices, now = Date.now()) {
     .filter((device) => !device.revokedAt && device.memberActive !== false &&
       (device.memberExpiresAt === undefined || device.memberExpiresAt > now))
     .map((device) => device.memberId))];
+}
+
+/** memberId -> member kind ("adult", "limited", "temporary") for the members
+ * activeResponsibilityMemberIds lists, from their devices' directory rows. */
+export function activeMemberKinds(devices, now = Date.now()) {
+  const active = new Set(activeResponsibilityMemberIds(devices, now));
+  const kinds = new Map();
+  for (const device of devices)
+    if (active.has(device.memberId) && !kinds.has(device.memberId)) kinds.set(device.memberId, device.memberKind ?? "adult");
+  return kinds;
 }
 
 // Mirrors the server's requireTrustAuthority: only active Adults may rotate
@@ -184,7 +196,7 @@ function browserLiveChannel(options) {
 }
 
 export class SyncCoordinator {
-  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {}, onSimpleView = () => {}, onFeatures = () => {}, privateLog = openBrowserPrivateLog, onPrivateLog = () => {}, vaultKey = async () => null }) {
+  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {}, onSimpleView = () => {}, onFeatures = () => {}, onChoreChart = () => {}, privateLog = openBrowserPrivateLog, onPrivateLog = () => {}, vaultKey = async () => null }) {
     this.store = store;
     this.engine = engine;
     this.identity = identity;
@@ -240,6 +252,7 @@ export class SyncCoordinator {
     this.onSimpleView = onSimpleView;
     // Household features (ADR 0021): the switched-off set, from each status.
     this.onFeatures = onFeatures;
+    this.onChoreChart = onChoreChart;
     this.simpleView = null;
   }
 
@@ -685,6 +698,9 @@ export class SyncCoordinator {
         const attachmentResult = await reconcileAttachments({ identity: this.identity, store: this.store, keyStore: this.keyStore, state: await this.store.projectCurrent(), signal: this.abortController.signal, suspectedOrphans: (this.suspectedOrphans ??= new Set()) });
         attachmentRows = attachmentResult.rows;
       } catch { /* Attachment transport retries independently; household event sync remains available. */ }
+      // The family album's photos (#673): uploaded, re-encrypted, and
+      // deleted once no photo needs them (album-blobs.js).
+      try { await this.syncAlbum(); } catch { /* retried on the next pass */ }
       if (pendingOutbox.length === 0 && pendingBindings.length === 0)
         await this.store.markSyncInitialized();
       this.catchUp = null;
@@ -701,6 +717,8 @@ export class SyncCoordinator {
       state: hasMore ? "syncing" : "ready",
       quarantineNotice: kept.length ? quarantineMessage(kept) : null,
       memberIds: activeResponsibilityMemberIds(devices),
+      // The chore chart (#676) needs to know who are children and Adults.
+      memberKinds: activeMemberKinds(devices),
       ...(attachmentRows === undefined ? {} : { attachmentRows }),
       ...update,
       message: quarantinedEvents
@@ -813,6 +831,8 @@ export class SyncCoordinator {
   noteFeatures(status) {
     if (!status?.features || this.stopped) return;
     try { this.onFeatures?.(status.features); } catch { /* the view's trouble isn't sync's */ }
+    // Whether adults may join the chore chart (#676) comes with them.
+    if (status.choreChart) try { this.onChoreChart?.(status.choreChart); } catch { /* likewise */ }
   }
 
   /** Opens the fridge once (#317); null where its storage isn't available.
@@ -1632,8 +1652,20 @@ export class SyncCoordinator {
     return this.request("/api/household/install-identity", { method: "DELETE", body: JSON.stringify({ expectedRev }) });
   }
 
+  /** One album pass (#673): reads the album from the history, then lets
+   * album-blobs.js upload and tidy its photos. */
+  async syncAlbum() {
+    if (this.stopped || typeof this.store?.album !== "function") return;
+    const album = await this.store.album();
+    this.albumStore ??= await openAlbumStore(this.store);
+    if (this.stopped || !this.albumStore) return;
+    await reconcileAlbum({ album, identity: this.identity, store: this.store, keyStore: this.keyStore, albumStore: this.albumStore, suspected: (this.albumSuspects ??= new Set()), signal: this.abortController.signal });
+  }
+
   stop() {
     this.stopped = true;
+    this.albumStore?.close();
+    this.albumStore = null;
     this.stopLive();
     this.abortController.abort();
     clearInterval(this.timer);

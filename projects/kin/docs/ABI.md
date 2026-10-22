@@ -14,14 +14,19 @@ kin_history_truncate(count) -> status   keep the first `count` records
 kin_project(ptr, len)                replay the history: KINE context -> KINS
 kin_device_names(ptr, len)           replay the history: KINE context -> KDEV (v1.1)
 kin_member_names(ptr, len)           replay the history: KINE context -> KMNM (v1.3)
-kin_meals(ptr, len)                  replay the history: KINE context -> KMLS (#333)
-kin_meal_shopping_plan(ptr, len)     KMPQ + KINE context -> KMSP (#333)
+kin_meals(ptr, len)                  replay the history: KINE context -> KMLS v1 (#333)
+kin_meal_plans(ptr, len)             replay the history: KINE context -> KMLS v2 (#679)
+kin_meal_shopping_plan(ptr, len)     KMPQ v1/v2 + KINE context -> KMSP (#333, #679)
 kin_item_emojis(ptr, len)            replay the history: KINE context -> KIEM (#344)
 kin_my_things(ptr, len)              KMTQ + KINE context -> KMTD (#344)
 kin_week(ptr, len)                   KWKQ + KINE context -> KWKD (#417)
 kin_shopping_sections(ptr, len)      replay the history: KINE context -> KSHS (#411)
 kin_routine_rotations(ptr, len)      replay the history: KINE context -> KRRS (#429)
 kin_sitter_page(ptr, len)            replay the history: KINE context -> KSIT (#442)
+kin_album(ptr, len)                  replay the history: KINE context -> KALB (#673)
+kin_chore_chart(ptr, len)            KCCQ + KINE context -> KCCD (#676)
+kin_calendar_range(ptr, len)         KCAQ + KINE context -> KCAL (#656)
+kin_ical_parse(ptr, len)             .ics file bytes -> KICS (#666); no household state
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
@@ -293,6 +298,11 @@ N  payload
 | 68 | ROUTINE_ROTATION_SET (#429) | routine ID [16] (non-zero), member count u8 (0, or 2–12), current index u8 (below the count; 0 when the count is 0), reserved u16, then each member ID [16] (non-zero, no repeats): 20 + 16 × count bytes. An empty list ends the rotation |
 | 69 | ROUTINE_TURN_SET (#429) | routine ID [16] (non-zero), member ID [16] (non-zero): 32 bytes |
 | 70 | SITTER_PAGE_SET (#442) | entry count u16 (0–30), reserved u16, then each entry: kind u8 (1 note, 2 reference record, 3 routine), 3 reserved, record ID [16] (non-zero; no entry twice); then the intro (u16 length + UTF-8; trimmed, 0–500 bytes, no controls but newline) |
+| 75 | ALBUM_PHOTO_ADDED (#673) | photo ID [16] (non-zero), attachment ID [16] (starts `a1 b0`, not the prefix alone), caption (u16 length + UTF-8; trimmed, 0–200 bytes, no control characters) |
+| 76 | ALBUM_PHOTO_REMOVED (#673) | photo ID [16] (non-zero): 16 bytes |
+| 80 | MEAL_SET (#679) | civil date u32 (YYYYMMDD), slot u8 (1 breakfast, 2 lunch, 4 snack; never 3 dinner) + 3 reserved, recipe flag u8 (0 or 1) + 3 reserved, recipe ID [16] when flagged, name (u16 + UTF-8, as a dinner's) |
+| 81 | MEAL_CLEARED (#679) | civil date u32, slot u8 (1, 2 or 4) + 3 reserved: 8 bytes |
+| 82 | RECIPE_FAVOURITE_SET (#679) | recipe ID [16] (non-zero), favourite u8 (0 or 1) + 3 reserved: 20 bytes |
 | 100 | PRIVATE_NOTE_SET (#489, private log) | note ID [16] (non-zero), text length u32 (0 removes the note; at most 2,048 bytes), UTF-8 text (no control characters except line feed). Reserved: still decoded; no surface writes it. Kinds without a definition in 100–199 fail with code 3 |
 | 101 | JOURNAL_ENTRY_CREATED (#498, private log) | entry ID [16] (non-zero), civil date u32 (YYYYMMDD, a real date), title length u16 (≤ 200), photo count u8 (≤ 10), reserved u8, body length u32 (≤ 20,000), title (UTF-8, no controls, trimmed), body (UTF-8, no controls but line feed, trimmed), then each photo (136 bytes): type u8 (1 JPEG, 2 PNG, 3 WebP), reserved [3], sealed size u32 (29 to 4 MiB + 4 KiB), blob reference [32], key [32], thumbnail reference [32], thumbnail key [32] (all non-zero; no reference twice in an entry). Title, body or a photo is required |
 | 102 | JOURNAL_ENTRY_EDITED (#498, private log) | as 101: the whole new content |
@@ -606,6 +616,37 @@ tuned for printed codes under heavy blur.
   lowercased) count once; "already on Shopping" compares against active
   Shopping items the same way. A one-off dinner or an unknown or archived
   recipe fails with code 4.
+- **Fuller meal plans (kinds 80–82, #679,
+  [ADR 0022](decisions/0022-family-hub.md) §7).** The payloads are strict like
+  the other meals kinds: a slot of 1, 2 or 4 (dinner stays on kinds 61–63),
+  zero reserved bytes, a 0/1 flag word, a non-zero recipe ID and a canonical
+  name, so they re-encode to the same bytes; anything else fails with code 2.
+  KCMD actions 80 (`set-meal` `{ date, slot, recipeId?, name }`), 81
+  (`clear-meal` `{ date, slot }`) and 82 (`set-recipe-favourite`
+  `{ recipeId, favourite }`) carry the exact payload as their text with a
+  zero entity ID and no option, date or expiry (`kin-meals.js`). Rust checks
+  them against the current meals (`MealsState::check_command`, code 4): a
+  recipe that exists and isn't archived, named as it is now; a meal to clear;
+  and a change.
+- **KMLS v2** (every meal and favourites, `kin_meal_plans`, #679): a new
+  export, so KMLS v1 and `kin_meals` are unchanged. `"KMLS"`, version 2,
+  reserved u16, recipe count u32, meal count u32; then each active recipe as
+  in v1, except that the byte after the ingredient count holds flags (bit 0
+  favourite) and two reserved bytes follow it; then each meal in the same
+  window as v1's dinners, by date then slot: date u32, slot u8 (1 breakfast,
+  2 lunch, 3 dinner, 4 snack), flags u8 (bit 0 recipe, bit 1 cook; a cook
+  only on dinner), 2 reserved, recipe ID [16], cook member ID [16] (zero when
+  absent), name as shown. JavaScript decodes either version
+  (`decodeMeals`: `{ recipes, dinners, meals }`); the app reads v2.
+- **KMPQ v2** (#679): the same 32 bytes as v1 with version 2, where byte 9 is
+  a slot for source 3 and zero otherwise, and two sources are added: 3, a
+  date's meal in that slot (slot 3 is the same as source 2), and 4, every
+  meal with a recipe in the seven days from the date (which needs six more
+  days before 9999-12-31, as KWKQ). The week's lines come day by day, each
+  day's meals in slot order, each recipe once, and lines with the same text
+  count once across recipes; a week without recipes is an empty plan, not an
+  error. The result is KMSP v1. A v1 query reads as before and never takes a
+  slot or sources 3–4 (code 2); versions other than 1 and 2 fail with code 3.
 - **Item pictures (kind 64, #344).** The payload is strict like meals: a
   non-zero item ID, a 0/1 flag word with zero reserved bytes, and one emoji
   as `chat::check_emoji` accepts it; it re-encodes to the same bytes. KCMD
@@ -675,6 +716,177 @@ tuned for printed codes under heavy blur.
   0 for none). The host takes titles, fields and text from the KINS
   projection by ID, so nothing is copied. A household that never set a page
   reports no entries and no intro.
+- **The family album (kinds 75–76, #673).** The payloads are strict: they
+  re-encode to the same bytes, so a zero photo ID, an attachment ID without
+  the album prefix `a1 b0` (or with nothing after it), an untrimmed caption,
+  a control character or more than 200 caption bytes fail with code 2. KCMD
+  actions 75 (`add-album-photo`) and 76 (`remove-album-photo`) carry the
+  exact payload as their text with a zero entity ID and no option, date or
+  expiry; the host trims the caption and makes it one line first
+  (`kin-album.js`). Rust checks them against the album
+  (`AlbumState::check_command`, code 4): a new photo ID, an attachment no
+  live photo uses, at most 500 photos; a removal names a live photo. Only
+  whoever added a photo or a household admin may remove it: Rust can't tell
+  who is an admin, so the host's command append path reads the album and
+  refuses it for anyone else (`canRemoveAlbumPhoto`); replay accepts a
+  removal from any member ([THREAT-MODEL](THREAT-MODEL.md)).
+- **KALB v1** (the family album, `kin_album`): `"KALB"`, version 1,
+  reserved u16, photo count u32 (≤ 500), removal count u32 (≤ 64); then each
+  live photo, newest first: photo ID [16], attachment ID [16], added by
+  (member ID) [16], added at i64 (Unix ms, the event's timestamp), caption
+  (u16 + UTF-8); then each recent removal, newest first: photo ID [16],
+  attachment ID [16], removed at i64. JavaScript decodes it as `{ photos:
+  [{ photoId, attachmentId, addedBy, addedAt, caption }], removed: [{
+  photoId, attachmentId, removedAt }] }`.
+- **The family calendar (kinds 71–74, #656, `rust/src/calendar.rs`).** The
+  payloads are strict like store sections: they re-encode to the same bytes.
+  Kind 71, the event (72 fixed bytes, then attendees and texts):
+  ```text
+   0 event ID [16]
+  16 flags u8: bit 0 all-day, 1 countdown, 2 repeats, 3 linked to a series
+  17 attendee count u8 (0–16), reserved u16
+  20 start date u32, start minute u16 (0–1439), end minute u16, end date u32
+     (all-day: minutes 0, the end is the last date, inclusive)
+  32 rule, 16 bytes (all zero without one): frequency u8 (1 daily, 2 weekly,
+     3 monthly, 4 yearly), by u8 (0 none, 1 day of month, 2 nth weekday),
+     weekdays u8 (bit 0 Monday … 6 Sunday; weekly only, non-empty), week
+     start u8 (0–6; weekly only), interval u16 (1–1,000), count u16 (0 or
+     1–1,000), until u32 (0 or a date on or after the start; not with a
+     count), month day i8 (1–31 or -1), nth i8 (1–5 or -1), nth weekday u8
+     (0–6), reserved u8
+  48 series ID [16], original start date u32, minute u16, reserved u16 (all
+     zero unless linked; never the event's own ID)
+  72 attendee member IDs [16] each, strictly ascending, non-zero
+     title (1–200), place (0–200), notes (0–2,000), zone (0–64; empty when
+     all-day or floating), source UID (0–255): each u16 length + UTF-8
+  ```
+  Titles and places are trimmed single lines; notes have `\n` line breaks,
+  no trailing space on a line and no control characters but newline; the
+  zone is ASCII letters, digits, `/`, `_`, `-`, `+` with no empty segment;
+  an event lasts at most 366 days. Kinds 72 and 73: event ID [16], scope u8
+  (1 one occurrence, 2 the series), 3 reserved, original start date u32,
+  minute u16, reserved u16 (zero for the series); 28 bytes. Kind 74: colour
+  u8 (0–11, or 255 for the default), 3 reserved; it colours the event's own
+  member. KCMD actions 71 (`save-calendar-event` `{ event }`), 72
+  (`cancel-calendar-event` `{ eventId, occurrence }`), 73
+  (`restore-calendar-event`, the same) and 74 (`set-member-colour`
+  `{ colour }`) carry the exact payload as their text with a zero entity ID
+  and no option, date or expiry (`kin-calendar.js`). Rust checks them
+  against the current state (`CalendarState::check_command`, code 4): see
+  [EVENTS](EVENTS.md#the-family-calendar).
+- **KCAQ v1 / KCAL v1** (the calendar between two dates,
+  `kin_calendar_range`, `rust/src/calendar_range.rs`): the 20-byte query
+  `"KCAQ"`, version 1, reserved u16, from u32, to u32 (valid dates, from ≤ to,
+  at most 400 days together, else code 2), flags u32 (bit 0 every event's
+  definition, bit 1 cancelled occurrences too, marked; others zero), then a
+  record-less KINE context. The result:
+  ```text
+   0 "KCAL", version u16 = 1, reserved u16
+   8 from u32, to u32, today u32 (the context's civil date)
+  20 flags u32: bit 0 occurrences past 5,000 left out, 1 items past 2,000
+     left out, 2 routine occurrences past 5,000 left out, 3 the household
+     mode pauses routines, 4 a next countdown follows
+  24 colour, event, occurrence, item, routine and meal counts, u32 each
+  48 the next countdown, one occurrence record (20 zero bytes when none)
+  68 colours, 20 bytes each by member ID: member ID [16], colour u8 (0–11),
+     3 reserved
+     events by event ID: flags u8 (bit 0 cancelled as a whole, 1 cancelled
+     through its series), reserved u8, cancelled occurrence count u16,
+     payload length u32, each cancelled original start (date u32, minute u16,
+     reserved u16; ascending), the kind-71 payload
+     occurrences, 20 bytes each, earliest first (date, all-day before timed,
+     minute, event ID): event index u32 (into the events above), start date
+     u32, start minute u16, flags u8 (bit 0 all-day, 1 countdown, 2
+     cancelled, 3 stands in for an occurrence of a series), reserved u8, end
+     date u32, end minute u16, reserved u16
+     items, 40 bytes each by date then text: item ID [16], date u32,
+     classification u8, flags u8 (bit 0 owner), reserved u16, owner [16]
+     routines, 44 bytes each by date then text: routine ID [16], opens u32,
+     occurrence key u32, cadence u8 (as KINS), flags u8 (bit 0 owner, 1
+     current, 2 done), reserved u16, owner [16]
+     meals by date then slot: date u32, slot u8 (1 breakfast, 2 lunch, 3
+     snack, 4 dinner), flags u8 (bit 0 recipe, 1 cook), reserved u16, recipe
+     ID [16], cook [16] (zero when none), name u16 + UTF-8
+  ```
+  Occurrences overlapping the range count, including one that started before
+  it and is still going on (a timed one ending exactly at midnight doesn't).
+  The next countdown is the first occurrence of a countdown event from the
+  context's date to 400 days on, in the range or not. Events are those an
+  occurrence or the countdown names, or all of them with flag bit 0 (editing
+  a series; finding an earlier import by source UID). Items, routines and
+  meals are as KWKD has them over the range, except that meals include
+  breakfast, lunch and snacks (kinds 80–81) beside dinners since #660, by
+  date then KCAL slot (1 breakfast, 2 lunch, 3 snack, 4 dinner; a cook only
+  on dinners), with no format change. At most
+  2,000 events and 5,000 occurrences; the earliest are kept. JavaScript
+  decodes it with `decodeCalendarRange` (`kin-calendar.js`).
+- **KICS v1** (an iCalendar file as Kin events, `kin_ical_parse`, #666,
+  `rust/src/ical.rs`): the input is the file's bytes (at most 2 MB, else
+  code 5; the parse never fails on content). The result:
+  ```text
+   0 "KICS", version u16 = 1, reserved u16
+   8 event count u32 (at most 5,000), skipped count u32, flags u32 (bit 0
+     more than 5,000 events, the rest left out)
+  20 the calendar's name (X-WR-CALNAME): u16 length + UTF-8
+     per event: flags u32 (bit 0 repeat not kept, first occurrence only; 1
+     time zone not understood, floating; 2 STATUS:CANCELLED; 3 an override,
+     RECURRENCE-ID; 4 text shortened; 5 length shortened; 6 EXDATEs left
+     out; 7 no title), series index u32 (0xFFFFFFFF none), original start
+     date u32, minute u16, reserved u16 (zero without a series), EXDATE
+     count u16 (at most 1,000), reserved u16, payload length u32, each
+     EXDATE (date u32, minute u16, reserved u16; ascending), then the kind-71
+     payload with a zero event ID and no series link
+  ```
+  The host gives each event an ID (an earlier import's when KCAL lists the
+  same source UID), saves it, cancels its EXDATEs, and saves each override
+  linked to its series' ID and original start, cancelling that occurrence.
+  The parse reads VCALENDAR (X-WR-CALNAME) and VEVENT (UID, SUMMARY,
+  LOCATION, DESCRIPTION, DTSTART, DTEND, DURATION, RRULE, EXDATE,
+  RECURRENCE-ID, STATUS), unfolds lines, unquotes parameters and unescapes
+  text; every other component, VTIMEZONE and VALARM included, is skipped.
+  Zones: `Z` is `UTC`; an IANA TZID (also inside a longer path) is kept; a
+  Windows or Outlook display name maps through a small table; anything else
+  is floating, flagged ([ADR 0022](decisions/0022-family-hub.md) §3).
+- <a id="the-chore-chart-676"></a>**The chore chart (kinds 77–79, #676,
+  `rust/src/chores.rs`).** Payloads are strict and re-encode to the same
+  bytes (code 2): 77 is routine ID [16], points u8 (0–10), 3 reserved; 78 is
+  member ID [16], goal u16 (0–1000), reserved u16, text (u16 + UTF-8: 1–120
+  bytes, trimmed, no control characters; empty exactly when the goal is 0);
+  79 is member ID [16], joined u8 (0 or 1), 3 reserved. KCMD actions 77–79
+  (`set-chore-points`, `set-chore-reward`, `set-chore-chart-joined`) carry
+  the exact payload as their text with a zero entity ID and no option, date
+  or expiry (`kin-chores.js`). Rust checks them against the current state
+  (`ChoresState::check_command`, code 4): points name a live routine, every
+  change changes something, and kind 79 comes from the member it names. The
+  host gates the rest (`canSendChoreCommand`): points and rewards are for
+  Adults, joining for an Adult while a household admin allows adults.
+- **KCCQ v1 / KCCD v1** (the chore chart, `kin_chore_chart`): the query
+  `"KCCQ"`, version 1, reserved u16, week start u32 (a Monday, YYYYMMDD),
+  flags u8 (bit 0: adults allowed), 3 reserved, eight i64 day boundaries (the
+  first instant of each day Monday–Sunday in the host's time zone, then the
+  next Monday's; each day 1–25 hours), member count u16 (≤ 32), reserved
+  u16 (84 bytes), then 20 bytes per member: ID [16] (non-zero, distinct),
+  kind u8 (1 child, 2 Adult), 3 reserved; then a record-less KINE context
+  whose civil date lies in the week. The result `"KCCD"`, version 1,
+  reserved u16, week start u32, today u32, flags u8 (bit 0: routines
+  paused), 3 reserved, member count u16, points-setting count u16 (24
+  bytes); then 20 bytes per live routine whose points aren't 1: routine ID
+  [16], points u8, 3 reserved; then each member on the chart (children
+  always, Adults only when allowed and joined), in the query's order: ID
+  [16], flags u8 (bit 0 Adult, bit 1 reward), reserved u8, points this week
+  u16, reward goal u16 (0 for none), chore count u16, reward text (u16 +
+  UTF-8), then 28 bytes per chore (by day, items before routines, then by
+  text; at most 200): kind u8 (1 item, 2 routine), flags u8 (bit 0 done,
+  bit 1 today: can be ticked or unticked now), points u8, reserved u8, ID
+  [16], date u32 (the day it shows on), occurrence key u32 (0 for an item).
+  Open items assigned to the member show on their planned day this week
+  (undated and overdue ones today); done items on the day they were done,
+  for whoever they're credited to; routine occurrences on the day they open,
+  done ones for their credited member, open ones for the owner (only the
+  current occurrence of a rotating routine). Points are the credited
+  completions whose time falls in the week. JavaScript decodes it as `{
+  start, today, routinesPaused, points: Map, members: [{ memberId, adult,
+  points, reward, chores }] }`.
 - **KMTQ v1 / KMTD v1** (a member's things today, `kin_my_things`): the
   24-byte query `"KMTQ"`, version 1, reserved u16, member ID [16] (non-zero),
   then a record-less KINE context. The result `"KMTD"`, version 1, reserved

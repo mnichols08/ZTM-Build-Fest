@@ -75,7 +75,8 @@ test("a route into a switched-off feature opens Today with a calm line (#625)", 
   hash = "#today";
   const { app, navigation, features, statuses } = controller();
   navigation.showPageFromLocation();
-  features.receive({ off: 2 ** 3 | 2 ** 5, revision: 1, admin: false });
+  // Routines, This week and the Calendar (which the week page also holds).
+  features.receive({ off: 2 ** 3 | 2 ** 5 | 2 ** 14, revision: 1, admin: false });
   for (const target of ["#routines", "#routines/checklists", "#week"]) {
     navigation.navigate(target);
     assert.equal(app.route.canonical, "today", target);
@@ -86,5 +87,18 @@ test("a route into a switched-off feature opens Today with a calm line (#625)", 
   assert.equal(app.route.canonical, "lists/shopping", "always-on pages still open");
   features.receive({ off: 0, revision: 2, admin: false });
   navigation.navigate("#week");
-  assert.equal(app.route.canonical, "week", "back on, it opens again");
+  assert.equal(app.route.canonical, "week/week", "back on, it opens again");
+});
+
+test("with only the Calendar on, This week's address opens the Day view (#661)", () => {
+  hash = "#today";
+  const { app, navigation, features } = controller();
+  navigation.showPageFromLocation();
+  features.receive({ off: 2 ** 5, revision: 1, admin: false });
+  navigation.navigate("#week");
+  assert.equal(app.route.canonical, "week/day");
+  assert.equal(hash, "#week/day", "the address follows");
+  features.receive({ off: 2 ** 5 | 2 ** 14, revision: 2, admin: false });
+  navigation.navigate("#week/month");
+  assert.equal(app.route.canonical, "today", "with both off, Today");
 });

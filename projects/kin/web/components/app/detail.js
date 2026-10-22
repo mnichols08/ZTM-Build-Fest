@@ -12,7 +12,7 @@ export class DetailController {
 
   openItemDetail(itemId, { opener = null, stepId = null, origin = null } = {}) {
     // Simple view has no item details (#345).
-    if (!this.app.state || !this.app.vault || this.app.vault.locked || this.app.simpleView) return;
+    if (!this.app.state || !this.app.vault || this.app.vault.locked || this.app.simpleView || this.app.displayMode) return;
     const record = this.app.state.items.find((item) => item.itemId === itemId) ?? null;
     const page = this.app.route?.page ?? "today";
     const sameItem = this.app.selection?.itemId === itemId;

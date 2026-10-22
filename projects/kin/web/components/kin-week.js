@@ -1,13 +1,19 @@
 // This week (#416, #421, #425): the next seven days in one calm list. Each
 // day is a headed section with its planned items, routine occurrences,
-// dinner and maintenance due. The days and what falls on them come from Rust
+// meals (#679: every slot) and maintenance due. The days and what falls on them come from Rust
 // (`kin_week`); this component only names and draws them. Items complete and
 // reopen with the ordinary commands (Undo applies) and move to another day
 // with "Move to…"; routines complete for the current period only.
+// In the Calendar (#661, ADR 0022 §2) this list is the Week view: each day
+// starts with its calendar events (from `kin_calendar_range`, placed in the
+// viewer's time by the calendar controller), in each person's colour with
+// their names.
 import { assigneeLabel } from "./shared/assignee-label.js";
 import { describePlanningDate, formatCivilDate, nextCivilDate } from "../today-view.js";
 import { mergePrivateIntoWeek } from "../private-items.js";
 import { privateItemRow } from "./shared/private-marker.js";
+import { SLOT_LABELS } from "../meals/meals-view.js";
+import { eventChip } from "./calendar/event-chip.js";
 
 const CADENCE = { daily: "Every day", weekdays: "Weekdays", weekly: "Every week", biweekly: "Every two weeks", monthly: "Every month" };
 
@@ -32,6 +38,8 @@ class KinWeek extends HTMLElement {
     this.state = null;
     this.context = {};
     this.isDisabled = false;
+    this.events = new Map();
+    this.people = null;
   }
 
   connectedCallback() {
@@ -47,8 +55,11 @@ class KinWeek extends HTMLElement {
    * today's civil date, the projection (for text), the responsibility
    * context and this member's private items for This week (#514; none in
    * Simple view or with their setting off). */
-  update({ days, today, state, context, privateItems = [] }) {
+  update({ days, today, state, context, privateItems = [], events = null, people = null }) {
     this.days = mergePrivateIntoWeek(days ?? [], privateItems);
+    // The calendar's events by date (#661): Map date → { allDay, timed }.
+    this.events = events ?? new Map();
+    this.people = people;
     this.today = today;
     this.state = state;
     this.context = context ?? {};
@@ -91,7 +102,21 @@ class KinWeek extends HTMLElement {
       section.append(heading);
       const list = document.createElement("ul");
       list.className = "week-list";
-      for (const meal of day.meals) list.append(this.line("week-meal", `Dinner: ${meal.name}`));
+      // Calendar events first (#661): all-day, then by time.
+      const events = this.events.get(day.date);
+      if (events && this.people) {
+        for (const placed of [...events.allDay, ...events.timed.map((segment) => segment.placed)]) {
+          const row = document.createElement("li");
+          row.className = "week-row week-event";
+          const chip = eventChip(placed, day.date, this.people);
+          chip.disabled = this.isDisabled;
+          row.append(chip);
+          list.append(row);
+        }
+      }
+      // Every meal of the day (#679), in planner order; Rust's own week has
+      // the dinner only, so a meal without a slot is dinner.
+      for (const meal of day.meals) list.append(this.line("week-meal", `${SLOT_LABELS[meal.slot] ?? "Dinner"}: ${meal.name}`));
       for (const entry of day.items) {
         const item = items.get(entry.itemId);
         if (item) list.append(this.itemRow(item, entry, day.date));

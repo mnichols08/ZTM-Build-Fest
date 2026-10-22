@@ -18,6 +18,11 @@ export class ShareController {
     const action = consumeLaunchAction();
     const shared = await consumeShare();
     if (!this.ctx.navigation.workspaceReady()) return;
+    // A kitchen display (#670) takes no shortcut or share.
+    if (this.app.displayMode) {
+      if (action || shared) this.ctx.status.setStatus("Sharing into Kin isn't available on a kitchen display.");
+      return;
+    }
     if (action) this.land(action);
     if (this.app.simpleView) {
       if (shared) this.ctx.status.setStatus("Sharing into Kin isn't available in Simple view.");
@@ -32,7 +37,7 @@ export class ShareController {
    * address was a shortcut action. */
   handleLaunchAddress() {
     if (!captureLaunchAction()) return false;
-    if (this.ctx.navigation.workspaceReady()) this.land(consumeLaunchAction());
+    if (this.ctx.navigation.workspaceReady() && !this.app.displayMode) this.land(consumeLaunchAction());
     return true;
   }
 
@@ -78,12 +83,24 @@ export class ShareController {
     // nothing shared there touches household data.
     const journalOpen = this.ctx.journal?.status() === "ready";
     // Destinations of switched-off features leave the sheet (#625).
-    const allowed = shareDestinations(["todo", "shopping", "note", "handoff", ...(chatOpen ? ["chat"] : []), ...(journalOpen ? ["journal"] : [])], this.ctx.features.off);
+    // Family photos (#673) when a photo came through.
+    const photos = (shared.files ?? []).filter((file) => /^image\/(jpeg|png|webp)$/.test(file.type ?? ""));
+    // A calendar file (#660) can go to the calendar, after a preview.
+    const calendarFile = (shared.files ?? []).find((file) => file.type === "text/calendar" || /\.ics$/i.test(file.name ?? "")) ?? null;
+    const allowed = shareDestinations(["todo", "shopping", "note", "handoff", ...(chatOpen ? ["chat"] : []), ...(journalOpen ? ["journal"] : []), ...(photos.length ? ["photos"] : []), ...(calendarFile ? ["calendar"] : [])], this.ctx.features.off);
     const sheet = this.app.shareSheet;
     if (!sheet) return;
     const kind = await sheet.choose({ text, link, files, allowed });
     if (!kind) {
       this.ctx.status.setStatus("Nothing was added.");
+      return;
+    }
+    if (kind === "photos") {
+      await this.ctx.album.offer(photos);
+      return;
+    }
+    if (kind === "calendar") {
+      this.ctx.calendar.openImport({ file: calendarFile });
       return;
     }
     if (kind === "journal") {

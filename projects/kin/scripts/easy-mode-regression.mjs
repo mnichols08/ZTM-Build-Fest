@@ -12,7 +12,7 @@ import { setViewport } from "./cdp-viewport.mjs";
 
 // Every page and tab Help covers (help/help-content.js has a topic for each).
 export const ROUTES = [
-  "today", "week", "search", "journal",
+  "today", "week/week", "week/day", "week/month", "chores", "search", "journal",
   "lists/todo", "lists/shopping", "lists/staples", "lists/meals", "lists/mine",
   "routines/all", "routines/checklists", "updates/handoffs", "updates/chat",
   "household/hub", "household/fridge", "household/notes", "household/sitter", "household/areas",
@@ -219,7 +219,7 @@ export async function easyModeRegressions(client, { until }) {
   assert.deepEqual(nav.lists, ["todo", "shopping"], "Lists keeps To do and Shopping");
   await go("#household");
   nav = await navigation();
-  assert.deepEqual(nav.household, ["hub"], "Household keeps its overview");
+  assert.deepEqual(nav.household, ["hub", "photos"], "Household keeps its overview and Family photos (#673)");
   assert.ok(nav.routinesOnHub, "Routines is one tap away on the overview");
   await go("#routines");
   await go("#lists/staples");

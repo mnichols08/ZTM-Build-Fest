@@ -38,6 +38,7 @@ import { accountVaultMethods } from "./durable-store/account-vault.mjs";
 import { lifecycleMethods } from "./durable-store/lifecycle.mjs";
 import { feedbackMethods } from "./durable-store/feedback.mjs";
 import { preparedInvitationMethods } from "./durable-store/prepared-invitations.mjs";
+import { calendarSubscriptionMethods } from "./durable-store/calendar-subscriptions.mjs";
 import {
   acquireDatabaseMaintenanceLock,
   acquireDatabaseProcessLock,
@@ -70,6 +71,10 @@ export {
   MAX_ATTACHMENT_BYTES,
   MAX_HOUSEHOLD_ATTACHMENT_BYTES,
   MAX_HOUSEHOLD_ATTACHMENTS,
+  ALBUM_ATTACHMENT_PREFIX,
+  MAX_HOUSEHOLD_ALBUM_ATTACHMENTS,
+  MAX_HOUSEHOLD_ALBUM_BYTES,
+  isAlbumAttachmentId,
   MAX_CHAT_BLOB_BYTES,
   MAX_HOUSEHOLD_CHAT_BLOB_BYTES,
   MAX_HOUSEHOLD_CHAT_BLOBS,
@@ -474,4 +479,4 @@ export class DurableStore {
   }
 }
 
-addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, chatBlobMethods, chatEventMethods, boardEventMethods, privateEventMethods, privateBlobMethods, chatHiddenMethods, chatKeyMethods, chatReceiptMethods, accountVaultMethods, lifecycleMethods, authorityMethods, envelopeMethods, feedbackMethods, preparedInvitationMethods);
+addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, chatBlobMethods, chatEventMethods, boardEventMethods, privateEventMethods, privateBlobMethods, chatHiddenMethods, chatKeyMethods, chatReceiptMethods, accountVaultMethods, lifecycleMethods, authorityMethods, envelopeMethods, feedbackMethods, preparedInvitationMethods, calendarSubscriptionMethods);

@@ -29,10 +29,20 @@ export const SEGMENTS = Object.freeze({
     Object.freeze({ id: "handoffs", label: "Handoffs" }),
     Object.freeze({ id: "chat", label: "Chat" }),
   ]),
+  // The Calendar (#661, ADR 0022 §2): This week grew into it. Its views
+  // are segments; Week (This week's list) is the default, so `#week` still
+  // opens it.
+  week: Object.freeze([
+    Object.freeze({ id: "week", label: "Week" }),
+    Object.freeze({ id: "day", label: "Day" }),
+    Object.freeze({ id: "month", label: "Month" }),
+  ]),
   household: Object.freeze([
     Object.freeze({ id: "hub", label: "Household" }),
     // The family fridge (#317): a shared drawing board.
     Object.freeze({ id: "fridge", label: "Fridge" }),
+    // Family photos (#673): the household's album and its slideshow.
+    Object.freeze({ id: "photos", label: "Family photos" }),
     Object.freeze({ id: "notes", label: "Notes & reference" }),
     // The sitter page (#441): what a babysitter or guest sees first.
     Object.freeze({ id: "sitter", label: "For the sitter" }),
@@ -52,8 +62,12 @@ const PAGE_TITLES = Object.freeze({
   updates: "Updates",
   household: "Household",
   search: "Search",
-  // This week (#416): reached from Today; it marks Today in the navigation.
-  week: "This week",
+  // This week (#416), grown into the Calendar (#661): reached from Today;
+  // it marks Today in the navigation. There is no sixth destination.
+  week: "Calendar",
+  // The chore chart (#676): reached from Today (and Simple view); it marks
+  // Today in the navigation.
+  chores: "Chore chart",
   // For you (#441): a Temporary member's landing page; it marks Today.
   foryou: "For you",
   // A member's journal (#497): reached from Household (the More place), not
@@ -102,7 +116,7 @@ export function routeHash(page, segment = null) {
   if (!segments) return `#${page}`;
   const chosen = segments.find((entry) => entry.id === segment) ?? segments[0];
   // The hub and the first list are the page's default and stay short.
-  if (chosen === segments[0] && (page === "household" || page === "routines")) return `#${page}`;
+  if (chosen === segments[0] && (page === "household" || page === "routines" || page === "week")) return `#${page}`;
   return `#${page}/${chosen.id}`;
 }
 
@@ -111,18 +125,21 @@ export const SIMPLE_ROUTES = Object.freeze({
   today: Object.freeze({ page: "today", label: "Today" }),
   chat: Object.freeze({ page: "updates", segment: "chat", label: "Chat" }),
   fridge: Object.freeze({ page: "household", segment: "fridge", label: "Fridge" }),
+  // The chore chart (#676), reached from Simple view's Today.
+  chores: Object.freeze({ page: "chores", label: "Chore chart" }),
 });
 
 /**
- * Simple view's allowlist: Today, Updates › Chat when `chat` is true and
- * Household › Fridge when `fridge` is true. Every other hash, alias, search
- * link and `/pair` resolves to Today.
+ * Simple view's allowlist: Today, Updates › Chat when `chat` is true,
+ * Household › Fridge when `fridge` is true and the chore chart when `chores`
+ * is true. Every other hash, alias, search link and `/pair` resolves to Today.
  */
-export function resolveSimpleRoute(location = {}, { chat = false, fridge = false } = {}) {
+export function resolveSimpleRoute(location = {}, { chat = false, fridge = false, chores = false } = {}) {
   const route = resolveRoute(location);
   // An old Talk link isn't Chat: Simple view has no To talk about list.
   const allowed = (chat && route.page === "updates" && route.segment === "chat" && !route.topics) ||
-    (fridge && route.page === "household" && route.segment === "fridge");
+    (fridge && route.page === "household" && route.segment === "fridge") ||
+    (chores && route.page === "chores");
   return allowed ? route : resolveRoute({ hash: "#today" });
 }
 
@@ -143,7 +160,7 @@ export function resolveRoute({ hash = "", pathname = "/" } = {}) {
     : null;
   const canonical = segments ? `${page}/${segment}` : page;
   // Search is reachable from every page; it marks no primary destination.
-  const destination = page === "search" ? null : page === "week" || page === "foryou" ? "today" : page === "journal" ? "household" : page;
+  const destination = page === "search" ? null : page === "week" || page === "foryou" || page === "chores" ? "today" : page === "journal" ? "household" : page;
   return { page, segment, canonical, destination, title: PAGE_TITLES[page], hash: segments ? routeHash(page, segment) : `#${page}`, ...(topics ? { topics: true } : {}) };
 }
 

@@ -166,6 +166,22 @@ export function routineOccurrenceEntry(type, routineId, after) {
   });
 }
 
+// ---- The family album (#673) ---------------------------------------------
+// The album isn't part of the projection: for these entries the undo
+// controller passes the state with `album` (store.album()) and `albumKeep`
+// (the attachments still kept, album-blobs.js albumKeep). Removing a photo
+// is undone by adding its image again under a new photo ID; once the Undo
+// grace has passed and its blob is gone, it can't be.
+
+const albumPhotoIn = (state, photoId) => state?.album?.photos?.find((photo) => photo.photoId === photoId) ?? null;
+const albumLabel = (caption) => (caption ? `remove the photo ${name(caption)}` : "remove a photo");
+
+export function albumRemovedEntry(photo) {
+  if (!photo?.photoId || !photo.attachmentId) return null;
+  const caption = photo.caption ?? "";
+  return Object.freeze({ kind: "album-removed", photoId: photo.photoId, attachmentId: photo.attachmentId, caption, replacementId: newId(), label: albumLabel(caption) });
+}
+
 // ---- Running ------------------------------------------------------------
 
 /**
@@ -221,6 +237,15 @@ export function reversalStatus(entry, state) {
       const replacement = routineIn(state, entry.replacementId);
       return replacement?.status === "archived" ? "gone" : "ready";
     }
+    case "album-removed": {
+      if (albumPhotoIn(state, entry.replacementId)) return "ready";
+      if (state?.album?.removed?.some((removed) => removed.photoId === entry.replacementId)) return "gone";
+      // Someone else put the image back meanwhile, or its blob is gone.
+      if (state?.album?.photos?.some((photo) => photo.attachmentId === entry.attachmentId)) return "conflict";
+      return state?.albumKeep?.has(entry.attachmentId) ? "ready" : "gone";
+    }
+    case "album-added":
+      return albumPhotoIn(state, entry.photoId) ? "ready" : "gone";
     default:
       return "gone";
   }
@@ -269,6 +294,11 @@ export function nextReversalStep(entry, state, { memberIds = null, skip = null }
       return recreateItemStep(entry, state, memberIds, skip);
     case "routine-archived":
       return recreateRoutineStep(entry, state, memberIds, skip);
+    case "album-removed":
+      return albumPhotoIn(state, entry.replacementId) ? null
+        : { type: "add-album-photo", photoId: entry.replacementId, attachmentId: entry.attachmentId, caption: entry.caption };
+    case "album-added":
+      return albumPhotoIn(state, entry.photoId) ? { type: "remove-album-photo", photoId: entry.photoId } : null;
     default:
       return null;
   }
@@ -342,9 +372,70 @@ export function inverseEntry(entry, before, after) {
       return keep({ kind: "routine-created", routineId: entry.replacementId, mark: routineMark(after, entry.replacementId) });
     case "routine-occurrence":
       return keep({ ...entry, to: entry.to === "completed" ? "open" : "completed" });
+    case "album-removed":
+      return keep({ kind: "album-added", photoId: entry.replacementId, attachmentId: entry.attachmentId, caption: entry.caption });
+    case "album-added":
+      return keep({ kind: "album-removed", photoId: entry.photoId, attachmentId: entry.attachmentId, caption: entry.caption, replacementId: newId() });
     default:
       return null;
   }
+}
+
+// ---- The family calendar (#660) -----------------------------------------
+// Calendar events aren't in the projection: the calendar controller reads
+// them from KCAL. A calendar entry carries the steps that reverse it and
+// the steps that redo it ({ command, optional }), worked out when the
+// change was made, and a mark of each event (or colour) it touched as the
+// change left it. Undo runs only while every mark still matches; otherwise
+// someone changed it since and it is left alone. `next` counts the steps
+// already run, so a run that stopped part-way resumes where it left off.
+
+/** What an event looks like now, as a comparable string: its canonical
+ * fields and what is cancelled of it. Null when there is no such event. */
+export function calendarEventMark(event) {
+  if (!event) return null;
+  const { cancelled = false, cancelledThroughSeries = false, cancelledStarts = [], ...saved } = event;
+  const starts = cancelledStarts.map((start) => `${start.date}:${start.minute}`).sort().join(",");
+  return `${JSON.stringify(saved)}|${cancelled ? 1 : 0}${cancelledThroughSeries ? 1 : 0}|${starts}`;
+}
+
+/** The marks of every event and member colour in a KCAL read (allEvents):
+ * Map key → mark, keyed by event ID or "colour:<memberId>". */
+export function calendarMarks(range) {
+  const marks = new Map();
+  for (const event of range?.events ?? []) marks.set(event.eventId, calendarEventMark(event));
+  for (const [memberId, colour] of range?.colours ?? []) marks.set(`colour:${memberId}`, String(colour));
+  return marks;
+}
+
+/** A calendar change that can be undone: `undo` and `redo` are step lists,
+ * `keys` the events (or "colour:<id>") it touched, `marks` their marks
+ * after the change. */
+export function calendarEntry({ label, undo, redo, keys, marks }) {
+  return {
+    kind: "calendar", label, steps: undo, back: redo, next: 0,
+    expect: keys.map((key) => [key, marks.get(key) ?? null]),
+  };
+}
+
+/** "ready", "conflict" (changed since) or "gone" (no longer there). A
+ * colour back at the default has no mark, which matches null. */
+export function calendarReversalStatus(entry, marks) {
+  if (entry.next > 0) return "ready";
+  for (const [key, mark] of entry.expect) {
+    const now = marks.get(key) ?? null;
+    if (now === mark) continue;
+    return now === null && !key.startsWith("colour:") ? "gone" : "conflict";
+  }
+  return "ready";
+}
+
+/** The entry for the other stack after a finished run. */
+export function calendarInverse(entry, marks) {
+  return {
+    kind: "calendar", label: entry.label, steps: entry.back, back: entry.steps, next: 0,
+    expect: entry.expect.map(([key]) => [key, marks.get(key) ?? null]),
+  };
 }
 
 const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);

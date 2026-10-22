@@ -736,6 +736,45 @@ automatic lock is off. Households that keep a shared screen should turn
 automatic lock on; Kin does not force it. A kiosk mode limited to the fridge
 would need its own credential and is out of scope.
 
+### A kitchen display is an unlocked adult's device (#669, ADR 0022 §4)
+
+Kitchen display mode turns an Adult's device into a wall screen. It stays
+unlocked and signed in as that adult, and **automatic lock doesn't apply**
+while it is a display: a screen that locked after five minutes would be no
+use on the wall. The trade-off, stated to the adult before they turn it on:
+
+- **Anyone in the kitchen can see and tick household things**: today's
+  events and the week, the children's chore charts, today's meals, the
+  shopping list, the fridge, and the newest chat messages (read-only). What
+  they tick or add is recorded as this adult's device, as any change on it
+  would be; chore points still go to the chore's owner.
+- **Hidden, not just undrawn**: the adult's private storage (journal, Just
+  for me, reminders), Search, item details, Household settings, every admin
+  action, Chat composition, shares and keyboard shortcuts have no panel and
+  no route: every address opens the display. This is a layout on an
+  unlocked device, as Simple view is (above): someone with the device and
+  developer tools, or who reads its storage while it is unlocked, gets what
+  the adult's unlocked Kin holds. Don't make a device a display if that
+  matters; a display is for the shared kitchen, not a hallway in a shared
+  house.
+- **Leaving needs the adult's passkey or password** (on a device set up
+  before accounts, the household's backup key, which is what unlocks it),
+  checked on the device by opening its vault once more, so it works offline.
+  A wrong one is refused calmly. The display can still be **locked** like
+  any Kin (closing the browser, a lock from another tab), and unlocking
+  needs the same secret; after an unlock it opens as the display again.
+- **Switching the feature off, or a member who isn't an Adult**: if the
+  household turns "Kitchen display" off, or the service says this member
+  isn't an Adult, the display **locks** rather than opening the adult's full
+  Kin to whoever is in the kitchen.
+- **Stored on the device:** whether it is a display (for one household's
+  vault), its night hours and its photo frame wait, unencrypted in local
+  storage, like the display preferences. No household content.
+- **Screen:** it keeps the screen on with the Screen Wake Lock API where the
+  browser allows, dims on a night schedule and shows family photos when
+  quiet. Photos on the screensaver are visible to anyone in the room, as
+  they are to everyone in the household.
+
 ### Simple view is a layout, not a lock (#341)
 
 An admin can turn on Simple view for a Limited member
@@ -786,6 +825,46 @@ modified client could write a `SITTER_PAGE_SET` event and other devices would
 accept it, as for attachment removal above. The page can only point at
 records already in the household, so the worst case is a rearranged or
 emptied page that an Adult sets again.
+
+### Family photos: who may remove a photo is enforced by the app, not by replay (#673)
+
+The family album ([ADR 0022](decisions/0022-family-hub.md) §5) holds photos
+everyone in the household can see. Its images are ordinary household
+attachment blobs: encrypted on the device under the household key, uploaded
+to the same relay, unreadable to the service. What the service learns is the
+same as for any attachment, plus that an attachment is an album photo (its
+ID starts `a1b0`) and how many there are and how big.
+
+Only whoever added a photo, or a household admin, may remove it (owner
+decision). Rust records who added each photo but doesn't know who is an
+admin, so the check is on the app's single command append path
+(`canRemoveAlbumPhoto`), as for the sitter page. A member running a modified
+client could write an `ALBUM_PHOTO_REMOVED` event for someone else's photo,
+and other devices would accept it. The relay still refuses to delete the
+encrypted file unless its uploader or an Adult asks, and Undo can bring the
+photo back for an hour; after that, an Adult's device deletes the unneeded
+blob. The worst case is a removed photo the person who added it can add
+again.
+
+A removed photo's encrypted file stays on devices and the relay for up to an
+hour (so Undo works) before the next sync pass deletes it. Photos another
+device added are downloaded the first time they are shown and kept on this
+device in `kin-album:<household>`, sealed like the household's other
+attachments; "Start over on this browser" deletes that database too.
+
+### The chore chart's rules are kept by the app (#676)
+
+The chore chart ([ADR 0022](decisions/0022-family-hub.md) §6) has three
+rules Rust can't fully enforce, because it doesn't know member kinds or the
+service's settings: only Adults set points (kind 77) and rewards (kind 78),
+and an adult joins (kind 79) only while a household admin allows adults.
+The app enforces them on the single command path; a Limited member running
+a modified client could change a routine's points or a reward, or an Adult
+could join while adults aren't allowed (their card shows only on devices
+where the setting is on, which it isn't). Replay does enforce that a member
+joins or leaves only for themselves: a kind-79 event naming someone else has
+no effect. Points are a household game derived from completions anyone in
+the household can already record; they protect nothing.
 
 ### Prepared invitations: a printed sheet is an invitation (#613, ADR 0021 §4)
 
@@ -875,6 +954,36 @@ member can make the service store up to 5 reports with 1 MiB pictures an
 hour; the service caps stored reports at 20,000 and pictures at 1 GiB. The
 GitHub token, if configured, can write that repository's issues; scope it
 to Issues on one repository.
+
+### Synced outside calendars are readable by the service (ADR 0022 §3, #667)
+
+A calendar a member syncs is fetched by the Kin service, which reads it in
+plaintext while it holds it (at most 30 minutes in memory) and relays it to
+the devices in its audience over TLS only, not end-to-end encrypted. The
+service's database holds each calendar's private link in plaintext, because
+it must fetch it: the operator, or anyone with the database or a backup, can
+read those calendars for as long as the links work. Members are warned
+before turning sync on; importing a file instead keeps the calendar off the
+service.
+
+The fetcher is a way for members to make the service request URLs, so it is
+guarded against server-side request forgery (server/calendar-fetcher.mjs):
+`https:` on port 443 only, no credentials in the link; every address the host
+resolves to must be public unicast (no private, loopback, link-local,
+carrier-NAT, multicast, documentation, benchmarking, 6to4, Teredo or other
+reserved IPv4 or IPv6 range, and IPv4-mapped or NAT64 IPv6 judged by the
+IPv4 address), checked again on every redirect hop (5 at most, never away
+from https), and the connection goes to the address that was checked, so DNS
+rebinding between check and connect doesn't work; 2 MB and 15 seconds per
+fetch, no compressed answers; 10 calendars per member, 30 per household and
+20 additions per member an hour; backoff from 5 minutes to 6 hours after
+errors. Residual risks: the service still reaches any public HTTPS host a
+member names (it can be used to send a GET to a public site about every 30
+minutes per calendar, and to learn whether a host serves something that looks
+like a calendar); an operator whose own network treats a public address as
+internal (for example an allowlist by source address) is not protected by
+these checks. Feeds are parsed only on the devices, by the same bounded Rust
+parser as file import.
 
 ### v1.0 was not tested across every browser and device
 

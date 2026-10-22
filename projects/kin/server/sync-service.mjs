@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
-import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "./durable-store.mjs";
-import { boardAccess, boardPolicyOf, canManageTrust, canParticipate, chatAccess, chatPolicyOf, featuresOf, isHouseholdAdmin, PairingError, privatePolicyOf, requireTrustAuthority } from "./pairing-service.mjs";
+import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ALBUM_ATTACHMENTS, MAX_HOUSEHOLD_ALBUM_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS, isAlbumAttachmentId } from "./durable-store.mjs";
+import { boardAccess, boardPolicyOf, canManageTrust, canParticipate, chatAccess, chatPolicyOf, choreChartOf, featuresOf, isHouseholdAdmin, PairingError, privatePolicyOf, requireTrustAuthority } from "./pairing-service.mjs";
 import { INSTALL_ICONS, installContentTag, installIconUrl, validateInstallIdentity } from "./install-identity.mjs";
 import {
   canonicalEventEnvelope,
@@ -64,6 +64,7 @@ export class EncryptedSyncService {
     this.boardRelayService?.forgetHousehold(householdId);
     this.privateRelayService?.forgetHousehold(householdId);
     this.privateBlobService?.forgetHousehold(householdId);
+    this.calendarSyncService?.forgetHousehold(householdId);
     this.feedbackService?.forgetHousehold(householdId);
     this.liveService?.revalidate(householdId);
   }
@@ -95,6 +96,9 @@ export class EncryptedSyncService {
       // Household features (ADR 0021 §2): the switched-off set every member's
       // devices hide, its revision, and whether this member may change it.
       features: { ...featuresOf(auth.household), admin: isHouseholdAdmin(auth.member, this.now()) },
+      // The chore chart (ADR 0022 §6, #676): whether an admin allows adults
+      // to join, its revision, and whether this member may change it.
+      choreChart: { ...choreChartOf(auth.household), admin: isHouseholdAdmin(auth.member, this.now()) },
       currentEpoch: state.currentEpoch,
       enabled: state.enabled,
       rotationPending: state.rotationPending,
@@ -482,10 +486,13 @@ export class EncryptedSyncService {
       return { accepted: false, size: ciphertext.length, digest };
     }
     if (!this.store) {
-      const householdRows = [...this.attachments.entries()].filter(([key]) => key.startsWith(`${auth.household.id}:`));
+      // Album photos (#673) and other attachments each have their own quota.
+      const album = isAlbumAttachmentId(attachmentId);
+      const householdRows = [...this.attachments.entries()].filter(([key, row]) => key.startsWith(`${auth.household.id}:`) && isAlbumAttachmentId(row.attachmentId) === album);
       const total = householdRows.reduce((sum, [, row]) => sum + row.ciphertext.length, 0);
-      if (householdRows.length >= MAX_HOUSEHOLD_ATTACHMENTS || total + ciphertext.length > MAX_HOUSEHOLD_ATTACHMENT_BYTES)
-        throw new PairingError("attachment_limit", "This household reached its encrypted attachment limit.", 409);
+      if (album ? householdRows.length >= MAX_HOUSEHOLD_ALBUM_ATTACHMENTS || total + ciphertext.length > MAX_HOUSEHOLD_ALBUM_BYTES
+        : householdRows.length >= MAX_HOUSEHOLD_ATTACHMENTS || total + ciphertext.length > MAX_HOUSEHOLD_ATTACHMENT_BYTES)
+        throw new PairingError("attachment_limit", album ? "This household's family photos are full." : "This household reached its encrypted attachment limit.", 409);
       this.attachments.set(`${auth.household.id}:${attachmentId}`, { attachmentId, keyEpoch, ciphertext: Buffer.from(ciphertext), size: ciphertext.length, digest, uploaderMemberId: auth.member.id });
     } else {
       this.store.putAttachment(auth.household.id, attachmentId, keyEpoch, ciphertext, digest, this.now(), auth.member.id);
@@ -504,10 +511,13 @@ export class EncryptedSyncService {
     return { ...row, ciphertext };
   }
 
-  listAttachments(sessionToken) {
+  /** The household's encrypted attachments. Album photos (#673) are listed
+   * only to devices that ask for them (`album`): an older device would take
+   * a blob no kind-39 binding names for an orphan and delete it. */
+  listAttachments(sessionToken, { album = false } = {}) {
     const auth = this.authorize(sessionToken);
     this.attachmentState(auth);
-    const rows = this.store?.listAttachments(auth.household.id) ?? [...this.attachments.entries()].filter(([key]) => key.startsWith(`${auth.household.id}:`)).map(([, row]) => ({ attachmentId: row.attachmentId, keyEpoch: row.keyEpoch, size: row.size, digest: row.digest }));
+    const rows = this.store?.listAttachments(auth.household.id, { album }) ?? [...this.attachments.entries()].filter(([key, row]) => key.startsWith(`${auth.household.id}:`) && (album || !isAlbumAttachmentId(row.attachmentId))).map(([, row]) => ({ attachmentId: row.attachmentId, keyEpoch: row.keyEpoch, size: row.size, digest: row.digest }));
     return rows.filter((row) => {
       try { this.attachmentState(auth, row.keyEpoch); return true; } catch { return false; }
     });

@@ -1462,6 +1462,7 @@ kin-app > .security-panel {
     grid-template-areas:
       "intro intro"
       "capture tonight"
+      "capture events"
       "capture quick"
       "catchup routines"
       "onboarding updates"
@@ -1481,12 +1482,15 @@ kin-app > .security-panel {
   #today > kin-compose { grid-area: capture; min-width: 0; }
   #today > kin-catch-up { grid-area: catchup; min-width: 0; }
   #today > kin-tonight { grid-area: tonight; min-width: 0; }
+  /* Today's events and the next countdown (#663), under Tonight. */
+  #today > kin-calendar-today { grid-area: events; min-width: 0; }
   #today .tonight-section { margin-bottom: 16px; }
   #today > .onboarding-card { grid-area: onboarding; }
   #today.compact-onboarding {
     grid-template-areas:
       "intro intro"
       "capture tonight"
+      "capture events"
       "capture quick"
       "catchup routines"
       "summary summary"
@@ -1559,6 +1563,36 @@ kin-personal-settings label { display: flex; align-items: center; gap: 10px; min
 kin-personal-settings .personal-setting { display: grid; gap: 2px; }
 kin-personal-settings .personal-setting .section-hint { padding-left: 30px; }
 kin-personal-settings input[type="radio"], kin-personal-settings input[type="checkbox"] { width: 20px; height: 20px; flex: none; accent-color: var(--accent); }
+/* Outside calendars (#668, ADR 0022 §3), under Identity & appearance. */
+kin-calendar-subscriptions { display: grid; gap: 10px; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); min-width: 0; }
+kin-calendar-subscriptions h2 { margin: 0; font-size: 18px; font-weight: 650; }
+kin-calendar-subscriptions h3 { margin: 8px 0 0; font-size: 16px; font-weight: 650; }
+kin-calendar-subscriptions h4 { margin: 0; font-size: 16px; font-weight: 650; }
+kin-calendar-subscriptions .section-hint, kin-calendar-subscriptions p { margin: 0; }
+kin-calendar-subscriptions [hidden] { display: none !important; }
+.calendar-subscription-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.calendar-subscription { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); min-width: 0; overflow-wrap: anywhere; }
+.calendar-subscription-name { font-weight: 650; }
+.calendar-subscription-who { color: var(--ink-muted); }
+.calendar-subscription-status[data-state="error"] { color: var(--danger); font-weight: 560; }
+.calendar-subscription-form { display: grid; gap: 8px; min-width: 0; }
+.calendar-subscription-form label[for] { font-weight: 650; }
+.calendar-subscription-form input[type="url"] { min-height: var(--tap); width: 100%; box-sizing: border-box; padding-inline: 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+.calendar-subscription-form input[aria-invalid="true"] { border-color: var(--danger); }
+.calendar-subscription-error { color: var(--danger); font-weight: 600; }
+.calendar-subscription-audience { display: grid; gap: 4px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.calendar-subscription-audience legend { padding: 0; margin-bottom: 4px; font-weight: 650; }
+.calendar-subscription-audience label { display: flex; align-items: center; gap: 10px; min-height: var(--tap); }
+.calendar-subscription-audience input { width: 20px; height: 20px; flex: none; accent-color: var(--accent); }
+.calendar-subscription-confirm { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line-strong); border-inline-start: 4px solid var(--accent); border-radius: var(--r-card); background: var(--surface-secondary); }
+.calendar-subscription-warning { font-weight: 650; }
+.calendar-subscription-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+kin-calendar-subscriptions button { min-height: var(--tap); padding-inline: 16px; }
+kin-calendar-subscriptions button.danger { border: 1px solid var(--danger); border-radius: var(--r-control); background: var(--surface); color: var(--danger); font: inherit; font-weight: 650; }
+.calendar-subscription > button { justify-self: start; }
+@media (forced-colors: active) {
+  .calendar-subscription, .calendar-subscription-confirm { border: 1px solid CanvasText; }
+}
 
 @media (forced-colors: active) {
   .brand-mark { border: 1px solid CanvasText; forced-color-adjust: none; }
@@ -1987,6 +2021,27 @@ kin-meals { display: block; container-type: inline-size; container-name: meals; 
 .meal-day-actions, .recipe-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .meal-plan, .meal-ingredients { min-height: var(--tap); }
 .meal-plan { min-width: 88px; }
+/* Fuller meal plans (#679): a row per meal in each day card, the week's own
+   actions, which meals show, Today's other meals and favourites. */
+.today-meals { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 0; padding: 0; list-style: none; color: var(--ink-muted); overflow-wrap: anywhere; }
+.meals-week-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.meals-week-tools button, .recipe-favourites-filter, .recipe-favourite, .meal-slot-plan, .meal-slot-ingredients { min-height: var(--tap); }
+.meal-slot-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0 14px; margin: 0 0 12px; padding: 0; border: 0; min-inline-size: 0; }
+.meal-slot-filter legend { float: inline-start; margin-inline-end: 4px; padding: 0; font-weight: 600; line-height: var(--tap); }
+.meal-slot-filter label { display: inline-flex; align-items: center; gap: 6px; min-height: var(--tap); }
+.meal-slot-filter input { inline-size: 20px; block-size: 20px; margin: 0; }
+.meal-slots { display: grid; gap: 8px; }
+.meal-slot { display: grid; gap: 2px; min-width: 0; padding-top: 8px; border-top: 1px solid var(--line); }
+.meal-slot:first-child { padding-top: 0; border-top: 0; }
+.meal-slot-label { margin: 0; color: var(--ink-muted); font-size: 13px; font-weight: 600; }
+.meal-slot-name { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.meal-slot-name.is-empty { font-weight: 400; color: var(--ink-muted); }
+.meal-slot-plan { min-width: 88px; }
+.recipe-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.recipe-favourite { flex: none; min-width: var(--tap); font-size: 20px; line-height: 1; }
+.recipe-favourite[aria-pressed="true"] { color: var(--accent); }
+.recipe-favourites-filter[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+:root[data-kin-easy="on"] .recipe-favourite { font-size: 17px; }
 .recipe-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .recipe { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); }
 .recipe-name { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
@@ -2023,6 +2078,7 @@ kin-meals { display: block; container-type: inline-size; container-name: meals; 
 @media (forced-colors: active) {
   .meal-day.is-today { border: 2px solid Highlight; box-shadow: none; }
   .meal-today { border: 1px solid CanvasText; }
+  .recipe-favourites-filter[aria-pressed="true"] { outline: 2px solid Highlight; }
 }
 
 /* Simple view (#345, ADR 0013): big cards, two or three destinations, no
@@ -2610,7 +2666,9 @@ kin-journal { display: grid; gap: var(--space-3); min-width: 0; }
 :root[data-kin-features-off~="notes"] [data-feature~="notes"],
 :root[data-kin-features-off~="sitter"] [data-feature~="sitter"],
 :root[data-kin-features-off~="journal"] [data-feature~="journal"],
-:root[data-kin-features-off~="mine"] [data-feature~="mine"] { display: none !important; }
+:root[data-kin-features-off~="mine"] [data-feature~="mine"],
+:root[data-kin-features-off~="calendar"] [data-feature~="calendar"],
+:root[data-kin-features-off~="chores"] [data-feature~="chores"] { display: none !important; }
 .features-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .features-note[hidden] { display: none; }
 .features-note-text { flex: 1 1 16rem; margin: 0; }
@@ -2703,4 +2761,158 @@ button.show-password { justify-self: start; }
    whatever smaller size a component gives it in the regular layout. */
 :root[data-kin-easy="on"] :is(button, select, summary, textarea, input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"])) {
   min-height: var(--tap);
+}
+
+/* ---------- Family photos and the photo frame (#673) ---------- */
+.album-count { margin: 0; color: var(--ink-muted); }
+.album-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.album-feedback:empty, .album-empty[hidden] { display: none; }
+.album-feedback { margin: 8px 0 0; }
+.album-empty { color: var(--ink-muted); }
+.album-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(140px, 42vw), 1fr));
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.album-tile { display: grid; gap: 4px; min-width: 0; }
+.album-thumb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--r-row);
+  background: var(--surface-secondary);
+}
+.album-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.album-thumb img[hidden], .album-thumb-placeholder[hidden] { display: none; }
+.album-thumb-placeholder { font-size: 28px; opacity: .6; }
+.album-tile-caption { margin: 0; font-size: 14px; color: var(--ink-muted); overflow-wrap: anywhere; }
+.album-add-list { display: grid; gap: 10px; max-height: min(55vh, 520px); margin: 0; padding: 0; overflow: auto; list-style: none; }
+.album-add-row { display: grid; grid-template-columns: 72px 1fr; gap: 10px; align-items: center; }
+.album-add-row img { width: 72px; height: 72px; object-fit: cover; border-radius: var(--r-control); background: var(--surface-secondary); }
+.album-add-fields { display: grid; gap: 4px; min-width: 0; }
+.album-caption-input { width: 100%; min-height: var(--tap); box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); }
+.album-add-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.album-viewer-status:empty { display: none; }
+.album-viewer-status { margin: 12px; text-align: center; }
+.album-viewer-meta { margin: 0; padding: 8px 18px 0; color: var(--ink-muted); }
+.album-viewer-actions { flex-wrap: wrap; }
+.album-viewer-actions .album-remove { margin-inline-start: auto; color: var(--danger); border-color: var(--danger); }
+.album-viewer-actions .album-remove[hidden] { display: none; }
+
+/* The slideshow fills the screen; the frame inside it is reusable. */
+.album-slideshow {
+  width: 100vw;
+  max-width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #000;
+  color: #fff;
+}
+.album-slideshow::backdrop { background: #000; }
+kin-photo-frame { position: relative; display: block; width: 100%; height: 100%; min-height: 240px; overflow: hidden; background: #000; color: #fff; }
+kin-photo-frame:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+.photo-frame-stage { position: absolute; inset: 0; }
+.photo-frame-slide {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  opacity: 0;
+  transition: opacity 1.2s ease-in-out;
+}
+.photo-frame-slide.is-showing { opacity: 1; }
+.photo-frame-slide img:not([src]) { display: none; }
+.photo-frame-slide img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.photo-frame-caption {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  display: grid;
+  gap: 2px;
+  padding: 28px 20px calc(18px + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgba(0, 0, 0, .78));
+  font-size: clamp(16px, 2.4vw, 26px);
+  line-height: 1.3;
+  text-shadow: 0 1px 2px #000;
+}
+.photo-frame-caption-text[hidden] { display: none; }
+.photo-frame-caption-text { font-weight: 700; overflow-wrap: anywhere; }
+.photo-frame-added-by { font-size: .8em; color: #f1f1f1; }
+.photo-frame-empty { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 20px; text-align: center; font-size: 20px; }
+.photo-frame-empty[hidden] { display: none; }
+.photo-frame-controls { position: absolute; top: calc(12px + env(safe-area-inset-top)); inset-inline-end: 12px; display: flex; gap: 8px; }
+.photo-frame-controls[hidden] { display: none; }
+.photo-frame-controls button { min-height: var(--tap); border-color: rgba(255, 255, 255, .7); background: rgba(0, 0, 0, .6); color: #fff; }
+.photo-frame-controls button:hover:not(:disabled) { background: rgba(0, 0, 0, .8); }
+@media (prefers-reduced-motion: reduce) {
+  /* No fade: the next photo replaces the last in place. */
+  .photo-frame-slide { transition: none; }
+}
+
+/* The chore chart (#676, ADR 0022 §6): a card per person in their colour,
+   with big tick boxes. Colour is never the only signal: the name is in the
+   card's header, and done jobs say "Done". The kitchen display reuses
+   <kin-chore-chart size="display"> with larger targets. */
+.today-chores-link { display: inline-flex; align-items: center; min-height: var(--tap); font-size: 15px; }
+.chore-chart { display: block; }
+.chore-empty { color: var(--ink-muted); }
+.chore-cards { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+@media (min-width: 720px) { .chore-cards { grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); } }
+.chore-card { overflow: hidden; border: 2px solid var(--chore-colour, var(--line-strong)); border-radius: var(--r-card); background: var(--surface); }
+.chore-card-header { padding: var(--space-2) var(--space-3); background: var(--chore-colour, var(--accent)); color: #fff; }
+.chore-card-name { margin: 0; font-size: 1.4rem; line-height: 1.25; overflow-wrap: anywhere; }
+.chore-points { margin: 4px 0 0; font-size: 1.05rem; font-weight: 600; }
+.chore-progress { display: block; inline-size: 100%; block-size: 0.9rem; margin-block-start: var(--space-1); accent-color: #fff; }
+.chore-card section > :not(header) { margin-inline: var(--space-3); }
+.chore-day-heading { margin-block: var(--space-2) var(--space-1); font-size: 1.1rem; }
+.chore-list, .chore-week-list { margin-block: 0 var(--space-2); padding: 0; list-style: none; }
+.chore-row + .chore-row { border-block-start: 1px solid var(--line); }
+.chore-tick { display: flex; align-items: center; gap: var(--space-2); min-block-size: 4rem; padding-block: var(--space-1); cursor: pointer; }
+.chore-box { flex: 0 0 auto; inline-size: 2.75rem; block-size: 2.75rem; margin: 0; accent-color: var(--chore-colour, var(--accent)); }
+.chore-box:disabled { cursor: default; }
+.chore-picture { flex: 0 0 3rem; inline-size: 3rem; block-size: 3rem; display: grid; place-items: center; overflow: hidden; border-radius: var(--r-row); background: var(--surface-secondary); font-size: 2rem; line-height: 1; }
+.chore-picture.is-empty { display: none; }
+.chore-picture img { inline-size: 100%; block-size: 100%; object-fit: cover; }
+.chore-text { flex: 1 1 auto; min-inline-size: 0; font-size: 1.15rem; font-weight: 600; overflow-wrap: anywhere; }
+.chore-worth { flex: 0 0 auto; color: var(--ink-muted); font-size: 0.9rem; }
+.chore-row.is-done .chore-text { color: var(--ink-muted); text-decoration: line-through; }
+.chore-none, .chore-all-done { margin-block: var(--space-1) var(--space-2); }
+.chore-all-done { font-weight: 700; }
+.chore-week { margin-block-end: var(--space-2); }
+.chore-week > summary { min-block-size: var(--tap); display: flex; align-items: center; cursor: pointer; }
+.chore-week-day { margin-block: var(--space-1) 2px; font-size: 1rem; }
+.chore-week-row { padding-block: 2px; overflow-wrap: anywhere; }
+.chore-week-row.is-done .chore-week-state { font-weight: 700; }
+.chore-reward { margin-block-end: var(--space-3); }
+.chore-reward-toggle { min-block-size: var(--tap); }
+.chore-reward-form { display: grid; gap: var(--space-1); margin-block-start: var(--space-2); }
+.chore-reward-form input { min-block-size: var(--tap); }
+.chore-join { margin-block-start: var(--space-3); }
+.chore-join-button { min-block-size: var(--tap); }
+.routine-chore-points { display: inline-flex; align-items: center; gap: var(--space-1); min-block-size: var(--tap); margin-inline-end: var(--space-2); }
+.routine-chore-points select { min-block-size: var(--tap); }
+.chore-adults-row { display: flex; align-items: center; gap: var(--space-2); min-block-size: var(--tap); }
+.simple-chores-link, .simple-back-link { display: flex; align-items: center; justify-content: center; min-block-size: 3.5rem; margin-block: var(--space-2); border: 2px solid var(--accent); border-radius: var(--r-control); font-size: 1.125rem; font-weight: 700; text-decoration: none; }
+.simple-chores-link[hidden] { display: none; }
+/* Easy mode: the tick boxes and job names bigger still. */
+:root[data-kin-easy="on"] .chore-box { inline-size: 3.5rem; block-size: 3.5rem; }
+:root[data-kin-easy="on"] .chore-tick { min-block-size: 5rem; }
+:root[data-kin-easy="on"] .chore-text { font-size: 1.3rem; }
+kin-chore-chart[size="display"] .chore-tick { min-block-size: 5rem; }
+kin-chore-chart[size="display"] .chore-box { inline-size: 4rem; block-size: 4rem; }
+kin-chore-chart[size="display"] .chore-text { font-size: 1.5rem; }
+@media (forced-colors: active) {
+  .chore-card { border: 2px solid CanvasText; }
+  .chore-card-header { background: Canvas; color: CanvasText; border-block-end: 2px solid CanvasText; }
 }

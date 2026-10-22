@@ -34,9 +34,12 @@ import { ShareController } from "./share.js";
 import { BadgeController } from "./badge.js";
 import { PrivatePrefsController } from "./private-prefs.js";
 import { WeekController } from "./week.js";
+import { CalendarController } from "./calendar.js";
+import { ChoresController } from "./chores.js";
 import { EasyController } from "./easy.js";
 import { HelpController } from "./help.js";
 import { SitterController } from "./sitter.js";
+import { AlbumController } from "./album.js";
 import { JournalController } from "./journal.js";
 import { RotationsController } from "./rotations.js";
 import { ImportController } from "./import.js";
@@ -64,6 +67,8 @@ import { SyncController } from "./sync.js";
 import { UndoController } from "./undo.js";
 import { ViewBuilder } from "./views.js";
 import { ReportController } from "./report.js";
+import { CalendarSyncController } from "./calendar-sync.js";
+import { DisplayController } from "./display.js";
 import { LocalReminders } from "../../reminders.js";
 import { EventStore } from "../../storage/event-store.js";
 import { readAutoLockPreference } from "./constants.js";
@@ -93,7 +98,13 @@ export function createAppContext(app) {
   ctx.easy = new EasyController(ctx);
   ctx.help = new HelpController(ctx);
   ctx.week = new WeekController(ctx);
+  // The family calendar (#660, ADR 0022): views, Today, colours, import.
+  // Outside calendars (#668) reach the views through calendar/external.js.
+  ctx.calendar = new CalendarController(ctx);
+  // The chore chart (#676, ADR 0022 §6).
+  ctx.chores = new ChoresController(ctx);
   ctx.sitter = new SitterController(ctx);
+  ctx.album = new AlbumController(ctx);
   // The member's journal (#496): private, never household state.
   ctx.journal = new JournalController(ctx);
   ctx.rotations = new RotationsController(ctx);
@@ -114,6 +125,10 @@ export function createAppContext(app) {
   ctx.views = new ViewBuilder(ctx);
   // Reports and suggestions to the Kin team (ADR 0021 §3).
   ctx.report = new ReportController(ctx);
+  // Outside calendars synced through the service (ADR 0022 §3, #668).
+  ctx.calendarSync = new CalendarSyncController(ctx);
+  // Kitchen display mode (#669, ADR 0022 §4).
+  ctx.display = new DisplayController(ctx);
   return ctx;
 }
 
@@ -168,7 +183,10 @@ export function initializeAppState(app) {
     app.passkeyPromptDismissed = false;
     app.onHouseholdStatus = (event) => { app.householdStatus = event.detail;
       // Household features (#625) ride along with the household's status.
-      if (event.detail?.features) app.ctx.features.receive(event.detail.features, { householdId: event.detail.householdId ?? null }); app.ctx.sitter.landTemporaryMember(); app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
+      if (event.detail?.features) app.ctx.features.receive(event.detail.features, { householdId: event.detail.householdId ?? null });
+      // Whether adults may join the chore chart (#676) rides along too.
+      if (event.detail?.choreChart) app.ctx.chores.receiveSetting(event.detail.choreChart);
+      app.ctx.sitter.landTemporaryMember(); app.ctx.display.statusChanged(); app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
     app.onSecurityChanged = () => app.ctx.status.renderOnboarding();
     app.autoLockMinutes = readAutoLockPreference();
     app.autoLockTimer = null;
@@ -181,6 +199,8 @@ export function initializeAppState(app) {
     app.onChangeResponsibility = (event) => app.ctx.items.handleChangeResponsibility(event);
     // Simple view (#346): Done and Undo on a card.
     app.onSimpleDone = (event) => void app.ctx.simple.markDone(event.detail);
+    // Kitchen display mode (#670): Household › Overview's setup.
+    app.onDisplayEnter = (event) => app.ctx.display.start(event.detail ?? {});
     // Item picture (#347), from the item details.
     app.onSetItemEmoji = (event) => void app.ctx.simple.setItemEmoji(event.detail);
     app.onReplenishStaple = (event) => app.ctx.items.handleReplenishStaple(event);
@@ -264,12 +284,17 @@ export function initializeAppState(app) {
       const outcome = await app.ctx.rotations.setTurn(event.detail.routineId, event.detail.memberId);
       event.detail.done?.(outcome);
     };
+    // Chore chart points per routine (#676), from Routines.
+    app.onSetChorePoints = async (event) => {
+      const outcome = await app.ctx.chores.setPoints(event.detail.routineId, event.detail.points);
+      event.detail.done?.(outcome);
+    };
     app.onSaveSitterPage = async (event) => {
       const outcome = await app.ctx.sitter.save(event.detail ?? {});
       event.detail?.done?.(outcome);
     };
     app.onStartShopping = (event) => {
-      if (!app.simpleView && app.state && app.ctx.features.isOn("shopping-mode")) app.shoppingMode?.open({ opener: event.detail?.opener ?? null });
+      if (!app.simpleView && !app.displayMode && app.state && app.ctx.features.isOn("shopping-mode")) app.shoppingMode?.open({ opener: event.detail?.opener ?? null });
     };
     app.onRoutineIntent = (event) => app.ctx.routines.saveRoutine({ ...event.detail, type: event.type.slice(4) });
     app.onChangeRoutineSchedule = (event) => app.ctx.routines.changeRoutineSchedule(event.detail);
@@ -289,7 +314,11 @@ export function initializeAppState(app) {
     app.onOpenItem = (event) => app.ctx.detail.openItemDetail(event.detail.itemId, { opener: event.detail.opener ?? event.target });
     app.onCloseItemDetail = () => app.ctx.detail.closeItemDetail({ restoreFocus: true });
     app.onOpenSearchResult = (event) => app.ctx.navigation.handleOpenSearchResult(event.detail);
-    app.onChatToRecord = (event) => app.ctx.chatShare.open({ ...event.detail, opener: event.detail?.opener ?? null });
+    app.onChatToRecord = (event) => {
+      // "Add to the family photos" (#673): the photo goes to Family photos.
+      if (event.detail?.kind === "photos") { void app.ctx.album.offer(event.detail.files ?? [], { opener: event.detail.opener ?? null }); return; }
+      app.ctx.chatShare.open({ ...event.detail, opener: event.detail?.opener ?? null });
+    };
     app.onOpenChatMessage = (event) => app.ctx.navigation.handleOpenChatMessage(event.detail);
     app.onPlaybookIntent = (event) => app.ctx.routines.handlePlaybookIntent(event);
     app.onLocalReminder = (event) => app.ctx.records.handleLocalReminder(event.detail);
@@ -306,6 +335,17 @@ export function initializeAppState(app) {
     // Help on every screen (#621): a page's or a dialog's Help button.
     app.onOpenHelp = (event) => app.ctx.help.open(event.detail ?? {});
     app.onModeChange = () => app.ctx.records.saveMode(app.modeSelect.value);
+    // The family calendar (#660): <kin-calendar>, the event editor, the
+    // colour setting and importing a calendar file.
+    app.onCalendarFocus = (event) => app.ctx.calendar.handleFocus(event.detail ?? {});
+    app.onCalendarOpenEvent = (event) => app.ctx.calendar.openEvent(event.detail ?? {});
+    app.onCalendarNewEvent = (event) => app.ctx.calendar.openNew(event.detail ?? {});
+    app.onCalendarImport = (event) => app.ctx.calendar.openImport(event.detail ?? {});
+    app.onCalendarSave = async (event) => event.detail?.done?.(await app.ctx.calendar.save(event.detail));
+    app.onCalendarCancel = async (event) => event.detail?.done?.(await app.ctx.calendar.cancel(event.detail));
+    app.onSetMemberColour = async (event) => event.detail?.done?.(await app.ctx.calendar.setColour(event.detail?.colour ?? null));
+    app.onCalendarImportFile = async (event) => event.detail?.done?.(await app.ctx.calendar.previewImport(event.detail?.file));
+    app.onCalendarImportConfirm = async (event) => event.detail?.done?.(await app.ctx.calendar.confirmImport());
     app.pulseTimer = null;
     app.catchUpCursor = null;
     app.snapshotBoundary = null;

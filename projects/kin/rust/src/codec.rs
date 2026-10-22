@@ -69,6 +69,9 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::DinnerSet { .. } => crate::meals::DINNER_SET,
         EventKind::DinnerCleared { .. } => crate::meals::DINNER_CLEARED,
         EventKind::DinnerCookSet { .. } => crate::meals::DINNER_COOK_SET,
+        EventKind::MealSet { .. } => crate::meals::MEAL_SET,
+        EventKind::MealCleared { .. } => crate::meals::MEAL_CLEARED,
+        EventKind::RecipeFavouriteSet { .. } => crate::meals::RECIPE_FAVOURITE_SET,
         EventKind::ItemEmojiSet { .. } => crate::simple::ITEM_EMOJI_SET,
         EventKind::ChatTopicSet { .. } => crate::chat::CHAT_TOPIC_SET,
         EventKind::ShoppingSectionsSet { .. } => crate::store_sections::SHOPPING_SECTIONS_SET,
@@ -76,6 +79,15 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::RoutineRotationSet { .. } => crate::rotations::ROUTINE_ROTATION_SET,
         EventKind::RoutineTurnSet { .. } => crate::rotations::ROUTINE_TURN_SET,
         EventKind::SitterPageSet { .. } => crate::sitter::SITTER_PAGE_SET,
+        EventKind::AlbumPhotoAdded { .. } => crate::album::ALBUM_PHOTO_ADDED,
+        EventKind::AlbumPhotoRemoved { .. } => crate::album::ALBUM_PHOTO_REMOVED,
+        EventKind::CalendarEventSaved(_) => crate::calendar::CALENDAR_EVENT_SAVED,
+        EventKind::CalendarEventCancelled { .. } => crate::calendar::CALENDAR_EVENT_CANCELLED,
+        EventKind::CalendarEventRestored { .. } => crate::calendar::CALENDAR_EVENT_RESTORED,
+        EventKind::MemberColourSet { .. } => crate::calendar::MEMBER_COLOUR_SET,
+        EventKind::ChorePointsSet { .. } => crate::chores::CHORE_POINTS_SET,
+        EventKind::ChoreRewardSet { .. } => crate::chores::CHORE_REWARD_SET,
+        EventKind::ChoreChartJoined { .. } => crate::chores::CHORE_CHART_JOINED,
         EventKind::PrivateNoteSet { .. } => crate::private::PRIVATE_NOTE_SET,
         EventKind::PrivateItem(event) => event.code(),
         EventKind::ReminderSet { .. } => crate::private_prefs::REMINDER_SET,
@@ -475,7 +487,10 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
         | EventKind::RecipeArchived { .. }
         | EventKind::DinnerSet { .. }
         | EventKind::DinnerCleared { .. }
-        | EventKind::DinnerCookSet { .. }) => {
+        | EventKind::DinnerCookSet { .. }
+        | EventKind::MealSet { .. }
+        | EventKind::MealCleared { .. }
+        | EventKind::RecipeFavouriteSet { .. }) => {
             payload = crate::meals::encode_payload(kind)?;
         }
         // Item emoji (#344): simple.rs owns the payload.
@@ -493,6 +508,23 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
         // The sitter page (#442): sitter.rs owns the payload.
         kind @ EventKind::SitterPageSet { .. } => {
             payload = crate::sitter::encode_payload(kind)?;
+        }
+        // The family album (#673): album.rs owns the payloads.
+        kind @ (EventKind::AlbumPhotoAdded { .. } | EventKind::AlbumPhotoRemoved { .. }) => {
+            payload = crate::album::encode_payload(kind)?;
+        }
+        // The family calendar (#656): calendar.rs owns the payloads.
+        kind @ (EventKind::CalendarEventSaved(_)
+        | EventKind::CalendarEventCancelled { .. }
+        | EventKind::CalendarEventRestored { .. }
+        | EventKind::MemberColourSet { .. }) => {
+            payload = crate::calendar::encode_payload(kind)?;
+        }
+        // The chore chart (#676): chores.rs owns the payloads.
+        kind @ (EventKind::ChorePointsSet { .. }
+        | EventKind::ChoreRewardSet { .. }
+        | EventKind::ChoreChartJoined { .. }) => {
+            payload = crate::chores::encode_payload(kind)?;
         }
         // A member's private log (#489): private.rs owns the payloads.
         kind @ (EventKind::PrivateNoteSet { .. }

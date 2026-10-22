@@ -73,7 +73,9 @@ export class SimpleController {
     const open = (room) => Boolean(room) && room.access !== "none";
     // A household that switched Chat or the Fridge off (#625) has neither.
     const on = (id) => this.ctx.features?.isOn(id) !== false;
-    return { chat: on("chat") && open(this.app.chat?.room), fridge: on("fridge") && open(this.app.fridge?.room) };
+    // The chore chart (#676) needs nothing from the service; it leaves with
+    // its feature.
+    return { chat: on("chat") && open(this.app.chat?.room), fridge: on("fridge") && open(this.app.fridge?.room), chores: on("chores") };
   }
 
   /** Mounts the Simple view workspace: Today's cards, Chat, the Fridge. */
@@ -123,9 +125,22 @@ export class SimpleController {
     };
     this.app.simpleToday = document.createElement("kin-simple");
     this.app.simpleToday.previews = this.app.previewProvider;
-    const today = page("today", "Today", this.app.simpleToday);
+    // The chore chart (#676): one big link from Today to the child's chart,
+    // with the same chart the full layout shows (Join and rewards aren't
+    // offered here).
+    this.app.simpleChoresLink = document.createElement("a");
+    this.app.simpleChoresLink.className = "simple-chores-link";
+    this.app.simpleChoresLink.href = routeHash(SIMPLE_ROUTES.chores.page);
+    this.app.simpleChoresLink.textContent = "My chore chart";
+    const today = page("today", "Today", this.app.simpleChoresLink, this.app.simpleToday);
     const chat = page("updates", "Chat", this.app.chat);
     const fridge = page("household", "Fridge", this.app.fridge);
+    const back = document.createElement("a");
+    back.className = "simple-back-link";
+    back.href = routeHash("today");
+    back.textContent = "Back to Today";
+    const chores = page("chores", "Chore chart", this.ctx.views.choreChartElement(), back);
+    this.app.choreJoin = null;
     // The household element stays connected, hidden, so this device still
     // learns of its own removal and locks (checkHouseholdAuthorization).
     const background = document.createElement("div");
@@ -133,8 +148,8 @@ export class SimpleController {
     background.className = "simple-background";
     if (this.app.household) background.append(this.app.household);
     this.app.simpleBackground = background;
-    this.app.controlFieldset.replaceChildren(today, chat, fridge, background);
-    this.app.pages = new Map([["today", today], ["updates", chat], ["household", fridge]]);
+    this.app.controlFieldset.replaceChildren(today, chat, fridge, chores, background);
+    this.app.pages = new Map([["today", today], ["updates", chat], ["household", fridge], ["chores", chores]]);
     this.app.segmentNavs = new Map();
     this.app.segmentPanels = new Map();
     this.updateAccess();
@@ -144,13 +159,14 @@ export class SimpleController {
   /** Hides Chat or the Fridge from the navigation when access is none. */
   updateAccess() {
     if (!this.on) return;
-    const { chat, fridge } = this.access();
+    const { chat, fridge, chores } = this.access();
     this.app.navLinks.get("updates").hidden = !chat;
     this.app.navLinks.get("household").hidden = !fridge;
     this.app.nav.classList.toggle("simple-nav-single", !chat && !fridge);
+    if (this.app.simpleChoresLink) this.app.simpleChoresLink.hidden = !chores;
     // A page that is no longer allowed goes back to Today.
     const route = this.app.route;
-    if (route && ((route.page === "updates" && !chat) || (route.page === "household" && !fridge))) this.ctx.navigation.navigate("#today");
+    if (route && ((route.page === "updates" && !chat) || (route.page === "household" && !fridge) || (route.page === "chores" && !chores))) this.ctx.navigation.navigate("#today");
   }
 
   /** The route Simple view allows for the current location. */
@@ -179,6 +195,7 @@ export class SimpleController {
     }
     this.app.simpleToday = null;
     this.app.simpleBackground = null;
+    this.app.simpleChoresLink = null;
     if (this.app.chat) this.app.chat.simple = false;
   }
 

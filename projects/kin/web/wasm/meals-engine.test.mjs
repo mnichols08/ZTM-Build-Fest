@@ -37,13 +37,17 @@ test("recipes, dinners and cooks round-trip through Rust", () => {
   home.run({ type: "set-dinner", date: "2026-10-06", name: "Leftovers" });
   const meals = engine.meals(home.records, asOf, civilDate);
   assert.deepEqual(meals, {
-    recipes: [{ recipeId: id(0x71), name: "Rice pudding", notes: "Serves 4\nStir often", ingredients: [
+    recipes: [{ recipeId: id(0x71), name: "Rice pudding", notes: "Serves 4\nStir often", favourite: false, ingredients: [
       { text: "Milk", stapleId: id(0x31), staple: "active" },
       { text: "Short-grain rice", stapleId: null, staple: "none" },
     ] }],
     dinners: [
       { date: "2026-10-05", recipeId: id(0x71), cookId: id(0x22), name: "Rice pudding" },
       { date: "2026-10-06", recipeId: null, cookId: null, name: "Leftovers" },
+    ],
+    meals: [
+      { date: "2026-10-05", slot: "dinner", recipeId: id(0x71), cookId: id(0x22), name: "Rice pudding" },
+      { date: "2026-10-06", slot: "dinner", recipeId: null, cookId: null, name: "Leftovers" },
     ],
   });
   // Rust refuses what its rules forbid, as engine errors the host can show.
@@ -71,4 +75,42 @@ test("the Shopping plan re-adds staples, skips what is listed, and a retry adds 
   const retry = engine.mealShoppingPlan({ recipeId: id(0x71) }, home.records, asOf, civilDate);
   assert.deepEqual(retry.filter((line) => line.outcome !== "already").map((line) => line.text), ["Jam"]);
   assert.throws(() => engine.mealShoppingPlan({ date: "2026-10-09" }, home.records, asOf, civilDate));
+});
+
+// Fuller meal plans (#679, kinds 80–82): every slot and favourites read back
+// through KMLS v2, and one week's plan covers every slot.
+test("breakfast, lunch, snacks and favourites round-trip, and the week's plan covers every slot", () => {
+  const home = household();
+  home.run({ type: "save-recipe", recipeId: id(0x71), name: "Porridge", ingredients: [{ text: "Oats" }, { text: "Milk" }] });
+  home.run({ type: "save-recipe", recipeId: id(0x72), name: "Sandwiches", ingredients: [{ text: "Bread" }, { text: "milk" }] });
+  const set = home.run({ type: "set-meal", date: "2026-10-05", slot: "breakfast", recipeId: id(0x71), name: "Porridge" });
+  assert.equal(set.metadata.kind, "MEAL_SET");
+  home.run({ type: "set-meal", date: "2026-10-06", slot: "lunch", recipeId: id(0x72), name: "Sandwiches" });
+  home.run({ type: "set-meal", date: "2026-10-06", slot: "snack", name: "  Apple   slices " });
+  home.run({ type: "set-dinner", date: "2026-10-06", name: "Soup" });
+  assert.equal(home.run({ type: "set-recipe-favourite", recipeId: id(0x72), favourite: true }).metadata.kind, "RECIPE_FAVOURITE_SET");
+  const meals = engine.meals(home.records, asOf, civilDate);
+  assert.deepEqual(meals.recipes.map((recipe) => [recipe.name, recipe.favourite]), [["Porridge", false], ["Sandwiches", true]]);
+  assert.deepEqual(meals.meals.map((meal) => [meal.date, meal.slot, meal.name]), [
+    ["2026-10-05", "breakfast", "Porridge"],
+    ["2026-10-06", "lunch", "Sandwiches"],
+    ["2026-10-06", "dinner", "Soup"],
+    ["2026-10-06", "snack", "Apple slices"],
+  ]);
+  assert.deepEqual(meals.dinners.map((dinner) => dinner.name), ["Soup"]);
+  // The week from Monday 5 October: Oats, Milk, Bread ("milk" counts once).
+  const week = engine.mealShoppingPlan({ week: "2026-10-05" }, home.records, asOf, civilDate);
+  assert.deepEqual(week.map((line) => [line.outcome, line.text]), [["add", "Oats"], ["add", "Milk"], ["add", "Bread"]]);
+  const lunch = engine.mealShoppingPlan({ date: "2026-10-06", slot: "lunch" }, home.records, asOf, civilDate);
+  assert.deepEqual(lunch.map((line) => line.text), ["Bread", "milk"]);
+  assert.deepEqual(engine.mealShoppingPlan({ week: "2026-10-12" }, home.records, asOf, civilDate), []);
+  // Rust's rules: no change, dinner on kind 80, an unfavourite twice.
+  assert.throws(() => home.run({ type: "set-meal", date: "2026-10-05", slot: "breakfast", recipeId: id(0x71), name: "Porridge" }), (error) => error.code !== undefined);
+  assert.throws(() => home.run({ type: "set-meal", date: "2026-10-05", slot: "dinner", name: "Soup" }), (error) => error.code === 2);
+  home.run({ type: "clear-meal", date: "2026-10-06", slot: "snack" });
+  home.run({ type: "set-recipe-favourite", recipeId: id(0x72), favourite: false });
+  assert.throws(() => home.run({ type: "set-recipe-favourite", recipeId: id(0x72), favourite: false }), (error) => error.code !== undefined);
+  const after = engine.meals(home.records, asOf, civilDate);
+  assert.equal(after.meals.some((meal) => meal.slot === "snack"), false);
+  assert.equal(after.recipes.some((recipe) => recipe.favourite), false);
 });

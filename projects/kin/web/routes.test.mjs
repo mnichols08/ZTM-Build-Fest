@@ -96,11 +96,17 @@ test("Simple view allows only Today, Chat and the Fridge, and sends everything e
   assert.equal(resolveSimpleRoute({ hash: "#household/fridge" }, { chat: true, fridge: false }).canonical, "today", "no fridge access");
 });
 
-test("This week is its own page, reached from Today, which stays marked (#416)", () => {
+test("This week grew into the Calendar, reached from Today, which stays marked (#416, #661)", () => {
   const route = resolveRoute({ hash: "#week" });
-  assert.equal(route.canonical, "week");
-  assert.equal(route.title, "This week");
+  assert.equal(route.canonical, "week/week", "the Week view is the default");
+  assert.equal(route.hash, "#week", "and keeps its short address");
+  assert.equal(route.title, "Calendar");
   assert.equal(route.destination, "today");
+  for (const view of ["day", "month"]) {
+    const other = resolveRoute({ hash: `#week/${view}` });
+    assert.deepEqual([other.canonical, other.hash, other.destination], [`week/${view}`, `#week/${view}`, "today"]);
+  }
+  assert.equal(resolveRoute({ hash: "#week/year" }).canonical, "week/week");
   assert.equal(resolveSimpleRoute({ hash: "#week" }, { chat: true, fridge: true }).canonical, "today", "Simple view has no week page");
 });
 
