@@ -440,6 +440,53 @@ exception and have their own section above.
   told this before turning it on; THREAT-MODEL explains why it is a layout
   rather than a lock. It sends nothing new to the service.
 
+## Unreleased (Kin at home, ADR 0025): a home server and the connection relay
+
+**Planned, not built.** [ADR 0025](decisions/0025-kin-at-home.md) (epic
+#708) decides how a household can run Kin on its own computer, reached
+through a **connection relay** (a cloud program that forwards encrypted
+connections; not the sync service, which Kin's documents call "the relay").
+Nothing below exists yet; this section records what was decided, so the
+built version can be checked against it.
+
+- **The home server** is the Kin service running in the household's home. It
+  sees exactly what the hosted service sees today (sections above), and the
+  person who runs it is its operator. Household content stays end-to-end
+  encrypted, as before.
+- **What the connection relay can see:** each home server's name (for
+  example `smith.home.kin.journeytocode.io`), the home server's IP address
+  while it is connected and when it is online, phones' IP addresses and
+  which name each connects to, when connections open and close, and how many
+  bytes go each way.
+- **What it can't see:** anything inside the connections. TLS ends on the
+  home server with the home server's own certificate; the relay has no key
+  for it. Pages, app code, requests, events, chat, photos, cookies, passwords
+  and passkeys pass through it encrypted. It doesn't know the household's
+  name, members or devices.
+- **What it keeps:** a registry of names (name, a hash of the home server's
+  public key, the claim date, the last day it connected, own domains, its
+  certificate-authority account link, suspended or not), kept while the name
+  exists; retired names forever as the name and key hash only; and hourly
+  counts of connections and bytes per name for 30 days. Phones' addresses
+  are held in memory only, for rate limits, for at most 24 hours. No access
+  logs and no per-connection records. This is what the open-source relay
+  does; a household can't verify from outside what a relay operator
+  actually runs.
+- **Names are public.** A home server's name appears in public Certificate
+  Transparency logs (as every HTTPS site's does) and in plain text at the
+  start of each connection (the SNI).
+- **What the home server sends out:** as today, Web Push to browsers' push
+  services, outside-calendar downloads and, if its admins turn it on, report
+  forwarding; and in addition, requests to Let's Encrypt for its
+  certificate, a daily check of a Certificate Transparency search service
+  (crt.sh by default) for its own name, and a daily check for updates. None
+  of these carries household content.
+- **Backups on the home server** hold the database (as encrypted as the
+  service's) and the home server's keys; they stay on the household's
+  computer, or a drive it chooses.
+- **Moving from the hosted service** uses the household export; nothing is
+  deleted from the hosted service until the household closes it there.
+
 
 
 Kin implements client-side encrypted event sync, but it has not received independent security review or production operational hardening. Do not call the service zero-knowledge, anonymous, or robustly recoverable; do not imply cryptography protects a compromised unlocked browser/runtime.

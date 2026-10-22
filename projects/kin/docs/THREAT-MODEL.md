@@ -351,6 +351,33 @@ The Play app is a Trusted Web Activity: it opens
 | Signing | Google holds the app signing key (Play App Signing). The owner's upload key, kept offline and never in the repository or CI, can only submit builds to Play, and Play support can replace it if lost or leaked (ANDROID "Lost upload key"). |
 | Falling back | Without a TWA-capable browser the app opens a Custom Tab, with a URL bar, in the user's browser, never a WebView with its own storage. |
 
+## Unreleased (Kin at home, ADR 0025): the home server and the connection relay
+
+**Planned, not built.** [ADR 0025](decisions/0025-kin-at-home.md) (epic #708)
+decides a home server reached through a **connection relay**: a cloud
+program that reads only the server name (SNI) from each TLS ClientHello and
+splices the still-encrypted bytes to the home server over a tunnel the home
+server dialled out. It is a different thing from the sync service, which this
+document calls "the relay" (S4, S5). Nothing here is claimed as protection
+until it is built and reviewed (#740 requires an independent review of the
+relay, the tunnel, the SNI parser and the ACME client).
+
+| Threat | What the design does | What remains |
+| --- | --- | --- |
+| The connection relay reads household traffic | TLS ends on the home server with its own key and certificate; the relay holds no key or certificate for any home server's name and never serves a page, script or service worker for one. App code always comes from the home server. | The relay sees names, phones' and the home server's IP addresses, connection times and sizes, and the home server's uptime (PRIVACY). |
+| The relay operator (or someone who takes over the relay) gets a certificate for a household's free name | CAA with `accounturi` and `validationmethods=tls-alpn-01` (RFC 8657) binds each name to the home server's ACME account; unclaimed names have `issue ";"`. The home server checks Certificate Transparency daily for certificates it didn't make and alerts admins. | **The relay operator controls the DNS for its zone and carries the challenge traffic**, so it can change CAA and get a certificate. With it, it could serve its own app code to the household's phones, which would run as Kin (ask for passwords, read what the unlocked app shows). CT monitoring detects this only afterwards. Households that don't want to trust the relay operator use their own domain, where DNS and CAA are theirs and the relay can't get a certificate. The relay's zone has no DNSSEC at first. |
+| A name passes to another home server | A name is bound to one Ed25519 home key forever; released or lapsed names are never given to anyone else (a name that never got a certificate is the only exception). Transfer needs the old key's signed tunnel and the new key's signature. | Whoever holds the home key and the ACME account key (the data directory or a backup) is the home server: backups are as sensitive as the computer. |
+| A malformed or hostile ClientHello attacks the relay | A bounded parser (16 KiB, 4 records, 10 seconds) that reads only the `server_name` extension and refuses anything malformed; fuzz-tested. | Parser bugs before review. |
+| Encrypted Client Hello hides the name | The relay's DNS publishes no ECH configuration, so browsers send the real SNI; own domains that publish one are refused. GREASE ECH is ignored. | The name each phone connects to is visible on the network path. |
+| Tunnel takeover or replay | The home server signs in with its home key over a signature bound to the tunnel's TLS session (exporter); a newer tunnel replaces an older one. | A stolen home key. |
+| A false client address breaks rate limits | The phone's address travels in the tunnel's `OPEN` frame; the home server uses it, and ignores `X-Forwarded-For`, only on tunnel streams. | A dishonest relay can lie about addresses; it gains no more than it could by dropping traffic. |
+| Cookie tossing from a home name onto `kin.journeytocode.io` | A Public Suffix List entry for `home.kin.journeytocode.io`, and `__Host-` session cookie names on HTTPS origins. | Until both are in use (the PSL takes months), a home server under the zone could set cookies for parent domains. |
+| Misuse of a name for something other than Kin | Per-name connection and bandwidth limits, claim limits, an abuse address and suspension. | The relay can't look inside connections, by design. |
+| Relay down or unreachable | Devices are local-first and keep working; the home server reconnects with backoff; push, calendar sync and certificate renewal are outbound and don't need the relay. | No access from outside, or from inside without the relay (direct LAN access is deferred). |
+| A malicious update | Releases are signed with an offline Ed25519 key built into the home server; the launcher verifies the signature, size and SHA-256 before replacing anything, backs up first and rolls back on a failed health check. | A stolen release key. |
+| The home server's control panel | Loopback with a one-time setup code, or a signed-in household admin; every change needs a fresh passkey or password. | Programs on the same computer can reach loopback; the code limits them to setup. |
+| The home server reaches into the LAN | The calendar fetcher's guard against private, loopback and link-local addresses stays on. | As for the hosted service ("Synced outside calendars"). |
+
 ## Security principles
 
 - Assume household text and imported/persisted bytes are untrusted.
