@@ -64,6 +64,7 @@ export class EncryptedSyncService {
     this.boardRelayService?.forgetHousehold(householdId);
     this.privateRelayService?.forgetHousehold(householdId);
     this.privateBlobService?.forgetHousehold(householdId);
+    this.calendarSyncService?.forgetHousehold(householdId);
     this.feedbackService?.forgetHousehold(householdId);
     this.liveService?.revalidate(householdId);
   }
