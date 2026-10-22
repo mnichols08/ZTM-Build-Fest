@@ -96,6 +96,8 @@ export class ConnectionRelay {
     this.signInRate = new WindowCounter({ limit: this.limits.signInsPerSourcePerHour, windowMs: HOUR });
     this.claimsToday = new WindowCounter({ limit: this.limits.claimsPerSourcePerDay, windowMs: DAY });
     this.claims30 = new ClaimSketch({ limit: this.limits.claimsPerSourcePer30Days });
+    // Keyed by the home key's hash, not an address.
+    this.checkRate = new WindowCounter({ limit: this.limits.checksPerKeyPerMinute, windowMs: MINUTE });
     this.buckets = new Map();
     this.pendingCounts = new Map();
     this.pendingErrors = new Map();
@@ -343,6 +345,17 @@ export class ConnectionRelay {
       case ControlOp.REMOVE_DOMAIN:
         code = registry.removeDomain(tunnel.keyHash, request.name);
         break;
+      case ControlOp.CHECK: {
+        // Answers what CLAIM or ADD_DOMAIN would, and changes nothing.
+        if (!this.checkRate.hit(tunnel.keyHex)) return Code.LIMIT;
+        if (registry.labelOf(request.name) !== null) return registry.check(tunnel.keyHash, request.name);
+        if (!registry.domainAllowed(request.name, this.relayName)) return Code.NAME_NOT_ALLOWED;
+        const proofs = await this.#txtProofs(request.name);
+        const other = registry.keyOf(request.name);
+        if (other && !other.equals(tunnel.keyHash) && proofs.has(other.toString("base64url"))) return Code.NAME_TAKEN;
+        // UNKNOWN_NAME: the relay can't see this key in _kin-relay yet.
+        return proofs.has(keyHashText(tunnel.publicKey)) ? Code.NONE : Code.UNKNOWN_NAME;
+      }
       case ControlOp.TRANSFER: {
         if (!verifyEd25519(request.newKey, transferMessage(request.name, tunnel.publicKey, request.newKey), request.signature)) return Code.AUTH_FAILED;
         const newHash = keyHash(request.newKey);
@@ -410,6 +423,7 @@ export class ConnectionRelay {
     this.phoneRate.sweep();
     this.signInRate.sweep();
     this.claimsToday.sweep();
+    this.checkRate.sweep();
     for (const [id, bucket] of this.buckets) if (bucket.tokens >= bucket.burstBytes) this.buckets.delete(id);
     for (const tunnel of [...this.tunnels.values()]) {
       if (this.registry.keySuspended(tunnel.keyHash)) { this.#unroute(tunnel); this.tunnels.delete(tunnel.keyHex); tunnel.goaway(Code.SUSPENDED); }

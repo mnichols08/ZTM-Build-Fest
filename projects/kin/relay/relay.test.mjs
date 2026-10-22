@@ -452,6 +452,35 @@ test("own domains: routed after the TXT record proves the key, checked again dai
   } finally { server.close(); await relay.close(); }
 });
 
+test("CHECK (#719): answers what a claim would, binds nothing, and is limited per key", async () => {
+  const txt = new Map();
+  const relay = await startRelay({ limits: { checksPerKeyPerMinute: 6 }, resolveTxt: async (name) => { if (!txt.has(name)) throw Object.assign(new Error("no"), { code: "ENOTFOUND" }); return txt.get(name); } });
+  const a = home(relay);
+  const b = home(relay);
+  try {
+    await a.connect();
+    await b.connect();
+    const check = async (server, name) => (await server.control(ControlOp.CHECK, { name })).status;
+    assert.equal(await check(a, "smith.home.test"), Code.NONE, "free");
+    assert.equal(relay.registry.keyOf("smith.home.test"), null, "a check binds nothing");
+    assert.deepEqual(a.names, [], "and routes nothing");
+    assert.equal(await check(a, "www.home.test"), Code.NAME_NOT_ALLOWED, "reserved");
+    assert.equal((await a.control(ControlOp.CLAIM, { name: "smith.home.test" })).status, Code.NONE);
+    assert.equal(await check(a, "smith.home.test"), Code.NONE, "your own name");
+    assert.equal(await check(b, "smith.home.test"), Code.NAME_TAKEN, "someone else's");
+    assert.equal(await check(a, "jones.home.test"), Code.LIMIT, "one free name per key");
+    assert.equal(await check(b, "kin.family.test"), Code.UNKNOWN_NAME, "an own domain whose TXT record the relay can't see yet");
+    txt.set("_kin-relay.kin.family.test", [[keyHashText(b.publicKey)]]);
+    assert.equal(await check(b, "kin.family.test"), Code.NONE, "the TXT record names this key");
+    assert.equal(relay.registry.keyOf("kin.family.test"), null);
+    assert.equal(await check(b, "x.home.test.other"), Code.UNKNOWN_NAME, "a name outside the zone is an own domain");
+    assert.equal(await check(b, "relay.home.test"), Code.NAME_NOT_ALLOWED, "the relay's own name");
+    assert.equal(await check(b, "anything.home.test"), Code.NONE);
+    assert.equal(await check(b, "anything.home.test"), Code.LIMIT, "the per-key limit");
+    assert.equal(await check(a, "other.home.test"), Code.LIMIT, "each key has its own count; a still holds a name");
+  } finally { a.close(); b.close(); await relay.close(); }
+});
+
 test("suspension: an operator's suspension closes the tunnel with GOAWAY 5 and refuses sign-in", async () => {
   const relay = await startRelay();
   const { privateKey } = generateKeyPairSync("ed25519");

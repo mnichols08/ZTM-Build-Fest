@@ -1,0 +1,440 @@
+// The control panel (ADR 0025 §11, story #718: setup #719, status #720).
+// The server's own pages, at /control/ (web/control/), reached two ways:
+//
+// 1. On loopback, from the home server's own computer:
+//    http://localhost:<port>/control/. Its API is /control/api/* here. A
+//    program on the same computer can reach loopback too, so the panel
+//    first asks for a one-time code that Kin prints to its window and log
+//    (access-codes.mjs), then keeps a control session in a cookie
+//    (control-sessions.mjs). Every change after setup needs a fresh
+//    confirmation code, printed the same way.
+// 2. Through the household's address, https://<name>/control/, for a
+//    signed-in household admin. Its API is /api/control/* in server.mjs,
+//    behind the app's own origin check and session, and every change needs
+//    the admin's fresh passkey (or password), as Kin's other admin changes.
+//
+// The origin problem. A configured home server's app origin is
+// https://<name>, and the app API refuses any other Origin; the browser on
+// the computer itself is at http://localhost:<port>. Rather than add a
+// second app origin (which would weaken assertSecureOrigin, WebAuthn's
+// relying party and the API's CSRF check), the loopback panel has its own
+// small API under /control/api/, which the app API never serves, with its
+// own rules (loopbackProblem, writeProblem):
+//
+// - only sockets from the loopback listener, never tunnel streams;
+// - only a loopback peer address, and only a Host header that is a loopback
+//   name with the listener's own port (a DNS-rebinding page has its own
+//   host name in Host);
+// - no X-Forwarded-For, Forwarded or X-Real-IP, and none at all when
+//   KIN_TRUSTED_PROXIES is set: a proxy in front makes loopback mean
+//   "anyone", so the loopback panel turns off;
+// - writes need Origin to be exactly http://<that Host>, a JSON body, and
+//   Sec-Fetch-Site same-origin when the browser sends it;
+// - the session cookie is HttpOnly, SameSite=Strict and Path=/control.
+//
+// Seams for later tasks: `provide(section, fn)` fills a status section
+// (backups #721, updates #722 show "not built yet" until then), and
+// `registerChange(kind, handler)` adds a change, which both ways of
+// reaching the panel then confirm and apply the same way.
+import { readFileSync, statSync, statfsSync } from "node:fs";
+import { dirname } from "node:path";
+import { isIP } from "node:net";
+import { parseHouseholdPolicy } from "../pairing-service/bootstrap-limits.mjs";
+import { tunnelPeer } from "../client-key.mjs";
+import { readJsonBody } from "../http-body.mjs";
+import { CONFIRM_CODE_TTL_MS, OneTimeCode, SETUP_CODE_TTL_MS, displayCode } from "./access-codes.mjs";
+import { SESSION_COOKIE, SESSION_TTL_MS } from "./control-sessions.mjs";
+import { MAX_HOUSEHOLDS_LIMIT, writeHomeSettings } from "./settings.mjs";
+import { SetupError } from "./setup.mjs";
+
+export const PANEL_API_PREFIX = "/control/api/";
+const MAX_BODY_BYTES = 16_384;
+const FORWARDING_HEADERS = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip"];
+
+export class ControlError extends Error {
+  constructor(code, message, status = 400, extra = {}) {
+    super(message);
+    this.name = "ControlError";
+    this.code = code;
+    this.status = status;
+    this.extra = extra;
+  }
+}
+
+const isSet = (value) => value !== undefined && value !== null && String(value).trim() !== "";
+
+export function isLoopbackAddress(address) {
+  const value = String(address ?? "").toLowerCase().replace(/^::ffff:/, "");
+  if (value === "::1") return true;
+  return isIP(value) === 4 && value.split(".")[0] === "127";
+}
+
+/** Host header names that mean "this computer". */
+function loopbackHost(host, port) {
+  const match = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]):(\d{1,5})$/i.exec(String(host ?? ""));
+  return Boolean(match) && Number(match[2]) === port;
+}
+
+/**
+ * Why `request` may not use the loopback panel, or null when it may. Codes:
+ * "not-loopback" (a tunnel stream or another address), "proxied" (a proxy
+ * may stand in front), "host" (not a loopback Host for this listener).
+ */
+export function loopbackProblem(request, { trustedProxies = new Set() } = {}) {
+  if (tunnelPeer(request.socket) !== null) return "not-loopback";
+  if (!isLoopbackAddress(request.socket?.remoteAddress)) return "not-loopback";
+  if (trustedProxies.size > 0) return "proxied";
+  if (FORWARDING_HEADERS.some((name) => request.headers[name] !== undefined)) return "proxied";
+  if (!loopbackHost(request.headers.host, request.socket?.localPort)) return "host";
+  return null;
+}
+
+/** Why a loopback write is refused (cross-site or not JSON), or null. */
+export function writeProblem(request) {
+  const origin = request.headers.origin;
+  if (typeof origin !== "string" || origin !== `http://${String(request.headers.host).toLowerCase()}`) return "origin";
+  const site = request.headers["sec-fetch-site"];
+  if (site !== undefined && site !== "same-origin") return "origin";
+  if (!/^application\/json(?:\s*;|$)/i.test(String(request.headers["content-type"] ?? ""))) return "content-type";
+  return null;
+}
+
+function cookieValue(request, name) {
+  for (const part of String(request.headers.cookie ?? "").split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key === name) return rest.join("=");
+  }
+  return null;
+}
+
+function send(response, status, value, headers = {}) {
+  if (response.headersSent) return;
+  response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers });
+  response.end(JSON.stringify(value));
+}
+
+const CODE_ANSWERS = {
+  wrong: ["control-code-wrong", 401],
+  expired: ["control-code-expired", 410],
+  locked: ["control-code-locked", 429],
+  none: ["control-code-none", 410],
+  malformed: ["control-code-malformed", 400],
+};
+
+export class ControlPanel {
+  /**
+   * @param {object} options
+   * @param {object} options.application  createKinServer's result
+   * @param {string} options.dataDirectory
+   * @param {string|null} options.databasePath  for "storage used" (null: in memory)
+   * @param {() => object} options.getSettings
+   * @param {(settings: object) => void} options.setSettings
+   * @param {import("./setup.mjs").HomeSetup} options.setup
+   * @param {import("./control-sessions.mjs").ControlSessions} options.sessions
+   * @param {Set<string>} [options.trustedProxies]
+   * @param {object} [options.env]
+   * @param {(event: object) => void} [options.log]  where codes are printed
+   * @param {() => number} [options.now]
+   */
+  constructor({ application, dataDirectory, databasePath = null, getSettings, setSettings, setup, sessions, trustedProxies = new Set(), env = process.env, log = () => {}, now = Date.now, version }) {
+    Object.assign(this, { application, dataDirectory, databasePath, getSettings, setSettings, setup, sessions, trustedProxies, env, log, now });
+    this.version = version ?? JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
+    this.codes = {
+      access: new OneTimeCode({ purpose: "access", ttlMs: SETUP_CODE_TTL_MS, now }),
+      confirm: new OneTimeCode({ purpose: "confirm", ttlMs: CONFIRM_CODE_TTL_MS, now }),
+    };
+    this.sections = new Map([
+      // #721 provides these: last backup, schedule, kept copies.
+      ["backups", () => ({ state: "not-built" })],
+      // #722 provides these: the update policy and what is available.
+      ["updates", () => ({ state: "not-built", current: this.version })],
+    ]);
+    this.changes = new Map();
+    this.registerChange("households-limit", {
+      check: (change) => {
+        const value = change?.maxHouseholds;
+        if (!Number.isSafeInteger(value) || value < 1 || value > MAX_HOUSEHOLDS_LIMIT)
+          throw new ControlError("control-limit-invalid", `Choose a number from 1 to ${MAX_HOUSEHOLDS_LIMIT}.`);
+        if (isSet(this.env.KIN_MAX_HOUSEHOLDS) || isSet(this.env.KIN_ALLOW_NEW_HOUSEHOLDS))
+          throw new ControlError("control-limit-from-environment", "This limit is set on this computer (KIN_MAX_HOUSEHOLDS or KIN_ALLOW_NEW_HOUSEHOLDS).", 409);
+        return { kind: "households-limit", maxHouseholds: value };
+      },
+      apply: async ({ maxHouseholds }) => {
+        this.setSettings(await writeHomeSettings(this.dataDirectory, { maxHouseholds }, this.env));
+        this.application.service.householdPolicy = parseHouseholdPolicy({ maxHouseholds });
+        return { maxHouseholds };
+      },
+    });
+  }
+
+  get settings() { return this.getSettings(); }
+
+  /** The panel's address on this computer. */
+  url() {
+    const port = this.application.server.address()?.port ?? Number(this.env.KIN_PORT ?? 8000);
+    return `http://localhost:${port}/control/`;
+  }
+
+  /** Called once the loopback listener is up. On first run (no name yet)
+   * this prints the setup code. */
+  started() {
+    if (!this.settings.configured) this.issueCode("access", { force: true });
+  }
+
+  /** Issues and prints a code. Resolves with { expiresAt } or throws when
+   * asked again too soon. The code itself goes only to the log. */
+  issueCode(purpose, { force = false } = {}) {
+    const code = this.codes[purpose];
+    const issued = code.issue({ force });
+    if (!issued) throw new ControlError("control-code-too-soon", "Kin printed a code a moment ago. Look for it in Kin's window or log.", 429, { retryAt: new Date(code.nextIssueAt()).toISOString() });
+    this.log({
+      event: "home_control_code",
+      purpose: purpose === "access" && !this.settings.configured ? "setup" : purpose,
+      code: displayCode(issued.code),
+      expiresAt: new Date(issued.expiresAt).toISOString(),
+      url: this.url(),
+    });
+    return { expiresAt: new Date(issued.expiresAt).toISOString() };
+  }
+
+  // ------------------------------------------------------------- the seams
+
+  /** Fills a status section (#721 "backups", #722 "updates"). */
+  provide(section, provider) {
+    if (typeof provider !== "function") throw new TypeError("a status provider is a function");
+    this.sections.set(section, provider);
+  }
+
+  /** Adds a change: `check(change)` returns the normalized change or throws
+   * ControlError; `apply(normalized)` makes it. Both ways of reaching the
+   * panel confirm it freshly before `apply`. */
+  registerChange(kind, { check, apply }) {
+    this.changes.set(kind, { check, apply });
+  }
+
+  checkChange(change) {
+    const handler = this.changes.get(change?.kind);
+    if (!handler) throw new ControlError("control-change-unknown", "Kin doesn't know that change.");
+    return handler.check(change);
+  }
+
+  /** Applies a change that has been checked and freshly confirmed. */
+  async applyChange(change) {
+    const normalized = this.checkChange(change);
+    const result = await this.changes.get(normalized.kind).apply(normalized);
+    this.log({ event: "home_control_change", kind: normalized.kind });
+    return { kind: normalized.kind, ...result };
+  }
+
+  // ----------------------------------------------------------- the status
+
+  #storage() {
+    if (!this.databasePath || this.databasePath === ":memory:") return { databaseBytes: null, freeBytes: null };
+    let databaseBytes = 0;
+    for (const suffix of ["", "-wal"]) databaseBytes += statSync(`${this.databasePath}${suffix}`, { throwIfNoEntry: false })?.size ?? 0;
+    let freeBytes = null;
+    try {
+      const disk = statfsSync(dirname(this.databasePath));
+      freeBytes = Number(disk.bavail) * Number(disk.bsize);
+    } catch { freeBytes = null; }
+    return { databaseBytes, freeBytes };
+  }
+
+  /** Households and trusted devices on this server: counts only. */
+  #counts() {
+    const { service } = this.application;
+    let devices = 0;
+    for (const device of service.devices.values()) {
+      if (device.revokedAt) continue;
+      const household = service.households.get(device.householdId);
+      if (household && household.lifecycleState !== "deleted") devices += 1;
+    }
+    return { households: service.countLiveHouseholds(), devices };
+  }
+
+  /**
+   * What the status page shows (#720). Counts, dates, states and error
+   * codes: never household content, a household's or member's identifier,
+   * a device label, a key or anyone's address.
+   */
+  status() {
+    const settings = this.settings;
+    const home = this.application.home ?? null;
+    const now = this.now();
+    const tunnel = home?.tunnel.status() ?? null;
+    const certificate = home?.certificates.status() ?? null;
+    const policy = this.application.service.householdPolicy;
+    const sections = {};
+    for (const [name, provider] of this.sections) {
+      try { sections[name] = provider(); } catch { sections[name] = { state: "error" }; }
+    }
+    return {
+      version: this.version,
+      checkedAt: new Date(now).toISOString(),
+      name: settings.name,
+      freeName: settings.freeName,
+      origin: settings.configured ? `https://${settings.name}` : null,
+      setupComplete: Boolean(certificate?.certificate),
+      relay: tunnel ? {
+        state: tunnel.state, connected: tunnel.connected, since: tunnel.since, relay: tunnel.relay,
+        names: tunnel.names, routed: tunnel.routed, nameError: tunnel.nameError, lastError: tunnel.lastError, nextAttemptAt: tunnel.nextAttemptAt,
+      } : null,
+      certificate: certificate ? {
+        state: certificate.state,
+        notAfter: certificate.certificate?.notAfter ?? null,
+        daysLeft: certificate.certificate?.daysLeft ?? null,
+        issuer: certificate.certificate?.issuer ?? null,
+        renewAt: certificate.renewAt,
+        expiringSoon: certificate.expiringSoon,
+        nextAttemptAt: certificate.nextAttemptAt,
+        lastError: certificate.lastError ? { code: certificate.lastError.code, at: certificate.lastError.at } : null,
+        lastRenewedAt: certificate.lastRenewedAt,
+        transparency: { state: certificate.transparency.state, checkedAt: certificate.transparency.checkedAt, unexpected: certificate.transparency.unexpected.length, error: certificate.transparency.error?.code ?? null },
+      } : null,
+      storage: this.#storage(),
+      counts: this.#counts(),
+      limits: {
+        maxHouseholds: policy.maxHouseholds,
+        allowNew: policy.allowNew,
+        fromEnvironment: isSet(this.env.KIN_MAX_HOUSEHOLDS) || isSet(this.env.KIN_ALLOW_NEW_HOUSEHOLDS),
+        highest: MAX_HOUSEHOLDS_LIMIT,
+      },
+      ...sections,
+    };
+  }
+
+  /** True while a home server has no name: the app's own API is off, so no
+   * household is made on localhost, where its passkeys would be bound to
+   * the wrong name (ADR 0025 §10). */
+  appBlocked() { return !this.settings.configured; }
+
+  // ------------------------------------------------- the loopback panel API
+
+  #signedIn(request) {
+    return this.sessions.verify(cookieValue(request, SESSION_COOKIE));
+  }
+
+  #requireSession(request) {
+    if (!this.#signedIn(request)) throw new ControlError("control-sign-in-required", "Enter the code Kin printed to open the control panel.", 401);
+  }
+
+  #state(request) {
+    const signedIn = this.#signedIn(request);
+    const access = this.codes.access;
+    return {
+      signedIn,
+      version: this.version,
+      configured: this.settings.configured,
+      codeExpiresAt: access.active ? new Date(access.expiresAt).toISOString() : null,
+      ...(signedIn ? { setup: this.setup.view(), status: this.status() } : {}),
+    };
+  }
+
+  /**
+   * Handles /control/api/* on loopback. Resolves true when it answered.
+   * Everything else under /control/ is the static page (server.mjs).
+   */
+  async handle(request, response, url) {
+    if (!url.pathname.startsWith(PANEL_API_PREFIX)) return false;
+    try {
+      const problem = loopbackProblem(request, { trustedProxies: this.trustedProxies });
+      if (problem) throw new ControlError("control-loopback-only", "This part of the control panel works only on the home server's own computer. Through the household's address, sign in to Kin as a household admin.", 403, { reason: problem });
+      const route = url.pathname.slice(PANEL_API_PREFIX.length);
+      if (request.method === "GET" && route === "state") { send(response, 200, this.#state(request)); return true; }
+      if (request.method !== "POST") throw new ControlError("control-not-found", "That isn't part of the control panel.", 404);
+      const refused = writeProblem(request);
+      if (refused) throw new ControlError("control-origin-rejected", "The control panel only accepts changes from its own page.", 403);
+      let body;
+      try { body = await readJsonBody(request, response, MAX_BODY_BYTES); } catch { throw new ControlError("control-bad-request", "Kin couldn't read that request."); }
+      if (body === null || typeof body !== "object" || Array.isArray(body)) throw new ControlError("control-bad-request", "Kin couldn't read that request.");
+      send(response, 200, await this.#route(request, response, route, body));
+    } catch (error) {
+      this.#fail(response, error);
+    }
+    return true;
+  }
+
+  async #route(request, response, route, body) {
+    switch (route) {
+      case "sign-in": {
+        const answer = this.codes.access.verify(body.code);
+        if (answer !== "ok") {
+          const [code, status] = CODE_ANSWERS[answer];
+          throw new ControlError(code, "That code didn't work.", status, answer === "wrong" ? { attemptsLeft: this.codes.access.attemptsLeft } : {});
+        }
+        const token = await this.sessions.create();
+        response.setHeader("Set-Cookie", `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/control; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`);
+        this.log({ event: "home_control_signed_in" });
+        return { signedIn: true };
+      }
+      case "code":
+        return this.issueCode("access");
+      case "sign-out": {
+        await this.sessions.revoke(cookieValue(request, SESSION_COOKIE));
+        response.setHeader("Set-Cookie", `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/control; Max-Age=0`);
+        return { signedIn: false };
+      }
+      default:
+        break;
+    }
+    this.#requireSession(request);
+    switch (route) {
+      case "setup/check-name": return this.setup.checkName(body.name);
+      case "setup/name": return this.setup.chooseName(body.name);
+      case "setup/terms": return { ...(await this.setup.agreeTerms(body.agreed)) };
+      case "setup/terms-url": return { url: await this.setup.termsUrl() };
+      case "setup/records": return this.setup.checkRecords();
+      case "setup/connect": return this.setup.connect();
+      case "setup/retry": return this.setup.retryCertificate();
+      case "confirm-code": return this.issueCode("confirm");
+      case "change": {
+        // Checked before the code is spent, so a wrong value doesn't cost one.
+        this.checkChange(body.change);
+        const answer = this.codes.confirm.verify(body.code);
+        if (answer !== "ok") {
+          const [code, status] = CODE_ANSWERS[answer];
+          throw new ControlError(code.replace("control-code", "control-confirm"), "That confirmation code didn't work.", status, answer === "wrong" ? { attemptsLeft: this.codes.confirm.attemptsLeft } : {});
+        }
+        return this.applyChange(body.change);
+      }
+      default:
+        throw new ControlError("control-not-found", "That isn't part of the control panel.", 404);
+    }
+  }
+
+  #fail(response, error) {
+    if (error instanceof ControlError || error instanceof SetupError) {
+      send(response, error.status, { error: error.code, message: error.message, ...(error.extra ?? {}) });
+      return;
+    }
+    // A HomeSettingsError (a bad value that got past the checks) or an
+    // unexpected failure: logged by code, answered without detail.
+    this.log({ event: "home_control_failed", code: typeof error?.code === "string" ? error.code : "error" });
+    send(response, 500, { error: "control-failed", message: "Kin couldn't do that. Look at Kin's log on this computer." });
+  }
+
+  async close() {
+    await this.setup.close();
+  }
+}
+
+/**
+ * Builds home mode's control panel for a running Kin server: the settings
+ * it reads and writes, its stored sessions and the setup flow, and
+ * attaches it. `restart(reason)` asks the launcher to start the service
+ * again (setup's last step). Test seams: `setup` (HomeSetup options such as
+ * `tunnel`, `acmeTransport`, `checkDomain`, `resolver`) and `now`.
+ */
+export async function createControlPanel({ application, dataDirectory, databasePath = null, settings, env = process.env, restart, log = () => {}, trustedProxies = new Set(), setup: setupOptions = {}, now = Date.now, version }) {
+  const { ControlSessions } = await import("./control-sessions.mjs");
+  const { HomeSetup } = await import("./setup.mjs");
+  let current = settings;
+  const getSettings = () => current;
+  const setSettings = (next) => { current = next; };
+  const sessions = await new ControlSessions({ dataDirectory, now }).load();
+  const setup = new HomeSetup({ dataDirectory, getSettings, setSettings, getHome: () => application.home ?? null, restart, env, log, ...setupOptions });
+  const panel = new ControlPanel({ application, dataDirectory, databasePath, getSettings, setSettings, setup, sessions, trustedProxies, env, log, now, version });
+  application.attachControlPanel(panel);
+  application.controlPanel = panel;
+  return panel;
+}

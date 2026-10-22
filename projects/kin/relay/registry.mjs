@@ -236,6 +236,23 @@ export class Registry {
     return Code.NONE;
   }
 
+  /**
+   * CHECK (#719): what CLAIM would answer for `name` from `keyHash`, without
+   * binding it, counting it or joining the weekly waiting list. NONE means
+   * free (or already this key's); LIMIT means this key already holds a
+   * different free name. The weekly cap and per-source limits are only
+   * known at the claim itself.
+   */
+  check(keyHash, name) {
+    const label = this.labelOf(name);
+    if (label === null || !freeLabelAllowed(label, this.reserved)) return Code.NAME_NOT_ALLOWED;
+    const existing = this.sql.nameRow.get(name);
+    if (existing) return Buffer.from(existing.key_hash).equals(keyHash) ? Code.NONE : Code.NAME_TAKEN;
+    if (this.sql.retired.get(name)) return Code.NAME_TAKEN;
+    if (this.sql.nameOfKey.get(keyHash)) return Code.LIMIT;
+    return Code.NONE;
+  }
+
   /** RELEASE (§3): stops routing and retires the name for good. */
   release(keyHash, name) {
     const row = this.sql.nameRow.get(name);

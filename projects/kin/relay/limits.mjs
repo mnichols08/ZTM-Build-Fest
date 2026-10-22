@@ -25,6 +25,8 @@ export const DEFAULT_LIMITS = Object.freeze({
   pendingHellos: 4096,
   phoneConnections: 65_536,
   controlRequestsInFlight: 8,
+  // CHECK (#719): a setup page checking names as someone types.
+  checksPerKeyPerMinute: 30,
 });
 
 /**
