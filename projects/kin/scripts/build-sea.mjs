@@ -44,6 +44,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findSeaBlob, injectElf, readElf } from "./sea/elf.mjs";
+import { canonicalSeaBlob, readSeaBlob } from "./sea/blob.mjs";
 import { flipFuse, fuseFlipped } from "./sea/fuse.mjs";
 import { checkMachOExecutable, injectMachO, readMachO, thinSlice } from "./sea/macho.mjs";
 import { checkPeExecutable, injectPe, readPe } from "./sea/pe.mjs";
@@ -147,7 +148,14 @@ export function buildBlob({ files, version, nodeVersion, generator, workDirector
   writeFileSync(join(workDirectory, "sea-config.json"), JSON.stringify(config, null, 2));
   const result = spawnSync(generator, ["--experimental-sea-config", "sea-config.json"], { cwd: workDirectory, encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "" } });
   if (result.status !== 0) throw new BuildSeaError(`node --experimental-sea-config failed: ${(result.stderr || result.stdout || result.error?.message || "").trim()}`);
-  return { blob: readFileSync(join(workDirectory, "kin.blob")), manifest };
+  // Node writes the assets in an order that depends on the build machine's
+  // C++ library; sorted, the blob is the same everywhere (sea/blob.mjs).
+  const blob = canonicalSeaBlob(readFileSync(join(workDirectory, "kin.blob")));
+  const parsed = readSeaBlob(blob);
+  const names = parsed.assets.map(({ name }) => name.toString("utf8"));
+  if (!parsed.main.equals(readFileSync(join(workDirectory, "main.cjs"))) || names.join("\n") !== Object.keys(assets).sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))).join("\n"))
+    throw new BuildSeaError("The SEA blob node wrote doesn't hold exactly the main script and the app files.");
+  return { blob, manifest };
 }
 
 /** The executable for one target: `base` (an unmodified node binary for
@@ -321,7 +329,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     await buildSea(parseBuildArguments(process.argv.slice(2)));
   } catch (error) {
-    if (!(error instanceof BuildSeaError) && !["ServiceHostBuildError", "ElfInjectError", "MachOInjectError", "PeInjectError", "CodeSignatureError", "FuseError", "NodeReleaseError"].includes(error?.name)) throw error;
+    if (!(error instanceof BuildSeaError) && !["ServiceHostBuildError", "SeaBlobError", "ElfInjectError", "MachOInjectError", "PeInjectError", "CodeSignatureError", "FuseError", "NodeReleaseError"].includes(error?.name)) throw error;
     console.error(error.message);
     // In CI the stack says which step failed (#747: diagnosing from a
     // runner's annotations).

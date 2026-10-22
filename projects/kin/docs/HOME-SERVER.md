@@ -109,7 +109,16 @@ there must be byte-identical to the Linux build.
 **Reproducible.** The same sources, engine and node binary give
 byte-identical executables: files are bundled in sorted order, the blob has no
 code cache or snapshot, and the injector is deterministic
-(`scripts/build-sea.test.mjs` builds twice and compares).
+(`scripts/build-sea.test.mjs` builds twice and compares). That holds across
+build machines too: node writes the blob's assets in an order that depends
+on the C++ library it was built with (different on Linux, macOS and
+Windows), so the build rewrites them sorted by name (`scripts/sea/blob.mjs`),
+and `.gitattributes` keeps the bundled files' LF line endings in a Windows
+checkout. CI compares the Mac and Windows executables built natively with
+the Linux build's. A code cache would make the blob machine-specific and
+gains nothing measurable: it only covers the small main script, and the
+server's modules load from disk (first start 335–494 ms without, 420–561
+ms with; later starts about 300 ms either way, on Linux x64).
 
 **How it works.** The executable is a Node
 [single executable application](https://nodejs.org/api/single-executable-applications.html).
@@ -149,8 +158,11 @@ When it runs, the executable writes its app files once to a cache folder
 (`app-<bundle hash>` inside `KIN_APP_CACHE`; by default systemd's
 `CACHE_DIRECTORY`, else `~/.cache/kin`, `~/Library/Caches/Kin` or
 `%LOCALAPPDATA%\Kin`), checks every file's SHA-256 on each start and
-rewrites any that changed. That folder is the service's read-only app
-directory. The launcher then starts a second copy of the executable as the
+rewrites any that changed. That folder, by its real path (macOS's
+temporary folders are symlinks, and the permission model compares paths as
+written), is the service's read-only app directory. Copies started at the
+same moment (the service and `kin --health`, say) unpack safely side by
+side, also on Windows, where a folder in use can't be replaced. The launcher then starts a second copy of the executable as the
 service, with Node's permission flags in `NODE_OPTIONS` (an executable takes
 no Node flags on its command line), so the service runs in the same sandbox
 as `node server/start.mjs`: it reads the app, reads and writes only its data

@@ -3,12 +3,12 @@
 // it serves the app and the engine in home mode, inside the permission
 // model, from its unpacked and checked app files.
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, win32 } from "node:path";
+import { basename, join, win32 } from "node:path";
 import test from "node:test";
 import { appManifest, BuildSeaError, buildExecutable, buildSea, checkExecutable, collectAppFiles, DEFAULT_TARGETS, parseBuildArguments, PROJECT_ROOT } from "./build-sea.mjs";
 import { readElf } from "./sea/elf.mjs";
@@ -126,7 +126,7 @@ function start(executable, env) {
   return { child, ready, stop, output: () => output };
 }
 
-test("on Linux the executable builds reproducibly and serves Kin in home mode inside the sandbox", { timeout: 110_000 }, async (t) => {
+test("on Linux the executable builds reproducibly and serves Kin in home mode inside the sandbox", { timeout: 180_000 }, async (t) => {
   const target = hostTarget();
   if (process.platform !== "linux") { t.skip("builds and runs only on Linux"); return; }
   let base;
@@ -199,6 +199,33 @@ test("on Linux the executable builds reproducibly and serves Kin in home mode in
   appendFileSync(server, "\nthrow new Error('tampered');\n");
   assert.equal(run(["--prepare"], env).status, 0);
   assert.deepEqual(readFileSync(server), original);
+
+  // A cache reached through a symlink, as macOS's temporary folders are
+  // (/var/folders -> /private/var/folders): the service loads its files by
+  // the real path its permission flags allow, so it still starts.
+  const realCache = join(root, "real-cache");
+  mkdirSync(realCache);
+  const linkedCache = join(root, "linked-cache");
+  symlinkSync(realCache, linkedCache, "dir");
+  const linkedPort = await freePort();
+  const linkedEnv = { ...env, KIN_APP_CACHE: linkedCache, KIN_PORT: String(linkedPort), KIN_DATA_DIR: join(root, "data-linked") };
+  const linked = start(executable, linkedEnv);
+  t.after(linked.stop);
+  assert.equal((await linked.ready).event, "service_ready", linked.output());
+  assert.equal((await fetch(`http://127.0.0.1:${linkedPort}/health`)).status, 200);
+  assert.equal(await linked.stop(), 0);
+
+  // Several copies unpacking into one empty cache at once (the service
+  // starting while `kin --health` runs), then again into the full one: all
+  // succeed with the same intact folder, and no half-written copy remains.
+  const raceEnv = { ...process.env, NODE_OPTIONS: "", ...env, KIN_APP_CACHE: join(root, "race") };
+  const prepare = () => new Promise((resolve) => execFile(executable, ["--prepare"], { env: raceEnv, timeout: 30_000 }, (error, stdout, stderr) => resolve({ code: error ? error.code ?? 1 : 0, stdout: stdout.trim(), stderr })));
+  for (const round of [1, 2]) {
+    const results = await Promise.all([prepare(), prepare(), prepare(), prepare()]);
+    for (const result of results) assert.equal(result.code, 0, `round ${round}: ${result.stderr}`);
+    assert.equal(new Set(results.map(({ stdout }) => stdout)).size, 1);
+    assert.deepEqual(readdirSync(join(root, "race")), [basename(results[0].stdout)]);
+  }
 
   // Home mode is the executable's default, with its refusals.
   const refused = run([], { ...env, KIN_ANDROID_PACKAGE: "io.example.kin" });

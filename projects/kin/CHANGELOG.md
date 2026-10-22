@@ -42,8 +42,13 @@ documentation only.
   `codesign`, runs the Mac and Windows executables and compares them with
   native builds; the Windows executable ships with the service host (#749)
   built by the `service-host` job, and CI checks that `kin.exe
-  --print-service` finds it. Still unsigned: Gatekeeper and SmartScreen
-  warn.
+  --print-service` finds it. The blob's assets are sorted and the bundled
+  files keep LF endings, so Linux, macOS and Windows build byte-identical
+  executables. The executable now loads its app files by their real path
+  (it failed to start from a cache under macOS's symlinked temporary
+  folders) and unpacks safely when several copies start at once (Windows
+  refused to rename onto a folder another copy had just written). Still
+  unsigned: Gatekeeper and SmartScreen warn.
 - **Kin runs as a real Windows service** (#749; story #713,
   [ADR 0025](docs/decisions/0025-kin-at-home.md) §10,
   [HOME-SERVER](docs/HOME-SERVER.md)). `tools/kin-service-host` is a small
