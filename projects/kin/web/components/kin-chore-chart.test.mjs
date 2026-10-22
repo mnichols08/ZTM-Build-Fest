@@ -87,7 +87,7 @@ test("on the display the goal is chosen with big buttons, never typed", () => {
   const form = one(element, ".chore-reward-form");
   assert.ok(form, "the editor opens");
   assert.equal(element.querySelectorAll("input").filter((node) => node.type === "number").length, 0, "no number box to type into");
-  assert.equal(document.activeElement?.dataset.focusKey, `${CHILD}:reward-text`, "the reward's name has the focus");
+  assert.equal(document.activeElement?.dataset.focusKey, `${CHILD}:goal-more`, "a button has the focus, so no keyboard covers the chart yet");
   assert.equal(one(element, ".chore-goal-value").textContent, "20 points", "20 to start with");
   // A one-tap goal, then one more.
   element.querySelectorAll(".chore-goal-preset").find((node) => node.dataset.goal === "30").click();

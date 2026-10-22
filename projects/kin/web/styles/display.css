@@ -179,9 +179,10 @@ kin-fridge[data-layout="display"] > .fridge-summary { grid-area: summary; font-s
 kin-fridge[data-layout="display"] > .fridge-status { grid-area: status; }
 kin-fridge[data-layout="display"] .fridge-tools { display: grid; grid-template-columns: repeat(3, var(--display-tap)); gap: 10px; align-content: start; }
 kin-fridge[data-layout="display"] .fridge-tools[hidden] { display: none; }
+/* Each group on rows of its own: colours, widths, then Undo and Redo. */
 kin-fridge[data-layout="display"] .fridge-colours,
-kin-fridge[data-layout="display"] .fridge-widths,
-kin-fridge[data-layout="display"] .fridge-history { display: contents; }
+kin-fridge[data-layout="display"] .fridge-widths { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, var(--display-tap)); gap: 10px; }
+kin-fridge[data-layout="display"] .fridge-history { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 kin-fridge[data-layout="display"] .fridge-colour,
 kin-fridge[data-layout="display"] .fridge-width { inline-size: var(--display-tap); block-size: var(--display-tap); }
 kin-fridge[data-layout="display"] .fridge-width::after { inline-size: 32px; }
@@ -215,7 +216,7 @@ kin-fridge[data-layout="display"] .fridge-magnet-done { grid-column: span 3; }
 .fridge-notes-title { margin: 0 0 var(--space-1); font-size: 1.1em; }
 .fridge-notes-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 .fridge-note { display: grid; gap: 4px; padding: 12px 16px; border-radius: 6px; background: #fff4a8; color: #2b2522; box-shadow: 0 2px 4px rgb(0 0 0 / 0.2); }
-.fridge-note-text { font-size: 1.45em; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+.fridge-note-text { font-size: 1.5em; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
 .fridge-note-by { font-size: 0.85em; }
 /* The dialogs (Add a magnet, Clear) at display size. */
 .kitchen-display .fridge-dialog { inline-size: min(40rem, calc(100vw - 32px)); font-size: 1.1rem; }
@@ -227,6 +228,8 @@ kin-fridge[data-layout="display"] .fridge-magnet-done { grid-column: span 3; }
 @media (max-width: 719px) {
   kin-fridge[data-layout="display"] { grid-template-columns: minmax(0, 1fr); grid-template-areas: "heading" "tools" "board" "notes" "summary" "status"; }
   kin-fridge[data-layout="display"] .fridge-tools { grid-template-columns: repeat(auto-fill, var(--display-tap)); }
+  kin-fridge[data-layout="display"] .fridge-colours,
+  kin-fridge[data-layout="display"] .fridge-widths { grid-template-columns: repeat(auto-fill, var(--display-tap)); }
   kin-fridge[data-layout="display"] .fridge-eraser,
   kin-fridge[data-layout="display"] .fridge-add-magnet,
   kin-fridge[data-layout="display"] .fridge-clear,

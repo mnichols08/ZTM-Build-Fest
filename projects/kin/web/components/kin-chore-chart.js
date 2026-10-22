@@ -242,7 +242,9 @@ class KinChoreChart extends HTMLElement {
     this.editing = open ? card.memberId : null;
     this.draft = open ? { memberId: card.memberId, goal: card.reward?.goal ?? 20, text: card.reward?.text ?? "" } : null;
     this.render();
-    if (open) this.querySelector(`[data-focus-key="${card.memberId}:${this.forDisplay ? "reward-text" : "goal"}"]`)?.focus();
+    // On the display the focus goes to a button, not the text box: a wall
+    // tablet's keyboard would cover the chart before anyone asked to type.
+    if (open) this.querySelector(`[data-focus-key="${card.memberId}:${this.forDisplay ? "goal-more" : "goal"}"]`)?.focus();
     else this.querySelector(`[data-focus-key="${card.memberId}:reward"]`)?.focus();
   }
 
