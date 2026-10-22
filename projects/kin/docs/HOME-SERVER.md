@@ -11,8 +11,8 @@ server**. A plain guide for households comes with #740.
 | --- | --- |
 | `KIN_MODE=home` (§9) | Built (#713). |
 | One executable for Linux x64 and arm64 (Raspberry Pi) (§10) | Built (#714): `scripts/build-sea.mjs`. |
-| One executable for macOS arm64 and x64 | Not yet: needs Mach-O injection (#747). |
-| One executable for Windows x64 | Not yet: needs PE injection (#748). |
+| One executable for macOS arm64 and x64 | Built (#747): Kin's Mach-O injector and ad-hoc signature. Device check under #717. |
+| One executable for Windows x64 | Built (#748): Kin's PE injector. Device check under #717. |
 | Container image for NAS and server users | Built (#715): `deploy/home/Dockerfile`. |
 | Running as a service: systemd, launchd, Windows | Built (#716). On Windows a real service run by Kin's Rust service host, `kin-service-host.exe` (#749); a scheduled task when the host is missing. |
 | Device checks on each platform | #717. |
@@ -309,19 +309,29 @@ change that both ways in confirm the same way, and `SECTIONS` and
 ```sh
 # from projects/kin, with Node 24.22.0 (the version the executables run on)
 ./build-wasm.sh                      # or: node scripts/fetch-wasm.mjs
-node scripts/build-sea.mjs           # linux-x64 and linux-arm64
+node scripts/build-sea.mjs           # all five targets
+node scripts/build-sea.mjs --target darwin-arm64,darwin-x64
+node scripts/build-sea.mjs --target win-x64
 node scripts/build-sea.mjs --target linux-x64 --measure
 ```
 
-The script downloads the official node binary for each target from
+Every target builds on any machine: a Linux computer builds the Mac and
+Windows executables, and the other way round. The Windows build also ships
+the service host beside `kin.exe` (below, "Building the host"): on a
+machine that can't build it, give one built on Windows in
+`KIN_SERVICE_HOST_EXE`. The script downloads the official node binary for each target from
 nodejs.org, checks it against the release's `SHASUMS256.txt`, and caches it
 in `target/sea/node/`. `--node-binary PATH` uses a binary you already have
 (for one target), and `--node-version X.Y.Z` picks another release (the
 build then needs that version of node on this machine to write the blob).
 The results are in `target/sea/dist/`:
 
-- `kin-<version>-linux-x64` and `kin-<version>-linux-arm64`, about 130 MB
-  each (node itself is most of it);
+- `kin-<version>-linux-x64`, `kin-<version>-linux-arm64`,
+  `kin-<version>-darwin-arm64`, `kin-<version>-darwin-x64` and
+  `kin-<version>-win-x64.exe`, 95 to 135 MB each (node itself is most of
+  it);
+- `kin-service-host-<version>-win-x64.exe`, the Windows service host
+  (#749), which belongs in the same folder as the Windows executable;
 - `SHA256SUMS`, to check with `sha256sum -c SHA256SUMS`;
 - `build-info.json`: the version, node release, the hash of every bundled
   file, and the hash of each node binary used;
@@ -330,14 +340,34 @@ The results are in `target/sea/dist/`:
   (it unpacks its files) and after. On a development machine it was about
   330 ms and 300 ms.
 
-The CI job `home-executables` builds both Linux targets for every change,
-starts the x64 one, and keeps the results as the `kin-home-executables`
-artifact.
+Before writing each executable the script parses it back with the same
+reader the injector uses and checks it (`checkExecutable`): the blob is
+where Node looks for it and byte-identical, the fuse is flipped, and the
+layout is one the system's loader accepts (below). On a Mac it also runs
+`codesign --verify --strict` on the macOS executables.
+
+The CI job `home-executables` builds all five targets on Linux for every
+change, starts the Linux x64 one, runs the injector tests against the
+official node binaries it downloaded, and keeps the results as the
+`kin-home-executables` artifact. `home-executables-run` then takes the Mac
+(arm64) and Windows executables to a Mac and a Windows runner: `codesign
+--verify` must accept the macOS signatures, each executable must print its
+version, start and answer `--health`, and the same target built natively
+there must be byte-identical to the Linux build.
 
 **Reproducible.** The same sources, engine and node binary give
 byte-identical executables: files are bundled in sorted order, the blob has no
 code cache or snapshot, and the injector is deterministic
-(`scripts/build-sea.test.mjs` builds twice and compares).
+(`scripts/build-sea.test.mjs` builds twice and compares). That holds across
+build machines too: node writes the blob's assets in an order that depends
+on the C++ library it was built with (different on Linux, macOS and
+Windows), so the build rewrites them sorted by name (`scripts/sea/blob.mjs`),
+and `.gitattributes` keeps the bundled files' LF line endings in a Windows
+checkout. CI compares the Mac and Windows executables built natively with
+the Linux build's. A code cache would make the blob machine-specific and
+gains nothing measurable: it only covers the small main script, and the
+server's modules load from disk (first start 335–494 ms without, 420–561
+ms with; later starts about 300 ms either way, on Linux x64).
 
 **How it works.** The executable is a Node
 [single executable application](https://nodejs.org/api/single-executable-applications.html).
@@ -345,16 +375,43 @@ code cache or snapshot, and the injector is deterministic
 its main script and the server, the web app, `package.json` and the WASM
 engine as assets. Node usually adds the blob with the `postject` npm
 package; Kin can't use npm packages, so `scripts/sea/elf.mjs` writes it into
-a copy of the node binary itself: a `NODE_SEA_BLOB` note in a new read-only
-segment, with the program header table moved to the end of the file, and the
-sentinel fuse flipped (`scripts/sea/fuse.mjs`).
+a copy of the node binary itself, with the sentinel fuse flipped
+(`scripts/sea/fuse.mjs`), in the form Node looks for on each system:
+
+- **Linux** (`scripts/sea/elf.mjs`): a `NODE_SEA_BLOB` note in a new
+  read-only segment, with the program header table moved to the end of the
+  file.
+- **macOS** (`scripts/sea/macho.mjs`): a section `__NODE_SEA_BLOB` in a new
+  read-only segment `NODE_SEA` (the names Node's `src/node_sea_bin.cc`
+  passes to `getsectdata`), placed where `__LINKEDIT` was; `__LINKEDIT`
+  moves up and stays last, every load command that points into it is
+  moved, and its chained fixups get an entry for the new segment, as dyld
+  requires. Node's own signature (Developer ID) no longer matches, so it is
+  cut off and replaced by an **ad-hoc signature** written by
+  `scripts/sea/codesign.mjs`: a CodeDirectory of SHA-256 hashes of every
+  4 KiB page, empty requirements, no certificate, the same as
+  `codesign --sign -` writes. Apple silicon won't run a binary without one.
+  Its page hashes are computed exactly as Apple's are (a test compares them
+  with node's own signature), and no Mac or `codesign` is needed to build.
+  A universal binary is reduced to the target's slice first; nodejs.org
+  ships thin ones.
+- **Windows** (`scripts/sea/pe.mjs`): an `RT_RCDATA` resource named
+  `NODE_SEA_BLOB` (what `FindResource` looks up), in a new `.rsrc` section
+  at the end holding every resource node.exe had (icons, version
+  information, manifest) plus the blob. The old resource section stays,
+  unused, as `.rsrc0`; no other section moves. node.exe's Authenticode
+  certificate table is removed (the injection invalidates it), and
+  `SizeOfImage`, the data directories and the checksum are rewritten.
 
 When it runs, the executable writes its app files once to a cache folder
 (`app-<bundle hash>` inside `KIN_APP_CACHE`; by default systemd's
 `CACHE_DIRECTORY`, else `~/.cache/kin`, `~/Library/Caches/Kin` or
 `%LOCALAPPDATA%\Kin`), checks every file's SHA-256 on each start and
-rewrites any that changed. That folder is the service's read-only app
-directory. The launcher then starts a second copy of the executable as the
+rewrites any that changed. That folder, by its real path (macOS's
+temporary folders are symlinks, and the permission model compares paths as
+written), is the service's read-only app directory. Copies started at the
+same moment (the service and `kin --health`, say) unpack safely side by
+side, also on Windows, where a folder in use can't be replaced. The launcher then starts a second copy of the executable as the
 service, with Node's permission flags in `NODE_OPTIONS` (an executable takes
 no Node flags on its command line), so the service runs in the same sandbox
 as `node server/start.mjs`: it reads the app, reads and writes only its data
@@ -367,11 +424,16 @@ chmod +x kin-1.6.0-linux-x64
 KIN_DATA_DIR=~/kin-data ./kin-1.6.0-linux-x64
 ```
 
+On a Mac, `KIN_DATA_DIR=~/kin-data ./kin-1.6.0-darwin-arm64` (or
+`-darwin-x64` on an Intel Mac; the first time, see "Unsigned builds"
+below). On Windows, in PowerShell:
+`$env:KIN_DATA_DIR = "$HOME\kin-data"; .\kin-1.6.0-win-x64.exe`.
+
 Open `http://localhost:8000` on the same computer: the first time, it is the
 setup page, with the code the program printed
 ([above](#setting-it-up-the-control-panel)). Without `KIN_DATA_DIR` it uses
-`/var/lib/kin`, which an ordinary account can't write: install it as a
-service instead (below), or set `KIN_DATA_DIR`. The other settings are the
+the system data folder (`/var/lib/kin` on Linux), which an ordinary account
+can't write: install it as a service instead (below), or set `KIN_DATA_DIR`. The other settings are the
 server's usual ones (README): `KIN_PORT`, `KIN_ORIGIN`,
 `KIN_TRUSTED_PROXIES` and so on.
 
@@ -432,8 +494,8 @@ quarantined unsigned program; you already chose to open it), creates
 `/Library/Logs/Kin` owned by that account with mode 0700, and writes the
 LaunchDaemon `/Library/LaunchDaemons/io.journeytocode.kin.plist` with
 `UserName`, `RunAtLoad`, `KeepAlive` and `Umask` 077. Its log is
-`/Library/Logs/Kin/kin.log`. The macOS executable needs #747; until then the
-same commands work with `node server/start.mjs` from a checkout.
+`/Library/Logs/Kin/kin.log`. The same commands work with
+`node server/start.mjs` from a checkout.
 
 ### Windows (a service, with Kin's service host)
 
@@ -515,10 +577,13 @@ elsewhere (with mingw-w64). `scripts/build-sea.mjs` builds it with the
 Windows executable and ships it beside it as
 `kin-service-host-<version>-win-x64.exe` (listed in `SHA256SUMS`;
 `KIN_SERVICE_HOST_EXE` gives a host built elsewhere), which
-`--install-service` also finds. The Windows executable needs #748; until
-then `node server\start.mjs --install-service` from a checkout installs the
-service with node and the host from
-`tools\kin-service-host\target\release\`, or the task without it.
+`--install-service` also finds. On Linux that needs the
+`x86_64-pc-windows-gnu` Rust target and mingw-w64, or a host built on
+Windows given in `KIN_SERVICE_HOST_EXE`: CI's `home-executables` job uses
+the one the `service-host` job built on Windows. From a checkout,
+`node server\start.mjs --install-service` installs the service with node
+and the host from `tools\kin-service-host\target\release\`, or the task
+without it.
 
 ## The container image
 
@@ -554,14 +619,19 @@ They are checksummed instead: check a download against `SHA256SUMS` from the
 same release before opening it (`sha256sum -c SHA256SUMS`, or
 `Get-FileHash kin.exe` in PowerShell).
 
-- **macOS Gatekeeper** (when #747 lands) says the app "can't be opened
+- **macOS Gatekeeper** says the app "can't be opened
   because Apple cannot check it for malicious software". Open it once from
   Finder with Control-click › **Open** › **Open**, or in **System Settings ›
   Privacy & Security** choose **Open Anyway**. From Terminal,
   `xattr -d com.apple.quarantine kin` removes the download flag.
-  `--install-service` removes it from the installed copy.
-- **Windows SmartScreen** (when #748 lands) says "Windows protected your
-  PC". Choose **More info › Run anyway**. Some antivirus programs also warn
+  `--install-service` removes it from the installed copy. The executable
+  carries an ad-hoc signature (Apple silicon needs one to run anything),
+  which says nothing about who built it; `codesign -dv kin` shows
+  `Signature=adhoc`.
+- **Windows SmartScreen** says "Windows protected your PC". Choose
+  **More info › Run anyway**. node.exe's own Authenticode signature is
+  removed when Kin is added to it, so Windows shows the publisher as
+  unknown. Some antivirus programs also warn
   about a new unsigned program; the checksum is how to tell it is Kin's.
 - **Linux** has no such check; `chmod +x` is enough.
 
@@ -580,6 +650,13 @@ the executable and restart the service (`sudo systemctl restart kin`).
 The tests here ran on Linux x64 with Node 24.22.0. CI on Node 24.22.0 must
 confirm the Linux build, the arm64 build (built, not run, in CI), the
 container image (`home-container`) and `systemd-analyze verify` of the unit.
+The macOS and Windows executables were built and checked on Linux only:
+parsed back by Kin's readers and by `llvm-objdump` and `llvm-readobj`, the
+ad-hoc signature's page hashes checked, but not run. `home-executables-run`
+must confirm that a Mac accepts the signature (`codesign --verify`) and runs
+the arm64 executable, and that Windows runs the x64 one; the Mac x64
+executable runs in CI only on a runner with Rosetta.
+
 The CI job `service-host` lints and tests the Windows service host on Linux
 and Windows, and on Windows builds it and runs it as a real service
 (`scripts/service-host-smoke.mjs`): it must start without error 1053,

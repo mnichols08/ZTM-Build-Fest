@@ -15,6 +15,13 @@
 // for the next request; a `badNonce` error is retried with the nonce that came
 // with it (§6.5), up to three times.
 //
+// ACME Renewal Information (RFC 9773, #751): when the directory names
+// `renewalInfo`, `renewalInfo(id)` is an unauthenticated GET of
+// `<renewalInfo>/<certificate identifier>` (§4.1; x509.mjs computes the
+// identifier) answering { suggestedWindow: { start, end }, explanationURL? }
+// with Retry-After for the next poll, and a newOrder may carry `replaces`
+// (§5). A CA without `renewalInfo` never sees `replaces`.
+//
 // The HTTP transport is injected (transport.mjs), so tests run against an
 // in-process server and nothing here opens a socket by itself.
 import { X509Certificate, createPublicKey, sign } from "node:crypto";
@@ -29,6 +36,7 @@ const ERROR_PREFIX = "urn:ietf:params:acme:error:";
 /** ACME problem types (RFC 8555 §6.7) to the plain codes Kin shows. */
 const ERROR_CODES = Object.freeze({
   accountDoesNotExist: "acme-no-account",
+  alreadyReplaced: "acme-already-replaced",
   alreadyRevoked: "acme-already-revoked",
   badCSR: "acme-bad-csr",
   badNonce: "acme-bad-nonce",
@@ -100,6 +108,17 @@ export function parseRetryAfter(value, now = Date.now()) {
   if (/^\d+$/.test(text)) return Number(text) * 1000;
   const at = Date.parse(text);
   return Number.isNaN(at) ? undefined : Math.max(0, at - now);
+}
+
+// RFC 3339 date-time (§5.6), as ARI's suggestedWindow carries it.
+const RFC3339 = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/;
+const ARI_IDENTIFIER = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+
+/** An https URL of at most 2000 characters, or null: the only kind of
+ * `explanationURL` the control panel will offer as a link. */
+function httpsUrlOrNull(value) {
+  if (typeof value !== "string" || value.length > 2000) return null;
+  try { return new URL(value).protocol === "https:" ? value : null; } catch { return null; }
 }
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.());
@@ -226,9 +245,43 @@ export class AcmeClient {
     return location;
   }
 
-  async newOrder(names) {
-    const { newOrder } = await this.directory();
-    const response = await this.post(newOrder, { identifiers: names.map((value) => ({ type: "dns", value })) });
+  /**
+   * The CA's renewal information for the certificate `certificateId`
+   * (RFC 9773 §4.2), or null when the CA has no `renewalInfo`.
+   *
+   * @returns {Promise<{ start: number, end: number, explanationURL: string | null, retryAfterMs: number | undefined } | null>}
+   *   `start`/`end` in ms since epoch; `explanationURL` only when it is https.
+   *   An error answer, or a window that isn't two RFC 3339 times with `end`
+   *   after `start` (§4.2 calls that invalid), throws an AcmeError carrying
+   *   the response's Retry-After.
+   */
+  async renewalInfo(certificateId) {
+    if (typeof certificateId !== "string" || !ARI_IDENTIFIER.test(certificateId)) throw new TypeError("not an ARI certificate identifier");
+    const { renewalInfo } = await this.directory();
+    if (typeof renewalInfo !== "string" || !renewalInfo) return null;
+    const response = await this.#send(`${renewalInfo.replace(/\/+$/, "")}/${certificateId}`, { method: "GET" });
+    const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"), this.now());
+    const text = await response.text();
+    let body = null;
+    try { body = JSON.parse(text); } catch { /* checked below */ }
+    if (response.status !== 200) throw problemToError(body, response.status, retryAfterMs);
+    const window = body?.suggestedWindow;
+    const start = typeof window?.start === "string" && RFC3339.test(window.start) ? Date.parse(window.start) : NaN;
+    const end = typeof window?.end === "string" && RFC3339.test(window.end) ? Date.parse(window.end) : NaN;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      throw new AcmeError("acme-bad-response", "invalid renewal information", { status: response.status, retryAfterMs });
+    }
+    return { start, end, explanationURL: httpsUrlOrNull(body.explanationURL), retryAfterMs };
+  }
+
+  /** A new order for `names`. `replaces` (an ARI certificate identifier) is
+   * sent only to a CA whose directory has `renewalInfo`. */
+  async newOrder(names, { replaces } = {}) {
+    const { newOrder, renewalInfo } = await this.directory();
+    const response = await this.post(newOrder, {
+      identifiers: names.map((value) => ({ type: "dns", value })),
+      ...(replaces && renewalInfo ? { replaces } : {}),
+    });
     const url = response.headers.get("location");
     if (!url || !Array.isArray(response.body?.authorizations) || !response.body?.finalize) throw new AcmeError("acme-bad-response", "malformed order");
     return { url, ...response.body };
@@ -288,11 +341,22 @@ export class AcmeClient {
  * certificate, and `remove(name)` stops it (tls-alpn.mjs). The answer is
  * removed again whatever happens.
  *
+ * `replaces` is the ARI identifier of the certificate this one succeeds
+ * (RFC 9773 §5). A CA that says it was already replaced (409
+ * `alreadyReplaced`, say after an issuance whose download was lost) gets the
+ * order again without it: the predecessor still needs a successor.
+ *
  * @returns {Promise<{ chainPem: string, orderUrl: string }>}
  */
-export async function obtainCertificate(client, { names, certificateKey, responder, termsOfServiceAgreed, contact }) {
+export async function obtainCertificate(client, { names, certificateKey, responder, termsOfServiceAgreed, contact, replaces }) {
   await client.ensureAccount({ termsOfServiceAgreed, contact });
-  const order = await client.newOrder(names);
+  let order;
+  try {
+    order = await client.newOrder(names, { replaces });
+  } catch (error) {
+    if (!replaces || error?.code !== "acme-already-replaced") throw error;
+    order = await client.newOrder(names);
+  }
   const installed = [];
   try {
     for (const authorizationUrl of order.authorizations) {

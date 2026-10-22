@@ -8,9 +8,9 @@
 //                              [--node-version X.Y.Z] [--wasm PATH]
 //                              [--out DIR] [--measure]
 //
-//   --target        comma-separated: linux-x64, linux-arm64 (default: both).
-//                   darwin-arm64, darwin-x64 and win-x64 are not built yet:
-//                   Mach-O (#747) and PE (#748) injection are follow-ups.
+//   --target        comma-separated: linux-x64, linux-arm64, darwin-arm64,
+//                   darwin-x64, win-x64 (default: all five). Every target
+//                   builds on any machine.
 //   --node-binary   use this node binary (for a single target) instead of
 //                   downloading the official one from nodejs.org.
 //   --node-version  the node release to build on (default: the node running
@@ -30,6 +30,12 @@
 // order, the blob has no code cache or snapshot, and the injector is
 // deterministic). Downloaded node binaries are checked against the release's
 // SHASUMS256.txt and their hashes recorded in build-info.json.
+//
+// The injectors: scripts/sea/elf.mjs (Linux, #714), scripts/sea/macho.mjs
+// with an ad-hoc signature from scripts/sea/codesign.mjs (macOS, #747) and
+// scripts/sea/pe.mjs (Windows, #748). Every executable is parsed back and
+// checked (checkExecutable) before it is written; on a Mac, codesign
+// --verify also checks the macOS ones.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -37,14 +43,19 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { injectElf, readElf } from "./sea/elf.mjs";
-import { flipFuse } from "./sea/fuse.mjs";
+import { findSeaBlob, injectElf, readElf } from "./sea/elf.mjs";
+import { canonicalSeaBlob, readSeaBlob } from "./sea/blob.mjs";
+import { flipFuse, fuseFlipped } from "./sea/fuse.mjs";
+import { checkMachOExecutable, injectMachO, readMachO, thinSlice } from "./sea/macho.mjs";
+import { checkPeExecutable, injectPe, readPe } from "./sea/pe.mjs";
 import { downloadNode, hostTarget, TARGETS } from "./sea/node-release.mjs";
 import { buildWindowsServiceHost } from "./sea/windows-service-host.mjs";
 
 export const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-export const DEFAULT_TARGETS = Object.freeze(["linux-x64", "linux-arm64"]);
-const FOLLOW_UP = Object.freeze({ macho: "#747 (Mach-O injection for macOS)", pe: "#748 (PE injection for Windows)" });
+export const DEFAULT_TARGETS = Object.freeze(["linux-x64", "linux-arm64", "darwin-arm64", "darwin-x64", "win-x64"]);
+// The ad-hoc signature's identifier (codesign -d shows it), the same as the
+// LaunchDaemon's label.
+const SIGNING_IDENTIFIER = "io.journeytocode.kin";
 
 export class BuildSeaError extends Error {
   constructor(message) {
@@ -76,11 +87,8 @@ export function parseBuildArguments(argv) {
     else throw new BuildSeaError(`Unknown argument "${argument}".`);
   }
   if (!options.targets.length) throw new BuildSeaError("--target needs at least one target.");
-  for (const target of options.targets) {
+  for (const target of options.targets)
     if (!Object.hasOwn(TARGETS, target)) throw new BuildSeaError(`Unknown target "${target}". Targets: ${Object.keys(TARGETS).join(", ")}.`);
-    const { format } = TARGETS[target];
-    if (format !== "elf") throw new BuildSeaError(`${target} can't be built yet: it needs ${FOLLOW_UP[format]}.`);
-  }
   if (new Set(options.targets).size !== options.targets.length) throw new BuildSeaError("A target is listed twice.");
   if (options.nodeBinary && options.targets.length !== 1) throw new BuildSeaError("--node-binary is for a single --target.");
   if (!/^\d+\.\d+\.\d+$/.test(options.nodeVersion)) throw new BuildSeaError(`"${options.nodeVersion}" isn't a node version.`);
@@ -143,15 +151,57 @@ export function buildBlob({ files, version, nodeVersion, generator, workDirector
   writeFileSync(join(workDirectory, "sea-config.json"), JSON.stringify(config, null, 2));
   const result = spawnSync(generator, ["--experimental-sea-config", "sea-config.json"], { cwd: workDirectory, encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "" } });
   if (result.status !== 0) throw new BuildSeaError(`node --experimental-sea-config failed: ${(result.stderr || result.stdout || result.error?.message || "").trim()}`);
-  return { blob: readFileSync(join(workDirectory, "kin.blob")), manifest };
+  // Node writes the assets in an order that depends on the build machine's
+  // C++ library; sorted, the blob is the same everywhere (sea/blob.mjs).
+  const blob = canonicalSeaBlob(readFileSync(join(workDirectory, "kin.blob")));
+  const parsed = readSeaBlob(blob);
+  const names = parsed.assets.map(({ name }) => name.toString("utf8"));
+  if (!parsed.main.equals(readFileSync(join(workDirectory, "main.cjs"))) || names.join("\n") !== Object.keys(assets).sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))).join("\n"))
+    throw new BuildSeaError("The SEA blob node wrote doesn't hold exactly the main script and the app files.");
+  return { blob, manifest };
 }
 
-/** The executable for one ELF target: `base` (an unmodified node binary)
- * with its fuse flipped and the blob added. */
-export function buildElfExecutable(target, base, blob) {
-  const { machine } = readElf(base);
-  if (machine !== TARGETS[target].machine) throw new BuildSeaError(`The node binary for ${target} is for another processor (ELF machine ${machine}).`);
-  return injectElf(flipFuse(Buffer.from(base)), blob);
+/** The executable for one target: `base` (an unmodified node binary for
+ * it) with its fuse flipped and the blob added; for macOS also ad-hoc
+ * signed, for Windows without node's Authenticode signature. */
+export function buildExecutable(target, base, blob) {
+  const { format, machine: expected } = TARGETS[target];
+  const other = (machine) => new BuildSeaError(`The node binary for ${target} is for another processor (machine 0x${machine.toString(16)}).`);
+  if (format === "elf") {
+    const { machine } = readElf(base);
+    if (machine !== expected) throw other(machine);
+    return injectElf(flipFuse(Buffer.from(base)), blob);
+  }
+  if (format === "macho") {
+    const thin = thinSlice(base, expected);
+    const { cpuType } = readMachO(thin);
+    if (cpuType !== expected) throw other(cpuType);
+    return injectMachO(flipFuse(Buffer.from(thin)), blob, { identifier: SIGNING_IDENTIFIER });
+  }
+  const { machine } = readPe(base);
+  if (machine !== expected) throw other(machine);
+  return injectPe(flipFuse(Buffer.from(base)), blob);
+}
+
+/**
+ * Parses a built executable back with the format's own reader and checks
+ * it: the layout the loader expects, the blob where Node looks for it (and
+ * byte-identical to `blob`), the fuse flipped, and for macOS the ad-hoc
+ * signature's page hashes. Throws if anything is off.
+ */
+export function checkExecutable(target, executable, blob) {
+  const { format } = TARGETS[target];
+  const found = format === "elf" ? findSeaBlob(executable) : format === "macho" ? checkMachOExecutable(executable).blob : checkPeExecutable(executable).blob;
+  if (!found?.equals(blob)) throw new BuildSeaError(`The ${target} executable doesn't hold the SEA blob where Node looks for it.`);
+  if (!fuseFlipped(executable)) throw new BuildSeaError(`The ${target} executable's SEA fuse isn't flipped.`);
+}
+
+/** On a Mac, Apple's own check of the ad-hoc signature. */
+function codesignVerify(file) {
+  if (process.platform !== "darwin") return;
+  const result = spawnSync("codesign", ["--verify", "--strict", "--verbose=2", file], { encoding: "utf8" });
+  if (result.error?.code === "ENOENT") return;
+  if (result.status !== 0) throw new BuildSeaError(`codesign --verify rejected ${file}: ${(result.stderr || result.stdout).trim()}`);
 }
 
 function nodeVersionOf(binary) {
@@ -211,7 +261,9 @@ export async function measureStart(executable, { appCache, timeoutMs = 60_000 } 
     child.removeAllListeners("exit");
     child.kill("SIGTERM");
     await new Promise((done) => (child.exitCode !== null || child.signalCode !== null ? done() : child.once("exit", done)));
-    rmSync(data, { recursive: true, force: true });
+    // On Windows the service (a second process) may still be closing its
+    // database for a moment after the launcher has gone.
+    rmSync(data, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 }
 
@@ -243,10 +295,12 @@ export async function buildSea(options, { log = (line) => console.log(line) } = 
   const targets = [];
   for (const target of options.targets) {
     const base = bases.get(target);
-    const executable = buildElfExecutable(target, base.bytes, blob);
+    const executable = buildExecutable(target, base.bytes, blob);
+    checkExecutable(target, executable, blob);
     const file = `kin-${version}-${target}${TARGETS[target].suffix}`;
     writeFileSync(join(options.out, file), executable);
     chmodSync(join(options.out, file), 0o755);
+    if (TARGETS[target].format === "macho") codesignVerify(join(options.out, file));
     targets.push({ target, file, size: executable.length, sha256: sha256(executable), node: { sha256: sha256(base.bytes), ...(base.archive ? { archive: base.archive.archive, archiveSha256: base.archive.archiveSha256 } : { source: "--node-binary" }) } });
     log(`Built ${join(options.out, file)} (${(executable.length / 1048576).toFixed(1)} MiB)`);
   }
@@ -268,7 +322,7 @@ export async function buildSea(options, { log = (line) => console.log(line) } = 
       writeFileSync(join(options.out, "start-time.json"), `${JSON.stringify(timing, null, 2)}\n`);
       log(`Start: ${firstStartMs} ms the first time (unpacking), ${startMs} ms after`);
     } finally {
-      rmSync(appCache, { recursive: true, force: true });
+      rmSync(appCache, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
   }
   return info;
@@ -278,8 +332,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     await buildSea(parseBuildArguments(process.argv.slice(2)));
   } catch (error) {
-    if (!(error instanceof BuildSeaError) && error?.name !== "ServiceHostBuildError" && error?.name !== "ElfInjectError" && error?.name !== "FuseError" && error?.name !== "NodeReleaseError") throw error;
+    if (!(error instanceof BuildSeaError) && !["ServiceHostBuildError", "SeaBlobError", "ElfInjectError", "MachOInjectError", "PeInjectError", "CodeSignatureError", "FuseError", "NodeReleaseError"].includes(error?.name)) throw error;
     console.error(error.message);
+    // In CI the stack says which step failed (#747: diagnosing from a
+    // runner's annotations).
+    if (process.env.GITHUB_ACTIONS === "true") console.error(error.stack);
     process.exitCode = 1;
   }
 }

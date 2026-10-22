@@ -88,6 +88,16 @@ function intact(directory, manifest) {
 // Writes the app's files to <root>/app-<bundle> (via a temporary directory
 // renamed into place, so a half-written copy is never used) and returns that
 // directory. Older builds' copies are removed.
+//
+// Several copies of the executable may unpack at once (the service starting
+// while `kin --health` runs, say), and on Windows a directory can't be
+// renamed onto one that exists, or removed while a running service has its
+// files open. So: a copy that is already intact is used as it is, whoever
+// wrote it; a damaged one is removed (retrying while Windows holds it)
+// before the rename; and losing the rename to another process that wrote an
+// intact copy first is fine.
+const RENAME_RACE = new Set(["ENOTEMPTY", "EEXIST", "EPERM", "EBUSY", "EACCES"]);
+
 function unpack(root, manifest) {
   const name = `app-${manifest.bundle.slice(0, 16)}`;
   const target = path.join(root, name);
@@ -102,14 +112,30 @@ function unpack(root, manifest) {
       fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o755 });
       fs.writeFileSync(destination, bytes, { mode: 0o644 });
     }
-    fs.rmSync(target, { recursive: true, force: true });
-    fs.renameSync(staging, target);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        fs.renameSync(staging, target);
+        break;
+      } catch (error) {
+        if (!RENAME_RACE.has(error.code) || attempt >= 5) throw error;
+        if (intact(target, manifest)) {
+          fs.rmSync(staging, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+          break;
+        }
+        fs.rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      }
+    }
   } catch (error) {
-    fs.rmSync(staging, { recursive: true, force: true });
+    fs.rmSync(staging, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     fail(`Kin couldn't unpack its app files into ${root} (${error.code ?? error.message}). Set KIN_APP_CACHE to a folder this account can write.`);
   }
-  for (const entry of fs.readdirSync(root))
-    if (entry !== name && /^\.?app-[0-9a-f]{16}/.test(entry)) fs.rmSync(path.join(root, entry), { recursive: true, force: true });
+  // Other builds' copies go; another process's unpacking of this build
+  // (.app-<same bundle>-…) is left alone. Removal is best effort: Windows
+  // keeps a folder a running older version still uses.
+  for (const entry of fs.readdirSync(root)) {
+    if (entry === name || entry.startsWith(`.${name}-`) || !/^\.?app-[0-9a-f]{16}/.test(entry)) continue;
+    try { fs.rmSync(path.join(root, entry), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch {}
+  }
   return target;
 }
 
@@ -148,7 +174,12 @@ async function launcher() {
   // Set on the process itself, so the admin commands see it too.
   if (!process.env.KIN_MODE) process.env.KIN_MODE = "home";
   const env = process.env;
-  const appDirectory = unpack(path.resolve(cacheRoot || defaultCacheRoot(env)), manifest);
+  // The service's permission flags name its app directory by its real path
+  // (server/permissions.mjs), and the permission model compares paths as
+  // written. So the service must load its files by that path too, not
+  // through a symlink: macOS's temporary folders (/var/folders, /tmp) are
+  // symlinks into /private.
+  const appDirectory = fs.realpathSync(unpack(path.resolve(cacheRoot || defaultCacheRoot(env)), manifest));
   if (prepareOnly) {
     process.stdout.write(`${appDirectory}\n`);
     return;
