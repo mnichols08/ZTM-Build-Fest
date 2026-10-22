@@ -214,7 +214,15 @@ class KinRoutines extends HTMLElement {
       next.points.size === this.choreSettingsValue.points.size && [...next.points].every(([id, points]) => this.choreSettingsValue.points.get(id) === points));
     if (same) return;
     this.choreSettingsValue = next;
-    this.render();
+    // Patched in place: the points arrive after Routines has drawn, and a
+    // full redraw would move focus out of an open schedule editor.
+    for (const row of this.list?.children ?? []) {
+      const record = this.records.find((entry) => entry.routineId === row.dataset.routineId);
+      const existing = row.querySelector(".routine-chore-points");
+      if (!next || !record) { existing?.remove(); continue; }
+      if (existing) existing.querySelector("select").value = String(next.points.get(record.routineId) ?? 1);
+      else row.querySelector("kin-rotation")?.after(this.chorePointsControl(record));
+    }
   }
   set playbooks(value) {
     const records = value ?? [];

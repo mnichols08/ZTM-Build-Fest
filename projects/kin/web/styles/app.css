@@ -2747,6 +2747,7 @@ button.show-password { justify-self: start; }
 .chore-join { margin-block-start: var(--space-3); }
 .chore-join-button { min-block-size: var(--tap); }
 .routine-chore-points { display: inline-flex; align-items: center; gap: var(--space-1); min-block-size: var(--tap); margin-inline-end: var(--space-2); }
+.routine-chore-points select { min-block-size: var(--tap); }
 .chore-adults-row { display: flex; align-items: center; gap: var(--space-2); min-block-size: var(--tap); }
 .simple-chores-link, .simple-back-link { display: flex; align-items: center; justify-content: center; min-block-size: 3.5rem; margin-block: var(--space-2); border: 2px solid var(--accent); border-radius: var(--r-control); font-size: 1.125rem; font-weight: 700; text-decoration: none; }
 .simple-chores-link[hidden] { display: none; }
