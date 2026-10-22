@@ -50,9 +50,10 @@ test("the executable holds the server, the web app, package.json and the engine,
   writeFileSync(wasm, WASM);
   const files = collectAppFiles({ wasm });
   const paths = files.map(({ path }) => path);
-  for (const path of ["package.json", "server/server.mjs", "server/launcher.mjs", "server/permissions.mjs", "server/durable-store/schema.mjs", "web/index.html", "web/wasm/kin-engine.js", "web/wasm/kin_engine.wasm"])
+  for (const path of ["package.json", "server/server.mjs", "server/launcher.mjs", "server/permissions.mjs", "server/durable-store/schema.mjs", "web/index.html", "web/wasm/kin-engine.js", "web/wasm/kin_engine.wasm", "server/home/tunnel-client.mjs", "relay/ktun.mjs"])
     assert.ok(paths.includes(path), path);
   assert.ok(!paths.some((path) => path.endsWith(".test.mjs")), "no tests");
+  assert.deepEqual(paths.filter((path) => path.startsWith("relay/")), ["relay/ktun.mjs"], "of the relay, only the codec the tunnel shares");
   assert.ok(!paths.some((path) => path.startsWith("server/test-fixtures/") || path.endsWith("-test-utils.mjs")), "no test helpers");
   assert.deepEqual(paths, [...paths].sort((left, right) => (left < right ? -1 : 1)), "sorted byte-wise");
   assert.equal(files.find(({ path }) => path === "web/wasm/kin_engine.wasm").source, wasm);

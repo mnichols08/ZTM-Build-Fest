@@ -86,7 +86,9 @@ export function parseBuildArguments(argv) {
 }
 
 // What goes into the executable: the server and the web app (not their
-// tests or test helpers), package.json (the version) and the engine.
+// tests or test helpers), package.json (the version), the engine, and the
+// KTUN codec the home server's tunnel shares with the relay (relay/ktun.mjs,
+// #733). The rest of relay/ is the relay itself and is never bundled.
 const SKIP = [/\.test\.mjs$/, /^server\/test-fixtures\//, /^server\/[^/]*-test-utils\.mjs$/, /^server\/durable-restart-worker\.mjs$/, /^web\/wasm\/kin_engine\.wasm(\.sha256)?$/];
 
 export function collectAppFiles({ root = PROJECT_ROOT, wasm }) {
@@ -102,6 +104,7 @@ export function collectAppFiles({ root = PROJECT_ROOT, wasm }) {
   visit("server");
   visit("web");
   files.push({ path: "package.json", source: join(root, "package.json") });
+  files.push({ path: "relay/ktun.mjs", source: join(root, "relay", "ktun.mjs") });
   if (!existsSync(wasm))
     throw new BuildSeaError(`The WASM engine ${wasm} is missing. Build it with build-wasm.sh (or build-wasm.ps1), or fetch this commit's with node scripts/fetch-wasm.mjs.`);
   files.push({ path: "web/wasm/kin_engine.wasm", source: wasm });

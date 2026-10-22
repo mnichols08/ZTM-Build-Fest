@@ -9,6 +9,23 @@
 // only from those addresses.
 import { isIP } from "node:net";
 
+// Sockets that arrived through the home server's authenticated tunnel, and
+// the phone address the relay gave for each. Only server/home/ adds to it,
+// for TLS sockets it made itself from tunnel streams; a socket from the
+// loopback listener is never in it, so direct connections keep the rules
+// above.
+const tunnelPeers = new WeakMap();
+
+/** Marks `socket` as a tunnel stream whose client is `address` (from OPEN). */
+export function trustTunnelPeer(socket, address) {
+  tunnelPeers.set(socket, normalizeAddress(address));
+}
+
+/** The OPEN address of a tunnel socket, or null for any other socket. */
+export function tunnelPeer(socket) {
+  return tunnelPeers.get(socket) ?? null;
+}
+
 /** Parses KIN_TRUSTED_PROXIES: comma-separated IP addresses. Empty means off. */
 export function parseTrustedProxies(value) {
   if (value === undefined || value === null || value === "") return new Set();
@@ -38,6 +55,13 @@ export function normalizeAddress(address) {
  * back to the proxy's own address, which never loosens the limit.
  */
 export function clientKey(request, trustedProxies) {
+  // A connection through the home server's tunnel (ADR 0025 §2, #736): the
+  // relay reported the phone's address in the stream's OPEN frame, outside
+  // the HTTP request where a phone can't forge it. That address is the key,
+  // per IPv4 address or IPv6 /64, and X-Forwarded-For is ignored: no proxy
+  // sits between the relay and the home server.
+  const tunneled = tunnelPeers.get(request.socket);
+  if (tunneled !== undefined) return isIP(tunneled) ? limitKey(tunneled) : "unknown";
   const peer = normalizeAddress(request.socket?.remoteAddress) || "unknown";
   if (!trustedProxies?.size || !trustedProxies.has(peer)) return peer;
   const header = request.headers?.["x-forwarded-for"];
