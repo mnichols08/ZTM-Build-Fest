@@ -64,6 +64,52 @@ export async function fridgeRegressions(client, until) {
     })()`));
   };
 
+  // The tap targets matching `selector` that are under 44px tall, measured
+  // once the fridge has stopped moving (#754). A size change, a view arriving
+  // or a button's hover or press settling all animate a transform, and
+  // getBoundingClientRect measures through it: a 44px tool came back under
+  // 44 on the tablet. So: fonts loaded, the fridge's (and its ancestors')
+  // animations and transitions finished, and two frames in a row that agree,
+  // within a time limit. Each small target is reported with what it measured,
+  // so a failure says which tool, how tall, and why.
+  const smallTargets = (selector) => page(`(async () => {
+    const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    const deadline = performance.now() + 2000;
+    await document.fonts?.ready;
+    const fridge = document.querySelector("kin-fridge");
+    const touches = (animation) => {
+      const target = animation.effect?.target;
+      return Boolean(target) && (fridge.contains(target) || target.contains(fridge));
+    };
+    const moving = () => document.getAnimations().filter((animation) => animation.playState === "running" && touches(animation));
+    while (moving().length && performance.now() < deadline) await frame();
+    const targets = () => [...document.querySelectorAll(${JSON.stringify(selector)})].filter((b) => !b.hidden && b.getClientRects().length);
+    const heights = () => targets().map((b) => b.getBoundingClientRect().height).join();
+    let before = heights();
+    for (;;) {
+      await frame();
+      const after = heights();
+      if (after === before || performance.now() >= deadline) break;
+      before = after;
+    }
+    // A transformed box's rect is mapped in floating point; a hundredth of
+    // a pixel under 44 is rounding, not a smaller target.
+    return targets().filter((b) => b.getBoundingClientRect().height < 43.99).map((b) => {
+      const style = getComputedStyle(b);
+      return {
+        tool: b.textContent || b.getAttribute("aria-label"),
+        height: b.getBoundingClientRect().height,
+        layoutHeight: b.offsetHeight,
+        minHeight: style.minHeight,
+        transform: style.transform,
+        hover: b.matches(":hover"),
+        active: b.matches(":active"),
+        moving: moving().map((animation) => (animation.animationName ?? animation.transitionProperty ?? "animation") + " on " + (animation.effect.target.className || animation.effect.target.localName)),
+        layout: fridge.dataset.layout ?? "stacked",
+      };
+    });
+  })()`);
+
   const door = () => page(`(() => {
     const rect = document.querySelector("kin-fridge .fridge-door").getBoundingClientRect();
     return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, right: rect.right };
@@ -80,11 +126,12 @@ export async function fridgeRegressions(client, until) {
     await resize(metrics);
     await page(`document.querySelector("kin-fridge .fridge-door").scrollIntoView({ block: "center" })`);
     const rect = await door();
-    const layout = await page(`({ scrollWidth: document.documentElement.scrollWidth, innerWidth, small: [...document.querySelectorAll("kin-fridge .fridge-tools button")].filter((b) => !b.hidden && b.getClientRects().length && b.getBoundingClientRect().height < 44).map((b) => b.textContent || b.getAttribute("aria-label")) })`);
+    const layout = await page(`({ scrollWidth: document.documentElement.scrollWidth, innerWidth })`);
+    const small = await smallTargets("kin-fridge .fridge-tools button");
     assert.ok(Math.abs(rect.width / rect.height - 0.75) < 0.01, `${label}: the door keeps its 3:4 shape (${rect.width}×${rect.height})`);
     assert.ok(rect.width >= 240 && rect.right <= layout.innerWidth, `${label}: the door fits the screen`);
     assert.ok(layout.scrollWidth <= layout.innerWidth, `${label}: no horizontal scroll`);
-    assert.deepEqual(layout.small, [], `${label}: every visible tool is at least 44px tall`);
+    assert.deepEqual(small, [], `${label}: every visible tool is at least 44px tall; under 44px: ${JSON.stringify(small)}`);
   }
 
   // ---- Kitchen-screen mode (#324) ------------------------------------------
@@ -348,11 +395,12 @@ export async function fridgeRegressions(client, until) {
     await page(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`);
     await page(`document.querySelector("kin-fridge .fridge-door").scrollIntoView({ block: "center" })`);
     const rect = await door();
-    const layout = await page(`({ scrollWidth: document.documentElement.scrollWidth, innerWidth, small: [...document.querySelectorAll("kin-fridge .fridge-tools button, kin-fridge > .fridge-fullscreen")].filter((b) => !b.hidden && b.getClientRects().length && b.getBoundingClientRect().height < 44).map((b) => b.textContent || b.getAttribute("aria-label")) })`);
+    const layout = await page(`({ scrollWidth: document.documentElement.scrollWidth, innerWidth })`);
+    const small = await smallTargets("kin-fridge .fridge-tools button, kin-fridge > .fridge-fullscreen");
     assert.ok(Math.abs(rect.width / rect.height - 0.75) < 0.01, `${label}: the door keeps its 3:4 shape (${rect.width}×${rect.height})`);
     assert.ok(rect.width >= 240 && rect.right <= layout.innerWidth, `${label}: the door fits the screen (${JSON.stringify(rect)} in ${layout.innerWidth})`);
     assert.ok(layout.scrollWidth <= layout.innerWidth, `${label}: no horizontal scroll`);
-    assert.deepEqual(layout.small, [], `${label}: every visible control is at least 44px tall`);
+    assert.deepEqual(small, [], `${label}: every visible control is at least 44px tall; under 44px: ${JSON.stringify(small)}`);
   }
   const inkCheck = () => page(`(async () => {
     // Two frames, so a changed appearance has been styled and painted.
