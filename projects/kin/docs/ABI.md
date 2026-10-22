@@ -14,8 +14,9 @@ kin_history_truncate(count) -> status   keep the first `count` records
 kin_project(ptr, len)                replay the history: KINE context -> KINS
 kin_device_names(ptr, len)           replay the history: KINE context -> KDEV (v1.1)
 kin_member_names(ptr, len)           replay the history: KINE context -> KMNM (v1.3)
-kin_meals(ptr, len)                  replay the history: KINE context -> KMLS (#333)
-kin_meal_shopping_plan(ptr, len)     KMPQ + KINE context -> KMSP (#333)
+kin_meals(ptr, len)                  replay the history: KINE context -> KMLS v1 (#333)
+kin_meal_plans(ptr, len)             replay the history: KINE context -> KMLS v2 (#679)
+kin_meal_shopping_plan(ptr, len)     KMPQ v1/v2 + KINE context -> KMSP (#333, #679)
 kin_item_emojis(ptr, len)            replay the history: KINE context -> KIEM (#344)
 kin_my_things(ptr, len)              KMTQ + KINE context -> KMTD (#344)
 kin_week(ptr, len)                   KWKQ + KINE context -> KWKD (#417)
@@ -295,6 +296,9 @@ N  payload
 | 68 | ROUTINE_ROTATION_SET (#429) | routine ID [16] (non-zero), member count u8 (0, or 2–12), current index u8 (below the count; 0 when the count is 0), reserved u16, then each member ID [16] (non-zero, no repeats): 20 + 16 × count bytes. An empty list ends the rotation |
 | 69 | ROUTINE_TURN_SET (#429) | routine ID [16] (non-zero), member ID [16] (non-zero): 32 bytes |
 | 70 | SITTER_PAGE_SET (#442) | entry count u16 (0–30), reserved u16, then each entry: kind u8 (1 note, 2 reference record, 3 routine), 3 reserved, record ID [16] (non-zero; no entry twice); then the intro (u16 length + UTF-8; trimmed, 0–500 bytes, no controls but newline) |
+| 80 | MEAL_SET (#679) | civil date u32 (YYYYMMDD), slot u8 (1 breakfast, 2 lunch, 4 snack; never 3 dinner) + 3 reserved, recipe flag u8 (0 or 1) + 3 reserved, recipe ID [16] when flagged, name (u16 + UTF-8, as a dinner's) |
+| 81 | MEAL_CLEARED (#679) | civil date u32, slot u8 (1, 2 or 4) + 3 reserved: 8 bytes |
+| 82 | RECIPE_FAVOURITE_SET (#679) | recipe ID [16] (non-zero), favourite u8 (0 or 1) + 3 reserved: 20 bytes |
 | 100 | PRIVATE_NOTE_SET (#489, private log) | note ID [16] (non-zero), text length u32 (0 removes the note; at most 2,048 bytes), UTF-8 text (no control characters except line feed). Reserved: still decoded; no surface writes it. Kinds without a definition in 100–199 fail with code 3 |
 | 101 | JOURNAL_ENTRY_CREATED (#498, private log) | entry ID [16] (non-zero), civil date u32 (YYYYMMDD, a real date), title length u16 (≤ 200), photo count u8 (≤ 10), reserved u8, body length u32 (≤ 20,000), title (UTF-8, no controls, trimmed), body (UTF-8, no controls but line feed, trimmed), then each photo (136 bytes): type u8 (1 JPEG, 2 PNG, 3 WebP), reserved [3], sealed size u32 (29 to 4 MiB + 4 KiB), blob reference [32], key [32], thumbnail reference [32], thumbnail key [32] (all non-zero; no reference twice in an entry). Title, body or a photo is required |
 | 102 | JOURNAL_ENTRY_EDITED (#498, private log) | as 101: the whole new content |
@@ -608,6 +612,37 @@ tuned for printed codes under heavy blur.
   lowercased) count once; "already on Shopping" compares against active
   Shopping items the same way. A one-off dinner or an unknown or archived
   recipe fails with code 4.
+- **Fuller meal plans (kinds 80–82, #679,
+  [ADR 0022](decisions/0022-family-hub.md) §7).** The payloads are strict like
+  the other meals kinds: a slot of 1, 2 or 4 (dinner stays on kinds 61–63),
+  zero reserved bytes, a 0/1 flag word, a non-zero recipe ID and a canonical
+  name, so they re-encode to the same bytes; anything else fails with code 2.
+  KCMD actions 80 (`set-meal` `{ date, slot, recipeId?, name }`), 81
+  (`clear-meal` `{ date, slot }`) and 82 (`set-recipe-favourite`
+  `{ recipeId, favourite }`) carry the exact payload as their text with a
+  zero entity ID and no option, date or expiry (`kin-meals.js`). Rust checks
+  them against the current meals (`MealsState::check_command`, code 4): a
+  recipe that exists and isn't archived, named as it is now; a meal to clear;
+  and a change.
+- **KMLS v2** (every meal and favourites, `kin_meal_plans`, #679): a new
+  export, so KMLS v1 and `kin_meals` are unchanged. `"KMLS"`, version 2,
+  reserved u16, recipe count u32, meal count u32; then each active recipe as
+  in v1, except that the byte after the ingredient count holds flags (bit 0
+  favourite) and two reserved bytes follow it; then each meal in the same
+  window as v1's dinners, by date then slot: date u32, slot u8 (1 breakfast,
+  2 lunch, 3 dinner, 4 snack), flags u8 (bit 0 recipe, bit 1 cook; a cook
+  only on dinner), 2 reserved, recipe ID [16], cook member ID [16] (zero when
+  absent), name as shown. JavaScript decodes either version
+  (`decodeMeals`: `{ recipes, dinners, meals }`); the app reads v2.
+- **KMPQ v2** (#679): the same 32 bytes as v1 with version 2, where byte 9 is
+  a slot for source 3 and zero otherwise, and two sources are added: 3, a
+  date's meal in that slot (slot 3 is the same as source 2), and 4, every
+  meal with a recipe in the seven days from the date (which needs six more
+  days before 9999-12-31, as KWKQ). The week's lines come day by day, each
+  day's meals in slot order, each recipe once, and lines with the same text
+  count once across recipes; a week without recipes is an empty plan, not an
+  error. The result is KMSP v1. A v1 query reads as before and never takes a
+  slot or sources 3–4 (code 2); versions other than 1 and 2 fail with code 3.
 - **Item pictures (kind 64, #344).** The payload is strict like meals: a
   non-zero item ID, a 0/1 flag word with zero reserved bytes, and one emoji
   as `chat::check_emoji` accepts it; it re-encodes to the same bytes. KCMD

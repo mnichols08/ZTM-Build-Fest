@@ -20,7 +20,7 @@ import { errorName } from "../diagnostics/global.js";
 import { decodeAttachmentBindings, decodeProjection } from "./projection-decode.js";
 import { HistoryMirror } from "./history-mirror.js";
 import { BOARD_COMMANDS, BOARD_EVENT_KINDS, MAX_BOARD_EVENT_COUNT, BoardFormatError, decodeBoard, encodeBoardIntent } from "./kin-board.js";
-import { MEAL_COMMANDS, MEAL_EVENT_KINDS, MealFormatError, decodeMeals, decodePlan, encodeMealIntent, encodePlanQuery } from "./kin-meals.js";
+import { FIRST_MEAL_PLAN_KIND, MEAL_COMMANDS, MEAL_EVENT_KINDS, MEAL_PLAN_COMMANDS, MEAL_PLAN_EVENT_KINDS, MealFormatError, decodeMeals, decodePlan, encodeMealIntent, encodePlanQuery } from "./kin-meals.js";
 import { SIMPLE_COMMANDS, SIMPLE_EVENT_KINDS, SimpleFormatError, decodeItemEmojis, decodeMyThings, encodeItemEmojiIntent, encodeMyThingsQuery } from "./kin-simple.js";
 import { decodeWeek, encodeWeekQuery } from "./kin-week.js";
 import { SECTION_COMMANDS, SECTION_EVENT_KINDS, SectionFormatError, decodeShoppingSections, encodeSectionIntent } from "./kin-sections.js";
@@ -111,6 +111,7 @@ export function createEngine(instanceExports) {
     "kin_device_names",
     "kin_member_names",
     "kin_meals",
+    "kin_meal_plans",
     "kin_meal_shopping_plan",
     "kin_item_emojis",
     "kin_my_things",
@@ -328,11 +329,13 @@ export function createEngine(instanceExports) {
     // Members' preferred display names (#224), replayed from the same
     // history: [{ memberId, name }] in member-ID order, IDs as hex. Members
     // who never set a name are absent; hosts fall back to their own labels.
-    // Meals (#333): { recipes, dinners } from the household history, dinners
-    // from 35 days before `civilDate` to 370 after (kin-meals.js decodeMeals).
+    // Meals (#333, #679): { recipes, dinners, meals } from the household
+    // history, every meal of the day (KMLS v2, `kin_meal_plans`) from 35 days
+    // before `civilDate` to 370 after, and favourites (kin-meals.js
+    // decodeMeals). `kin_meals` (KMLS v1, dinners only) stays exported.
     meals: (records, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodeMeals(
-        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_meals"),
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_meal_plans"),
       )),
     // Item emoji (#344): a Map itemId -> emoji for items that exist and
     // aren't archived.
@@ -397,8 +400,9 @@ export function createEngine(instanceExports) {
       const query = encodeWeekQuery(startCivilDate);
       return safeDecode(() => decodeWeek(queryBytes(exports, mirror, "kin_week", query, records, asOf, civilDate, syncIdentity)));
     },
-    // What adding a recipe's ({ recipeId }) or a date's dinner's ({ date })
-    // ingredients to Shopping would do now: [{ outcome, text, stapleId }].
+    // What adding a recipe's ({ recipeId }), a date's dinner's ({ date }), a
+    // date's meal's ({ date, slot }) or a week's ({ week }) ingredients to
+    // Shopping would do now: [{ outcome, text, stapleId }].
     mealShoppingPlan: (source, records, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodePlan(mealPlanBytes(exports, mirror, source, records, asOf, civilDate, syncIdentity))),
     memberNames: (records, asOf, civilDate, syncIdentity = null) =>
@@ -1198,6 +1202,9 @@ const COMMAND_TYPES = [
   // kin-calendar.js.
   ...CALENDAR_COMMANDS,
 ];
+// Fuller meal plans (#679): KCMD actions 80–82, encoded by kin-meals.js.
+// Placed by code, after a gap of codes used by other family-hub kinds.
+MEAL_PLAN_COMMANDS.forEach((type, index) => { COMMAND_TYPES[FIRST_MEAL_PLAN_KIND + index] = type; });
 const EVENT_KINDS = [
   null,
   "ITEM_ADDED",
@@ -1268,6 +1275,8 @@ PRIVATE_ITEM_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_PRIVATE_IT
 JOURNAL_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_JOURNAL_KIND + index] = kind; });
 // Reminders and settings (#520): kinds 120, 121 and 130.
 for (const [kind, code] of Object.entries(PREFS_KIND_CODES)) EVENT_KINDS[code] = kind;
+// Fuller meal plans (#679): kinds 80–82.
+MEAL_PLAN_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_MEAL_PLAN_KIND + index] = kind; });
 
 // The command field that names each event's own entity (packet offset 92).
 // Other ID fields on a command are references to a different entity: a
@@ -1342,8 +1351,9 @@ function encodeIntent(type, value) {
 
 function encodeIntentPacket(command, identity) {
   const kind = COMMAND_TYPES.indexOf(command.type);
-  // Meals (59–63) carry their canonical payload (kin-meals.js).
-  if (kind >= 59 && kind <= 63) {
+  // Meals (59–63, and 80–82 for fuller meal plans) carry their canonical
+  // payload (kin-meals.js).
+  if ((kind >= 59 && kind <= 63) || (kind >= FIRST_MEAL_PLAN_KIND && kind < FIRST_MEAL_PLAN_KIND + MEAL_PLAN_COMMANDS.length)) {
     try { return encodeMealIntent(command, identity); }
     catch (error) {
       if (error instanceof MealFormatError) throw new KinEngineError(2, error.message);

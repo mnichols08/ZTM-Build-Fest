@@ -69,6 +69,9 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::DinnerSet { .. } => crate::meals::DINNER_SET,
         EventKind::DinnerCleared { .. } => crate::meals::DINNER_CLEARED,
         EventKind::DinnerCookSet { .. } => crate::meals::DINNER_COOK_SET,
+        EventKind::MealSet { .. } => crate::meals::MEAL_SET,
+        EventKind::MealCleared { .. } => crate::meals::MEAL_CLEARED,
+        EventKind::RecipeFavouriteSet { .. } => crate::meals::RECIPE_FAVOURITE_SET,
         EventKind::ItemEmojiSet { .. } => crate::simple::ITEM_EMOJI_SET,
         EventKind::ChatTopicSet { .. } => crate::chat::CHAT_TOPIC_SET,
         EventKind::ShoppingSectionsSet { .. } => crate::store_sections::SHOPPING_SECTIONS_SET,
@@ -479,7 +482,10 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
         | EventKind::RecipeArchived { .. }
         | EventKind::DinnerSet { .. }
         | EventKind::DinnerCleared { .. }
-        | EventKind::DinnerCookSet { .. }) => {
+        | EventKind::DinnerCookSet { .. }
+        | EventKind::MealSet { .. }
+        | EventKind::MealCleared { .. }
+        | EventKind::RecipeFavouriteSet { .. }) => {
             payload = crate::meals::encode_payload(kind)?;
         }
         // Item emoji (#344): simple.rs owns the payload.

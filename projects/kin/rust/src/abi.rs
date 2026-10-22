@@ -329,8 +329,15 @@ pub extern "C" fn kin_meals(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::meals, None)
 }
 
-/// A Shopping plan for a recipe or a date's dinner (KMPQ + KINE context ->
-/// KMSP v1, #333) against the instance's history.
+/// Every meal of the day and favourites (KMLS v2, #679) in the instance's
+/// history, in the context of a record-less KINE request.
+#[no_mangle]
+pub extern "C" fn kin_meal_plans(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::meal_plans, None)
+}
+
+/// A Shopping plan for a recipe, a date's meal or a week (KMPQ v1/v2 + KINE
+/// context -> KMSP v1, #333, #679) against the instance's history.
 #[no_mangle]
 pub extern "C" fn kin_meal_shopping_plan(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::meal_shopping_plan, None)

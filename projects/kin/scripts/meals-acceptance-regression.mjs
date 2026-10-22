@@ -223,7 +223,8 @@ export async function mealsAcceptanceRegressions(client, until) {
     const before = pudding();
     await app.ctx.meals.saveRecipe({ recipeId: before.recipeId, name: before.name, notes: before.notes,
       ingredients: before.ingredients.map((line) => ({ text: line.text, stapleId: null })) }, { quiet: true });
-    meals.querySelector('.recipe[data-recipe-id="' + before.recipeId + '"] button').click();
+    // Edit is the first action (the favourite star sits beside the name, #679).
+    meals.querySelector('.recipe[data-recipe-id="' + before.recipeId + '"] .recipe-actions button').click();
     const editor = meals.querySelector(".recipe-dialog");
     editor.querySelectorAll("textarea")[1].value = "Stir often";
     editor.querySelector("form").requestSubmit();

@@ -434,6 +434,24 @@ pub enum EventKind {
         date: CivilDate,
         member_id: Option<ActorId>,
     },
+    /// Fuller meal plans (#679, ADR 0022 §7, meals.rs): a breakfast, lunch
+    /// or snack for one civil date, as a recipe (with its name when planned)
+    /// or a one-off name. Never dinner: dinners keep kinds 61–63.
+    MealSet {
+        date: CivilDate,
+        slot: crate::meals::MealSlot,
+        recipe_id: Option<RecipeId>,
+        name: String,
+    },
+    MealCleared {
+        date: CivilDate,
+        slot: crate::meals::MealSlot,
+    },
+    /// A recipe marked as a favourite, or not.
+    RecipeFavouriteSet {
+        recipe_id: RecipeId,
+        favourite: bool,
+    },
     BoardClearUndone {
         clear_id: BoardId,
     },

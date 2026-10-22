@@ -83,20 +83,99 @@ export function matchingStaple(text, staples) {
   return staples.find((item) => item.status !== "archived" && collapseText(item.text).toLowerCase() === key) ?? null;
 }
 
+/** Every planned meal, any slot: `meals.meals` (KMLS v2), else the dinners. */
+const plannedMeals = (meals) => meals?.meals ?? (meals?.dinners ?? []).map((dinner) => ({ ...dinner, slot: "dinner" }));
+
 /** Recipes most recently planned first (by the latest date they were planned
- * for), then the rest by name, for the plan dialog. */
+ * for, in any slot), favourites before the rest (#679), then by name, for
+ * the plan dialog. */
 export function recentRecipes(meals, limit = 5) {
   const lastPlanned = new Map();
-  for (const dinner of meals.dinners) if (dinner.recipeId) lastPlanned.set(dinner.recipeId, dinner.date);
+  for (const meal of plannedMeals(meals)) {
+    if (meal.recipeId && (lastPlanned.get(meal.recipeId) ?? "") < meal.date) lastPlanned.set(meal.recipeId, meal.date);
+  }
   return [...meals.recipes]
-    .sort((left, right) => (lastPlanned.get(right.recipeId) ?? "").localeCompare(lastPlanned.get(left.recipeId) ?? "") || left.name.localeCompare(right.name))
+    .sort((left, right) => Number(Boolean(right.favourite)) - Number(Boolean(left.favourite)) ||
+      (lastPlanned.get(right.recipeId) ?? "").localeCompare(lastPlanned.get(left.recipeId) ?? "") || left.name.localeCompare(right.name))
     .slice(0, limit);
 }
 
-/** Recipes whose name contains every word of `query` (case-insensitive). */
-export function filterRecipes(recipes, query) {
+/** Recipes whose name contains every word of `query` (case-insensitive);
+ * with `favouritesOnly`, only favourites (#679). */
+export function filterRecipes(recipes, query, { favouritesOnly = false } = {}) {
   const words = collapseText(query).toLowerCase().split(" ").filter(Boolean);
-  if (!words.length) return [...recipes].sort((left, right) => left.name.localeCompare(right.name));
-  return recipes.filter((recipe) => words.every((word) => recipe.name.toLowerCase().includes(word)))
+  return recipes
+    .filter((recipe) => !favouritesOnly || recipe.favourite)
+    .filter((recipe) => words.every((word) => recipe.name.toLowerCase().includes(word)))
     .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+// ---- Fuller meal plans (#679, ADR 0022 §7) --------------------------------
+
+/** The meals of a day in the planner's order (kin-meals.js MEAL_SLOTS). */
+export const SLOTS = Object.freeze(["breakfast", "lunch", "dinner", "snack"]);
+export const SLOT_LABELS = Object.freeze({ breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", snack: "Snack" });
+
+/** The meal planned for `date` ("YYYY-MM-DD") in `slot`, or null. */
+export function mealOn(meals, date, slot) {
+  return plannedMeals(meals).find((meal) => meal.date === date && meal.slot === slot) ?? null;
+}
+
+/** A day's planned meals in slot order, as [{ slot, label, ...meal }]. */
+export function mealsOn(meals, date) {
+  return SLOTS.flatMap((slot) => {
+    const meal = mealOn(meals, date, slot);
+    return meal ? [{ ...meal, slot, label: SLOT_LABELS[slot] }] : [];
+  });
+}
+
+/**
+ * "Same as last week": what to plan in the week from `monday` so that each
+ * empty slot gets the meal planned seven days earlier. Slots already planned
+ * are left alone. A recipe still listed is planned as itself, under its
+ * current name; one archived since is planned by name only. Cooks aren't
+ * copied. Returns [{ date, slot, recipeId, name }] in date and slot order.
+ */
+export function sameAsLastWeek(meals, monday) {
+  const recipes = new Map((meals?.recipes ?? []).map((recipe) => [recipe.recipeId, recipe]));
+  const copies = [];
+  for (const { date } of weekDays(monday)) {
+    const before = addDays(date, -7);
+    for (const slot of SLOTS) {
+      const source = mealOn(meals, before, slot);
+      if (!source || mealOn(meals, date, slot)) continue;
+      const recipe = source.recipeId ? recipes.get(source.recipeId) : null;
+      copies.push({ date, slot, recipeId: recipe?.recipeId ?? null, name: recipe?.name ?? source.name });
+    }
+  }
+  return copies;
+}
+
+/** YYYYMMDD as "YYYY-MM-DD". */
+const civilText = (value) => (typeof value === "number"
+  ? `${String(Math.floor(value / 10_000)).padStart(4, "0")}-${String(Math.floor(value / 100) % 100).padStart(2, "0")}-${String(value % 100).padStart(2, "0")}`
+  : value);
+
+/**
+ * This week (KWKD days from `kin_week`, whose meals are the dinner only)
+ * with every slot (#679): each day's `meals` becomes [{ slot, recipeId,
+ * cookId, name }] in slot order, the dinner from Rust's week and the other
+ * slots from the meals view. Without a meals view only dinners show.
+ */
+export function mergeMealsIntoWeek(days, meals) {
+  return (days ?? []).map((day) => {
+    const date = civilText(day.date);
+    const others = SLOTS.filter((slot) => slot !== "dinner").flatMap((slot) => {
+      const meal = mealOn(meals, date, slot);
+      return meal ? [{ slot, recipeId: meal.recipeId, cookId: null, name: meal.name }] : [];
+    });
+    const dinners = (day.meals ?? []).map((meal) => ({ ...meal, slot: "dinner" }));
+    const merged = [...others, ...dinners].sort((left, right) => SLOTS.indexOf(left.slot) - SLOTS.indexOf(right.slot));
+    return { ...day, meals: merged };
+  });
+}
+
+/** Today's meals other than dinner ("Breakfast: Porridge"), for Today. */
+export function todayMealLines(meals, date) {
+  return mealsOn(meals, date).filter((meal) => meal.slot !== "dinner").map((meal) => `${meal.label}: ${meal.name}`);
 }
