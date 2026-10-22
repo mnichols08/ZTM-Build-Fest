@@ -16,7 +16,7 @@ test("the switchable features, in the ADR's order, with stable small bits", () =
   assert.deepEqual(FEATURES.map((entry) => [entry.label, entry.bit]), [
     ["Chat", 0], ["Fridge", 1], ["Meals", 2], ["Routines", 3], ["Taking turns", 4], ["This week", 5], ["Talk later", 6],
     ["Store sections", 7], ["Shopping mode", 8], ["Maintenance", 9], ["Notes & reference", 10], ["Sitter page", 11],
-    ["Journal", 12], ["Just for me", 13], ["Family photos", 16],
+    ["Journal", 12], ["Just for me", 13], ["Chore chart", 15], ["Family photos", 16],
   ]);
   assert.equal(new Set(FEATURES.map((entry) => entry.id)).size, FEATURES.length);
   assert.equal(KNOWN_FEATURE_MASK, FEATURES.reduce((mask, entry) => mask + 2 ** entry.bit, 0));

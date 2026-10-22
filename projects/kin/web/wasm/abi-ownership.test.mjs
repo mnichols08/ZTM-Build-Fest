@@ -41,6 +41,7 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_calendar_range: status,
       kin_album: status,
       kin_ical_parse: status,
+      kin_chore_chart: status,
       kin_event_metadata: status,
       kin_event_metadata_batch: status,
       kin_audio_peaks: status,

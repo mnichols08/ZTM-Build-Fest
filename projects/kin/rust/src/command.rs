@@ -247,6 +247,10 @@ pub enum HouseholdCommand {
     /// The family calendar (#656, kinds 71–74), carried whole like a meals
     /// event; `CalendarState::check_command` decides whether it applies.
     Calendar(EventKind),
+    /// The chore chart (#676, kinds 77–79), carried whole like a meals event;
+    /// `ChoresState::check_command` decides whether it applies. Points and
+    /// rewards are the host's to gate to Adults (chores.rs).
+    Chore(EventKind),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -570,6 +574,12 @@ pub fn create_event(
             }
             kind.clone()
         }
+        Chore(kind) => {
+            if !crate::chores::is_chore_code(crate::codec::kind_code(kind)) {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -837,6 +847,11 @@ pub fn execute_with(
     }
     if let HouseholdCommand::Calendar(kind) = command {
         current.calendar.check_command(kind, context.actor_id)?;
+    }
+    if let HouseholdCommand::Chore(kind) = command {
+        current
+            .chores
+            .check_command(kind, context.actor_id, &current.routines)?;
     }
     if let HouseholdCommand::ChangeResponsibility {
         target_kind,
@@ -1489,6 +1504,14 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             HouseholdCommand::Calendar(event_kind),
             command_context(bytes)?,
         ));
+    }
+    // The chore chart (#676): likewise.
+    if crate::chores::is_chore_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::chores::decode_payload(kind, &bytes[128..])?;
+        return Ok((HouseholdCommand::Chore(event_kind), command_context(bytes)?));
     }
     let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48..=50 | 65) {
         String::new()

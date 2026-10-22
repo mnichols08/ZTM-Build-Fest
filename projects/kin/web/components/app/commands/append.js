@@ -3,6 +3,7 @@
 import { routeHash } from "../../../routes.js";
 import { SITTER_PAGE_FORBIDDEN, canChangeSitterPage } from "../../../wasm/kin-sitter.js";
 import { ALBUM_REMOVE_FORBIDDEN, canRemoveAlbumPhoto } from "../../../wasm/kin-album.js";
+import { CHORES_FORBIDDEN, JOIN_FORBIDDEN } from "../../../wasm/kin-chores.js";
 
 export class AppendCommands {
   constructor(ctx) {
@@ -18,6 +19,12 @@ export class AppendCommands {
     if (command?.type === "set-sitter-page" &&
       !canChangeSitterPage(this.app.householdStatus?.memberKind ?? (this.app.hasLocalSyncBinding ? null : "adult")))
       throw Object.assign(new Error(SITTER_PAGE_FORBIDDEN), { code: "forbidden", userMessage: SITTER_PAGE_FORBIDDEN });
+    // The chore chart (#676): points and rewards are for Adults, joining for
+    // an Adult while a household admin allows adults. Rust can't tell.
+    if (typeof command?.type === "string" && command.type.startsWith("set-chore") && this.ctx.chores && !this.ctx.chores.allows(command.type)) {
+      const message = command.type === "set-chore-chart-joined" ? JOIN_FORBIDDEN : CHORES_FORBIDDEN;
+      throw Object.assign(new Error(message), { code: "forbidden", userMessage: message });
+    }
     const session = this.ctx.session.captureSession();
     this.ctx.session.assertCurrentSession(session);
     // A family photo (#673, ADR 0022 §5) is removed by whoever added it or a

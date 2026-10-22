@@ -644,6 +644,38 @@ KINS. `kin_ical_parse` turns an `.ics` file into kind-71 payloads for import
 (#666). Older devices pause sync with "unsupported" and keep their data until
 they update.
 
+## The chore chart (#676)
+
+Kinds 77–79 ([ADR 0022](decisions/0022-family-hub.md) §6) are schema 1
+events in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 77 | `CHORE_POINTS_SET` | A routine's points per completed occurrence, 0–10. A routine nobody set is worth 1; items are always worth 1 |
+| 78 | `CHORE_REWARD_SET` | A member's reward: a goal of 1–1000 points this week and a text of 1–120 UTF-8 bytes ("Movie night"), trimmed, no control characters. Goal 0 with no text clears it |
+| 79 | `CHORE_CHART_JOINED` | A member joins (true) or leaves (false) the chart. Only the member it names may send it |
+
+Replay (rust/src/chores.rs) never fails on a decoded event from a real
+member and device; the latest setting wins. A kind-79 event whose author
+isn't the member it names is kept in the history with no effect. Commands
+are stricter (code 4): points name a routine that exists and isn't
+archived, and every change must change something; kind 79 must come from
+the member it names. Who may set points and rewards (Adults) and who may
+join (an Adult, while a household admin allows adults on the chart, a
+service setting) are the host's checks: replay doesn't know member kinds.
+
+The chart counts no new events for completions. Replay remembers each
+completion in effect (`ITEM_COMPLETED`, `ROUTINE_OCCURRENCE_COMPLETED`) with
+the member it's credited to: the item's responsibility, or the routine's
+owner when it was completed — for a rotating routine, whose turn it was,
+before the turn passes on — never the member who ticked it. Reopening
+removes the credit. Points are counted per week (Monday to Sunday in the
+host's time zone, whose day boundaries the host passes in) from the
+completions inside it, so the totals start again every Monday and nothing
+older is reported. Hosts read the chart through `kin_chore_chart`, which is
+not part of the KINS projection. Older devices pause sync with
+"unsupported" and keep their data until they update.
+
 ## v1.1.0 Household chat
 
 `CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and

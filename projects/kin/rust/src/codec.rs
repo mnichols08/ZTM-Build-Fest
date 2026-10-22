@@ -85,6 +85,9 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::CalendarEventCancelled { .. } => crate::calendar::CALENDAR_EVENT_CANCELLED,
         EventKind::CalendarEventRestored { .. } => crate::calendar::CALENDAR_EVENT_RESTORED,
         EventKind::MemberColourSet { .. } => crate::calendar::MEMBER_COLOUR_SET,
+        EventKind::ChorePointsSet { .. } => crate::chores::CHORE_POINTS_SET,
+        EventKind::ChoreRewardSet { .. } => crate::chores::CHORE_REWARD_SET,
+        EventKind::ChoreChartJoined { .. } => crate::chores::CHORE_CHART_JOINED,
         EventKind::PrivateNoteSet { .. } => crate::private::PRIVATE_NOTE_SET,
         EventKind::PrivateItem(event) => event.code(),
         EventKind::ReminderSet { .. } => crate::private_prefs::REMINDER_SET,
@@ -516,6 +519,12 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
         | EventKind::CalendarEventRestored { .. }
         | EventKind::MemberColourSet { .. }) => {
             payload = crate::calendar::encode_payload(kind)?;
+        }
+        // The chore chart (#676): chores.rs owns the payloads.
+        kind @ (EventKind::ChorePointsSet { .. }
+        | EventKind::ChoreRewardSet { .. }
+        | EventKind::ChoreChartJoined { .. }) => {
+            payload = crate::chores::encode_payload(kind)?;
         }
         // A member's private log (#489): private.rs owns the payloads.
         kind @ (EventKind::PrivateNoteSet { .. }

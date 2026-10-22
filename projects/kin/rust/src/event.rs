@@ -518,6 +518,24 @@ pub enum EventKind {
     MemberColourSet {
         colour: Option<u8>,
     },
+    /// The chore chart (#676, chores.rs): a routine's points per completed
+    /// occurrence, 0–10 (1 when never set).
+    ChorePointsSet {
+        routine_id: RoutineId,
+        points: u8,
+    },
+    /// A member's reward goal this week and its text; goal 0 with no text
+    /// clears it.
+    ChoreRewardSet {
+        member_id: ActorId,
+        goal: u16,
+        text: String,
+    },
+    /// A member joins or leaves the chart; only that member may say so.
+    ChoreChartJoined {
+        member_id: ActorId,
+        joined: bool,
+    },
     /// A member's private log (#489, private.rs): the placeholder private
     /// note, set to `text`; empty text removes it.
     PrivateNoteSet {

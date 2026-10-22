@@ -12,7 +12,7 @@ import { setViewport } from "./cdp-viewport.mjs";
 
 // Every page and tab Help covers (help/help-content.js has a topic for each).
 export const ROUTES = [
-  "today", "week", "search", "journal",
+  "today", "week", "chores", "search", "journal",
   "lists/todo", "lists/shopping", "lists/staples", "lists/meals", "lists/mine",
   "routines/all", "routines/checklists", "updates/handoffs", "updates/chat",
   "household/hub", "household/fridge", "household/notes", "household/sitter", "household/areas",

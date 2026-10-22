@@ -28,6 +28,7 @@ import { ROTATION_COMMANDS, ROTATION_EVENT_KINDS, RotationFormatError, decodeRou
 import { SITTER_COMMANDS, SITTER_EVENT_KINDS, SitterFormatError, decodeSitterPage, encodeSitterIntent } from "./kin-sitter.js";
 import { ALBUM_COMMANDS, ALBUM_EVENT_KINDS, AlbumFormatError, FIRST_ALBUM_KIND, decodeAlbum, encodeAlbumIntent } from "./kin-album.js";
 import { CALENDAR_COMMANDS, CALENDAR_EVENT_KINDS, CalendarFormatError, MAX_ICAL_BYTES, decodeCalendarRange, decodeICalendar, encodeCalendarIntent, encodeCalendarRangeQuery } from "./kin-calendar.js";
+import { CHORE_COMMANDS, CHORE_EVENT_KINDS, ChoreFormatError, FIRST_CHORE_KIND, decodeChoreChart, encodeChartQuery, encodeChoreIntent } from "./kin-chores.js";
 import { FIRST_PRIVATE_KIND, MAX_PRIVATE_EVENT_COUNT, PRIVATE_EVENT_KINDS, decodePrivate } from "./kin-private.js";
 import { FIRST_JOURNAL_KIND, FIRST_PRIVATE_ITEM_KIND, JOURNAL_EVENT_KINDS, PRIVATE_ITEM_EVENT_KINDS, PrivateFormatError, encodePrivateIntent } from "./kin-private.js";
 import { encodePrefsIntent, PREFS_COMMANDS, PREFS_KIND_CODES, PrefsFormatError } from "./kin-prefs.js";
@@ -123,6 +124,7 @@ export function createEngine(instanceExports) {
     "kin_album",
     "kin_calendar_range",
     "kin_ical_parse",
+    "kin_chore_chart",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_audio_peaks",
@@ -398,6 +400,11 @@ export function createEngine(instanceExports) {
       if (input.length === 0) return { name: "", skipped: 0, truncated: false, events: [] };
       return safeDecode(() => decodeICalendar(callCore(exports, "kin_ical_parse", input)));
     },
+    // The chore chart (#676, ADR 0022 §6) for the week of `civilDate`:
+    // `query` is { start, bounds, adultsAllowed, members } (kin-chores.js
+    // encodeChartQuery); the result is decodeChoreChart's.
+    choreChart: (query, records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeChoreChart(queryBytes(exports, mirror, "kin_chore_chart", encodeChartQuery(query), records, asOf, civilDate, syncIdentity))),
     // A member's things on `civilDate` (#344, ADR 0013): [{ kind: "item",
     // itemId } | { kind: "routine", routineId, occurrenceKey, done }].
     myThings: (memberId, records, asOf, civilDate, syncIdentity = null) =>
@@ -1214,6 +1221,9 @@ const COMMAND_TYPES = [
 // Fuller meal plans (#679): KCMD actions 80–82, encoded by kin-meals.js.
 // Placed by code, after a gap of codes used by other family-hub kinds.
 MEAL_PLAN_COMMANDS.forEach((type, index) => { COMMAND_TYPES[FIRST_MEAL_PLAN_KIND + index] = type; });
+// The chore chart (#676): KCMD actions 77–79, encoded by kin-chores.js. Set
+// by position: 71–76 belong to other family-hub kinds (ADR 0022).
+CHORE_COMMANDS.forEach((type, index) => { COMMAND_TYPES[FIRST_CHORE_KIND + index] = type; });
 const EVENT_KINDS = [
   null,
   "ITEM_ADDED",
@@ -1276,6 +1286,8 @@ const EVENT_KINDS = [
   ...SITTER_EVENT_KINDS,
   ...CALENDAR_EVENT_KINDS,
 ];
+// The chore chart (#676): kinds 77–79.
+CHORE_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_CHORE_KIND + index] = kind; });
 // A member's private log (#489): kinds from 100, after a gap of unused codes.
 PRIVATE_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_PRIVATE_KIND + index] = kind; });
 // "Just for me" (#510): kinds 110–118.
@@ -1420,6 +1432,14 @@ function encodeIntentPacket(command, identity) {
     try { return encodeCalendarIntent(command, identity); }
     catch (error) {
       if (error instanceof CalendarFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // The chore chart (77–79) carries its canonical payload (kin-chores.js).
+  if (kind >= FIRST_CHORE_KIND && kind < FIRST_CHORE_KIND + CHORE_COMMANDS.length) {
+    try { return encodeChoreIntent(command, identity); }
+    catch (error) {
+      if (error instanceof ChoreFormatError) throw new KinEngineError(2, error.message);
       throw error;
     }
   }

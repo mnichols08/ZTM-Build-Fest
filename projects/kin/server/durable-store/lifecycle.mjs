@@ -45,6 +45,8 @@ export function purgeHouseholdData(database, householdId) {
   purgeHouseholdFeedback(database, householdId);
   // Invitations an admin prepared and may have printed (#613).
   database.prepare("DELETE FROM prepared_invitations WHERE household_id = ?").run(householdId);
+  // Outside calendars members synced, and their links (ADR 0022 §3).
+  database.prepare("DELETE FROM calendar_subscriptions WHERE household_id = ?").run(householdId);
   database
     .prepare("DELETE FROM provisioning_grants WHERE household_id = ?")
     .run(householdId);
@@ -144,6 +146,9 @@ export const lifecycleMethods = {
       ),
       feedback: count(
         "SELECT COUNT(*) AS count FROM feedback WHERE household_id = ?",
+      ),
+      calendarSubscriptions: count(
+        "SELECT COUNT(*) AS count FROM calendar_subscriptions WHERE household_id = ?",
       ),
       events: count(
         "SELECT COUNT(*) AS count FROM sync_events WHERE household_id = ?",

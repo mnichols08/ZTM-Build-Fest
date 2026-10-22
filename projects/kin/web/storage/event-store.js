@@ -7,6 +7,7 @@ import {
   encryptedDatabase, snapshotStores, protectRows, valuesEqual, compareStoreRows,
 } from "./encrypted-idb.js";
 import { projectionContext } from "../browser-time.js";
+import { choreWeek } from "../wasm/kin-chores.js";
 import { hasFinalUnlockPath } from "../security/local-vault.js";
 import { bumpEventGeneration as bumpGeneration, EventArena, EVENT_GENERATION_KEY, historyWith } from "./event-arena.js";
 import { rotateEventProtection, resumeEventProtection } from "./root-rotation.js";
@@ -1331,6 +1332,18 @@ export class EventStore {
   parseICalendar(bytes) {
     if (!this.engine) throw new EventStoreError("Kin could not read that calendar file.");
     return this.engine.parseICalendar(bytes);
+  }
+
+  /** The chore chart for this week (#676, ADR 0022 §6): `members` are the
+   * household's children and Adults in join order ([{ memberId, kind:
+   * "child" | "adult" }]) and `adultsAllowed` the admin's setting. The week
+   * is Monday to Sunday in this device's time zone (kin-chores.js). */
+  async choreChart({ members = [], adultsAllowed = false } = {}) {
+    if (!this.engine) throw new EventStoreError("Kin could not read the chore chart.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    const { start, bounds } = choreWeek(civilDate);
+    return this.engine.choreChart({ start, bounds, adultsAllowed, members }, events, asOf, civilDate, syncIdentity);
   }
 
   /** `memberId`'s things today (#344, ADR 0013), in Rust's order. */

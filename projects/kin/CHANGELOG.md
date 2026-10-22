@@ -24,6 +24,26 @@ documentation only.
   encrypted on the device, kept in their own device database and counted in
   their own service quota. Household feature "Family photos" (bit 16), Help
   and easy mode. Browser regression `scripts/photo-album-regression.mjs`.
+- **The chore chart** (#676: #677, #678; epic #651,
+  [ADR 0022](docs/decisions/0022-family-hub.md) §6). From Today (and Simple
+  view for children): a card per child in their colour with today's jobs —
+  their routines (whose turn it is) and items — as big tick boxes with
+  pictures, the rest of the week, points this week and reward progress ("12
+  of 20 for Movie night"). Points go to the chore's owner, never to whoever
+  ticked it, and start again every Monday; children see each other's
+  totals. Parents set points per routine (0–10) on Routines and a reward per
+  child on the chart. Adults join only when a household admin allows it
+  (Household › Features, fresh confirmation) and then only if they choose
+  to; they can leave at any time. No streaks, no adult-only leaderboard, no
+  notifications about points. Event kinds 77 `CHORE_POINTS_SET`, 78
+  `CHORE_REWARD_SET`, 79 `CHORE_CHART_JOINED`; WASM export `kin_chore_chart`
+  (KCCQ → KCCD); **server schema 28** (`households.chore_adults`,
+  `chore_adults_revision`) with routes `POST
+  /api/household/chore-chart/options` and `/finish` and `choreChart` in the
+  sync status; household feature bit 15 "Chore chart". The element
+  `<kin-chore-chart>` is self-contained for the kitchen display.
+  PRODUCT-BOUNDARIES now allows weekly points for the children's chart.
+  EVENTS, ABI, TEST-VECTORS 085–089, SYNC, UX, V1.0-COMPATIBILITY.
 - **Family calendar events in the engine** (#656: #657, #658, #659; epic
   #651, [ADR 0022](docs/decisions/0022-family-hub.md) §1). Event kinds 71
   `CALENDAR_EVENT_SAVED`, 72 `CALENDAR_EVENT_CANCELLED`, 73
@@ -46,6 +66,26 @@ documentation only.
   onto Kin's repeats (the first occurrence only, flagged, when it can't
   be), EXDATE, RECURRENCE-ID overrides and STATUS:CANCELLED; at most 2 MB
   and 5,000 events. `engine.parseICalendar(bytes)`.
+- **Google, Apple and Outlook calendars, synced** (#665: #667, #668; epic
+  #651, [ADR 0022](docs/decisions/0022-family-hub.md) §3). Under Household ›
+  Identity & appearance › Outside calendars, an Adult pastes a calendar's
+  private iCal link (`https://` or `webcal://`), chooses **Just me** or
+  **Everyone in the household**, reads "Your Kin server will download this
+  calendar about every 30 minutes and can read it while it does." and turns
+  sync on. The list shows each calendar, who sees it, when it was updated
+  or why it couldn't be, and what's next; its owner or a household admin
+  turns it off for everyone. The service keeps only the link, owner,
+  audience, last fetch's status and ETag (server schema 29,
+  `calendar_subscriptions`), holds a downloaded feed in memory for at most
+  30 minutes, and fetches it with Node's own `https` and `dns` behind SSRF
+  protections (public unicast IPv4 and IPv6 only, re-checked on every
+  redirect, at most 5 redirects, port 443, 2 MB, 15 seconds, backoff on
+  errors; 10 calendars per member, 30 per household). Devices in the
+  audience fetch it through an authenticated route, parse it with
+  `parseICalendar`, keep it sealed in `kin-calendar-feeds:<household>`,
+  expand its repeats on the device and hand read-only occurrences labelled
+  "From Google" to the calendar views (`web/calendar/external.js`). They
+  never enter the household history.
 - **Fuller meal plans** (#679: #680, #681; epic #651,
   [ADR 0022](docs/decisions/0022-family-hub.md) §7). Meals plans breakfast,
   lunch, dinner and a snack for each day. Each day card has a row per meal,

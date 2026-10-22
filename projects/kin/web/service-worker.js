@@ -30,11 +30,15 @@ const SHELL = [
   // Set up Kin for someone (#613, #615).
   "/security/prepared-card.js", "/components/household/prepared.js",
   "/private/member-key.js", "/private/private-envelope.js", "/private/private-log-store.js", "/private/private-log.js", "/private/synced-prefs.js", "/private/private-blobs.js", "/private/journal.js", "/private/journal-view.js",
+  // Outside calendars (#668, ADR 0022 §3).
+  "/calendar/external.js", "/calendar/feed-cache.js", "/calendar/feed-expand.js", "/calendar/feed-link.js", "/calendar/feed-refresh.js", "/components/app/calendar-sync.js", "/components/kin-calendar-subscriptions.js",
   // Household features (#625, ADR 0021).
   "/features.js", "/features-cache.js", "/components/app/features.js", "/components/kin-household-features.js",
   // Family photos (#673).
   "/wasm/kin-album.js", "/album/album-blobs.js", "/album/album-image.js", "/album/album-session.js", "/album/album-store.js",
   "/components/kin-album.js", "/components/kin-photo-frame.js", "/components/app/album.js",
+  // The chore chart (#676, ADR 0022 §6).
+  "/wasm/kin-chores.js", "/chores/chore-chart-view.js", "/components/app/chores.js", "/components/kin-chore-chart.js", "/components/kin-chore-adults.js",
   // Just for me (#510).
   "/private-items.js", "/components/kin-just-for-me.js", "/components/app/private-items.js", "/components/shared/private-marker.js",
   "/appearance/palette.js", "/appearance/display-prefs.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js", "/appearance/install-icons.js",

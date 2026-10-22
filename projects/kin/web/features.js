@@ -35,7 +35,8 @@ export const FEATURES = Object.freeze([
   feature("sitter", 11, "Sitter page", "A welcome page for babysitters and guests, with what they need to know.", ["household/sitter", "foryou"]),
   feature("journal", 12, "Journal", "Each person's own private journal. Only they can see it.", ["journal"]),
   feature("mine", 13, "Just for me", "Each person's own private list. Only they can see it.", ["lists/mine"]),
-  // 14 is the Calendar and 15 the chore chart (ADR 0022, their own stories).
+  // 14 is the Calendar (ADR 0022 §2, its own story).
+  feature("chores", 15, "Chore chart", "The children's jobs for the week with big tick boxes, their points and rewards.", ["chores"]),
   feature("photos", 16, "Family photos", "A shared album of family photos, with a slideshow.", ["household/photos"]),
 ]);
 
