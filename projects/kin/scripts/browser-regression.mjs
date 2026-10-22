@@ -49,6 +49,7 @@ import { householdFeaturesRegressions } from "./household-features-regression.mj
 import { CALENDAR_HARNESS_HOUSEHOLD, calendarSyncHarness, calendarSyncRegressions, expectedCalendarRefusal } from "./calendar-sync-regression.mjs";
 import { rotationsRegressions } from "./rotations-regression.mjs";
 import { choreChartRegressions } from "./chore-chart-regression.mjs";
+import { kitchenDisplayRegressions } from "./kitchen-display-regression.mjs";
 import { storeSectionsRegressions } from "./store-sections-regression.mjs";
 import { recurringTaskRegressions } from "./recurring-tasks-regression.mjs";
 import { dailyUxHardeningRegressions } from "./daily-ux-hardening-regression.mjs";
@@ -1569,6 +1570,9 @@ try {
   console.log(await first.evaluate(`(${rotationsRegressions.toString()})()`));
   // The chore chart (#676): a child's card, points, rewards, adults joining.
   console.log(await first.evaluate(`(${choreChartRegressions.toString()})()`));
+  // Kitchen display mode (#669): tablet sizes, panels, leaving with the secret.
+  await visit(first, "today");
+  console.log(await kitchenDisplayRegressions(first, { until, recovery: recoverySecret }));
   console.log(await first.evaluate(`(${importRegressions.toString()})()`));
   console.log(await first.evaluate(`(${storeSectionsRegressions.toString()})()`));
   // Household features (#623–#626): off, hidden everywhere, on again.

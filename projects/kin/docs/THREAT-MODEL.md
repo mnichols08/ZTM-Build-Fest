@@ -736,6 +736,45 @@ automatic lock is off. Households that keep a shared screen should turn
 automatic lock on; Kin does not force it. A kiosk mode limited to the fridge
 would need its own credential and is out of scope.
 
+### A kitchen display is an unlocked adult's device (#669, ADR 0022 §4)
+
+Kitchen display mode turns an Adult's device into a wall screen. It stays
+unlocked and signed in as that adult, and **automatic lock doesn't apply**
+while it is a display: a screen that locked after five minutes would be no
+use on the wall. The trade-off, stated to the adult before they turn it on:
+
+- **Anyone in the kitchen can see and tick household things**: today's
+  events and the week, the children's chore charts, today's meals, the
+  shopping list, the fridge, and the newest chat messages (read-only). What
+  they tick or add is recorded as this adult's device, as any change on it
+  would be; chore points still go to the chore's owner.
+- **Hidden, not just undrawn**: the adult's private storage (journal, Just
+  for me, reminders), Search, item details, Household settings, every admin
+  action, Chat composition, shares and keyboard shortcuts have no panel and
+  no route: every address opens the display. This is a layout on an
+  unlocked device, as Simple view is (above): someone with the device and
+  developer tools, or who reads its storage while it is unlocked, gets what
+  the adult's unlocked Kin holds. Don't make a device a display if that
+  matters; a display is for the shared kitchen, not a hallway in a shared
+  house.
+- **Leaving needs the adult's passkey or password** (on a device set up
+  before accounts, the household's backup key, which is what unlocks it),
+  checked on the device by opening its vault once more, so it works offline.
+  A wrong one is refused calmly. The display can still be **locked** like
+  any Kin (closing the browser, a lock from another tab), and unlocking
+  needs the same secret; after an unlock it opens as the display again.
+- **Switching the feature off, or a member who isn't an Adult**: if the
+  household turns "Kitchen display" off, or the service says this member
+  isn't an Adult, the display **locks** rather than opening the adult's full
+  Kin to whoever is in the kitchen.
+- **Stored on the device:** whether it is a display (for one household's
+  vault), its night hours and its photo frame wait, unencrypted in local
+  storage, like the display preferences. No household content.
+- **Screen:** it keeps the screen on with the Screen Wake Lock API where the
+  browser allows, dims on a night schedule and shows family photos when
+  quiet. Photos on the screensaver are visible to anyone in the room, as
+  they are to everyone in the household.
+
 ### Simple view is a layout, not a lock (#341)
 
 An admin can turn on Simple view for a Limited member
