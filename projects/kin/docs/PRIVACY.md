@@ -399,7 +399,48 @@ calendar about every 30 minutes and can read it while it does."
   next time it lists its calendars ([RETENTION](RETENTION.md)).
 - **Importing** a `.ics` file instead never involves the service.
 
-## Claims boundary
+## The family hub (ADR 0022, v2.0.0)
+
+The Calendar, the family album, the chore chart, meal plans and the kitchen
+display are household content like items and routines. They follow the rules
+above unless this section says otherwise; synced outside calendars are the
+exception and have their own section above.
+
+- **Calendar events and member colours** (kinds 71–74) are encrypted events
+  in the household history. The service learns only what it learns for any
+  event: that a device wrote one, its size and its time. Every member sees
+  every event, as for items; attendees and colours are visible to the
+  household like members' names. Events are in household exports and `.ics`
+  exports.
+- **Importing a `.ics` file** happens on the device: the file is parsed in the
+  app and never sent anywhere. What is imported becomes ordinary household
+  events, so everyone in the household sees it. The import screen says so
+  before the file is chosen.
+- **The family album** (kinds 75–76) stores photos as household attachments,
+  encrypted like every attachment. Because album photos have their own quota,
+  the service learns which encrypted blobs are album photos, how many there
+  are and their sizes, never what they show or their captions. Removing a
+  photo removes it from every device's album; copies already saved elsewhere,
+  or in older exports, stay.
+- **The chore chart** (kinds 77–79): points and rewards are worked out on
+  devices from completions already in the history; there is no score stored
+  anywhere, nothing about points goes to the service, and totals cover only
+  the current week. Children's weekly totals are visible to the household,
+  including other children (owner decision). An adult appears on the chart
+  only if a household admin allows adults **and** that adult joins; the
+  service stores the admin's setting (a yes or no and a revision), not who
+  joined. There are no notifications about points.
+- **Meal plans and favourites** (kinds 80–82) are household content like
+  dinners.
+- **The kitchen display** shows household things to whoever is in the room
+  while it stays unlocked as one adult's device: today and the week, the
+  children's charts, meals, shopping, the fridge and recent chat messages,
+  read-only. It never shows that adult's private storage (journal, Just for
+  me, reminders), and leaving it needs their password or passkey. The adult is
+  told this before turning it on; THREAT-MODEL explains why it is a layout
+  rather than a lock. It sends nothing new to the service.
+
+
 
 Kin implements client-side encrypted event sync, but it has not received independent security review or production operational hardening. Do not call the service zero-knowledge, anonymous, or robustly recoverable; do not imply cryptography protects a compromised unlocked browser/runtime.
 

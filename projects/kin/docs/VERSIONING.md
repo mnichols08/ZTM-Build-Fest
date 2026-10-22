@@ -12,6 +12,20 @@ them, and the "start fresh" rule for v0.x data are in
 reference; a CI test keeps it in step with the code. The table below is
 historical.
 
+**v2.0.0 (the family hub, [ADR 0022](decisions/0022-family-hub.md)):** a
+product milestone, not a format break. The major number marks what changes
+for people (the Calendar with Today and This week reworked, the kitchen
+display, the chore chart, the family album and fuller meal plans). Every
+format change is additive: event kinds 71–82 (schema 1, replay protocol
+still 24), new read exports beside the existing ones, server schema 29
+(28 for the chore chart's adult setting, 29 for calendar subscriptions) with
+forward migrations, new device databases `kin-album:<household>` and
+`kin-calendar-feeds:<household>` beside the frozen event and key databases,
+and household feature bits 14–17. KINS, the sync envelope, the key database
+and export package formats are unchanged. Devices on v1.x pause household
+sync on the new kinds ("update Kin") and keep their data. The rows are in
+[V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md#additions-since-v10).
+
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
