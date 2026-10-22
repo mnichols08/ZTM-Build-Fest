@@ -137,6 +137,8 @@ export const HOUSEHOLD_FEATURE_BITS = Object.freeze({
   calendar: 14,
   // The chore chart (#676, ADR 0022 §6).
   chores: 15,
+  // Kitchen display mode (#669, ADR 0022 §4); 16 is Family photos (#673).
+  display: 17,
 });
 export const KNOWN_FEATURE_MASK = Object.values(HOUSEHOLD_FEATURE_BITS).reduce((mask, bit) => mask | (2 ** bit), 0);
 

@@ -44,6 +44,9 @@ export const FEATURES = Object.freeze([
   feature("calendar", 14, "Calendar", "Family events in each person's colour, by day, week or month, with countdowns on Today.", ["week/day", "week/month"]),
   // The chore chart (#676, ADR 0022 §6).
   feature("chores", 15, "Chore chart", "The children's jobs for the week with big tick boxes, their points and rewards.", ["chores"]),
+  // Kitchen display mode (#669, ADR 0022 §4): an adult's device as a wall
+  // screen. Bit 16 is Family photos (#673).
+  feature("display", 17, "Kitchen display", "Use a tablet on the wall to show today, the week, chores, meals and shopping.", []),
 ]);
 
 /** The parts that can't be switched off, named for the Features page. */

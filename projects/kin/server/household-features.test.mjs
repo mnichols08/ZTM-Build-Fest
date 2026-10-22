@@ -53,7 +53,7 @@ test("the service and the devices name the same feature bits", () => {
     "web/features.js and pairing-service/shared.mjs agree",
   );
   const count = Object.keys(HOUSEHOLD_FEATURE_BITS).length;
-  assert.equal(KNOWN_FEATURE_MASK, 2 ** count - 1);
+  assert.equal(KNOWN_FEATURE_MASK, Object.values(HOUSEHOLD_FEATURE_BITS).reduce((mask, value) => mask | (2 ** value), 0));
   assert.equal(new Set(Object.values(HOUSEHOLD_FEATURE_BITS)).size, count, "no bit is used twice");
 });
 
