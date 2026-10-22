@@ -10,7 +10,9 @@
 //   is the display, the header, navigation, Quick add, Search, shortcuts,
 //   the palette, item details and shares are gone. What it never shows has
 //   no panel: the adult's journal, Just for me, reminders, Search, admin
-//   actions, Household settings, Chat composition.
+//   actions, Household settings, Chat composition. A child's reward is the
+//   one setting it offers (#699): the chore chart's own kind 78 path, for
+//   the Adult whose device it is, with Undo.
 // - Auto-lock doesn't apply while it is a display (session.js
 //   scheduleAutoLock); leaving needs the adult's passkey or password,
 //   checked on this device (display/leave.js), then Kin reloads into the
@@ -142,6 +144,9 @@ export class DisplayController {
     });
     const chart = this.ctx.views.choreChartElement();
     chart.setAttribute("size", "display");
+    // The fridge keeps its room and access rules; only its layout is the
+    // display's (#700). Put back when the display goes (reset).
+    this.app.fridge?.setAttribute("size", "display");
     this.app.choreJoin = null;
     this.elements = new Map([
       ["today", this.app.calendarToday],
@@ -252,6 +257,7 @@ export class DisplayController {
       delete document.documentElement.dataset.kinDisplayNight;
     }
     if (!this.on) return;
+    this.app.fridge?.removeAttribute("size");
     this.app.displayMode = false;
     this.app.kitchenDisplay = null;
     this.app.quickAdd.hidden = false;

@@ -182,6 +182,30 @@ export function albumRemovedEntry(photo) {
   return Object.freeze({ kind: "album-removed", photoId: photo.photoId, attachmentId: photo.attachmentId, caption, replacementId: newId(), label: albumLabel(caption) });
 }
 
+// ---- Chore rewards (#676, #699) ------------------------------------------
+// Rewards aren't in the projection either: Rust works them out in the chore
+// chart query. For these entries the undo controller passes the state with
+// `choreRewards`, a Map of the charted members' IDs to their reward
+// ({ goal, text }, or null for none); a member no longer on the chart is
+// missing from it. Undo sets the reward back with the same kind 78 command
+// (goal 0 and no text removes it), and only while the reward is still what
+// this device set.
+
+const rewardFrom = (value) => (value && Number.isInteger(value.goal) && value.goal > 0 && typeof value.text === "string"
+  ? Object.freeze({ goal: value.goal, text: value.text }) : null);
+const sameReward = (a, b) => (a === null || b === null ? a === b : a.goal === b.goal && a.text === b.text);
+const rewardCommand = (memberId, reward) => ({ type: "set-chore-reward", memberId, goal: reward?.goal ?? 0, text: reward?.text ?? "" });
+
+/** A child's reward changed from `from` to `to` (each { goal, text } or
+ * null). `name` is how the chart names the child. Null when nothing
+ * changed. */
+export function choreRewardEntry({ memberId, name: who, from = null, to = null }) {
+  const was = rewardFrom(from), now = rewardFrom(to);
+  if (typeof memberId !== "string" || !memberId || sameReward(was, now)) return null;
+  const label = `${now ? (was ? "change" : "set") : "remove"} the reward for ${who || "a child"}`;
+  return Object.freeze({ kind: "chore-reward", memberId, from: was, to: now, label });
+}
+
 // ---- Running ------------------------------------------------------------
 
 /**
@@ -246,6 +270,11 @@ export function reversalStatus(entry, state) {
     }
     case "album-added":
       return albumPhotoIn(state, entry.photoId) ? "ready" : "gone";
+    case "chore-reward": {
+      const rewards = state?.choreRewards;
+      if (!(rewards instanceof Map) || !rewards.has(entry.memberId)) return "gone";
+      return sameReward(rewardFrom(rewards.get(entry.memberId)), entry.to) ? "ready" : "conflict";
+    }
     default:
       return "gone";
   }
@@ -299,6 +328,11 @@ export function nextReversalStep(entry, state, { memberIds = null, skip = null }
         : { type: "add-album-photo", photoId: entry.replacementId, attachmentId: entry.attachmentId, caption: entry.caption };
     case "album-added":
       return albumPhotoIn(state, entry.photoId) ? { type: "remove-album-photo", photoId: entry.photoId } : null;
+    case "chore-reward": {
+      const rewards = state?.choreRewards;
+      if (!(rewards instanceof Map) || !rewards.has(entry.memberId)) return null;
+      return sameReward(rewardFrom(rewards.get(entry.memberId)), entry.from) ? null : rewardCommand(entry.memberId, entry.from);
+    }
     default:
       return null;
   }
@@ -376,6 +410,8 @@ export function inverseEntry(entry, before, after) {
       return keep({ kind: "album-added", photoId: entry.replacementId, attachmentId: entry.attachmentId, caption: entry.caption });
     case "album-added":
       return keep({ kind: "album-removed", photoId: entry.photoId, attachmentId: entry.attachmentId, caption: entry.caption, replacementId: newId() });
+    case "chore-reward":
+      return keep({ kind: "chore-reward", memberId: entry.memberId, from: entry.to, to: entry.from });
     default:
       return null;
   }

@@ -301,3 +301,37 @@ test("a removed family photo comes back under a new ID, and redo removes it agai
   assert.equal(again.kind, "album-removed");
   assert.notEqual(again.replacementId, entry.replacementId);
 });
+
+// Chore rewards (#699): set from the chart (on the phone or the kitchen
+// display), undone by setting the previous reward again with kind 78, and
+// left alone when someone changed it since.
+test("a child's reward goes back to what it was, and redo sets it again", async () => {
+  const { choreRewardEntry } = await import("./undo.js");
+  const CHILD = "f".repeat(32);
+  const movie = { goal: 20, text: "Movie night" };
+  const park = { goal: 30, text: "Park trip" };
+  assert.equal(choreRewardEntry({ memberId: CHILD, name: "Sam", from: movie, to: { ...movie } }), null, "nothing changed");
+  assert.equal(choreRewardEntry({ memberId: "", from: null, to: movie }), null);
+  assert.equal(choreRewardEntry({ memberId: CHILD, name: "Sam", from: null, to: movie }).label, "set the reward for Sam");
+  assert.equal(choreRewardEntry({ memberId: CHILD, name: "Sam", from: movie, to: null }).label, "remove the reward for Sam");
+  const entry = choreRewardEntry({ memberId: CHILD, name: "Sam", from: movie, to: park });
+  assert.deepEqual({ ...entry }, { kind: "chore-reward", memberId: CHILD, from: movie, to: park, label: "change the reward for Sam" });
+
+  const charted = (reward) => ({ ...state(), choreRewards: new Map([[CHILD, reward]]) });
+  assert.equal(reversalStatus(entry, charted(park)), "ready");
+  assert.deepEqual(nextReversalStep(entry, charted(park)), { type: "set-chore-reward", memberId: CHILD, goal: 20, text: "Movie night" });
+  assert.equal(nextReversalStep(entry, charted(movie)), null, "done once it is back");
+  assert.equal(reversalStatus(entry, charted({ goal: 40, text: "Zoo" })), "conflict", "changed since, maybe on another device");
+  assert.equal(reversalStatus(entry, charted(null)), "conflict", "removed since");
+  assert.equal(reversalStatus(entry, { ...state(), choreRewards: new Map() }), "gone", "no longer on the chart");
+  assert.equal(reversalStatus(entry, state()), "gone", "no chart read");
+
+  const redo = inverseEntry(entry, charted(park), charted(movie));
+  assert.deepEqual({ ...redo }, { kind: "chore-reward", memberId: CHILD, from: park, to: movie, label: entry.label });
+  assert.deepEqual(nextReversalStep(redo, charted(movie)), { type: "set-chore-reward", memberId: CHILD, goal: 30, text: "Park trip" });
+
+  // A reward that was new is undone by removing it: goal 0, no text.
+  const added = choreRewardEntry({ memberId: CHILD, name: "Sam", from: null, to: movie });
+  assert.deepEqual(nextReversalStep(added, charted(movie)), { type: "set-chore-reward", memberId: CHILD, goal: 0, text: "" });
+  assert.equal(describeReversal(added, "undo", "done"), "Undone: set the reward for Sam.");
+});

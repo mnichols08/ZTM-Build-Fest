@@ -3385,7 +3385,7 @@ taking turns and items with a responsibility.
   easy mode makes the tick boxes and names bigger still.
 - `scripts/chore-chart-regression.mjs` checks the flow in the browser.
 
-## The kitchen display (#669: #670, #671, #672)
+## The kitchen display (#669: #670, #671, #672, #699, #700)
 
 [ADR 0022](decisions/0022-family-hub.md) §4: a **device mode of an Adult's
 device**, not a new member kind. A tablet on the kitchen wall that always
@@ -3421,15 +3421,35 @@ can tap.
     read);
   - **chores** — each child's card in their colour (`<kin-chore-chart
     size="display">`); ticking records it on this device with the points to
-    the chore's owner; no rewards or Join here;
+    the chore's owner. **Set a reward** / **Change reward** on each child's
+    card (#699) is for the Adult whose device it is, touch-first: the goal is
+    chosen with 64 px **−** and **+** buttons and one-tap goals (5, 10, 20,
+    30, 50), never typed; the reward's name is a big text box (focus stays
+    on a button when the editor opens, so the keyboard doesn't cover the
+    chart until someone taps the box); **Save reward**, **Remove reward**
+    and **Cancel**. It is the chore chart's own path (`kin:chore-reward` →
+    kind 78 `CHORE_REWARD_SET`), and once saved the toast offers **Undo**,
+    which sets the previous reward back (or removes a new one) and is refused
+    if the reward changed since. No Join here;
   - **lists** — the shopping list (`<kin-display-shopping>`): one big box to
     add, big rows to tick off;
-  - **board** — the fridge.
+  - **board** — the fridge (#700): the household's own `<kin-fridge>` with
+    its room and access rules (look only hides the tools; no access or the
+    Fridge feature off takes the panel away), given `size="display"` and a
+    wall-tablet layout: 64 px tools in a rail beside the 3:4 door (above it
+    below 720 px), the door as large as the panel allows, magnets at least
+    64 px and notes on them in larger type, and the note magnets repeated
+    under the door as large yellow slips with who put them up. No full
+    screen (the display is already), no hover-only titles, and a magnet's
+    menu is nine big place buttons laid out like the door, plus **Take it
+    down** and **Done**, instead of a drop-down.
 - **Layout.** Landscape (10"+ tablet sideways): the week across the top,
   then today, the chart and the lists in three columns, the fridge below.
   Portrait: the week, then today beside the lists, the chart, the fridge.
-  Below 720 px everything stacks. Text from 18 px (the time from 40 px) for
-  reading at 2–3 m; every control at least 64 px. Dark mode follows the
+  The display takes the whole screen (not the full layout's Today grid or
+  content width). Below 720 px everything stacks. Text from 18 px (the time from 40 px, the
+  fridge's notes from 26 px) for reading at 2–3 m; every control, Undo's
+  included, at least 64 px. Dark mode follows the
   appearance; reduced motion, "more contrast" and forced colours are
   honoured.
 - **Screen.** Screen Wake Lock keeps it on, asked for again when the page
@@ -3447,8 +3467,11 @@ can tap.
   checked on the device; a wrong one says so and keeps the dialog; the right
   one turns display mode off and Kin reloads into the full layout (still
   unlocked, #351).
-- **Help** on the display says what it is, how to tick and wake it, and how
-  to leave; "Message an admin" and "Report a problem" aren't offered there.
+- **What it never offers** is unchanged by #699: a child's reward is the only
+  setting on the display, the same one an Adult has on the phone's chart;
+  Household settings, admin actions and private storage stay out.
+- **Help** on the display says what it is, how to tick, set a reward and
+  wake it, and how to leave; "Message an admin" and "Report a problem" aren't offered there.
 - `scripts/kitchen-display-regression.mjs` checks the flow in the browser at
   tablet sizes; [KITCHEN-DISPLAY-CHECKLIST](KITCHEN-DISPLAY-CHECKLIST.md) is
   the owner's check on a real wall tablet.

@@ -6,7 +6,9 @@
 // Self-contained so the kitchen display can reuse it: it only renders and
 // reports. Give it `cards` (chores/chore-chart-view.js buildChoreChart);
 // optionally `editable` (Adults: "Set reward" on each child's card) and the
-// `size="display"` attribute for the kitchen screen's larger targets. It
+// `size="display"` attribute for the kitchen screen's larger targets (#699:
+// there the goal is chosen with big − and + buttons and one-tap goals, never
+// typed, and the editor has Cancel). It
 // dispatches, bubbling and composed:
 // - `kin:chore-toggle` { memberId, kind, id, occurrenceKey, done, text } when
 //   a tick box changes (the host records it; the next `cards` shows it);
@@ -15,6 +17,11 @@
 // Household text is only ever set as textContent.
 
 const dayFormat = new Intl.DateTimeFormat(undefined, { weekday: "long" });
+// A reward's goal: 1–1000 points (kin-chores.js MAX_REWARD_GOAL), and the
+// display's one-tap choices.
+const MAX_GOAL = 1000;
+const GOAL_PRESETS = Object.freeze([5, 10, 20, 30, 50]);
+const clampGoal = (value) => Math.min(MAX_GOAL, Math.max(1, Math.round(Number(value) || 1)));
 
 function dayName(date) {
   const value = new Date(Math.floor(date / 10000), Math.floor(date / 100) % 100 - 1, date % 100);
@@ -29,6 +36,7 @@ class KinChoreChart extends HTMLElement {
     this.isDisabled = false;
     this.isEditable = false;
     this.editing = null;
+    this.draft = null;
     this.previewProvider = null;
     this.openWeeks = new Set();
   }
@@ -42,7 +50,7 @@ class KinChoreChart extends HTMLElement {
   set cards(value) {
     this.cardsValue = Array.isArray(value) ? value : [];
     this.loaded = true;
-    if (this.editing && !this.cardsValue.some((card) => card.memberId === this.editing)) this.editing = null;
+    if (this.editing && !this.cardsValue.some((card) => card.memberId === this.editing)) { this.editing = null; this.draft = null; }
     this.render();
   }
   get cards() { return this.cardsValue; }
@@ -50,7 +58,7 @@ class KinChoreChart extends HTMLElement {
   /** Adults may set each child's reward here. */
   set editable(value) {
     this.isEditable = Boolean(value);
-    if (!this.isEditable) this.editing = null;
+    if (!this.isEditable) { this.editing = null; this.draft = null; }
     this.render();
   }
 
@@ -223,6 +231,23 @@ class KinChoreChart extends HTMLElement {
     return row;
   }
 
+  /** The kitchen display's larger, touch-first variant (#699). */
+  get forDisplay() {
+    return this.getAttribute("size") === "display";
+  }
+
+  /** Opens or closes a child's reward editor. What is typed or chosen is
+   * kept in `draft`, so a redraw (a sync, a tick elsewhere) doesn't lose it. */
+  openEditor(card, open) {
+    this.editing = open ? card.memberId : null;
+    this.draft = open ? { memberId: card.memberId, goal: card.reward?.goal ?? 20, text: card.reward?.text ?? "" } : null;
+    this.render();
+    // On the display the focus goes to a button, not the text box: a wall
+    // tablet's keyboard would cover the chart before anyone asked to type.
+    if (open) this.querySelector(`[data-focus-key="${card.memberId}:${this.forDisplay ? "goal-more" : "goal"}"]`)?.focus();
+    else this.querySelector(`[data-focus-key="${card.memberId}:reward"]`)?.focus();
+  }
+
   rewardEditor(card) {
     const wrap = document.createElement("div");
     wrap.className = "chore-reward";
@@ -235,28 +260,14 @@ class KinChoreChart extends HTMLElement {
     toggle.setAttribute("aria-expanded", String(open));
     toggle.dataset.focusKey = `${card.memberId}:reward`;
     toggle.disabled = this.isDisabled;
-    toggle.addEventListener("click", () => {
-      this.editing = open ? null : card.memberId;
-      this.render();
-      if (!open) this.querySelector(`[data-focus-key="${card.memberId}:goal"]`)?.focus();
-    });
+    toggle.addEventListener("click", () => this.openEditor(card, !open));
     wrap.append(toggle);
     if (!open) return wrap;
+    if (this.draft?.memberId !== card.memberId) this.draft = { memberId: card.memberId, goal: card.reward?.goal ?? 20, text: card.reward?.text ?? "" };
+    const draft = this.draft;
     const form = document.createElement("form");
     form.className = "chore-reward-form";
-    const goalId = `chore-goal-${card.memberId}`, textId = `chore-reward-text-${card.memberId}`;
-    const goalLabel = document.createElement("label");
-    goalLabel.htmlFor = goalId;
-    goalLabel.textContent = "Points to reach this week";
-    const goal = document.createElement("input");
-    goal.id = goalId;
-    goal.type = "number";
-    goal.min = "1";
-    goal.max = "1000";
-    goal.required = true;
-    goal.inputMode = "numeric";
-    goal.value = String(card.reward?.goal ?? 20);
-    goal.dataset.focusKey = `${card.memberId}:goal`;
+    const textId = `chore-reward-text-${card.memberId}`;
     const textLabel = document.createElement("label");
     textLabel.htmlFor = textId;
     textLabel.textContent = "Reward";
@@ -266,34 +277,126 @@ class KinChoreChart extends HTMLElement {
     text.required = true;
     text.maxLength = 120;
     text.placeholder = "Movie night";
-    text.value = card.reward?.text ?? "";
+    text.enterKeyHint = "done";
+    text.value = draft.text;
     text.dataset.focusKey = `${card.memberId}:reward-text`;
+    text.addEventListener("input", () => { draft.text = text.value; });
     const save = document.createElement("button");
     save.type = "submit";
+    save.className = "chore-reward-save";
     save.textContent = "Save reward";
     save.disabled = this.isDisabled;
-    form.append(goalLabel, goal, textLabel, text, save);
+    let goalValue;
+    if (this.forDisplay) {
+      // Touch-first: the goal is chosen with big buttons, never typed.
+      form.append(this.goalStepper(card, draft), textLabel, text);
+      goalValue = () => draft.goal;
+    } else {
+      const goalId = `chore-goal-${card.memberId}`;
+      const goalLabel = document.createElement("label");
+      goalLabel.htmlFor = goalId;
+      goalLabel.textContent = "Points to reach this week";
+      const goal = document.createElement("input");
+      goal.id = goalId;
+      goal.type = "number";
+      goal.min = "1";
+      goal.max = "1000";
+      goal.required = true;
+      goal.inputMode = "numeric";
+      goal.value = String(draft.goal);
+      goal.dataset.focusKey = `${card.memberId}:goal`;
+      goal.addEventListener("input", () => { draft.goal = Number(goal.value); });
+      form.append(goalLabel, goal, textLabel, text);
+      goalValue = () => Number(goal.value);
+    }
+    const actions = document.createElement("div");
+    actions.className = "chore-reward-actions";
+    actions.append(save);
     if (card.reward) {
       const remove = document.createElement("button");
       remove.type = "button";
-      remove.className = "secondary";
+      remove.className = "secondary chore-reward-remove";
       remove.textContent = "Remove reward";
       remove.disabled = this.isDisabled;
       remove.addEventListener("click", () => {
         this.editing = null;
+        this.draft = null;
         this.emit("kin:chore-reward", { memberId: card.memberId, goal: 0, text: "" });
+        this.render();
+        this.querySelector(`[data-focus-key="${card.memberId}:reward"]`)?.focus();
       });
-      form.append(remove);
+      actions.append(remove);
     }
+    if (this.forDisplay) {
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "secondary chore-reward-cancel";
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", () => this.openEditor(card, false));
+      actions.append(cancel);
+    }
+    form.append(actions);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      const value = Number(goal.value);
-      if (!form.reportValidity() || !Number.isInteger(value)) return;
+      const value = goalValue();
+      if (!form.reportValidity() || !Number.isInteger(value) || value < 1 || value > MAX_GOAL) return;
       this.editing = null;
+      this.draft = null;
       this.emit("kin:chore-reward", { memberId: card.memberId, goal: value, text: text.value });
+      // Closed at once; the next `cards` shows the reward once it's saved.
+      this.render();
+      this.querySelector(`[data-focus-key="${card.memberId}:reward"]`)?.focus();
     });
     wrap.append(form);
     return wrap;
+  }
+
+  /** The display's goal: one point fewer or more, or a common goal, each a
+   * 64 px button; the number itself is read out as it changes. */
+  goalStepper(card, draft) {
+    const group = document.createElement("fieldset");
+    group.className = "chore-goal-stepper";
+    const legend = document.createElement("legend");
+    legend.textContent = "Points to reach this week";
+    const row = document.createElement("div");
+    row.className = "chore-goal-row";
+    const value = document.createElement("output");
+    value.className = "chore-goal-value";
+    value.setAttribute("aria-live", "polite");
+    const step = (label, delta, key) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "secondary chore-goal-step";
+      button.dataset.step = String(delta);
+      button.dataset.focusKey = `${card.memberId}:${key}`;
+      button.textContent = delta < 0 ? "−" : "+";
+      button.setAttribute("aria-label", label);
+      button.addEventListener("click", () => { draft.goal = clampGoal(draft.goal + delta); this.render(); });
+      return button;
+    };
+    const fewer = step("One point fewer", -1, "goal-fewer");
+    const more = step("One point more", 1, "goal-more");
+    fewer.disabled = this.isDisabled || draft.goal <= 1;
+    more.disabled = this.isDisabled || draft.goal >= MAX_GOAL;
+    value.textContent = draft.goal === 1 ? "1 point" : `${draft.goal} points`;
+    row.append(fewer, value, more);
+    const presets = document.createElement("div");
+    presets.className = "chore-goal-presets";
+    for (const goal of GOAL_PRESETS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "secondary chore-goal-preset";
+      button.dataset.goal = String(goal);
+      button.dataset.focusKey = `${card.memberId}:goal-${goal}`;
+      button.textContent = String(goal);
+      button.setAttribute("aria-label", `${goal} points`);
+      button.setAttribute("aria-pressed", String(draft.goal === goal));
+      button.disabled = this.isDisabled;
+      button.addEventListener("click", () => { draft.goal = goal; this.render(); });
+      presets.append(button);
+    }
+    group.append(legend, row, presets);
+    return group;
   }
 
   emit(type, detail) {

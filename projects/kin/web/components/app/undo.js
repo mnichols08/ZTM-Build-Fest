@@ -110,9 +110,13 @@ export class UndoController {
     // Family-album entries (#673) also need the album, which isn't part of
     // the projection; it is read again after each step.
     const album = typeof entry.kind === "string" && entry.kind.startsWith("album-");
-    const read = async () => (album ? { ...this.app.state, ...(await this.ctx.album.undoState()) } : this.app.state);
+    // Chore rewards (#699) are worked out by Rust's chart query, also
+    // outside the projection: the chart is read again the same way.
+    const rewards = entry.kind === "chore-reward";
+    const read = async () => (album ? { ...this.app.state, ...(await this.ctx.album.undoState()) }
+      : rewards ? { ...this.app.state, choreRewards: await this.ctx.chores.rewards() } : this.app.state);
     let current = this.app.state;
-    if (album) {
+    if (album || rewards) {
       // Held while the album is read, so a second press waits its turn.
       this.running = true;
       try { current = await read(); } catch { /* the album check below refuses */ } finally { this.running = false; }

@@ -24,6 +24,11 @@
 //   screen in landscape) the tools move to a side rail and the door takes the
 //   height. Full screen shows the fridge alone. Neither changes automatic
 //   lock; a note says how this screen locks, and locking leaves full screen.
+// - The kitchen display (#700) sets `size="display"`: a layout for a wall
+//   tablet (display.css), 64 px tools beside the door, the notes repeated in
+//   large type under it, no full screen (the display is already), no
+//   hover-only titles, and a magnet's menu offers nine big place buttons
+//   instead of a drop-down.
 import { MAX_VISIBLE_MAGNETS, MAX_VISIBLE_STROKES, BOARD_WIDTH, BOARD_HEIGHT, boardPoints, normalizeNote, simplifyStroke, splitStroke } from "../wasm/kin-board.js";
 import { newBoardId } from "../board/board-room.js";
 import { ERASE_REACH, FRIDGE_COLOURS, FRIDGE_WIDTHS, KITCHEN_QUERY, fridgeSummary, kitchenScreenNote, pathPoints, strokeAt } from "../board/fridge-view.js";
@@ -50,6 +55,8 @@ function changeProblem(error, board) {
 }
 
 class KinFridge extends HTMLElement {
+  static get observedAttributes() { return ["size"]; }
+
   constructor() {
     super();
     this.roomValue = null;
@@ -101,15 +108,38 @@ class KinFridge extends HTMLElement {
     return document.fullscreenElement === this;
   }
 
+  /** On the kitchen display (#700). */
+  get forDisplay() {
+    return this.getAttribute("size") === "display";
+  }
+
+  attributeChangedCallback(name, before, after) {
+    if (name !== "size" || before === after || !this.door) return;
+    this.closeMagnetMenu({ focus: false });
+    this.updateLayout();
+    this.render();
+  }
+
   /** The side-rail layout and the lock note (#324). */
   updateLayout() {
     if (!this.door) return;
     const fullscreen = this.fullscreen;
-    const rail = Boolean(this.kitchenMedia?.matches) || (fullscreen && Boolean(this.landscapeMedia?.matches));
-    if (rail) this.dataset.layout = "rail";
+    const display = this.forDisplay;
+    const rail = !display && (Boolean(this.kitchenMedia?.matches) || (fullscreen && Boolean(this.landscapeMedia?.matches)));
+    if (display) this.dataset.layout = "display";
+    else if (rail) this.dataset.layout = "rail";
     else delete this.dataset.layout;
+    // The display is full screen already, and its lock is its own.
+    if (display) this.leaveFullscreen();
+    this.fullscreenButton.hidden = display || !this.canFullscreen;
     this.fullscreenButton.textContent = fullscreen ? "Leave full screen" : "Full screen";
-    this.kitchenNote.hidden = !(rail || fullscreen) || !this.room;
+    // A tooltip needs a hover a wall tablet doesn't have: the names stay as
+    // accessible names, without the title.
+    for (const button of [...this.colourButtons, ...this.widthButtons]) {
+      if (display) button.removeAttribute("title");
+      else button.title = button.getAttribute("aria-label");
+    }
+    this.kitchenNote.hidden = display || !(rail || fullscreen) || !this.room;
     if (!this.kitchenNote.hidden) this.kitchenNote.textContent = kitchenScreenNote(readAutoLockPreference());
     this.resize();
   }
@@ -160,7 +190,7 @@ class KinFridge extends HTMLElement {
     heading.className = "fridge-heading";
     heading.textContent = "Fridge";
     const lead = document.createElement("p");
-    lead.className = "section-hint";
+    lead.className = "section-hint fridge-lead";
     lead.textContent = "A shared board for the household: draw anything. Everyone sees it once they sync.";
 
     this.tools = document.createElement("div");
@@ -233,7 +263,8 @@ class KinFridge extends HTMLElement {
     this.fullscreenButton.type = "button";
     this.fullscreenButton.className = "fridge-fullscreen";
     this.fullscreenButton.textContent = "Full screen";
-    this.fullscreenButton.hidden = !(document.fullscreenEnabled && typeof this.requestFullscreen === "function");
+    this.canFullscreen = Boolean(document.fullscreenEnabled && typeof this.requestFullscreen === "function");
+    this.fullscreenButton.hidden = !this.canFullscreen;
     this.fullscreenButton.addEventListener("click", () => void this.toggleFullscreen());
     this.tools.append(colours, widths, this.eraserButton, history, this.magnetButton, this.clearButton, this.restoreButton);
 
@@ -265,11 +296,24 @@ class KinFridge extends HTMLElement {
     this.kitchenNote = document.createElement("p");
     this.kitchenNote.className = "fridge-kitchen-note";
     this.kitchenNote.hidden = true;
+    // The display's notes in large type (#700), readable across a kitchen
+    // however small the door is drawn.
+    this.notes = document.createElement("section");
+    this.notes.className = "fridge-notes";
+    this.notes.setAttribute("aria-labelledby", "fridge-notes-title");
+    this.notes.hidden = true;
+    const notesTitle = document.createElement("h3");
+    notesTitle.id = "fridge-notes-title";
+    notesTitle.className = "fridge-notes-title";
+    notesTitle.textContent = "Notes on the fridge";
+    this.notesList = document.createElement("ul");
+    this.notesList.className = "fridge-notes-list";
+    this.notes.append(notesTitle, this.notesList);
 
     const board = document.createElement("div");
     board.className = "fridge-board";
     board.append(this.door);
-    this.append(heading, lead, this.tools, this.fullscreenButton, board, this.summary, this.status, this.kitchenNote, this.buildMagnetDialog(), this.buildClearDialog());
+    this.append(heading, lead, this.tools, this.fullscreenButton, board, this.notes, this.summary, this.status, this.kitchenNote, this.buildMagnetDialog(), this.buildClearDialog());
     this.updateTools();
   }
 
@@ -310,6 +354,7 @@ class KinFridge extends HTMLElement {
       );
       this.door.setAttribute("aria-disabled", "true");
       this.drawInk();
+      this.renderNotes();
       this.updateTools();
       return;
     }
@@ -317,6 +362,7 @@ class KinFridge extends HTMLElement {
       this.state = null;
       this.summary.textContent = "The fridge isn't available to you in this household.";
       this.door.hidden = true;
+      this.renderNotes();
       this.updateTools();
       return;
     }
@@ -340,7 +386,27 @@ class KinFridge extends HTMLElement {
     if (this.summary.textContent !== summary) this.summary.textContent = summary;
     this.drawInk();
     this.renderMagnets();
+    this.renderNotes();
     this.updateTools();
+  }
+
+  /** The note magnets as a list in large type, on the display only. */
+  renderNotes() {
+    if (!this.notes) return;
+    const notes = this.forDisplay ? (this.state?.magnets ?? []).filter((magnet) => magnet.kind === "note" && magnet.text) : [];
+    this.notes.hidden = notes.length === 0;
+    this.notesList.replaceChildren(...notes.map((magnet) => {
+      const item = document.createElement("li");
+      item.className = "fridge-note";
+      const text = document.createElement("span");
+      text.className = "fridge-note-text";
+      text.textContent = magnet.text;
+      const by = document.createElement("span");
+      by.className = "fridge-note-by";
+      by.textContent = `from ${this.labelOf(magnet.author)}`;
+      item.append(text, by);
+      return item;
+    }));
   }
 
   // ---- Canvas -------------------------------------------------------------
@@ -556,7 +622,7 @@ class KinFridge extends HTMLElement {
       const name = magnetName(magnet);
       const by = this.labelOf(magnet.author);
       button.setAttribute("aria-label", `${name}, put up by ${by}`);
-      button.title = `Put up by ${by}`;
+      if (!this.forDisplay) button.title = `Put up by ${by}`;
       if (magnet.kind === "kin") button.append(this.kinMagnetIcon(magnet.number));
       else button.textContent = magnet.text;
       button.addEventListener("keydown", (event) => this.magnetKey(event, magnet));
@@ -665,6 +731,51 @@ class KinFridge extends HTMLElement {
     menu.className = "fridge-magnet-menu";
     menu.setAttribute("role", "group");
     menu.setAttribute("aria-label", magnetName(magnet));
+    const moveTo = (to) => {
+      this.closeMagnetMenu({ focus: false });
+      this.movingMagnets.set(magnet.id, to);
+      this.moveFrom.set(magnet.id, [magnet.x, magnet.y]);
+      void this.saveMove(magnet.id).then(() => this.focusMagnet(magnet.id));
+    };
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "fridge-magnet-remove";
+    remove.textContent = "Take it down";
+    remove.addEventListener("click", () => { this.closeMagnetMenu({ focus: false }); void this.removeMagnet(magnet); });
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "fridge-magnet-done";
+    close.textContent = "Done";
+    close.addEventListener("click", () => this.closeMagnetMenu());
+    menu.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.preventDefault(); this.closeMagnetMenu(); }
+    });
+    this.magnetMenu = { menu, magnetId: magnet.id };
+    if (this.forDisplay) {
+      // A wall tablet (#700): the nine places as a 3 × 3 grid of big
+      // buttons, laid out like the door; one tap moves the magnet.
+      const places = document.createElement("div");
+      places.className = "fridge-magnet-places";
+      places.setAttribute("role", "group");
+      places.setAttribute("aria-label", "Move to");
+      for (const region of MAGNET_REGIONS) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "fridge-magnet-place";
+        button.dataset.region = region.id;
+        button.textContent = region.label;
+        button.addEventListener("click", () => moveTo(regionPoint(region.id)));
+        places.append(button);
+      }
+      const heading = document.createElement("p");
+      heading.className = "fridge-magnet-menu-title";
+      heading.textContent = `${magnetName(magnet)}: move it, or take it down`;
+      menu.append(heading, places, remove, close);
+      this.door.after(menu);
+      places.querySelector('[data-region="middle"]')?.focus();
+      void anchor;
+      return;
+    }
     const label = document.createElement("label");
     label.textContent = "Move to ";
     const select = document.createElement("select");
@@ -686,26 +797,10 @@ class KinFridge extends HTMLElement {
     move.textContent = "Move";
     move.addEventListener("click", () => {
       if (!select.value) { select.focus(); return; }
-      const to = regionPoint(select.value);
-      this.closeMagnetMenu({ focus: false });
-      this.movingMagnets.set(magnet.id, to);
-      this.moveFrom.set(magnet.id, [magnet.x, magnet.y]);
-      void this.saveMove(magnet.id).then(() => this.focusMagnet(magnet.id));
+      moveTo(regionPoint(select.value));
     });
     label.append(select);
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.textContent = "Take it down";
-    remove.addEventListener("click", () => { this.closeMagnetMenu({ focus: false }); void this.removeMagnet(magnet); });
-    const close = document.createElement("button");
-    close.type = "button";
-    close.textContent = "Done";
-    close.addEventListener("click", () => this.closeMagnetMenu());
     menu.append(label, move, remove, close);
-    menu.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") { event.preventDefault(); this.closeMagnetMenu(); }
-    });
-    this.magnetMenu = { menu, magnetId: magnet.id };
     this.door.after(menu);
     select.focus();
     void anchor;

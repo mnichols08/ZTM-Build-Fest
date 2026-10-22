@@ -26,6 +26,10 @@ documentation only.
   Leaving needs the adult's passkey or password, checked on the device.
   Household feature "Kitchen display" (bit 17), Help, browser regression
   `scripts/kitchen-display-regression.mjs` and a wall-tablet checklist.
+  On the display an Adult can also set or change a child's reward (kind 78)
+  with 64 px buttons, with Undo (#699), and the fridge has a wall-tablet
+  layout: tools beside the door, its notes repeated in large type, no full
+  screen, hover titles or drop-downs (#700).
 
 - **Family photos** (#673: #674, #675; epic #651,
   [ADR 0022](docs/decisions/0022-family-hub.md) §5). A shared, encrypted
