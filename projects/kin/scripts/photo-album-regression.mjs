@@ -136,11 +136,13 @@ export async function photoAlbumRegressions() {
   await until(() => album.addDialog.open && album.addDialog.querySelectorAll(".album-add-row").length === 1, "a shared photo opens the add dialog on Family photos");
   check(app.route?.canonical === "household/photos", "on the Family photos page", app.route);
   album.addCancel.click();
+  await until(() => !album.addDialog.open, "Cancel closes the add dialog (share)");
 
   // Chat: "Add to the family photos" on a photo opens the same dialog.
   app.onChatToRecord(new CustomEvent("kin:chat-to-record", { detail: { kind: "photos", opener: null, files: [{ name: `chat-${tag}.jpg`, type: "image/jpeg", size: 1, load: () => photoFile(`chat-${tag}.jpg`, "#8e44ad") }] } }));
   await until(() => album.addDialog.open && album.addDialog.querySelectorAll(".album-add-row").length === 1, "a chat photo opens the add dialog");
   album.addCancel.click();
+  await until(() => !album.addDialog.open, "Cancel closes the add dialog (chat)");
   check(fileInputs() === inputsBefore, "no persistent file input was added", { before: inputsBefore, after: fileInputs() });
 
   // Tidy up.
