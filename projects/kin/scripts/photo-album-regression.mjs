@@ -127,6 +127,14 @@ export async function photoAlbumRegressions() {
 
   // Share sheet: a shared photo can go to Family photos.
   app.ctx.navigation.navigate("#today");
+  // Which code opens the add dialog, for a failure report.
+  const opens = [];
+  const openAdd = album.openAdd;
+  album.openAdd = function (...args) { opens.push(new Error().stack.split("\n").slice(2, 5).join(" | ")); return openAdd.apply(this, args); };
+  const dialogState = () => ({
+    opens, open: album.addDialog.open, modal: album.addDialog.matches(":modal"), inert: Boolean(album.addCancel.closest("[inert]")),
+    dialogs: [...document.querySelectorAll("dialog[open]")].map((dialog) => dialog.className), active: document.activeElement?.className,
+  });
   const sharing = app.ctx.share.offer({ title: "", text: "", url: "", files: [await photoFile(`shared-${tag}.jpg`, "#16a085")] });
   await until(() => app.shareSheet?.isOpen, "the share sheet opens");
   const destination = app.shareSheet.querySelector('button[data-kind="photos"]');
@@ -136,13 +144,16 @@ export async function photoAlbumRegressions() {
   await until(() => album.addDialog.open && album.addDialog.querySelectorAll(".album-add-row").length === 1, "a shared photo opens the add dialog on Family photos");
   check(app.route?.canonical === "household/photos", "on the Family photos page", app.route);
   album.addCancel.click();
-  await until(() => !album.addDialog.open, "Cancel closes the add dialog (share)");
+  for (let index = 0; index < 300 && album.addDialog.open; index++) await frame();
+  check(!album.addDialog.open, "Cancel closes the add dialog (share)", dialogState());
 
   // Chat: "Add to the family photos" on a photo opens the same dialog.
   app.onChatToRecord(new CustomEvent("kin:chat-to-record", { detail: { kind: "photos", opener: null, files: [{ name: `chat-${tag}.jpg`, type: "image/jpeg", size: 1, load: () => photoFile(`chat-${tag}.jpg`, "#8e44ad") }] } }));
   await until(() => album.addDialog.open && album.addDialog.querySelectorAll(".album-add-row").length === 1, "a chat photo opens the add dialog");
   album.addCancel.click();
-  await until(() => !album.addDialog.open, "Cancel closes the add dialog (chat)");
+  for (let index = 0; index < 300 && album.addDialog.open; index++) await frame();
+  check(!album.addDialog.open, "Cancel closes the add dialog (chat)", dialogState());
+  album.openAdd = openAdd;
   check(fileInputs() === inputsBefore, "no persistent file input was added", { before: inputsBefore, after: fileInputs() });
 
   // Tidy up.
