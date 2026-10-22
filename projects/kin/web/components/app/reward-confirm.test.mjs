@@ -148,6 +148,43 @@ test("Undo and Redo of a reward on the display ask too; cancelled, nothing is wr
   assert.deepEqual(asked, ["reward", "reward", "reward", "reward"]);
 });
 
+test("a press while the display's check is open, or still closing, is ignored and keeps the entry; once settled, Undo asks again", async () => {
+  // The real display controller's guard, with the dialog as a promise the
+  // test answers (what the kitchen display regression does by hand).
+  const { app, ctx, undo, appended, rewards } = workspace({ display: true });
+  app.displayMode = false;
+  const display = new DisplayController({ app });
+  app.displayMode = true;
+  ctx.display = display;
+  let answer = null;
+  let shown = 0;
+  display.adultCheck = {
+    readManifest: async () => ({ wrappers: [{ id: "r", type: "recovery" }] }),
+    dialog: () => { shown += 1; return new Promise((resolve) => { answer = resolve; }); },
+  };
+  rewards.set(CHILD, MOVIE);
+  undo.record(choreRewardEntry({ memberId: CHILD, name: "Sam", from: null, to: MOVIE }));
+  const first = undo.run("undo");
+  while (!shown) await null;
+  await undo.run("undo");
+  assert.equal(shown, 1, "a second press while the dialog is open asks nothing");
+  answer(false);
+  // Right after Cancel the run is still unwinding: a press now is ignored.
+  assert.equal(undo.running, true);
+  await undo.run("undo");
+  assert.equal(shown, 1);
+  await first;
+  assert.equal(undo.running, false);
+  assert.equal(undo.history.undoStack.length, 1, "the entry is back");
+  assert.deepEqual(appended, []);
+  const second = undo.run("undo");
+  while (shown < 2) await null;
+  assert.equal(shown, 2, "once settled, Undo asks again");
+  answer(false);
+  await second;
+  assert.equal(undo.history.undoStack.length, 1);
+});
+
 test("Undo of a reward on the phone doesn't ask", async () => {
   const { undo, appended, asked, rewards } = workspace({ display: false, confirm: false });
   rewards.set(CHILD, MOVIE);

@@ -206,6 +206,9 @@ async function rewardOnDisplay(recovery) {
   check(dialogTargets().length === 0, "the dialog's targets are 64px", dialogTargets());
   dialog().querySelector(".display-leave-cancel").click();
   await until(() => !dialog(), "Don't change it closes the dialog");
+  // The cancelled save finishes a few microtasks after the dialog goes: wait
+  // for it to say so, which is after the display's check is released.
+  await until(() => !app.ctx.display.asking, "the cancelled save settles");
   await idle();
   check(line() === before && charted() === null, "cancelled: no reward", { line: line(), reward: charted() });
   check(app.ctx.undo.history.undoStack.length === undos, "and nothing to undo");
@@ -231,10 +234,17 @@ async function rewardOnDisplay(recovery) {
     const rect = button.getBoundingClientRect();
     check(rect.height >= 63.5 && rect.width >= 63.5, "Undo's buttons are 64px", { className: button.className, width: rect.width, height: rect.height });
   }
+  const stacked = app.ctx.undo.history.undoStack.length;
   toast.querySelector(".undo-toast-action").click();
   await until(() => dialog()?.open && dialog().dataset.purpose === "reward", "Undo asks who you are (#705)");
   dialog().querySelector(".display-leave-cancel").click();
   await until(() => !dialog(), "Don't change it closes the dialog");
+  // The cancelled Undo puts its entry back and stops running a few
+  // microtasks after the dialog goes; a press before then is ignored (the
+  // toast never left, so it can't tell). Wait for it to say so.
+  await until(() => !app.ctx.undo.running && app.ctx.undo.history.undoStack.length === stacked,
+    "the cancelled Undo settles", () => ({ status: app.status?.textContent, running: app.ctx.undo.running, entries: app.ctx.undo.history.undoStack.length, stacked }));
+  check(/^Not undone: the reward wasn't changed\./.test(app.status?.textContent ?? ""), "and says so", app.status?.textContent);
   await idle();
   check(line() === `1 of 4 for ${reward}` && charted()?.goal === 4, "cancelled: the reward stays", { line: line(), reward: charted() });
   check(visible(toast) && toast.querySelector(".undo-toast-action").textContent === "Undo", "and Undo is still offered");
