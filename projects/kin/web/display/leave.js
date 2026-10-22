@@ -1,5 +1,6 @@
-// Leaving kitchen display mode (#670, ADR 0022 §4) needs the adult whose
-// device it is: their password or their passkey, checked on this device
+// Leaving kitchen display mode (#670, ADR 0022 §4), and changing a child's
+// reward there (#705), need the adult whose device it is: their password
+// or their passkey, checked on this device
 // against the same unlock paths that open Kin here, so it works offline and
 // for a household that doesn't sync. Proving it is opening this device's
 // vault once more with that secret; the copy that opens is locked again at
@@ -7,6 +8,11 @@
 //
 // A device set up before accounts unlocks with its backup key only; there
 // the backup key is what leaving asks for, as unlocking does.
+//
+// askAdult is the one way the display asks (leave and rewards alike): it
+// reads this device's unlock manifest, offers the methods it has, and
+// resolves true only once one of them opened the vault. Cancelling, or a
+// device with no way to confirm, resolves false: the caller writes nothing.
 import { LocalVault } from "../security/local-vault.js";
 import { authenticatePrf } from "../security/passkey-unlock.js";
 import { passwordUnlockKeys, passwordWrapper } from "../security/account-setup.js";
@@ -86,4 +92,45 @@ export async function confirmOwner({ manifest, method, secret = null, vaultId = 
   // Only proof was wanted: the copy that opened is closed again.
   vault?.lock?.();
   return true;
+}
+
+/**
+ * What each check says (#705): `title`, `lead` (followed by the methods),
+ * `none` (when the device has no way to confirm), `stay` (the cancel
+ * button) and `canceled` (a cancelled passkey). Leaving display mode, and a
+ * child's reward (saving, removing, or Undo and Redo of one) on the display.
+ */
+export const ADULT_CHECKS = Object.freeze({
+  leave: Object.freeze({
+    title: "Leave kitchen display",
+    lead: "Only the adult this device belongs to can leave.",
+    none: "This device has no way to confirm who you are, so it can't leave display mode here.",
+    stay: "Stay in display mode",
+    canceled: "Canceled. Kin is still a kitchen display.",
+  }),
+  reward: Object.freeze({
+    title: "Change a reward",
+    lead: "Only the adult this device belongs to can change a child's reward.",
+    none: "This device has no way to confirm who you are, so rewards can't be changed here.",
+    stay: "Don't change it",
+    canceled: "Canceled. The reward wasn't changed.",
+  }),
+});
+
+/**
+ * Asks the device's adult to confirm `purpose` (a key of ADULT_CHECKS).
+ * `readManifest()` resolves EventStore.securityStatus(); `ask(options)`
+ * shows the dialog (components/display/leave-dialog.js askAdultDialog) with
+ * { ...ADULT_CHECKS[purpose], methods, check } and resolves whether it was
+ * confirmed. `confirm` is confirmOwner (a test's stand-in otherwise).
+ * Resolves true only when a method opened this device's vault.
+ */
+export async function askAdult(purpose, { readManifest, vaultId = null, ask, confirm = confirmOwner } = {}) {
+  const text = ADULT_CHECKS[purpose];
+  if (!text || typeof ask !== "function") return false;
+  let manifest;
+  try { manifest = await readManifest(); } catch { manifest = null; }
+  const methods = leaveMethods(manifest);
+  const confirmed = await ask({ ...text, purpose, methods, check: (method, secret) => confirm({ manifest, method, secret, vaultId }) });
+  return confirmed === true && methods.length > 0;
 }

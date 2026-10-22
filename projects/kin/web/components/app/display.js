@@ -12,7 +12,11 @@
 //   no panel: the adult's journal, Just for me, reminders, Search, admin
 //   actions, Household settings, Chat composition. A child's reward is the
 //   one setting it offers (#699): the chore chart's own kind 78 path, for
-//   the Adult whose device it is, with Undo.
+//   the Adult whose device it is, with Undo. Saving or removing one, and
+//   Undo or Redo of one, first asks for the adult's passkey or password
+//   (#705, confirmAdult), as leaving does: the display hangs in the
+//   kitchen, so anyone there could otherwise change it. Ticking chores,
+//   shopping and the fridge stay open to everyone.
 // - Auto-lock doesn't apply while it is a display (session.js
 //   scheduleAutoLock); leaving needs the adult's passkey or password,
 //   checked on this device (display/leave.js), then Kin reloads into the
@@ -29,8 +33,8 @@
 import { PANELS, visiblePanels } from "../../display/panels.js";
 import { displayOnFor, isNight, msUntilNextChange, readDisplaySettings, writeDisplaySettings } from "../../display/schedule.js";
 import { IdleTimer } from "../../display/idle.js";
-import { confirmOwner, leaveMethods } from "../../display/leave.js";
-import { askToLeave } from "../display/leave-dialog.js";
+import { askAdult } from "../../display/leave.js";
+import { askAdultDialog } from "../display/leave-dialog.js";
 import { KinKitchenDisplay } from "../kin-kitchen-display.js";
 import { ScreenWake } from "../../wake-lock.js";
 import { EventStore } from "../../storage/event-store.js";
@@ -52,6 +56,9 @@ export class DisplayController {
     this.nightWoken = false;
     this.weekView = { view: "week", focus: null };
     this.onActivity = (event) => this.activity(event);
+    // How confirmAdult reads this device's unlock manifest and shows the
+    // dialog; a test replaces them.
+    this.adultCheck = { readManifest: () => EventStore.securityStatus(), dialog: askAdultDialog };
     this.reset();
   }
 
@@ -192,28 +199,36 @@ export class DisplayController {
     this.refresh();
   }
 
+  /** The adult whose device it is confirms `purpose` ("leave", or
+   * "reward" for a child's reward, #705) with their passkey or password,
+   * checked on this device (display/leave.js askAdult). Resolves true once
+   * confirmed; false when cancelled, refused, not a display, or while
+   * another check is open. */
+  async confirmAdult(purpose) {
+    if (!this.on || this.asking) return false;
+    this.asking = true;
+    try {
+      const confirmed = await askAdult(purpose, {
+        readManifest: this.adultCheck.readManifest,
+        vaultId: this.app.vault?.vaultId ?? null,
+        ask: (options) => this.adultCheck.dialog({ ...options, host: this.app }),
+      });
+      return confirmed && this.on;
+    } finally {
+      this.asking = false;
+    }
+  }
+
   /** "Leave display mode": the adult's passkey or password, then the full
    * layout. Resolves whether it left. */
   async leave({ opener = null } = {}) {
-    if (!this.on || this.leaving) return false;
-    this.leaving = true;
-    try {
-      let manifest;
-      try { manifest = await EventStore.securityStatus(); } catch { manifest = null; }
-      const vaultId = this.app.vault?.vaultId ?? null;
-      const left = await askToLeave({
-        methods: leaveMethods(manifest),
-        check: (method, secret) => confirmOwner({ manifest, method, secret, vaultId }),
-        host: this.app,
-      });
-      if (!left || !this.on) { opener?.focus?.(); return false; }
-      this.forget();
-      this.ctx.status.setStatus("Leaving display mode…");
-      this.reload();
-      return true;
-    } finally {
-      this.leaving = false;
-    }
+    if (!this.on || this.asking) return false;
+    const left = await this.confirmAdult("leave");
+    if (!left || !this.on) { opener?.focus?.(); return false; }
+    this.forget();
+    this.ctx.status.setStatus("Leaving display mode…");
+    this.reload();
+    return true;
   }
 
   /** Back to the full layout: rebuilt cleanly by reloading; a refresh keeps
@@ -250,7 +265,7 @@ export class DisplayController {
     this.frame = null;
     this.elements = null;
     this.weekView = { view: "week", focus: null };
-    this.leaving = false;
+    this.asking = false;
     if (typeof document !== "undefined") {
       for (const type of ["pointerdown", "keydown", "wheel"]) document.removeEventListener(type, this.onActivity, { capture: true });
       delete document.documentElement.dataset.kinDisplay;
