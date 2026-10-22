@@ -24,6 +24,22 @@ documentation only.
   encrypted on the device, kept in their own device database and counted in
   their own service quota. Household feature "Family photos" (bit 16), Help
   and easy mode. Browser regression `scripts/photo-album-regression.mjs`.
+- **Fuller meal plans** (#679: #680, #681; epic #651,
+  [ADR 0022](docs/decisions/0022-family-hub.md) §7). Meals plans breakfast,
+  lunch, dinner and a snack for each day. Each day card has a row per meal,
+  and **Show** folds meals away (on phones, unplanned ones start folded).
+  **Same as last week** copies last week's meals into the empty slots.
+  **Add this week's ingredients to Shopping** covers every meal and never
+  duplicates. A star marks a favourite recipe, and **Favourites** filters the
+  list. Favourites lead the planning dialog. Today lists today's other meals
+  under Tonight, and This week lists every meal on its day. New household
+  event kinds 80 `MEAL_SET`, 81 `MEAL_CLEARED` and 82 `RECIPE_FAVOURITE_SET`.
+  Dinner keeps kinds 61–63, so planned dinners stay valid. New WASM export
+  `kin_meal_plans` (KMLS v2) beside an unchanged `kin_meals` (KMLS v1), and
+  KMPQ v2 (a slot's meal or a week). Older devices pause sync with "update
+  Kin" when they meet the new kinds. Rust tests, test vectors 180–185 and
+  browser regression `scripts/meal-plan-regression.mjs`. UX §8.11, EVENTS,
+  ABI, V1.0-COMPATIBILITY.
 
 ## v1.6.0 — Kin for Everyone
 

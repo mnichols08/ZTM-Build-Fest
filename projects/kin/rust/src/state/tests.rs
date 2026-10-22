@@ -124,6 +124,9 @@ fn event(event_number: u8, logical_time: u64, kind: EventKind) -> EventEnvelope 
         | EventKind::DinnerSet { .. }
         | EventKind::DinnerCleared { .. }
         | EventKind::DinnerCookSet { .. }
+        | EventKind::MealSet { .. }
+        | EventKind::MealCleared { .. }
+        | EventKind::RecipeFavouriteSet { .. }
         | EventKind::ItemEmojiSet { .. }
         | EventKind::ShoppingSectionsSet { .. }
         | EventKind::ItemSectionSet { .. }

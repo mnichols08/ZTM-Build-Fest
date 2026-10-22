@@ -30,6 +30,7 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_device_names: status,
       kin_member_names: status,
       kin_meals: status,
+      kin_meal_plans: status,
       kin_meal_shopping_plan: status,
       kin_item_emojis: status,
       kin_my_things: status,

@@ -13,7 +13,7 @@
 import { idToHex, randomId } from "../../wasm/kin-engine.js";
 import { MealFormatError, collapseText, planSummary } from "../../wasm/kin-meals.js";
 import { syncProgress } from "./feedback.js";
-import { cookLabel, tonightLine } from "../../meals/meals-view.js";
+import { SLOT_LABELS, cookLabel, sameAsLastWeek, todayMealLines, tonightLine } from "../../meals/meals-view.js";
 import { routeHash } from "../../routes.js";
 import { SAVE_ERROR } from "./constants.js";
 
@@ -86,9 +86,10 @@ export class MealsController {
     return civilDate ? dateText(civilDate) : null;
   }
 
-  /** Hands the latest meals to <kin-meals> and Tonight on Today. */
+  /** Hands the latest meals to <kin-meals>, Tonight on Today (with today's
+   * other meals, #679) and This week. */
   show() {
-    const meals = this.app.mealsState ?? { recipes: [], dinners: [] };
+    const meals = this.app.mealsState ?? { recipes: [], dinners: [], meals: [] };
     const today = this.today();
     const people = this.people();
     const view = this.app.meals;
@@ -104,8 +105,10 @@ export class MealsController {
     const line = this.app.tonight;
     if (line && today) {
       const dinner = meals.dinners.find((entry) => entry.date === today) ?? null;
-      line.update({ text: tonightLine(dinner, people), href: routeHash("lists", "meals") });
+      line.update({ text: tonightLine(dinner, people), href: routeHash("lists", "meals"), meals: todayMealLines(meals, today) });
     }
+    // This week lists every meal beside Rust's dinners (app/week.js).
+    void this.ctx.week?.refresh?.();
   }
 
   /** One meals command with the busy guard, status and Retry. */
@@ -195,6 +198,92 @@ export class MealsController {
     });
   }
 
+  /** A breakfast, lunch or snack (#679, kind 80); dinner uses setDinner. */
+  setMeal({ date, slot, recipeId = null, name }) {
+    const label = SLOT_LABELS[slot]?.toLowerCase() ?? "meal";
+    return this.run({ type: "set-meal", date, slot, recipeId, name }, {
+      done: `Planned “${collapseText(name)}” for ${label} ${this.onDay(date)}.`,
+      retry: () => {
+        const recipe = recipeId ? this.app.mealsState?.recipes.find((entry) => entry.recipeId === recipeId) : null;
+        return this.setMeal({ date, slot, recipeId, name: recipe?.name ?? name });
+      },
+    });
+  }
+
+  clearMeal(date, slot) {
+    const label = SLOT_LABELS[slot]?.toLowerCase() ?? "meal";
+    return this.run({ type: "clear-meal", date, slot }, { done: `Cleared ${label} ${this.onDay(date)}.`, retry: () => this.clearMeal(date, slot) });
+  }
+
+  /** Marks a recipe a favourite or not (#679, kind 82). */
+  setFavourite(recipeId, favourite) {
+    const name = this.app.mealsState?.recipes.find((recipe) => recipe.recipeId === recipeId)?.name ?? "the recipe";
+    return this.run({ type: "set-recipe-favourite", recipeId, favourite }, {
+      done: favourite ? `Added “${name}” to favourites.` : `Removed “${name}” from favourites.`,
+      retry: () => this.setFavourite(recipeId, favourite),
+    });
+  }
+
+  /**
+   * "Same as last week" (#679): fills each empty meal of the week from
+   * `monday` with the one planned seven days earlier (meals-view.js). Each
+   * copy is one ordinary command; a failure part-way offers Retry, which
+   * works out the copies again, so nothing is planned twice.
+   */
+  async sameAsLastWeek(monday) {
+    if (!this.app.store || !this.app.engine) return false;
+    if (this.app.busy) { this.busyNotice(); return false; }
+    const copies = sameAsLastWeek(this.app.mealsState, monday);
+    if (!copies.length) {
+      this.ctx.status.setStatus("Nothing to copy: last week's meals are already planned, or last week had none.");
+      return false;
+    }
+    const session = this.ctx.session.captureSession();
+    this.ctx.status.setBusy(true);
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Copying last week…");
+    let saved = 0;
+    try {
+      for (const copy of copies) {
+        await this.ctx.append.appendCommand(copy.slot === "dinner"
+          ? { type: "set-dinner", date: copy.date, recipeId: copy.recipeId, name: copy.name }
+          : { type: "set-meal", ...copy });
+        this.ctx.session.assertCurrentSession(session);
+        saved += 1;
+      }
+      this.ctx.render.renderState();
+      await this.refresh();
+      this.ctx.status.setStatus(`Copied ${saved} ${saved === 1 ? "meal" : "meals"} from last week.${syncProgress({ syncing: Boolean(this.app.syncCoordinator), offline: navigator.onLine === false })}`);
+      this.ctx.peers.broadcastEventChange();
+      return true;
+    } catch (error) {
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return false;
+      if (saved) {
+        this.ctx.render.renderState();
+        this.ctx.peers.broadcastEventChange();
+      }
+      this.ctx.status.setStatus("");
+      this.ctx.status.showAlert(
+        saved
+          ? `Copied ${saved} ${saved === 1 ? "meal" : "meals"}, then Kin couldn't save the rest. Retry copies only what's missing.`
+          : (error.userMessage ?? "Kin couldn't copy last week's meals."),
+        () => this.sameAsLastWeek(monday),
+      );
+      return false;
+    } finally {
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
+        this.ctx.peers.flushPeerRefresh();
+      }
+    }
+  }
+
+  /** "on Monday 5 Oct", or "today". */
+  onDay(date) {
+    const day = this.dayName(date);
+    return day === "tonight" ? "today" : `on ${day}`;
+  }
+
   dayName(date) {
     const today = this.today();
     if (date === today) return "tonight";
@@ -205,11 +294,13 @@ export class MealsController {
   }
 
   /**
-   * Puts a recipe's ({ recipeId }) or a day's dinner's ({ date }) ingredients
-   * on Shopping. Rust plans each line (re-add a staple, add, or already on
-   * Shopping); each addition is an ordinary Shopping item. A failure part-way
-   * says how many were saved and offers Retry, which plans again: what was
-   * added is now already on Shopping, so nothing is added twice.
+   * Puts a recipe's ({ recipeId }), a day's dinner's ({ date }), a day's
+   * other meal's ({ date, slot }) or a whole week's ({ week }, every meal,
+   * #679) ingredients on Shopping. Rust plans each line (re-add a staple,
+   * add, or already on Shopping); each addition is an ordinary Shopping
+   * item. A failure part-way says how many were saved and offers Retry,
+   * which plans again: what was added is now already on Shopping, so nothing
+   * is added twice.
    */
   async addIngredients(source, label = "") {
     if (!this.app.store || !this.app.engine) return false;
@@ -228,7 +319,7 @@ export class MealsController {
         saved += 1;
       }
       this.ctx.render.renderState();
-      const summary = planSummary(plan);
+      const summary = source.week && !plan.length ? "No recipes are planned this week, so there's nothing to add." : planSummary(plan);
       const message = `${summary.endsWith(".") ? summary : `${summary}.`}${saved ? syncProgress({ syncing: Boolean(this.app.syncCoordinator), offline: navigator.onLine === false }) : ""}`;
       this.ctx.status.setStatus(message);
       this.app.meals?.showResult?.(message, routeHash("lists", "shopping"));
@@ -244,7 +335,7 @@ export class MealsController {
       this.ctx.status.showAlert(
         saved
           ? `Added ${saved} ${saved === 1 ? "ingredient" : "ingredients"} to Shopping, then Kin couldn't save the rest. Retry adds only what's missing.`
-          : (error.userMessage ?? `Kin couldn't add ${label ? `the ingredients for “${label}”` : "the ingredients"} to Shopping.`),
+          : (error.userMessage ?? `Kin couldn't add ${source.week ? `the ingredients for ${label || "this week"}` : label ? `the ingredients for “${label}”` : "the ingredients"} to Shopping.`),
         () => this.addIngredients(source, label),
       );
       return false;

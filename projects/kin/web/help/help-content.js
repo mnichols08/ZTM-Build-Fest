@@ -38,14 +38,14 @@ const topic = (title, about, actions, who) => Object.freeze({ title, about, acti
 
 export const HELP_TOPICS = Object.freeze({
   today: topic("Today",
-    "What needs doing today, in one place: your things, things for everyone, and what is planned for dinner.",
+    "What needs doing today, in one place: your things, things for everyone, and what is planned to eat.",
     [
       action("Write something down in the box at the top and press Add.", "kin-compose input, kin-compose textarea"),
       action("Press Complete when something is done. A line at the bottom lets you undo it.", ".complete-control"),
       action("Open This week to see the next seven days.", "a[href=\"#week\"]", "week"),
     ], EVERYONE),
   week: topic("This week",
-    "The next seven days: things planned for each day, routines that are due, dinners and jobs around the home.",
+    "The next seven days: things planned for each day, routines that are due, meals and jobs around the home.",
     [
       action("Tick something off when it is done.", ".week-check"),
       action("Move a thing to another day.", ".week-move"),
@@ -87,10 +87,11 @@ export const HELP_TOPICS = Object.freeze({
       action("Press Add to Shopping when you are running low.", ".replenish-button"),
     ], EVERYONE),
   "lists/meals": topic("Meals",
-    "Plan dinners for the week and keep the recipes you cook.",
+    "Plan breakfast, lunch, dinner and snacks for the week and keep the recipes you cook.",
     [
-      action("Choose a dinner for a day.", ".meal-day-actions button"),
-      action("Save a recipe you like.", ".recipe-form input, .meals-recipes-head button"),
+      action("Choose a meal for a day.", ".meal-day-actions button"),
+      action("Press Same as last week to plan this week like the last one.", ".meals-same-as-last"),
+      action("Save a recipe you like. Press its star to keep it in Favourites.", ".recipe-form input, .meals-recipes-head button, .recipe-favourite"),
     ], EVERYONE),
   "lists/mine": topic("Just for me",
     "Your own to-dos and short notes.",

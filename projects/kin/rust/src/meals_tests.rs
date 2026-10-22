@@ -716,3 +716,553 @@ fn kcmd_carries_meals_payloads_and_the_plan_query_is_strict() {
         "no dinner that day"
     );
 }
+
+// ---- Fuller meal plans (#679, ADR 0022 §7): kinds 80–82 -----------------
+
+fn meal(on: u32, slot: MealSlot, recipe: Option<u32>, name: &str) -> EventKind {
+    EventKind::MealSet {
+        date: date(on),
+        slot,
+        recipe_id: recipe.map(|id| RecipeId(numbered_id(id))),
+        name: name.into(),
+    }
+}
+
+fn favourite(id: u32, on: bool) -> EventKind {
+    EventKind::RecipeFavouriteSet {
+        recipe_id: RecipeId(numbered_id(id)),
+        favourite: on,
+    }
+}
+
+#[test]
+fn meal_plan_payloads_round_trip_and_only_canonical_bytes_decode() {
+    let kinds = [
+        meal(20261005, MealSlot::Breakfast, Some(7), "Porridge"),
+        meal(20261005, MealSlot::Lunch, None, "Sandwiches"),
+        meal(20261005, MealSlot::Snack, None, "Apples"),
+        EventKind::MealCleared {
+            date: date(20261005),
+            slot: MealSlot::Snack,
+        },
+        favourite(7, true),
+        favourite(7, false),
+    ];
+    for kind in kinds {
+        let code = crate::codec::kind_code(&kind);
+        assert!(is_meals_code(code) && (MEAL_SET..=RECIPE_FAVOURITE_SET).contains(&code));
+        let payload = encode_payload(&kind).unwrap();
+        assert_eq!(decode_payload(code, &payload).unwrap(), kind);
+        let mut longer = payload.clone();
+        longer.push(0);
+        assert!(decode_payload(code, &longer).is_err());
+    }
+    // Byte layout of kind 80: date, slot word, recipe flag word and ID, name.
+    let payload = encode_payload(&meal(20261005, MealSlot::Lunch, None, "Soup")).unwrap();
+    assert_eq!(
+        payload,
+        [
+            &20261005u32.to_le_bytes()[..],
+            &[2, 0, 0, 0],
+            &[0, 0, 0, 0],
+            &4u16.to_le_bytes(),
+            b"Soup"
+        ]
+        .concat()
+    );
+    // Dinner stays on kinds 61–63: never a slot of kinds 80–81.
+    assert_eq!(
+        encode_payload(&meal(20261005, MealSlot::Dinner, None, "Soup")),
+        Err(KinError::MalformedProtocol)
+    );
+    for slot in [0u8, 3, 5] {
+        let mut bytes = 20261005u32.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&[slot, 0, 0, 0]);
+        assert!(decode_payload(MEAL_CLEARED, &bytes).is_err(), "slot {slot}");
+    }
+    // Reserved bytes, a favourite flag other than 0 or 1, a zero recipe.
+    let mut cleared = 20261005u32.to_le_bytes().to_vec();
+    cleared.extend_from_slice(&[1, 0, 1, 0]);
+    assert!(decode_payload(MEAL_CLEARED, &cleared).is_err());
+    let mut star = numbered_id(7).to_vec();
+    star.extend_from_slice(&[2, 0, 0, 0]);
+    assert!(decode_payload(RECIPE_FAVOURITE_SET, &star).is_err());
+    assert!(encode_payload(&favourite(0, true)).is_err());
+    // Non-canonical names are refused, as for a dinner.
+    assert!(encode_payload(&meal(20261005, MealSlot::Lunch, None, " Soup")).is_err());
+}
+
+#[test]
+fn breakfast_lunch_and_snacks_follow_the_dinner_rules_without_a_cook() {
+    let mut home = Household::new();
+    home.meal(recipe(1, "Porridge", vec![ingredient("Oats")]))
+        .unwrap();
+    home.meal(meal(20261005, MealSlot::Breakfast, Some(1), "Porridge"))
+        .unwrap();
+    home.meal(meal(20261005, MealSlot::Lunch, None, "Leftovers"))
+        .unwrap();
+    home.meal(dinner(20261005, None, "Curry")).unwrap();
+    // The same meal again changes nothing; a recipe needs its current name.
+    assert_eq!(
+        home.meal(meal(20261005, MealSlot::Breakfast, Some(1), "Porridge")),
+        Err(KinError::InvalidEvent)
+    );
+    assert_eq!(
+        home.meal(meal(20261006, MealSlot::Breakfast, Some(1), "Oats")),
+        Err(KinError::InvalidEvent)
+    );
+    assert_eq!(
+        home.meal(meal(20261006, MealSlot::Breakfast, Some(9), "Ghost")),
+        Err(KinError::InvalidEvent),
+        "unknown recipe"
+    );
+    // Clearing a lunch leaves the other meals and the dinner alone.
+    assert_eq!(
+        home.meal(EventKind::MealCleared {
+            date: date(20261005),
+            slot: MealSlot::Snack
+        }),
+        Err(KinError::InvalidEvent),
+        "nothing planned"
+    );
+    home.meal(EventKind::MealCleared {
+        date: date(20261005),
+        slot: MealSlot::Lunch,
+    })
+    .unwrap();
+    let state = home.state();
+    assert_eq!(state.meals.slot_meals.len(), 1);
+    assert_eq!(
+        state
+            .meals
+            .meal(20261005, MealSlot::Breakfast)
+            .unwrap()
+            .name,
+        "Porridge"
+    );
+    assert_eq!(
+        state.meals.meal(20261005, MealSlot::Dinner).unwrap().name,
+        "Curry"
+    );
+    // Clearing dinner (kind 62) leaves breakfast.
+    home.meal(EventKind::DinnerCleared {
+        date: date(20261005),
+    })
+    .unwrap();
+    assert_eq!(home.state().meals.slot_meals.len(), 1);
+    // An archived recipe keeps its planned meal's name and can't be planned.
+    home.meal(EventKind::RecipeArchived {
+        recipe_id: RecipeId(numbered_id(1)),
+    })
+    .unwrap();
+    assert_eq!(
+        home.meal(meal(20261007, MealSlot::Breakfast, Some(1), "Porridge")),
+        Err(KinError::InvalidEvent)
+    );
+    let state = home.state();
+    let kept = state.meals.meal(20261005, MealSlot::Breakfast).unwrap();
+    assert_eq!(state.meals.dinner_name(kept), "Porridge");
+}
+
+#[test]
+fn favourites_toggle_on_active_recipes_and_replay_never_fails() {
+    let mut home = Household::new();
+    home.meal(recipe(1, "Tacos", vec![])).unwrap();
+    assert_eq!(
+        home.meal(favourite(1, false)),
+        Err(KinError::InvalidEvent),
+        "not a favourite yet"
+    );
+    home.meal(favourite(1, true)).unwrap();
+    assert_eq!(home.meal(favourite(1, true)), Err(KinError::InvalidEvent));
+    assert!(home.state().meals.is_favourite(&RecipeId(numbered_id(1))));
+    home.meal(favourite(1, false)).unwrap();
+    assert!(home.state().meals.favourites.is_empty());
+    assert_eq!(
+        home.meal(favourite(2, true)),
+        Err(KinError::InvalidEvent),
+        "unknown recipe"
+    );
+    home.meal(favourite(1, true)).unwrap();
+    home.meal(EventKind::RecipeArchived {
+        recipe_id: RecipeId(numbered_id(1)),
+    })
+    .unwrap();
+    assert_eq!(
+        home.meal(favourite(1, false)),
+        Err(KinError::InvalidEvent),
+        "archived"
+    );
+
+    // Replay: a favourite or a meal naming a recipe the history lacks is
+    // decoded and changes nothing.
+    let events: Vec<EventEnvelope> = [
+        favourite(9, true),
+        meal(20261005, MealSlot::Snack, Some(9), "Ghost"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(n, kind)| {
+        let mut event = EventEnvelope {
+            event_id: EventId(numbered_id(n as u32 + 1)),
+            household_id: HouseholdId(HOUSEHOLD),
+            actor_id: ActorId(ADULT),
+            device_id: DeviceId([0x11; 16]),
+            timestamp: 1_791_475_200_000,
+            logical_time: n as u64 + 1,
+            event_version: 1,
+            kind,
+            canonical_bytes: Vec::new(),
+        };
+        event.canonical_bytes = encode_event(&event).unwrap();
+        event
+    })
+    .collect();
+    let state = rebuild(&events, 1_791_475_200_100, date(TEST_DATE)).unwrap();
+    assert!(state.meals.favourites.is_empty() && state.meals.slot_meals.is_empty());
+}
+
+#[test]
+fn two_devices_planning_the_same_lunch_offline_converge_on_the_last_event() {
+    let first = execute(
+        &C::Meal(meal(20261005, MealSlot::Lunch, None, "Soup")),
+        context(1, ADULT, 0x11, 5),
+        request(&[]),
+    )
+    .unwrap()
+    .event;
+    let second = execute(
+        &C::Meal(meal(20261005, MealSlot::Lunch, None, "Salad")),
+        context(2, KID, 0x22, 5),
+        request(&[]),
+    )
+    .unwrap()
+    .event;
+    for order in [
+        [first.clone(), second.clone()],
+        [second.clone(), first.clone()],
+    ] {
+        let mut events = order.to_vec();
+        events.sort_by_key(|event| (event.logical_time, event.event_id));
+        let state = rebuild(&events, 1_791_475_200_100, date(TEST_DATE)).unwrap();
+        assert_eq!(
+            state.meals.meal(20261005, MealSlot::Lunch).unwrap().name,
+            "Salad"
+        );
+    }
+}
+
+#[test]
+fn the_week_plan_covers_every_slot_once_per_recipe_and_text() {
+    let mut home = Household::new();
+    home.run(add_item(1, "Milk", ItemClassification::Staple))
+        .unwrap();
+    home.run(add_item(2, "Bread", ItemClassification::Shopping))
+        .unwrap();
+    home.meal(recipe(
+        1,
+        "Porridge",
+        vec![ingredient("Oats"), linked("Milk", 1)],
+    ))
+    .unwrap();
+    home.meal(recipe(
+        2,
+        "Sandwiches",
+        vec![ingredient("Bread"), ingredient("Cheese")],
+    ))
+    .unwrap();
+    home.meal(recipe(
+        3,
+        "Mac and cheese",
+        vec![ingredient("cheese"), ingredient("Pasta")],
+    ))
+    .unwrap();
+    home.meal(recipe(4, "Fruit", vec![ingredient("Apples")]))
+        .unwrap();
+    // Monday 5 October to Sunday 11 October, plus one meal outside it.
+    home.meal(meal(20261005, MealSlot::Breakfast, Some(1), "Porridge"))
+        .unwrap();
+    home.meal(meal(20261006, MealSlot::Breakfast, Some(1), "Porridge"))
+        .unwrap();
+    home.meal(meal(20261005, MealSlot::Lunch, Some(2), "Sandwiches"))
+        .unwrap();
+    home.meal(dinner(20261007, Some(3), "Mac and cheese"))
+        .unwrap();
+    home.meal(meal(20261008, MealSlot::Snack, None, "Biscuits"))
+        .unwrap();
+    home.meal(meal(20261012, MealSlot::Snack, Some(4), "Fruit"))
+        .unwrap();
+    let state = home.state();
+    let plan = state
+        .meals
+        .shopping_plan(PlanSource::Week(date(20261005)), &state.items)
+        .unwrap();
+    let summary: Vec<(PlanOutcome, &str)> = plan
+        .iter()
+        .map(|line| (line.outcome, line.text.as_str()))
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            (PlanOutcome::Add, "Oats"),
+            (PlanOutcome::ReaddStaple, "Milk"),
+            (PlanOutcome::AlreadyOnShopping, "Bread"),
+            // "cheese" from the dinner is the same text: counted once.
+            (PlanOutcome::Add, "Cheese"),
+            (PlanOutcome::Add, "Pasta"),
+        ]
+    );
+    // One slot's meal, and a one-off meal has nothing to plan.
+    let lunch = state
+        .meals
+        .shopping_plan(
+            PlanSource::Meal(date(20261005), MealSlot::Lunch),
+            &state.items,
+        )
+        .unwrap();
+    assert_eq!(lunch.len(), 2);
+    assert_eq!(
+        state.meals.shopping_plan(
+            PlanSource::Meal(date(20261008), MealSlot::Snack),
+            &state.items
+        ),
+        Err(KinError::InvalidEvent)
+    );
+    // Dinner by slot is the same as by date.
+    assert_eq!(
+        state.meals.shopping_plan(
+            PlanSource::Meal(date(20261007), MealSlot::Dinner),
+            &state.items
+        ),
+        state
+            .meals
+            .shopping_plan(PlanSource::Dinner(date(20261007)), &state.items)
+    );
+    // A week with nothing to cook plans nothing, without an error.
+    assert_eq!(
+        state
+            .meals
+            .shopping_plan(PlanSource::Week(date(20261019)), &state.items),
+        Ok(vec![])
+    );
+}
+
+#[test]
+fn kmls_v2_lists_every_slot_and_favourites_while_v1_keeps_dinners_only() {
+    let mut home = Household::new();
+    home.meal(recipe(1, "Porridge", vec![ingredient("Oats")]))
+        .unwrap();
+    home.meal(recipe(2, "Tacos", vec![])).unwrap();
+    home.meal(favourite(2, true)).unwrap();
+    home.meal(dinner(20261005, Some(2), "Tacos")).unwrap();
+    home.meal(EventKind::DinnerCookSet {
+        date: date(20261005),
+        member_id: Some(ActorId(KID)),
+    })
+    .unwrap();
+    home.meal(meal(20261005, MealSlot::Snack, None, "Apples"))
+        .unwrap();
+    home.meal(meal(20261005, MealSlot::Breakfast, Some(1), "Porridge"))
+        .unwrap();
+    home.meal(meal(20260828, MealSlot::Lunch, None, "Too old"))
+        .unwrap();
+    let state = home.state();
+
+    // v1 is what it was: one dinner, no favourite flag.
+    let v1 = encode_meals(&state.meals, &state.items, date(TEST_DATE)).unwrap();
+    assert_eq!(u16::from_le_bytes([v1[4], v1[5]]), 1);
+    assert_eq!(u32::from_le_bytes(v1[12..16].try_into().unwrap()), 1);
+
+    let bytes = encode_meal_plans(&state.meals, &state.items, date(TEST_DATE)).unwrap();
+    assert_eq!(&bytes[..4], b"KMLS");
+    assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 2);
+    assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 2);
+    assert_eq!(
+        u32::from_le_bytes(bytes[12..16].try_into().unwrap()),
+        3,
+        "breakfast, dinner and snack in the window"
+    );
+    // Recipe 1: not a favourite; one ingredient; notes.
+    let mut at = 16 + 16;
+    let len = usize::from(u16::from_le_bytes([bytes[at], bytes[at + 1]]));
+    at += 2 + len;
+    assert_eq!(bytes[at..at + 4], [1, 0, 0, 0]);
+    at += 4 + 20;
+    let len = usize::from(u16::from_le_bytes([bytes[at], bytes[at + 1]]));
+    at += 2 + len + 2;
+    // Recipe 2: a favourite with no ingredients.
+    assert_eq!(bytes[at..at + 16], numbered_id(2));
+    at += 16;
+    let len = usize::from(u16::from_le_bytes([bytes[at], bytes[at + 1]]));
+    at += 2 + len;
+    assert_eq!(bytes[at..at + 4], [0, 1, 0, 0]);
+    at += 4 + 2;
+    // Meals by date then slot: breakfast (recipe), dinner (recipe, cook), snack.
+    let mut slots = Vec::new();
+    while at < bytes.len() {
+        assert_eq!(
+            u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()),
+            20261005
+        );
+        slots.push((bytes[at + 4], bytes[at + 5]));
+        if bytes[at + 4] == 3 {
+            assert_eq!(bytes[at + 24..at + 40], KID);
+        } else {
+            assert_eq!(bytes[at + 24..at + 40], [0; 16]);
+        }
+        at += 40;
+        let len = usize::from(u16::from_le_bytes([bytes[at], bytes[at + 1]]));
+        at += 2 + len;
+    }
+    assert_eq!(slots, vec![(1, 0b01), (3, 0b11), (4, 0b00)]);
+    assert_eq!(at, bytes.len());
+}
+
+#[test]
+fn kmpq_v2_plans_a_slot_or_a_week_and_v1_stays_strict() {
+    let mut history = History::default();
+    let query = |version: u16, source: u8, slot: u8, recipe: [u8; 16], on: u32| {
+        let mut bytes = b"KMPQ".to_vec();
+        bytes.extend_from_slice(&version.to_le_bytes());
+        bytes.extend_from_slice(&[0, 0, source, slot, 0, 0]);
+        bytes.extend_from_slice(&recipe);
+        bytes.extend_from_slice(&on.to_le_bytes());
+        bytes.extend_from_slice(&kine(&[], 0, TEST_DATE, None)[..]);
+        bytes
+    };
+    // Sources 3 and 4 need version 2; v1 never takes a slot.
+    assert_eq!(
+        meal_shopping_plan(&query(1, 4, 0, [0; 16], 20261005), &mut history),
+        Err(KinError::MalformedProtocol)
+    );
+    assert_eq!(
+        meal_shopping_plan(&query(1, 2, 1, [0; 16], 20261005), &mut history),
+        Err(KinError::MalformedProtocol)
+    );
+    assert_eq!(
+        meal_shopping_plan(&query(3, 4, 0, [0; 16], 20261005), &mut history),
+        Err(KinError::UnsupportedVersion)
+    );
+    // A slot must be 1–4 for source 3 and zero otherwise.
+    for slot in [0, 5] {
+        assert_eq!(
+            meal_shopping_plan(&query(2, 3, slot, [0; 16], 20261005), &mut history),
+            Err(KinError::MalformedProtocol)
+        );
+    }
+    assert_eq!(
+        meal_shopping_plan(&query(2, 4, 1, [0; 16], 20261005), &mut history),
+        Err(KinError::MalformedProtocol)
+    );
+    assert_eq!(
+        meal_shopping_plan(&query(2, 4, 0, [0; 16], 99991230), &mut history),
+        Err(KinError::MalformedProtocol),
+        "no seven days left"
+    );
+    assert_eq!(
+        meal_shopping_plan(&query(2, 3, 2, [0; 16], 20261005), &mut history),
+        Err(KinError::InvalidEvent),
+        "no lunch that day"
+    );
+    // An empty week is an empty KMSP v1 plan.
+    let plan = meal_shopping_plan(&query(2, 4, 0, [0; 16], 20261005), &mut history).unwrap();
+    assert_eq!(plan, [&b"KMSP"[..], &[1, 0, 0, 0], &[0, 0, 0, 0]].concat());
+    // A v2 recipe query reads as v1 did.
+    assert_eq!(
+        meal_shopping_plan(&query(2, 1, 0, numbered_id(1), 0), &mut history),
+        Err(KinError::InvalidEvent)
+    );
+}
+
+#[test]
+fn kcmd_carries_the_meal_plan_kinds() {
+    for kind in [
+        meal(20261005, MealSlot::Snack, None, "Apples"),
+        EventKind::MealCleared {
+            date: date(20261005),
+            slot: MealSlot::Breakfast,
+        },
+        favourite(4, true),
+    ] {
+        let code = crate::codec::kind_code(&kind);
+        let payload = encode_payload(&kind).unwrap();
+        let mut packet = vec![0u8; 128];
+        packet[..4].copy_from_slice(b"KCMD");
+        packet[4..6].copy_from_slice(&1u16.to_le_bytes());
+        packet[8..10].copy_from_slice(&code.to_le_bytes());
+        packet[12..28].copy_from_slice(&numbered_id(1));
+        packet[28..44].copy_from_slice(&HOUSEHOLD);
+        packet[44..60].copy_from_slice(&ADULT);
+        packet[60..76].copy_from_slice(&[0x11; 16]);
+        packet[76..84].copy_from_slice(&1_791_475_200_000i64.to_le_bytes());
+        packet[84..92].copy_from_slice(&1u64.to_le_bytes());
+        packet[124..128].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        packet.extend_from_slice(&payload);
+        let (command, _) = decode_command(&packet).unwrap();
+        assert_eq!(command, C::Meal(kind));
+    }
+}
+
+fn hex(text: &str) -> Vec<u8> {
+    let digits: String = text.split_whitespace().collect();
+    (0..digits.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&digits[at..at + 2], 16).unwrap())
+        .collect()
+}
+
+/// TEST-VECTORS 180–182 and 184–185, written out by hand.
+#[test]
+fn meal_plan_test_vectors() {
+    // 180: lunch on 2026-10-05, one-off "Soup"; breakfast from recipe 7.
+    assert_eq!(
+        encode_payload(&meal(20261005, MealSlot::Lunch, None, "Soup")).unwrap(),
+        hex("8d283501 02000000 00000000 0400 536f7570")
+    );
+    assert_eq!(
+        encode_payload(&meal(20261005, MealSlot::Breakfast, Some(7), "Porridge")).unwrap(),
+        hex("8d283501 01000000 01000000 07000000000000000000000000000000 0800 506f727269646765")
+    );
+    // 181: the snack on 2026-10-05 cleared.
+    assert_eq!(
+        encode_payload(&EventKind::MealCleared {
+            date: date(20261005),
+            slot: MealSlot::Snack
+        })
+        .unwrap(),
+        hex("8d283501 04000000")
+    );
+    // 182: recipe 7 a favourite, then not.
+    assert_eq!(
+        encode_payload(&favourite(7, true)).unwrap(),
+        hex("07000000000000000000000000000000 01000000")
+    );
+    assert_eq!(
+        encode_payload(&favourite(7, false)).unwrap(),
+        hex("07000000000000000000000000000000 00000000")
+    );
+
+    // 184: KMLS v2 with recipe 7 "Oats" (a favourite, no ingredients) and a
+    // breakfast of it on 2026-10-05.
+    let mut home = Household::new();
+    home.meal(recipe(7, "Oats", vec![])).unwrap();
+    home.meal(favourite(7, true)).unwrap();
+    home.meal(meal(20261005, MealSlot::Breakfast, Some(7), "Oats"))
+        .unwrap();
+    let state = home.state();
+    assert_eq!(
+        encode_meal_plans(&state.meals, &state.items, date(TEST_DATE)).unwrap(),
+        hex(concat!(
+            "4b4d4c53 0200 0000 01000000 01000000",
+            "07000000000000000000000000000000 0400 4f617473 00010000 0000",
+            "8d283501 01 01 0000 07000000000000000000000000000000",
+            "00000000000000000000000000000000 0400 4f617473"
+        ))
+    );
+    // An empty history.
+    let empty = Household::new().state();
+    assert_eq!(
+        encode_meal_plans(&empty.meals, &empty.items, date(TEST_DATE)).unwrap(),
+        hex("4b4d4c53 0200 0000 00000000 00000000")
+    );
+}

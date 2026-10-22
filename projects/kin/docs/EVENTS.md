@@ -442,6 +442,37 @@ Nothing here is counted or compared: who cooked is never totalled. Meals are
 not part of the KINS projection; hosts read them through `kin_meals` and plan
 Shopping additions through `kin_meal_shopping_plan`.
 
+### Fuller meal plans (kinds 80–82)
+
+Kinds 80–82 (#679, [ADR 0022](decisions/0022-family-hub.md) §7) are schema 1
+events in the household history, with the same rules as the meals kinds above.
+Dinner keeps kinds 61–63, so every dinner planned before them stays valid;
+the slot byte of kinds 80–81 is 1 breakfast, 2 lunch or 4 snack, and 3
+(dinner) is malformed there.
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 80 | `MEAL_SET` | The breakfast, lunch or snack for one civil date: a recipe with its name when planned, or a one-off name (1–80 characters) |
+| 81 | `MEAL_CLEARED` | That date has no meal in that slot |
+| 82 | `RECIPE_FAVOURITE_SET` | A recipe is a favourite, or no longer one |
+
+Replay never fails on a decoded event:
+
+- One meal per date and slot: the latest `MEAL_SET` in replay order wins, as
+  for dinners. A breakfast, lunch or snack has no cook.
+- A favourite is a flag per recipe; the latest event wins. A meal or
+  favourite naming a recipe the history lacks changes nothing.
+- Clearing a dinner (kind 62) leaves the other meals of that date, and the
+  other way round.
+- Commands: a meal names an active recipe by its current name, a favourite
+  names an active recipe, and every change must change something.
+
+Hosts read every slot and the favourites through `kin_meal_plans` (KMLS v2);
+`kin_meals` (KMLS v1) still lists dinners only. "Add this week's ingredients
+to Shopping" is a KMPQ v2 query over every meal with a recipe in the week.
+Devices from before this addition pause household sync with "unsupported"
+("update Kin") and keep their data until they update.
+
 ## Item pictures (Simple view)
 
 Kind 64 (#344, [ADR 0013](decisions/0013-simple-view.md)) is a schema 1 event
