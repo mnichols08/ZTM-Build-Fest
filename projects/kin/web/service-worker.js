@@ -18,7 +18,7 @@ const SHELL = [
   ...["add-shopping", "add-task", "new-journal-entry", "week", "shopping", "chat", "today"].flatMap((name) => [96, 192].map((size) => `/icons/shortcut-${name}-${size}.png`)),
   // The start-up guard index.html runs before the app's modules (#594).
   "/boot-guard.js",
-  "/browser-time.js", "/sitter-view.js", "/platform.js", "/pairing-link.js", "/share-target.js", "/app-badge.js", "/device-link.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin-board.js", "/wasm/kin-meals.js", "/wasm/kin-simple.js", "/wasm/kin-sections.js", "/wasm/kin-rotations.js", "/wasm/kin-sitter.js", "/wasm/kin-week.js", "/wasm/kin_engine.wasm", "/wasm/kin-qr.js", "/wasm/kin-private.js", "/wasm/kin-prefs.js",
+  "/browser-time.js", "/sitter-view.js", "/platform.js", "/pairing-link.js", "/share-target.js", "/app-badge.js", "/device-link.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin-board.js", "/wasm/kin-meals.js", "/wasm/kin-simple.js", "/wasm/kin-sections.js", "/wasm/kin-rotations.js", "/wasm/kin-sitter.js", "/wasm/kin-calendar.js", "/wasm/kin-week.js", "/wasm/kin_engine.wasm", "/wasm/kin-qr.js", "/wasm/kin-private.js", "/wasm/kin-prefs.js",
   "/wasm/wire.js", "/wasm/history-mirror.js", "/wasm/projection-decode.js", "/wasm/projection/reader.js", "/wasm/projection/items.js",
   "/wasm/projection/conversations.js", "/wasm/projection/routines.js", "/wasm/projection/records.js",
   "/routes.js", "/today-view.js", "/reminder-time.js", "/capture-plan.js", "/keyboard-commands.js", "/bulk-actions.js", "/undo.js", "/import/list-import.js", "/wake-lock.js", "/recurrence.js",

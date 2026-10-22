@@ -7,6 +7,31 @@ documentation only.
 
 ## Unreleased
 
+### Added
+
+- **Family calendar events in the engine** (#656: #657, #658, #659; epic
+  #651, [ADR 0022](docs/decisions/0022-family-hub.md) §1). Event kinds 71
+  `CALENDAR_EVENT_SAVED`, 72 `CALENDAR_EVENT_CANCELLED`, 73
+  `CALENDAR_EVENT_RESTORED` and 74 `MEMBER_COLOUR_SET` (KCMD actions 71–74):
+  all-day or timed events with a local time and an IANA zone, a place,
+  notes, attendees, a countdown flag and a source UID; repeats (daily,
+  weekly on chosen days, monthly or yearly by day or nth weekday, with an
+  interval and a count or end date) expanded in local civil time in Rust;
+  cancelling and restoring one occurrence or the series; a changed
+  occurrence as a linked standalone event; each member's palette colour.
+  `kin_calendar_range` (KCAQ → KCAL) reads up to 400 days, merging event
+  occurrences with dated items, routines and meals, the next countdown and
+  member colours. JavaScript: `web/wasm/kin-calendar.js`,
+  `engine.calendarRange`, the four commands and the store's
+  `calendarRange`, `memberColours` and `parseICalendar`. No views yet.
+- **iCalendar import in the engine** (#666; ADR 0022 §3). A native RFC 5545
+  subset parser (`rust/src/ical.rs`, `kin_ical_parse` → KICS) for Google,
+  Apple and Outlook exports: unfolding, escapes, DATE and DATE-TIME with
+  TZID (IANA, Windows names), `Z` or floating times, DURATION, RRULE mapped
+  onto Kin's repeats (the first occurrence only, flagged, when it can't
+  be), EXDATE, RECURRENCE-ID overrides and STATUS:CANCELLED; at most 2 MB
+  and 5,000 events. `engine.parseICalendar(bytes)`.
+
 ## v1.6.0 — Kin for Everyone
 
 Released 2026-10-21 as `kin-v1.6.0`. This minor release makes Kin easier for
