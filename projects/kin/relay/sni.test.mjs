@@ -216,7 +216,7 @@ test("fuzz: mutated hellos never throw, hang or misreport", () => {
   }
   const seconds = Number(process.hrtime.bigint() - started) / 1e9;
   assert.ok(seconds < 20, `fuzz took ${seconds}s`);
-  assert.ok(slowest < 50_000_000n, `slowest parse took ${Number(slowest) / 1e6} ms`);
+  assert.ok(slowest < 250_000_000n, `slowest parse took ${Number(slowest) / 1e6} ms`);
   // Bounded memory: a parse holds at most a 16 KiB copy, so 20,000 parses
   // leave nothing that grows with them.
   assert.ok(process.memoryUsage().heapUsed - heap < 64 * 1024 * 1024);

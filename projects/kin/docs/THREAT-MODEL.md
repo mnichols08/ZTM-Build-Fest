@@ -353,7 +353,8 @@ The Play app is a Trusted Web Activity: it opens
 
 ## Unreleased (Kin at home, ADR 0025): the home server and the connection relay
 
-**Planned, not built.** [ADR 0025](decisions/0025-kin-at-home.md) (epic #708)
+**Partly built.** The connection relay is built in `relay/` (#728) and not yet
+deployed; the home server's side is not built. [ADR 0025](decisions/0025-kin-at-home.md) (epic #708)
 decides a home server reached through a **connection relay**: a cloud
 program that reads only the server name (SNI) from each TLS ClientHello and
 splices the still-encrypted bytes to the home server over a tunnel the home

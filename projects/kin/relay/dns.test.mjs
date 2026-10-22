@@ -1,0 +1,99 @@
+// The relay's authoritative DNS (ADR 0025 §4, §5): answers by hand-built
+// query, and over UDP and TCP through Node's own resolver.
+import assert from "node:assert/strict";
+import { Resolver } from "node:dns/promises";
+import { once } from "node:events";
+import { connect } from "node:net";
+import test from "node:test";
+import { Rcode, Type, answerQuery, createDnsServer, encodeName, zoneConfig } from "./dns.mjs";
+
+const config = zoneConfig({ zone: "home.test", relayName: "relay.home.test", addresses: ["192.0.2.10", "2001:db8::10"], serial: 2026102201 });
+const registry = new Map([
+  ["smith.home.test", { routed: true, caaAccountUri: "https://acme.test/acct/7" }],
+  ["jones.home.test", { routed: true, caaAccountUri: null }],
+]);
+const lookup = (name) => registry.get(name) ?? { routed: false, caaAccountUri: null };
+
+function query(name, type, { id = 0x1234, flags = 0x0100, qdcount = 1, klass = 1 } = {}) {
+  const header = Buffer.alloc(12);
+  header.writeUInt16BE(id, 0);
+  header.writeUInt16BE(flags, 2);
+  header.writeUInt16BE(qdcount, 4);
+  const tail = Buffer.alloc(4);
+  tail.writeUInt16BE(type, 0);
+  tail.writeUInt16BE(klass, 2);
+  return Buffer.concat([header, encodeName(name), tail]);
+}
+const parse = (response) => ({
+  id: response.readUInt16BE(0), flags: response.readUInt16BE(2), rcode: response.readUInt16BE(2) & 0xf,
+  aa: Boolean(response.readUInt16BE(2) & 0x0400), tc: Boolean(response.readUInt16BE(2) & 0x0200), ra: Boolean(response.readUInt16BE(2) & 0x0080),
+  answers: response.readUInt16BE(6), authority: response.readUInt16BE(8),
+});
+const ask = (name, type, options) => parse(answerQuery(query(name, type, options), config, lookup));
+
+test("routed names: A/AAAA are the relay's addresses; CAA names the household's ACME account; never HTTPS", () => {
+  assert.deepEqual(ask("smith.home.test", Type.A), { id: 0x1234, flags: 0x8500, rcode: 0, aa: true, tc: false, ra: false, answers: 1, authority: 0 });
+  assert.equal(ask("smith.home.test", Type.AAAA).answers, 1);
+  assert.equal(ask("smith.home.test", Type.CAA).answers, 2, "issue with accounturi, and issuewild \";\"");
+  const nodata = ask("smith.home.test", Type.HTTPS);
+  assert.equal(nodata.rcode, Rcode.NOERROR);
+  assert.equal(nodata.answers, 0, "no HTTPS record, so no ECH configuration");
+  assert.equal(nodata.authority, 1, "NODATA carries the SOA");
+  assert.equal(ask("jones.home.test", Type.CAA).answers, 0, "no account set: CAA falls back to the zone's issue \";\"");
+  assert.equal(ask("smith.home.test", Type.TXT).answers, 0);
+});
+
+test("unrouted names are NXDOMAIN; the apex has SOA, NS and CAA 0 issue \";\"", () => {
+  assert.equal(ask("nobody.home.test", Type.A).rcode, Rcode.NXDOMAIN);
+  assert.equal(ask("a.smith.home.test", Type.A).rcode, Rcode.NXDOMAIN, "nothing below a name");
+  assert.equal(ask("home.test", Type.SOA).answers, 1);
+  assert.equal(ask("home.test", Type.NS).answers, 2);
+  const apexCaa = answerQuery(query("home.test", Type.CAA), config, lookup);
+  assert.ok(apexCaa.includes(Buffer.from([0, 5, ...Buffer.from("issue;")])), "0 issue \";\"");
+  assert.equal(ask("home.test", Type.A).answers, 0);
+  assert.equal(ask("ns1.home.test", Type.A).answers, 1, "in-zone name servers resolve to the relay");
+  assert.equal(ask("relay.home.test", Type.AAAA).answers, 1);
+});
+
+test("outside the zone, other classes, opcodes and malformed queries", () => {
+  const outside = ask("example.org", Type.A);
+  assert.equal(outside.rcode, Rcode.REFUSED);
+  assert.equal(outside.aa, false);
+  assert.equal(ask("smith.home.test", Type.A, { klass: 3 }).rcode, Rcode.REFUSED);
+  assert.equal(ask("smith.home.test", Type.A, { flags: 0x0800 }).rcode, Rcode.NOTIMP);
+  assert.equal(ask("smith.home.test", Type.A, { qdcount: 2 }).rcode, Rcode.FORMERR);
+  assert.equal(answerQuery(query("smith.home.test", Type.A, { flags: 0x8000 }), config, lookup), null, "responses are never answered");
+  assert.equal(answerQuery(Buffer.alloc(5), config, lookup), null);
+  const pointer = Buffer.concat([query("x", Type.A).subarray(0, 12), Buffer.from([0xc0, 0x0c, 0, 1, 0, 1])]);
+  assert.equal(parse(answerQuery(pointer, config, lookup)).rcode, Rcode.FORMERR);
+  // 0x20 case is echoed and still answered.
+  const mixed = answerQuery(query("SmItH.HoMe.TeSt", Type.A), config, lookup);
+  assert.equal(parse(mixed).answers, 1);
+  assert.ok(mixed.includes(Buffer.from("SmItH")));
+});
+
+test("over UDP and TCP with Node's resolver", async () => {
+  const server = await createDnsServer({ host: "127.0.0.1", port: 0, config, lookup });
+  try {
+    const resolver = new Resolver({ timeout: 2000, tries: 1 });
+    resolver.setServers([`127.0.0.1:${server.udpPort}`]);
+    assert.deepEqual(await resolver.resolve4("smith.home.test"), ["192.0.2.10"]);
+    assert.deepEqual(await resolver.resolve6("smith.home.test"), ["2001:db8::10"]);
+    const caa = await resolver.resolveCaa("smith.home.test");
+    assert.deepEqual(caa.map((entry) => entry.issue ?? entry.issuewild).sort(), [";", "letsencrypt.org; accounturi=https://acme.test/acct/7; validationmethods=tls-alpn-01"].sort());
+    assert.deepEqual((await resolver.resolveNs("home.test")).sort(), ["ns1.home.test", "ns2.home.test"]);
+    assert.equal((await resolver.resolveSoa("home.test")).serial, 2026102201);
+    await assert.rejects(resolver.resolve4("nobody.home.test"), (error) => error.code === "ENOTFOUND");
+    // TCP: a length-prefixed query.
+    const socket = connect(server.tcpPort, "127.0.0.1");
+    await once(socket, "connect");
+    const message = query("smith.home.test", Type.A);
+    const prefix = Buffer.alloc(2);
+    prefix.writeUInt16BE(message.length);
+    socket.write(Buffer.concat([prefix, message]));
+    const [chunk] = await once(socket, "data");
+    assert.equal(chunk.readUInt16BE(0), chunk.length - 2);
+    assert.equal(parse(chunk.subarray(2)).answers, 1);
+    socket.destroy();
+  } finally { await server.close(); }
+});

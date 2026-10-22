@@ -13,6 +13,7 @@ import test from "node:test";
 import { connect } from "node:tls";
 import { Code, ControlOp, encodeData, encodeFrame, keyHash, keyHashText, rawEd25519PublicKey, signEd25519, transferMessage } from "./ktun.mjs";
 import { ConnectionRelay } from "./relay.mjs";
+import { Registry } from "./registry.mjs";
 import { UNRECOGNIZED_NAME_ALERT } from "./sni.mjs";
 import { chromeLike, echOuter, records } from "./test-support/client-hello.mjs";
 import { FakeHome } from "./test-support/fake-home.mjs";
@@ -490,4 +491,31 @@ test("port 80 redirects to https and forwards nothing", async () => {
     assert.equal(bad.statusCode, 400);
     bad.resume();
   } finally { await relay.close(); }
+});
+
+test("the daily sweep frees names that never got a certificate and rechecks own domains", async () => {
+  const clock = { now: Date.now() };
+  const seen = new Map([["brown.home.test", true], ["smith.home.test", false], ["jones.home.test", null]]);
+  const txt = new Map();
+  const registry = new Registry({ zone: "home.test", now: () => clock.now, newNamesPerWeek: 0 });
+  const relay = await startRelay({ registry, certificateSeen: async (name) => seen.get(name), resolveTxt: async (name) => txt.get(name) ?? [] });
+  const servers = [home(relay), home(relay), home(relay)];
+  try {
+    for (const server of servers) await server.connect();
+    const [smith, brown, jones] = servers;
+    assert.equal((await smith.control(ControlOp.CLAIM, { name: "smith.home.test" })).status, Code.NONE);
+    assert.equal((await brown.control(ControlOp.CLAIM, { name: "brown.home.test" })).status, Code.NONE);
+    assert.equal((await jones.control(ControlOp.CLAIM, { name: "jones.home.test" })).status, Code.NONE);
+    txt.set("_kin-relay.kin.family.test", [[keyHashText(brown.publicKey)]]);
+    assert.equal((await brown.control(ControlOp.ADD_DOMAIN, { name: "kin.family.test" })).status, Code.NONE);
+    clock.now += 7 * 86_400_000;
+    txt.delete("_kin-relay.kin.family.test");
+    await relay.dailySweep();
+    await waitFor(() => smith.names.length === 0, "smith's uncertified name to be freed");
+    assert.equal(registry.keyOf("smith.home.test"), null, "freed, not retired: it may be claimed again");
+    assert.ok(registry.keyOf("brown.home.test"), "a name with a certificate stays");
+    assert.ok(registry.keyOf("jones.home.test"), "when CT can't tell, nothing is freed");
+    assert.deepEqual(brown.names, ["brown.home.test"], "the domain whose TXT record went away no longer routes");
+    assert.equal(relay.stats().addressesHeld > 0, true);
+  } finally { for (const server of servers) server.close(); await relay.close(); registry.close(); }
 });
