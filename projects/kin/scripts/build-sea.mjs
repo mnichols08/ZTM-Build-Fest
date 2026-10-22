@@ -323,6 +323,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } catch (error) {
     if (!(error instanceof BuildSeaError) && !["ServiceHostBuildError", "ElfInjectError", "MachOInjectError", "PeInjectError", "CodeSignatureError", "FuseError", "NodeReleaseError"].includes(error?.name)) throw error;
     console.error(error.message);
+    // In CI the stack says which step failed (#747: diagnosing from a
+    // runner's annotations).
+    if (process.env.GITHUB_ACTIONS === "true") console.error(error.stack);
     process.exitCode = 1;
   }
 }

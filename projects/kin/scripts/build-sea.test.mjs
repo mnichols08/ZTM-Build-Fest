@@ -65,6 +65,19 @@ test("the build takes all five targets and refuses unknown or repeated ones", { 
     assert.throws(() => parseBuildArguments(argv), (error) => error instanceof BuildSeaError && message.test(error.message), argv.join(" "));
 });
 
+test("every file built into the executable keeps LF endings in any checkout (.gitattributes)", { timeout: 60_000 }, (t) => {
+  // Otherwise a Windows checkout with core.autocrlf builds a different
+  // executable from Linux and macOS (#748).
+  const wasm = join(temporary(t), "engine.wasm");
+  writeFileSync(wasm, WASM);
+  const paths = collectAppFiles({ wasm }).map(({ path }) => path).filter((path) => path !== "web/wasm/kin_engine.wasm");
+  const result = spawnSync("git", ["check-attr", "--stdin", "eol"], { cwd: PROJECT_ROOT, input: paths.join("\n"), encoding: "utf8", timeout: 30_000 });
+  if (result.error || result.status !== 0) { t.skip("git isn't available here"); return; }
+  const lines = result.stdout.trim().split(/\r?\n/);
+  assert.equal(lines.length, paths.length);
+  for (const line of lines) assert.match(line, /: eol: lf$/, line);
+});
+
 test("the executable holds the server, the web app, package.json and the engine, not tests", { timeout: 60_000 }, (t) => {
   const wasm = join(temporary(t), "engine.wasm");
   writeFileSync(wasm, WASM);
