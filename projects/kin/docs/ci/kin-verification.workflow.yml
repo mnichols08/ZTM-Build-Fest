@@ -431,3 +431,51 @@ jobs:
           echo "health: $status"
           test "$(docker inspect -f '{{.Config.User}}' kin-home)" = "65532:65532"
           test "$status" = healthy
+
+  # Kin's Windows service host (tools/kin-service-host, #749), Rust std only.
+  # On both systems it is formatted, linted and unit-tested (on Linux, the
+  # parts that don't need Windows); on Windows its release build is kept and
+  # run as a real Windows service: started, a failed child restarted, stopped
+  # gracefully, and a child that ignores the stop ended after the timeout.
+  service-host:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: projects/kin/tools/kin-service-host
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install 1.93.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
+          rustup default 1.93.0
+      - name: Format, lint and test
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+      - name: Build the release host
+        if: runner.os == 'Windows'
+        run: cargo build --locked --release
+      - name: Run it as a Windows service
+        if: runner.os == 'Windows'
+        working-directory: projects/kin
+        run: node scripts/service-host-smoke.mjs tools/kin-service-host/target/release/kin-service-host.exe
+      - name: Keep the host
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kin-service-host-windows-x64
+          path: projects/kin/tools/kin-service-host/target/release/kin-service-host.exe
+          if-no-files-found: error
+          retention-days: 7
