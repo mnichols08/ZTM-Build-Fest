@@ -500,24 +500,25 @@ KINS projection snapshot.
 
 ### 8. Feature-switch bits
 
-- **Bit 18: Custom lists. Bit 19: Inventory.** As with event kinds, they
-  move up if ADR 0023 takes these bits first.
+- **Bit 19: Custom lists. Bit 20: Inventory.** Bit 18 is Add-ons in
+  ADR 0023. As with event kinds, they move up if other work takes these
+  bits first.
 - Your own words and templates are not a switch: they are part of
   Household › Features for admins.
 - **Off by default.** Most families don't need these, and an empty page in
   every household's Lists would be clutter. Today a new bit means on, so:
-  - the service's migration sets bits 18 and 19 in `features_off` for every
+  - the service's migration sets bits 19 and 20 in `features_off` for every
     household, and new households start with them set;
   - `/api/sync/status` gains `features.known`, the mask of bits this service
-    knows. A device treats bits 18 and later that the service doesn't know
+    knows. A device treats bits 19 and later that the service doesn't know
     as off. So an older server never makes these features appear by
     accident.
 
 ### 9. Server changes
 
-- One additive schema step (30, or the next free after ADR 0023) with a
+- One additive schema step (the next free one: 30, or 31 if ADR 0023 ships first) with a
   forward migration: no new columns, only the `features_off` update above.
-- `HOUSEHOLD_FEATURE_BITS` gains bits 18 and 19, and the status response
+- `HOUSEHOLD_FEATURE_BITS` gains bits 19 and 20, and the status response
   gains `features.known`.
 - Nothing else. Words, lists, entries and inventory are ordinary encrypted
   envelopes. Option B in section 4 would change `identity-limits.mjs`.
@@ -571,8 +572,8 @@ KINS projection snapshot.
 | --- | --- | --- |
 | 0 | Owner decisions: section 4 and the open questions below | — |
 | 1 | Your own words and templates: kind 83, `web/words.js`, `web/templates.js`, Help and search aliases, the Features page editor | — |
-| 2 | Custom lists: kinds 84–87, bit 18 with `features.known` and the server schema step, Today, assignment, search, reminders target 3, CSV export | 1 (for template suggestions) |
-| 3 | Inventory: kinds 88–91, bit 19, Running low on Shopping, `BarcodeDetector` scanning and typed fallback, CSV | 2 (shares the server step) |
+| 2 | Custom lists: kinds 84–87, bit 19 with `features.known` and the server schema step, Today, assignment, search, reminders target 3, CSV export | 1 (for template suggestions) |
+| 3 | Inventory: kinds 88–91, bit 20, Running low on Shopping, `BarcodeDetector` scanning and typed fallback, CSV | 2 (shares the server step) |
 | 4 | Native 1D barcode decoder in Rust for browsers without `BarcodeDetector` | 3 |
 | 5 | Daily summary card | — |
 | 6 | Several spaces on one device (its own ADR) | — |
