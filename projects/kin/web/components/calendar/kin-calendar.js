@@ -157,6 +157,11 @@ class KinCalendar extends HTMLElement {
   render() {
     if (!this.toolbar || this.today == null) return;
     const focus = this.focusDate ?? this.today;
+    // Redrawing replaces the day buttons and cells: keyboard focus on one
+    // moves to the new one for the same place (the roving day).
+    const active = document.activeElement;
+    const had = active?.closest?.(".cal-strip-day") && this.strip?.contains(active) ? "strip"
+      : active?.closest?.(".cal-month-cell") && this.body?.contains(active) ? "grid" : null;
     this.dataset.view = this.view;
     this.toolbar.hidden = false;
     this.addButton.hidden = this.readonly;
@@ -176,7 +181,7 @@ class KinCalendar extends HTMLElement {
     if (this.view === "week") this.renderWeek(from);
     else if (this.view === "day") this.renderDay(focus);
     else this.renderMonth(focus);
-    this.restoreKeyboardFocus();
+    this.restoreKeyboardFocus(had);
   }
 
   dayCount(date) {
@@ -257,8 +262,8 @@ class KinCalendar extends HTMLElement {
     this.go({ focus: target, keyboard: "strip" });
   }
 
-  restoreKeyboardFocus() {
-    const where = this.pendingFocus;
+  restoreKeyboardFocus(had = null) {
+    const where = this.pendingFocus ?? had;
     this.pendingFocus = null;
     if (where === "strip") this.strip.querySelector('.cal-strip-day[tabindex="0"]')?.focus();
     if (where === "grid") this.body.querySelector('.cal-month-cell[tabindex="0"]')?.focus();
