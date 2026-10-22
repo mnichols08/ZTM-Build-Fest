@@ -54,9 +54,10 @@ export const validationMethods = {
                (SELECT COUNT(*) FROM private_relay_state WHERE household_id = ?) +
                (SELECT COUNT(*) FROM private_blobs WHERE household_id = ?) +
                (SELECT COUNT(*) FROM feedback WHERE household_id = ?) +
-               (SELECT COUNT(*) FROM prepared_invitations WHERE household_id = ?) AS count`,
+               (SELECT COUNT(*) FROM prepared_invitations WHERE household_id = ?) +
+               (SELECT COUNT(*) FROM calendar_subscriptions WHERE household_id = ?) AS count`,
           )
-          .get(...new Array(28).fill(householdId)).count;
+          .get(...new Array(29).fill(householdId)).count;
         if (retainedRows !== 0)
           throw new DurableStoreError("Kin deleted-household data is invalid.");
         continue;

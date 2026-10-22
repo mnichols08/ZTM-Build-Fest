@@ -461,7 +461,12 @@ export class ViewBuilder {
     suggestSent.textContent = "What I've sent";
     suggestSent.addEventListener("click", () => this.ctx.report.open("sent", { opener: suggestSent }));
     this.app.suggestSection.append(suggestHeading, suggestHint, suggestButton, suggestSent);
-    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance, this.app.personalSettings);
+    // Outside calendars (#668, ADR 0022 §3): Google, Apple or Outlook
+    // calendars synced through the household's Kin server.
+    this.app.calendarSubscriptions = document.createElement("kin-calendar-subscriptions");
+    this.app.calendarSubscriptions.controller = this.ctx.calendarSync;
+    this.app.calendarSubscriptions.update(this.ctx.calendarSync.view());
+    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance, this.app.personalSettings, this.app.calendarSubscriptions);
 
     // For the sitter (#441, ADR 0017).
     const sitterPage = document.createElement("section");

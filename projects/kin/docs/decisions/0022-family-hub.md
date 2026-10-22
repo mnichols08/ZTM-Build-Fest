@@ -99,6 +99,17 @@ Facts that shape the design:
     - the service backs off on errors.
   - PRIVACY and THREAT-MODEL say the service reads synced calendars and
     holds their links (anyone with a link can read that calendar).
+  - **As built (#667, #668):** only Adults add calendars, for themselves or
+    everyone; Limited and Temporary members see shared ones. Its owner or a
+    household admin turns one off. The service downloads only when a device
+    in the audience asks and its copy is 30 minutes old or more, so a
+    calendar nobody opens isn't fetched; adding one downloads it once to
+    check the link. Links must be `https:` on port 443 (`webcal:` becomes
+    `https:`); 20 additions per member an hour; backoff from 5 minutes to 6
+    hours. Rust's range read replays the household history, so synced
+    events are expanded on the device by a port of its repeat walker
+    (`web/calendar/feed-expand.js`) and reach the views as read-only
+    occurrences through `web/calendar/external.js`.
 
 ### 4. Kitchen display mode
 
