@@ -7,6 +7,8 @@ import "./kin-chat-share.js";
 import "./kin-share-sheet.js";
 import "./kin-shopping-mode.js";
 import "./kin-week.js";
+import "./kin-chore-chart.js";
+import "./kin-chore-adults.js";
 import "./kin-just-for-me.js";
 import "./kin-sitter-editor.js";
 import "./kin-journal.js";
@@ -80,7 +82,7 @@ const ELEMENT_EVENTS = [
   ["kin:view-attachment", "onViewAttachment"], ["kin:remove-attachment", "onRemoveAttachment"],
   ["kin:household-status", "onHouseholdStatus"], ["kin:security-changed", "onSecurityChanged"],
   ["kin:retry-attachments", "onRetryAttachments"], ["kin:change-responsibility", "onChangeResponsibility"], ["kin:simple-done", "onSimpleDone"], ["kin:set-item-emoji", "onSetItemEmoji"],
-  ["kin:replenish-staple", "onReplenishStaple"], ["kin:complete-item", "onCompleteItem"], ["kin:start-shopping", "onStartShopping"], ["kin:save-sitter-page", "onSaveSitterPage"], ["kin:set-routine-rotation", "onSetRoutineRotation"], ["kin:set-routine-turn", "onSetRoutineTurn"], ["kin:set-item-section", "onSetItemSection"], ["kin:save-shopping-sections", "onSaveShoppingSections"], ["kin:import-list", "onImportList"],
+  ["kin:replenish-staple", "onReplenishStaple"], ["kin:complete-item", "onCompleteItem"], ["kin:start-shopping", "onStartShopping"], ["kin:save-sitter-page", "onSaveSitterPage"], ["kin:set-routine-rotation", "onSetRoutineRotation"], ["kin:set-routine-turn", "onSetRoutineTurn"], ["kin:set-chore-points", "onSetChorePoints"], ["kin:set-item-section", "onSetItemSection"], ["kin:save-shopping-sections", "onSaveShoppingSections"], ["kin:import-list", "onImportList"],
   ["kin:reopen-item", "onReopenItem"], ["kin:archive-item", "onArchiveItem"],
   ["kin:toggle-private-item", "onTogglePrivateItem"], ["kin:make-item-private", "onMakeItemPrivate"],
   ["kin:add-item-step", "onAddItemStep"], ["kin:complete-item-step", "onCompleteItemStep"],

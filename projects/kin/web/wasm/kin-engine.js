@@ -26,6 +26,7 @@ import { decodeWeek, encodeWeekQuery } from "./kin-week.js";
 import { SECTION_COMMANDS, SECTION_EVENT_KINDS, SectionFormatError, decodeShoppingSections, encodeSectionIntent } from "./kin-sections.js";
 import { ROTATION_COMMANDS, ROTATION_EVENT_KINDS, RotationFormatError, decodeRoutineRotations, encodeRotationIntent } from "./kin-rotations.js";
 import { SITTER_COMMANDS, SITTER_EVENT_KINDS, SitterFormatError, decodeSitterPage, encodeSitterIntent } from "./kin-sitter.js";
+import { CHORE_COMMANDS, CHORE_EVENT_KINDS, ChoreFormatError, FIRST_CHORE_KIND, decodeChoreChart, encodeChartQuery, encodeChoreIntent } from "./kin-chores.js";
 import { FIRST_PRIVATE_KIND, MAX_PRIVATE_EVENT_COUNT, PRIVATE_EVENT_KINDS, decodePrivate } from "./kin-private.js";
 import { FIRST_JOURNAL_KIND, FIRST_PRIVATE_ITEM_KIND, JOURNAL_EVENT_KINDS, PRIVATE_ITEM_EVENT_KINDS, PrivateFormatError, encodePrivateIntent } from "./kin-private.js";
 import { encodePrefsIntent, PREFS_COMMANDS, PREFS_KIND_CODES, PrefsFormatError } from "./kin-prefs.js";
@@ -117,6 +118,7 @@ export function createEngine(instanceExports) {
     "kin_shopping_sections",
     "kin_routine_rotations",
     "kin_sitter_page",
+    "kin_chore_chart",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_audio_peaks",
@@ -358,6 +360,11 @@ export function createEngine(instanceExports) {
       safeDecode(() => decodeSitterPage(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_sitter_page"),
       )),
+    // The chore chart (#676, ADR 0022 §6) for the week of `civilDate`:
+    // `query` is { start, bounds, adultsAllowed, members } (kin-chores.js
+    // encodeChartQuery); the result is decodeChoreChart's.
+    choreChart: (query, records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeChoreChart(queryBytes(exports, mirror, "kin_chore_chart", encodeChartQuery(query), records, asOf, civilDate, syncIdentity))),
     // A member's things on `civilDate` (#344, ADR 0013): [{ kind: "item",
     // itemId } | { kind: "routine", routineId, occurrenceKey, done }].
     myThings: (memberId, records, asOf, civilDate, syncIdentity = null) =>
@@ -1167,6 +1174,9 @@ const COMMAND_TYPES = [
   // The sitter page (#442): KCMD action 70, encoded by kin-sitter.js.
   ...SITTER_COMMANDS,
 ];
+// The chore chart (#676): KCMD actions 77–79, encoded by kin-chores.js. Set
+// by position: 71–76 belong to other family-hub kinds (ADR 0022).
+CHORE_COMMANDS.forEach((type, index) => { COMMAND_TYPES[FIRST_CHORE_KIND + index] = type; });
 const EVENT_KINDS = [
   null,
   "ITEM_ADDED",
@@ -1228,6 +1238,8 @@ const EVENT_KINDS = [
   ...ROTATION_EVENT_KINDS,
   ...SITTER_EVENT_KINDS,
 ];
+// The chore chart (#676): kinds 77–79.
+CHORE_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_CHORE_KIND + index] = kind; });
 // A member's private log (#489): kinds from 100, after a gap of unused codes.
 PRIVATE_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_PRIVATE_KIND + index] = kind; });
 // "Just for me" (#510): kinds 110–118.
@@ -1347,6 +1359,14 @@ function encodeIntentPacket(command, identity) {
     try { return encodeSitterIntent(command, identity); }
     catch (error) {
       if (error instanceof SitterFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // The chore chart (77–79) carries its canonical payload (kin-chores.js).
+  if (kind >= FIRST_CHORE_KIND && kind < FIRST_CHORE_KIND + CHORE_COMMANDS.length) {
+    try { return encodeChoreIntent(command, identity); }
+    catch (error) {
+      if (error instanceof ChoreFormatError) throw new KinEngineError(2, error.message);
       throw error;
     }
   }

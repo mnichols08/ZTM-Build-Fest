@@ -16,10 +16,10 @@ test("the switchable features, in the ADR's order, with stable small bits", () =
   assert.deepEqual(FEATURES.map((entry) => [entry.label, entry.bit]), [
     ["Chat", 0], ["Fridge", 1], ["Meals", 2], ["Routines", 3], ["Taking turns", 4], ["This week", 5], ["Talk later", 6],
     ["Store sections", 7], ["Shopping mode", 8], ["Maintenance", 9], ["Notes & reference", 10], ["Sitter page", 11],
-    ["Journal", 12], ["Just for me", 13],
+    ["Journal", 12], ["Just for me", 13], ["Chore chart", 15],
   ]);
   assert.equal(new Set(FEATURES.map((entry) => entry.id)).size, FEATURES.length);
-  assert.equal(KNOWN_FEATURE_MASK, 0x3fff);
+  assert.equal(KNOWN_FEATURE_MASK, 0xbfff);
   for (const entry of FEATURES) {
     assert.match(entry.description, /^[A-Z].*\.$/, `${entry.label} has a plain sentence`);
     assert.ok(entry.description.length <= 120, `${entry.label}'s description stays short`);

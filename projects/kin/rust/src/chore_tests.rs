@@ -2,7 +2,7 @@
 // replay, command rules), credit to the chore's owner (whose turn it was for
 // a rotating routine), weekly points that start again each Monday, adults
 // only when allowed and joined, KCCQ and KCCD. The byte vectors here are
-// TEST-VECTORS 070–074.
+// TEST-VECTORS 085–089.
 use crate::chores::*;
 use crate::codec::encode_event;
 use crate::command::{decode_command, execute, CommandContext, HouseholdCommand as C};
@@ -221,7 +221,7 @@ fn joined(member: [u8; 16], joined: bool) -> EventKind {
     }
 }
 
-// 070
+// 085
 #[test]
 fn chore_payloads_are_canonical_and_strict() {
     let points = encode_payload(&points_set(CAT, 3)).unwrap();
@@ -306,7 +306,7 @@ fn chore_payloads_are_canonical_and_strict() {
     assert_eq!(decode_payload(80, &points).map(|_| ()), malformed);
 }
 
-// 071
+// 086
 #[test]
 fn settings_replay_and_commands_refuse_what_changes_nothing() {
     let mut home = Home::new();
@@ -351,7 +351,7 @@ fn settings_replay_and_commands_refuse_what_changes_nothing() {
     );
 }
 
-// 072
+// 087
 #[test]
 fn only_the_member_named_joins_or_leaves() {
     let mut home = Home::new();
@@ -397,7 +397,7 @@ fn only_the_member_named_joins_or_leaves() {
     );
 }
 
-// 073
+// 088
 #[test]
 fn points_go_to_the_owner_and_follow_the_turn() {
     let mut home = Home::new();
@@ -625,7 +625,7 @@ fn utc_bounds(start: u32) -> Vec<i64> {
     (0..=7).map(|day| midnight(start) + day * DAY_MS).collect()
 }
 
-// 074
+// 089
 #[test]
 fn the_chart_reads_through_kccq_and_kccd() {
     let mut home = Home::new();

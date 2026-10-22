@@ -1012,6 +1012,28 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the prepared invitation migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 27) {
+      try {
+        this.transaction(() => {
+          // ADR 0022 §6 (#676): whether a household admin allows adults on
+          // the children's chore chart, and its revision. Plaintext
+          // authorization metadata like household features; off by default.
+          // Each adult still joins themselves, in the household history.
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN chore_adults INTEGER NOT NULL DEFAULT 0
+              CHECK (chore_adults IN (0, 1));
+            ALTER TABLE households ADD COLUMN chore_adults_revision INTEGER NOT NULL DEFAULT 0
+              CHECK (chore_adults_revision >= 0);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(28, Date.now());
+          sqlitePragma(this.db, "user_version = 28");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the chore chart migration.", { cause: error });
+      }
+    }
   },
 
   verify() {

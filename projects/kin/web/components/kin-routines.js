@@ -31,6 +31,9 @@ class KinRoutines extends HTMLElement {
     // Taking turns (#433): one element per routine keeps an open editor.
     this.rotationControls = new Map();
     this.rotationMap = new Map();
+    // Chore chart points per routine (#676): { points: Map(routineId ->
+    // 0–10) } for an Adult, or null (nothing shown).
+    this.choreSettingsValue = null;
     this.civilDate = null;
     // Which row's schedule editor is open, and its unsaved choice, survive
     // the re-render a background refresh causes.
@@ -203,6 +206,16 @@ class KinRoutines extends HTMLElement {
     this.rotationMap = map;
     this.render();
   }
+  /** Chore chart points (#676): { points: Map(routineId -> points) } shows
+   * a points choice on each routine; null hides it. */
+  set choreSettings(value) {
+    const next = value?.points instanceof Map ? value : null;
+    const same = next === this.choreSettingsValue || (next && this.choreSettingsValue &&
+      next.points.size === this.choreSettingsValue.points.size && [...next.points].every(([id, points]) => this.choreSettingsValue.points.get(id) === points));
+    if (same) return;
+    this.choreSettingsValue = next;
+    this.render();
+  }
   set playbooks(value) {
     const records = value ?? [];
     if (records === this.playbookRecords) return;
@@ -317,6 +330,11 @@ class KinRoutines extends HTMLElement {
     // closed Schedule editor cannot take focus.
     restoreFocus(focus, {
       find: ({ id, action }) => {
+        // A routine's chore chart points (#676) keep focus on their own select.
+        if (action === "set-chore-points") {
+          const select = [...this.querySelectorAll('select[data-action="set-chore-points"]')].find((node) => node.dataset.routineId === id);
+          if (select) return select;
+        }
         const counterpart = { "complete-routine-occurrence": "reopen-routine-occurrence", "reopen-routine-occurrence": "complete-routine-occurrence" }[action];
         const sameRow = [...this.querySelectorAll("button[data-routine-id]")].filter((button) => button.dataset.routineId === id && !button.closest("details:not([open])"));
         return sameRow.find((button) => button.dataset.action === action) ?? sameRow.find((button) => button.dataset.action === counterpart) ?? sameRow[0] ?? (this.createOpen ? this.input : this.addButton);
@@ -371,6 +389,7 @@ class KinRoutines extends HTMLElement {
       content.append(turns);
       turns.disabled = this.isDisabled;
       turns.record = { routineId: record.routineId, text: record.text, rotation, memberId: this.memberId, memberIds: this.memberIds, names: this.memberNames };
+      if (this.choreSettingsValue) content.append(this.chorePointsControl(record));
       const reminderId = `routine:${record.routineId}`;
       const reminder = this.reminderControls.get(reminderId) ?? document.createElement("kin-reminder");
       reminder.target = { id: reminderId, title: record.text };
@@ -424,6 +443,24 @@ class KinRoutines extends HTMLElement {
       (controls.find((node) => node.dataset.key === turnKey) ?? controls[0])?.focus({ preventScroll: true });
     }
     this.renderPlaybooks();
+  }
+  // A routine's points on the chore chart (#676): 0–10, 1 by default.
+  chorePointsControl(record) {
+    const label = document.createElement("label");
+    label.className = "routine-chore-points";
+    label.dataset.feature = "chores";
+    const name = document.createElement("span");
+    name.textContent = "Chore chart points";
+    const select = document.createElement("select");
+    select.dataset.routineId = record.routineId;
+    select.dataset.action = "set-chore-points";
+    select.setAttribute("aria-label", `Chore chart points for ${record.text}`);
+    for (let points = 0; points <= 10; points += 1) select.append(new Option(String(points), String(points)));
+    select.value = String(this.choreSettingsValue.points.get(record.routineId) ?? 1);
+    select.disabled = this.isDisabled;
+    select.addEventListener("change", () => this.dispatch("set-chore-points", { routineId: record.routineId, points: Number(select.value) }));
+    label.append(name, select);
+    return label;
   }
   // One row's schedule editor (kin-routine-schedule.js). Which editor is open
   // and its unsaved choice live here, so a re-render keeps them.

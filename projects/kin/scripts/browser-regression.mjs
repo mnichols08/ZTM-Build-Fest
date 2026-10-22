@@ -44,6 +44,7 @@ import { importRegressions } from "./import-regression.mjs";
 import { sitterRegressions } from "./sitter-regression.mjs";
 import { householdFeaturesRegressions } from "./household-features-regression.mjs";
 import { rotationsRegressions } from "./rotations-regression.mjs";
+import { choreChartRegressions } from "./chore-chart-regression.mjs";
 import { storeSectionsRegressions } from "./store-sections-regression.mjs";
 import { recurringTaskRegressions } from "./recurring-tasks-regression.mjs";
 import { dailyUxHardeningRegressions } from "./daily-ux-hardening-regression.mjs";
@@ -1551,6 +1552,8 @@ try {
   console.log(await first.evaluate(`(${weekRegressions.toString()})()`));
   console.log(await first.evaluate(`(${sitterRegressions.toString()})()`));
   console.log(await first.evaluate(`(${rotationsRegressions.toString()})()`));
+  // The chore chart (#676): a child's card, points, rewards, adults joining.
+  console.log(await first.evaluate(`(${choreChartRegressions.toString()})()`));
   console.log(await first.evaluate(`(${importRegressions.toString()})()`));
   console.log(await first.evaluate(`(${storeSectionsRegressions.toString()})()`));
   // Household features (#623–#626): off, hidden everywhere, on again.

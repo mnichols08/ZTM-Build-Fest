@@ -7,6 +7,29 @@ documentation only.
 
 ## Unreleased
 
+### Added
+
+- **The chore chart** (#676: #677, #678; epic #651,
+  [ADR 0022](docs/decisions/0022-family-hub.md) §6). From Today (and Simple
+  view for children): a card per child in their colour with today's jobs —
+  their routines (whose turn it is) and items — as big tick boxes with
+  pictures, the rest of the week, points this week and reward progress ("12
+  of 20 for Movie night"). Points go to the chore's owner, never to whoever
+  ticked it, and start again every Monday; children see each other's
+  totals. Parents set points per routine (0–10) on Routines and a reward per
+  child on the chart. Adults join only when a household admin allows it
+  (Household › Features, fresh confirmation) and then only if they choose
+  to; they can leave at any time. No streaks, no adult-only leaderboard, no
+  notifications about points. Event kinds 77 `CHORE_POINTS_SET`, 78
+  `CHORE_REWARD_SET`, 79 `CHORE_CHART_JOINED`; WASM export `kin_chore_chart`
+  (KCCQ → KCCD); **server schema 28** (`households.chore_adults`,
+  `chore_adults_revision`) with routes `POST
+  /api/household/chore-chart/options` and `/finish` and `choreChart` in the
+  sync status; household feature bit 15 "Chore chart". The element
+  `<kin-chore-chart>` is self-contained for the kitchen display.
+  PRODUCT-BOUNDARIES now allows weekly points for the children's chart.
+  EVENTS, ABI, TEST-VECTORS 085–089, SYNC, UX, V1.0-COMPATIBILITY.
+
 ## v1.6.0 — Kin for Everyone
 
 Released 2026-10-21 as `kin-v1.6.0`. This minor release makes Kin easier for
