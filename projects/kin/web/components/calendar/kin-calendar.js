@@ -35,7 +35,7 @@ class KinCalendar extends HTMLElement {
   constructor() {
     super();
     this.view = "week";
-    this.focus = null;
+    this.focusDate = null;
     this.today = null;
     this.days = new Map();
     this.extras = new Map();
@@ -61,7 +61,7 @@ class KinCalendar extends HTMLElement {
     this.todayButton = this.button("cal-today", "Today", () => this.go({ focus: this.today }));
     this.next = this.button("cal-next", "Next", () => this.move(1));
     moves.append(this.previous, this.todayButton, this.next);
-    this.addButton = this.button("cal-add primary-action", "Add event", () => this.emit("kin:calendar-new-event", { date: this.focus ?? this.today, minute: null, opener: this.addButton }));
+    this.addButton = this.button("cal-add primary-action", "Add event", () => this.emit("kin:calendar-new-event", { date: this.focusDate ?? this.today, minute: null, opener: this.addButton }));
     this.addButton.setAttribute("aria-haspopup", "dialog");
     this.toolbar.append(this.period, moves, this.addButton);
     this.strip = document.createElement("div");
@@ -103,9 +103,11 @@ class KinCalendar extends HTMLElement {
    * colourOf }), loading, easy }. Anything left out stays as it was.
    */
   update(next = {}) {
-    for (const key of ["view", "focus", "today", "days", "extras", "people", "loading", "easy"]) if (next[key] !== undefined) this[key] = next[key];
+    // `focus` is kept as `focusDate`: an element's own focus() stays a method.
+    if (next.focus !== undefined) this.focusDate = next.focus;
+    for (const key of ["view", "today", "days", "extras", "people", "loading", "easy"]) if (next[key] !== undefined) this[key] = next[key];
     if (!this.views.includes(this.view)) this.view = this.views[0];
-    this.focus ??= this.today;
+    this.focusDate ??= this.today;
     this.render();
   }
 
@@ -117,12 +119,12 @@ class KinCalendar extends HTMLElement {
 
   /** The civil dates this view shows: { from, to }. */
   range() {
-    return viewRange(this.view, this.focus ?? this.today, this.today);
+    return viewRange(this.view, this.focusDate ?? this.today, this.today);
   }
 
   /** The first day of the week the Week and Day views show. */
   weekStart() {
-    return weekAnchor(this.focus ?? this.today, this.today);
+    return weekAnchor(this.focusDate ?? this.today, this.today);
   }
 
   button(className, text, onClick) {
@@ -139,22 +141,22 @@ class KinCalendar extends HTMLElement {
   }
 
   move(direction) {
-    this.go({ focus: stepFocus(this.view, this.focus ?? this.today, direction) });
+    this.go({ focus: stepFocus(this.view, this.focusDate ?? this.today, direction) });
   }
 
   /** Changes the view or focus, draws what is known and asks for the data. */
-  go({ view = this.view, focus = this.focus, keyboard = null } = {}) {
-    const changed = view !== this.view || focus !== this.focus;
+  go({ view = this.view, focus = this.focusDate, keyboard = null } = {}) {
+    const changed = view !== this.view || focus !== this.focusDate;
     this.view = view;
-    this.focus = focus;
+    this.focusDate = focus;
     this.pendingFocus = keyboard;
     this.render();
-    if (changed) this.emit("kin:calendar-focus", { view: this.view, focus: this.focus });
+    if (changed) this.emit("kin:calendar-focus", { view: this.view, focus: this.focusDate });
   }
 
   render() {
     if (!this.toolbar || this.today == null) return;
-    const focus = this.focus ?? this.today;
+    const focus = this.focusDate ?? this.today;
     this.dataset.view = this.view;
     this.toolbar.hidden = false;
     this.addButton.hidden = this.readonly;
@@ -189,7 +191,7 @@ class KinCalendar extends HTMLElement {
   // ---- The row of days -----------------------------------------------------
 
   renderStrip(from) {
-    const focus = this.focus ?? this.today;
+    const focus = this.focusDate ?? this.today;
     const buttons = dateSpan(from, 7).map((date) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -219,7 +221,7 @@ class KinCalendar extends HTMLElement {
    * that day's list into sight. */
   chooseDay(date, keyboard) {
     if (this.view === "day") { this.go({ focus: date, keyboard: keyboard ? "strip" : null }); return; }
-    this.focus = date;
+    this.focusDate = date;
     for (const button of this.strip.querySelectorAll(".cal-strip-day")) button.tabIndex = Number(button.dataset.date) === date ? 0 : -1;
     if (keyboard) return;
     const section = this.weekList?.querySelector(`.week-day[data-date="${date}"]`) ?? this.body.querySelector(`[data-date="${date}"]`);
@@ -545,12 +547,12 @@ class KinCalendar extends HTMLElement {
     }
     event.preventDefault();
     const shown = this.body.querySelector(`.cal-month-cell[data-date="${target}"]`);
-    if (shown && civilParts(target).month === civilParts(this.focus ?? this.today).month) {
+    if (shown && civilParts(target).month === civilParts(this.focusDate ?? this.today).month) {
       for (const other of this.body.querySelectorAll(".cal-month-cell")) {
         other.tabIndex = other === shown ? 0 : -1;
         other.setAttribute("aria-selected", String(other === shown));
       }
-      this.focus = target;
+      this.focusDate = target;
       shown.focus();
       return;
     }

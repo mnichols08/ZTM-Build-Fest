@@ -39,7 +39,7 @@ class KinEventEditor extends HTMLElement {
     this.scope = this.radios("scope", "Change", [["one", "Just this one"], ["all", "All of them"]]);
     this.scope.classList.add("event-scope");
 
-    this.title = this.field("title", "What", "input", { type: "text", required: true, autocomplete: "off", maxLength: MAX_TITLE });
+    this.titleField = this.field("title", "What", "input", { type: "text", required: true, autocomplete: "off", maxLength: MAX_TITLE });
     this.date = this.field("date", "Day", "input", { type: "date", required: true });
     this.allDay = this.check("all-day", "All day");
     this.start = this.field("start", "Starts", "input", { type: "time", step: 300 });
@@ -80,7 +80,7 @@ class KinEventEditor extends HTMLElement {
     this.error.className = "quick-add-error event-error";
     this.error.id = id("error");
     this.error.setAttribute("role", "alert");
-    this.title.input.setAttribute("aria-describedby", this.error.id);
+    this.titleField.input.setAttribute("aria-describedby", this.error.id);
     // Changed on another device while open.
     this.conflict = document.createElement("div");
     this.conflict.className = "event-conflict";
@@ -119,7 +119,7 @@ class KinEventEditor extends HTMLElement {
     this.saveButton.textContent = "Save";
     actions.append(this.closeButton, this.saveButton);
 
-    this.form.append(this.scope, this.title.wrap, this.date.wrap, this.allDay.wrap, times, this.who, this.details, this.error, this.conflict, this.cancelArea, actions);
+    this.form.append(this.scope, this.titleField.wrap, this.date.wrap, this.allDay.wrap, times, this.who, this.details, this.error, this.conflict, this.cancelArea, actions);
     this.dialog.append(top, this.form);
     this.dialog.addEventListener("cancel", (event) => { if (this.pending) event.preventDefault(); });
     this.dialog.addEventListener("close", () => {
@@ -264,7 +264,7 @@ class KinEventEditor extends HTMLElement {
     this.fill(event, placed, date, minute, me);
     this.details.open = Boolean(event && (event.place || event.notes || event.repeat || event.countdown || event.end.date !== event.start.date));
     if (!this.dialog.open) this.dialog.showModal();
-    this.title.input.focus();
+    this.titleField.input.focus();
   }
 
   /** Puts an event (or a new one's defaults) into the fields. For a
@@ -274,7 +274,7 @@ class KinEventEditor extends HTMLElement {
     const start = occurrence ? occurrence.start : { date, minute: minute ?? 9 * 60 };
     const end = occurrence ? occurrence.end : { date, minute: Math.min((minute ?? 9 * 60) + 60, 1439) };
     this.zone = event ? event.zone : viewerZone();
-    this.title.input.value = event?.title ?? "";
+    this.titleField.input.value = event?.title ?? "";
     this.date.input.value = isoDate(start.date);
     this.allDay.input.checked = event ? event.allDay : minute == null;
     this.start.input.value = timeText(event?.allDay || (!event && minute == null) ? 9 * 60 : start.minute);
@@ -389,8 +389,8 @@ class KinEventEditor extends HTMLElement {
 
   /** The draft from the fields, or null with a message shown. */
   draft() {
-    const title = this.title.input.value.trim();
-    if (!title) return this.invalid(this.title.input, "Write what the event is.");
+    const title = this.titleField.input.value.trim();
+    if (!title) return this.invalid(this.titleField.input, "Write what the event is.");
     const date = fromIsoDate(this.date.input.value);
     if (!date) return this.invalid(this.date.input, "Choose the day.");
     const allDay = this.allDay.input.checked;
@@ -489,7 +489,7 @@ class KinEventEditor extends HTMLElement {
     this.base = latest.occurrence.event;
     this.placed = latest;
     this.fill(this.base, latest, latest.occurrence.start.date, null, null);
-    this.title.input.focus();
+    this.titleField.input.focus();
   }
 
   close() {

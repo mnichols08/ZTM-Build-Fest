@@ -41,8 +41,8 @@ export async function calendarRegressions(client, { until }) {
     const app = document.querySelector("kin-app");
     const editor = app.eventEditor;
     const set = (input, value) => { input.value = value; input.dispatchEvent(new Event("input", { bubbles: true })); input.dispatchEvent(new Event("change", { bubbles: true })); };
-    const focused = document.activeElement === editor.title.input;
-    set(editor.title.input, ${JSON.stringify(title)});
+    const focused = document.activeElement === editor.titleField.input;
+    set(editor.titleField.input, ${JSON.stringify(title)});
     editor.allDay.input.checked = false;
     editor.allDay.input.dispatchEvent(new Event("change", { bubbles: true }));
     set(editor.start.input, "17:30");
