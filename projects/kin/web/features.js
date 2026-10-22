@@ -23,7 +23,7 @@ const feature = (id, bit, label, description, routes = []) =>
 export const FEATURES = Object.freeze([
   feature("chat", 0, "Chat", "One conversation for the whole household, with photos, polls and reactions.", ["updates/chat"]),
   feature("fridge", 1, "Fridge", "A shared board to draw on and hang little notes, like a real fridge door.", ["household/fridge"]),
-  feature("meals", 2, "Meals", "Plan dinners for the week, keep recipes, and see tonight's dinner on Today.", ["lists/meals"]),
+  feature("meals", 2, "Meals", "Plan the week's meals, keep favourite recipes, and see today's meals on Today.", ["lists/meals"]),
   feature("routines", 3, "Routines", "Things that repeat, like taking the bins out on Tuesday, and reusable checklists.", ["routines"]),
   feature("turns", 4, "Taking turns", "Routines that rotate between people, so everyone knows whose turn it is.", []),
   feature("week", 5, "This week", "The next seven days in one list, reached from Today.", ["week"]),

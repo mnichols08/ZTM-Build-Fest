@@ -1987,6 +1987,27 @@ kin-meals { display: block; container-type: inline-size; container-name: meals; 
 .meal-day-actions, .recipe-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .meal-plan, .meal-ingredients { min-height: var(--tap); }
 .meal-plan { min-width: 88px; }
+/* Fuller meal plans (#679): a row per meal in each day card, the week's own
+   actions, which meals show, Today's other meals and favourites. */
+.today-meals { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 0; padding: 0; list-style: none; color: var(--ink-muted); overflow-wrap: anywhere; }
+.meals-week-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.meals-week-tools button, .recipe-favourites-filter, .recipe-favourite, .meal-slot-plan, .meal-slot-ingredients { min-height: var(--tap); }
+.meal-slot-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0 14px; margin: 0 0 12px; padding: 0; border: 0; min-inline-size: 0; }
+.meal-slot-filter legend { float: inline-start; margin-inline-end: 4px; padding: 0; font-weight: 600; line-height: var(--tap); }
+.meal-slot-filter label { display: inline-flex; align-items: center; gap: 6px; min-height: var(--tap); }
+.meal-slot-filter input { inline-size: 20px; block-size: 20px; margin: 0; }
+.meal-slots { display: grid; gap: 8px; }
+.meal-slot { display: grid; gap: 2px; min-width: 0; padding-top: 8px; border-top: 1px solid var(--line); }
+.meal-slot:first-child { padding-top: 0; border-top: 0; }
+.meal-slot-label { margin: 0; color: var(--ink-muted); font-size: 13px; font-weight: 600; }
+.meal-slot-name { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.meal-slot-name.is-empty { font-weight: 400; color: var(--ink-muted); }
+.meal-slot-plan { min-width: 88px; }
+.recipe-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.recipe-favourite { flex: none; min-width: var(--tap); font-size: 20px; line-height: 1; }
+.recipe-favourite[aria-pressed="true"] { color: var(--accent); }
+.recipe-favourites-filter[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+:root[data-kin-easy="on"] .recipe-favourite { font-size: 17px; }
 .recipe-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .recipe { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); }
 .recipe-name { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
@@ -2023,6 +2044,7 @@ kin-meals { display: block; container-type: inline-size; container-name: meals; 
 @media (forced-colors: active) {
   .meal-day.is-today { border: 2px solid Highlight; box-shadow: none; }
   .meal-today { border: 1px solid CanvasText; }
+  .recipe-favourites-filter[aria-pressed="true"] { outline: 2px solid Highlight; }
 }
 
 /* Simple view (#345, ADR 0013): big cards, two or three destinations, no

@@ -1,32 +1,57 @@
-// Lists › Meals (#333): plan the week's dinners from the household's own
-// recipes, choose who's cooking, and put a dinner's ingredients on Shopping.
+// Lists › Meals (#333, #679): plan the week's meals — breakfast, lunch,
+// dinner and a snack — from the household's own recipes, choose who's
+// cooking dinner, keep favourites, and put ingredients on Shopping.
 //
-// - The week is seven day rows, Monday to Sunday, each with its dinner (or
-//   "Nothing planned"), who's cooking, and one Plan / Change button. A
-//   container query lays the rows in two columns when the week has room
-//   (tablets); on wide screens the recipes sit beside a single list.
-// - Planning opens a native <dialog>: find a recipe (the filter is focused,
-//   recent recipes first), or "Something else…", plus who's cooking. Nothing
-//   needs dragging; wide screens also offer "Put on…" a day per recipe.
-//   Closing returns focus to the day's button.
+// - The week is seven day cards, Monday to Sunday, each with a row per meal
+//   (Breakfast, Lunch, Dinner, Snack): what's planned (or "Nothing
+//   planned"), dinner's cook, and one Plan / Change button. A container
+//   query lays the cards in two columns when the week has room (tablets); on
+//   wide screens the recipes sit beside a single list.
+// - "Show" chooses which meals the cards list. Dinner always shows. On a
+//   phone a meal nobody planned this week starts folded away, so the cards
+//   stay short; the choice is kept on this device.
+// - "Same as last week" fills each empty meal of the week shown with the
+//   one planned seven days earlier; "Add this week's ingredients to
+//   Shopping" plans every meal's recipe at once (KMPQ v2, Rust).
+// - Planning opens a native <dialog>: find a recipe (favourites and recent
+//   recipes first, the filter is focused), or "Something else…", plus who's
+//   cooking for dinner. Nothing needs dragging; wide screens also offer
+//   "Put on…" a day's dinner per recipe. Closing returns focus to the meal's
+//   button.
 // - Recipes are saved whole from a name, "Ingredients (one per line)" and
 //   notes. An ingredient that exactly matches an active Staple is linked to it
-//   (and the editor says so); each line's Staple select changes the link.
+//   (and the editor says so); each line's Staple select changes the link. A
+//   star marks a favourite, and "Favourites" filters the list to them.
 // - Nothing is counted or compared: who cooked is never totalled.
 //
 // The element only renders and reports; `actions` (app/meals.js) does the
-// writing: saveRecipe, archiveRecipe, setDinner, clearDinner, setCook and
-// addIngredients, each resolving true when it saved.
-import { cookLabel, cookOptions, filterRecipes, matchingStaple, mondayOf, recentRecipes, weekDays, weekLabel, addDays } from "../meals/meals-view.js";
-import { MealFormatError, collapseText, ingredientsFromText, normalizeDinnerName, normalizeRecipe } from "../wasm/kin-meals.js";
+// writing: saveRecipe, archiveRecipe, setDinner, clearDinner, setCook,
+// setMeal, clearMeal, setFavourite, sameAsLastWeek and addIngredients, each
+// resolving true when it saved.
+import { SLOTS, SLOT_LABELS, cookLabel, cookOptions, filterRecipes, matchingStaple, mealOn, mondayOf, recentRecipes, weekDays, weekLabel, addDays } from "../meals/meals-view.js";
+import { MealFormatError, collapseText, ingredientsFromText, normalizeMealName, normalizeRecipe } from "../wasm/kin-meals.js";
 
 let instances = 0;
+const SLOT_PREFERENCE = "kin.meal-slots";
+const NARROW = "(max-width: 559px)";
+
+/** The meals this device chose to show, or null for the default. */
+function readShownSlots() {
+  try {
+    const value = JSON.parse(globalThis.localStorage?.getItem(SLOT_PREFERENCE) ?? "null");
+    return Array.isArray(value) ? SLOTS.filter((slot) => slot === "dinner" || value.includes(slot)) : null;
+  } catch { return null; }
+}
+
+function writeShownSlots(slots) {
+  try { globalThis.localStorage?.setItem(SLOT_PREFERENCE, JSON.stringify(slots)); } catch { /* not kept */ }
+}
 
 class KinMeals extends HTMLElement {
   constructor() {
     super();
     this.idPrefix = `meals-${++instances}`;
-    this.mealsValue = { recipes: [], dinners: [] };
+    this.mealsValue = { recipes: [], dinners: [], meals: [] };
     this.today = null;
     this.monday = null;
     this.peopleValue = { myId: null, memberIds: [], names: new Map() };
@@ -35,6 +60,8 @@ class KinMeals extends HTMLElement {
     this.isDisabled = false;
     this.planning = null;
     this.editing = null;
+    this.favouritesOnly = false;
+    this.shownSlots = readShownSlots();
   }
 
   connectedCallback() {
@@ -42,9 +69,9 @@ class KinMeals extends HTMLElement {
     this.render();
   }
 
-  /** { recipes, dinners } from kin-meals.js decodeMeals. */
+  /** { recipes, dinners, meals } from kin-meals.js decodeMeals. */
   set meals(value) {
-    this.mealsValue = value ?? { recipes: [], dinners: [] };
+    this.mealsValue = value ?? { recipes: [], dinners: [], meals: [] };
     this.render();
   }
 
@@ -120,9 +147,53 @@ class KinMeals extends HTMLElement {
     this.thisWeek = navButton("This week", 0);
     this.nextWeek = navButton("Next week", 1);
     head.append(this.weekHeading, nav);
+
+    // The week's own actions.
+    const tools = document.createElement("div");
+    tools.className = "meals-week-tools";
+    this.sameAsLast = document.createElement("button");
+    this.sameAsLast.type = "button";
+    this.sameAsLast.className = "meals-same-as-last";
+    this.sameAsLast.textContent = "Same as last week";
+    this.sameAsLast.addEventListener("click", () => void this.actions?.sameAsLastWeek?.(this.monday));
+    this.weekIngredients = document.createElement("button");
+    this.weekIngredients.type = "button";
+    this.weekIngredients.className = "meals-week-ingredients";
+    this.weekIngredients.textContent = "Add this week's ingredients to Shopping";
+    this.weekIngredients.addEventListener("click", () => void this.actions?.addIngredients({ week: this.monday }, `the week of ${weekLabel(this.monday)}`));
+    tools.append(this.sameAsLast, this.weekIngredients);
+
+    // Which meals the cards list.
+    this.slotFilter = document.createElement("fieldset");
+    this.slotFilter.className = "meal-slot-filter";
+    const legend = document.createElement("legend");
+    legend.textContent = "Show";
+    this.slotFilter.append(legend);
+    this.slotBoxes = new Map();
+    for (const slot of SLOTS) {
+      const label = document.createElement("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.value = slot;
+      box.id = `${id}-show-${slot}`;
+      if (slot === "dinner") {
+        box.checked = true;
+        box.disabled = true;
+        label.title = "Dinner always shows";
+      }
+      box.addEventListener("change", () => {
+        this.shownSlots = SLOTS.filter((entry) => this.slotBoxes.get(entry).checked);
+        writeShownSlots(this.shownSlots);
+        this.render();
+      });
+      label.append(box, ` ${SLOT_LABELS[slot]}`);
+      this.slotFilter.append(label);
+      this.slotBoxes.set(slot, box);
+    }
+
     this.days = document.createElement("ol");
     this.days.className = "meal-days";
-    week.append(head, this.days);
+    week.append(head, tools, this.slotFilter, this.days);
 
     // Recipes.
     const recipes = document.createElement("section");
@@ -133,15 +204,23 @@ class KinMeals extends HTMLElement {
     const recipesHeading = document.createElement("h2");
     recipesHeading.id = `${id}-recipes-heading`;
     recipesHeading.textContent = "Recipes";
+    this.favouritesFilter = document.createElement("button");
+    this.favouritesFilter.type = "button";
+    this.favouritesFilter.className = "recipe-favourites-filter";
+    this.favouritesFilter.textContent = "Favourites";
+    this.favouritesFilter.setAttribute("aria-pressed", "false");
+    this.favouritesFilter.addEventListener("click", () => {
+      this.favouritesOnly = !this.favouritesOnly;
+      this.render();
+    });
     this.addRecipe = document.createElement("button");
     this.addRecipe.type = "button";
     this.addRecipe.className = "add-button";
     this.addRecipe.textContent = "Add a recipe";
     this.addRecipe.addEventListener("click", () => this.openRecipe(null, this.addRecipe));
-    recipesHead.append(recipesHeading, this.addRecipe);
+    recipesHead.append(recipesHeading, this.favouritesFilter, this.addRecipe);
     this.emptyRecipes = document.createElement("p");
     this.emptyRecipes.className = "section-hint meals-empty";
-    this.emptyRecipes.textContent = "Save a meal once and reuse it any week.";
     this.recipeList = document.createElement("ul");
     this.recipeList.className = "recipe-list";
     recipes.append(recipesHead, this.emptyRecipes, this.recipeList);
@@ -169,7 +248,21 @@ class KinMeals extends HTMLElement {
   // ---- The week ------------------------------------------------------------
 
   dinnerOn(date) {
-    return this.mealsValue.dinners.find((dinner) => dinner.date === date) ?? null;
+    return this.mealOn(date, "dinner");
+  }
+
+  mealOn(date, slot) {
+    return mealOn(this.mealsValue, date, slot);
+  }
+
+  /** The meals the cards list for the week of `days`. */
+  visibleSlots(days) {
+    if (this.shownSlots) return this.shownSlots;
+    // Default: everything, except that a phone folds away a meal nobody
+    // planned this week.
+    const narrow = globalThis.matchMedia?.(NARROW).matches ?? false;
+    if (!narrow) return SLOTS;
+    return SLOTS.filter((slot) => slot === "dinner" || days.some((day) => this.mealOn(day.date, slot)));
   }
 
   // ---- Focus across re-renders ------------------------------------------
@@ -181,22 +274,30 @@ class KinMeals extends HTMLElement {
   focusKey(node) {
     if (!node || !this.contains(node)) return null;
     if (node.id) return `#${node.id}`;
+    const slot = node.closest(".meal-slot");
     const day = node.closest(".meal-day");
-    if (day) return `day|${day.dataset.date}|${node.className}`;
+    if (day && slot) return `day|${day.dataset.date}|${slot.dataset.slot}|${node.classList[0] ?? ""}`;
     const recipe = node.closest(".recipe");
     if (recipe) return `recipe|${recipe.dataset.recipeId}|${[...recipe.querySelectorAll("button, select")].indexOf(node)}`;
     const planned = node.closest(".meal-plan-recipes li");
     if (planned) return `plan|${node.dataset.recipeId}`;
+    if (node.classList.contains("meals-same-as-last")) return "week|same";
+    if (node.classList.contains("meals-week-ingredients")) return "week|ingredients";
+    if (node.classList.contains("recipe-favourites-filter")) return "week|favourites";
     return null;
   }
 
   findByKey(key) {
     if (!key) return null;
     if (key.startsWith("#")) return this.querySelector(key);
-    const [kind, id, detail] = key.split("|");
-    if (kind === "day") return this.querySelector(`.meal-day[data-date="${id}"] [class="${detail}"]`) ?? this.querySelector(`.meal-day[data-date="${id}"] .meal-plan`);
+    const [kind, id, detail, className] = key.split("|");
+    if (kind === "day") {
+      const slot = this.querySelector(`.meal-day[data-date="${id}"] .meal-slot[data-slot="${detail}"]`);
+      return (className ? slot?.querySelector(`.${className}`) : null) ?? slot?.querySelector(".meal-slot-plan") ?? null;
+    }
     if (kind === "recipe") return this.querySelector(`.recipe[data-recipe-id="${id}"]`)?.querySelectorAll("button, select")[Number(detail)] ?? null;
     if (kind === "plan") return this.querySelector(`.meal-plan-recipes button[data-recipe-id="${id}"]`);
+    if (kind === "week") return { same: this.sameAsLast, ingredients: this.weekIngredients, favourites: this.favouritesFilter }[id] ?? null;
     return null;
   }
 
@@ -229,8 +330,10 @@ class KinMeals extends HTMLElement {
     const current = mondayOf(this.today) === days[0].date;
     this.weekHeading.textContent = current ? `This week · ${weekLabel(days[0].date)}` : `Week of ${weekLabel(days[0].date)}`;
     this.thisWeek.hidden = current;
-    for (const button of [this.previousWeek, this.thisWeek, this.nextWeek]) button.disabled = this.isDisabled;
-    const rows = days.map((day) => this.dayRow(day));
+    for (const button of [this.previousWeek, this.thisWeek, this.nextWeek, this.sameAsLast, this.weekIngredients, this.favouritesFilter]) button.disabled = this.isDisabled;
+    const shown = this.visibleSlots(days);
+    for (const [slot, box] of this.slotBoxes) box.checked = shown.includes(slot);
+    const rows = days.map((day) => this.dayRow(day, shown));
     this.days.replaceChildren(...rows);
     this.renderRecipes(days);
     this.addRecipe.disabled = this.isDisabled;
@@ -242,8 +345,7 @@ class KinMeals extends HTMLElement {
     this.restoreFocus(focused);
   }
 
-  dayRow(day) {
-    const dinner = this.dinnerOn(day.date);
+  dayRow(day, shown) {
     const row = document.createElement("li");
     row.className = "meal-day";
     row.dataset.date = day.date;
@@ -254,37 +356,57 @@ class KinMeals extends HTMLElement {
     if (day.date === this.today) {
       const badge = document.createElement("span");
       badge.className = "meal-today";
-      badge.textContent = "Tonight";
+      badge.textContent = "Today";
       name.append(" ", badge);
     }
+    const slots = document.createElement("div");
+    slots.className = "meal-slots";
+    for (const slot of shown) slots.append(this.slotRow(day, slot));
+    row.append(name, slots);
+    return row;
+  }
+
+  /** One meal of a day: what's planned, dinner's cook, Plan or Change, and
+   * its ingredients to Shopping. Dinner keeps the classes it always had. */
+  slotRow(day, slot) {
+    const dinner = slot === "dinner";
+    const meal = this.mealOn(day.date, slot);
+    const label = SLOT_LABELS[slot];
+    const lower = label.toLowerCase();
+    const row = document.createElement("div");
+    row.className = "meal-slot";
+    row.dataset.slot = slot;
+    const heading = document.createElement("p");
+    heading.className = "meal-slot-label";
+    heading.textContent = dinner && day.date === this.today ? "Tonight" : label;
     const what = document.createElement("p");
-    what.className = dinner ? "meal-dinner" : "meal-dinner is-empty";
-    what.textContent = dinner?.name ?? "Nothing planned";
-    row.append(name, what);
-    if (dinner) {
+    what.className = `meal-slot-name${dinner ? " meal-dinner" : ""}${meal ? "" : " is-empty"}`;
+    what.textContent = meal?.name ?? "Nothing planned";
+    row.append(heading, what);
+    if (dinner && meal) {
       const cook = document.createElement("p");
       cook.className = "meal-cook";
-      cook.textContent = `Cooking: ${cookLabel(dinner.cookId, this.people)}`;
+      cook.textContent = `Cooking: ${cookLabel(meal.cookId, this.people)}`;
       row.append(cook);
     }
     const actions = document.createElement("div");
     actions.className = "meal-day-actions";
     const plan = document.createElement("button");
     plan.type = "button";
-    plan.className = "meal-plan";
-    plan.textContent = dinner ? "Change" : "Plan";
-    plan.setAttribute("aria-label", `${dinner ? "Change" : "Plan"} dinner for ${day.longLabel}`);
+    plan.className = `meal-slot-plan${dinner ? " meal-plan" : ""}`;
+    plan.textContent = meal ? "Change" : "Plan";
+    plan.setAttribute("aria-label", `${meal ? "Change" : "Plan"} ${lower} for ${day.longLabel}`);
     plan.disabled = this.isDisabled;
-    plan.addEventListener("click", () => this.openPlan(day, plan));
+    plan.addEventListener("click", () => this.openPlan(day, plan, slot));
     actions.append(plan);
-    if (dinner?.recipeId && this.mealsValue.recipes.some((recipe) => recipe.recipeId === dinner.recipeId)) {
+    if (meal?.recipeId && this.mealsValue.recipes.some((recipe) => recipe.recipeId === meal.recipeId)) {
       const add = document.createElement("button");
       add.type = "button";
-      add.className = "meal-ingredients";
+      add.className = `meal-slot-ingredients${dinner ? " meal-ingredients" : ""}`;
       add.textContent = "Add ingredients to Shopping";
-      add.setAttribute("aria-label", `Add ingredients for ${dinner.name} on ${day.longLabel} to Shopping`);
+      add.setAttribute("aria-label", `Add ingredients for ${meal.name} on ${day.longLabel} to Shopping`);
       add.disabled = this.isDisabled;
-      add.addEventListener("click", () => void this.actions?.addIngredients({ date: day.date }, dinner.name));
+      add.addEventListener("click", () => void this.actions?.addIngredients(dinner ? { date: day.date } : { date: day.date, slot }, meal.name));
       actions.append(add);
     }
     row.append(actions);
@@ -292,15 +414,41 @@ class KinMeals extends HTMLElement {
   }
 
   renderRecipes(days) {
-    const recipes = [...this.mealsValue.recipes].sort((left, right) => left.name.localeCompare(right.name));
+    const all = [...this.mealsValue.recipes].sort((left, right) => left.name.localeCompare(right.name));
+    const hasFavourites = all.some((recipe) => recipe.favourite);
+    if (!hasFavourites) this.favouritesOnly = false;
+    this.favouritesFilter.hidden = !hasFavourites;
+    this.favouritesFilter.setAttribute("aria-pressed", String(this.favouritesOnly));
+    const recipes = filterRecipes(all, "", { favouritesOnly: this.favouritesOnly });
+    this.emptyRecipes.textContent = "Save a meal once and reuse it any week.";
     this.emptyRecipes.hidden = recipes.length > 0;
     this.recipeList.replaceChildren(...recipes.map((recipe) => {
       const item = document.createElement("li");
       item.className = "recipe";
       item.dataset.recipeId = recipe.recipeId;
+      const top = document.createElement("div");
+      top.className = "recipe-top";
       const name = document.createElement("p");
       name.className = "recipe-name";
       name.textContent = recipe.name;
+      // The star: a toggle button whose state is read out; the word shows in
+      // easy mode.
+      const star = document.createElement("button");
+      star.type = "button";
+      star.className = "recipe-favourite";
+      star.setAttribute("aria-pressed", String(Boolean(recipe.favourite)));
+      star.setAttribute("aria-label", `Favourite: ${recipe.name}`);
+      const icon = document.createElement("span");
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = recipe.favourite ? "★" : "☆";
+      const word = document.createElement("span");
+      word.className = "control-word";
+      word.setAttribute("aria-hidden", "true");
+      word.textContent = " Favourite";
+      star.append(icon, word);
+      star.disabled = this.isDisabled;
+      star.addEventListener("click", () => void this.actions?.setFavourite?.(recipe.recipeId, !recipe.favourite));
+      top.append(name, star);
       const meta = document.createElement("p");
       meta.className = "recipe-meta item-meta";
       meta.textContent = recipe.ingredients.length === 1 ? "1 ingredient" : `${recipe.ingredients.length} ingredients`;
@@ -322,7 +470,8 @@ class KinMeals extends HTMLElement {
         add.addEventListener("click", () => void this.actions?.addIngredients({ recipeId: recipe.recipeId }, recipe.name));
         actions.append(add);
       }
-      // Wide screens: put it on a day of the week shown, without a dialog.
+      // Wide screens: put it on a day's dinner of the week shown, without a
+      // dialog.
       const putOn = document.createElement("label");
       putOn.className = "recipe-put-on";
       putOn.textContent = "Put on ";
@@ -352,12 +501,14 @@ class KinMeals extends HTMLElement {
       });
       putOn.append(select, put);
       actions.append(putOn);
-      item.append(name, meta, actions);
+      item.append(top, meta, actions);
       return item;
     }));
+    if (!recipes.length && all.length) this.emptyRecipes.textContent = "No favourites yet.";
+    if (!recipes.length && all.length) this.emptyRecipes.hidden = false;
   }
 
-  // ---- Planning a day ------------------------------------------------------
+  // ---- Planning a meal -----------------------------------------------------
 
   buildPlanDialog() {
     const id = this.idPrefix;
@@ -399,9 +550,9 @@ class KinMeals extends HTMLElement {
       if (event.key === "Enter") { event.preventDefault(); void this.planSomethingElse(); }
     });
     otherRow.append(this.planOther, useOther);
-    const cookLabelElement = document.createElement("label");
-    cookLabelElement.htmlFor = `${id}-plan-cook`;
-    cookLabelElement.textContent = "Who's cooking";
+    this.planCookLabel = document.createElement("label");
+    this.planCookLabel.htmlFor = `${id}-plan-cook`;
+    this.planCookLabel.textContent = "Who's cooking";
     this.planCook = document.createElement("select");
     this.planCook.id = `${id}-plan-cook`;
     this.planCook.addEventListener("change", () => void this.changeCook());
@@ -419,22 +570,24 @@ class KinMeals extends HTMLElement {
     close.textContent = "Done";
     close.addEventListener("click", () => dialog.close());
     actions.append(this.planClear, close);
-    dialog.append(this.planTitle, findLabel, this.planFind, this.planRecipesHint, this.planRecipes, otherLabel, otherRow, this.planOtherError, cookLabelElement, this.planCook, this.planCookHint, actions);
+    dialog.append(this.planTitle, findLabel, this.planFind, this.planRecipesHint, this.planRecipes, otherLabel, otherRow, this.planOtherError, this.planCookLabel, this.planCook, this.planCookHint, actions);
     dialog.addEventListener("close", () => {
       const opener = this.planning?.opener;
       const date = this.planning?.day.date;
+      const slot = this.planning?.slot ?? "dinner";
       this.planning = null;
-      const target = this.querySelector(`.meal-day[data-date="${date}"] .meal-plan`) ?? opener;
+      const target = this.querySelector(`.meal-day[data-date="${date}"] .meal-slot[data-slot="${slot}"] .meal-slot-plan`) ?? opener;
       if (target?.isConnected) target.focus();
     });
     this.planDialog = dialog;
     return dialog;
   }
 
-  openPlan(day, opener) {
-    this.planning = { day, opener };
+  openPlan(day, opener, slot = "dinner") {
+    this.planning = { day, opener, slot };
+    const meal = this.mealOn(day.date, slot);
     this.planFind.value = "";
-    this.planOther.value = this.dinnerOn(day.date)?.recipeId ? "" : this.dinnerOn(day.date)?.name ?? "";
+    this.planOther.value = meal?.recipeId ? "" : meal?.name ?? "";
     this.planOtherError.hidden = true;
     this.renderPlan();
     this.planDialog.showModal?.();
@@ -442,44 +595,69 @@ class KinMeals extends HTMLElement {
     this.planFind.focus();
   }
 
+  /** Plans `recipe` or a one-off `name` for the meal being planned. */
+  saveMeal({ recipeId = null, name }) {
+    const { day, slot } = this.planning;
+    if (slot === "dinner") return this.actions?.setDinner({ date: day.date, recipeId, name });
+    return this.actions?.setMeal?.({ date: day.date, slot, recipeId, name });
+  }
+
+  /** After planning: dinner moves on to its cook; other meals are done. */
+  afterPlanned() {
+    if (this.planning?.slot === "dinner") this.planCook.focus();
+    else this.planDialog.close();
+  }
+
   renderPlan() {
     const focused = this.focusKey(document.activeElement);
-    const { day } = this.planning;
-    const dinner = this.dinnerOn(day.date);
-    this.planTitle.textContent = `Dinner for ${day.longLabel}`;
+    const { day, slot } = this.planning;
+    const dinner = slot === "dinner";
+    const meal = this.mealOn(day.date, slot);
+    this.planTitle.textContent = `${SLOT_LABELS[slot]} for ${day.longLabel}`;
     const query = this.planFind.value;
     const recipes = query.trim() ? filterRecipes(this.mealsValue.recipes, query) : recentRecipes(this.mealsValue, 8);
     this.planRecipesHint.textContent = !this.mealsValue.recipes.length
       ? "No recipes yet. Use Something else, or add a recipe from the Recipes list."
       : query.trim()
         ? (recipes.length ? "" : "No recipe matches. Use Something else instead.")
-        : "Recent recipes";
+        : "Favourites and recent recipes";
     this.planRecipesHint.hidden = !this.planRecipesHint.textContent;
     this.planRecipes.replaceChildren(...recipes.map((recipe) => {
       const item = document.createElement("li");
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = recipe.name;
       button.dataset.recipeId = recipe.recipeId;
-      if (dinner?.recipeId === recipe.recipeId) {
-        button.setAttribute("aria-pressed", "true");
-        button.setAttribute("aria-label", `${recipe.name} (planned)`);
+      if (recipe.favourite) {
+        const star = document.createElement("span");
+        star.setAttribute("aria-hidden", "true");
+        star.textContent = "★ ";
+        button.append(star);
       }
+      button.append(recipe.name);
+      const labels = [recipe.name];
+      if (recipe.favourite) labels.push("favourite");
+      if (meal?.recipeId === recipe.recipeId) {
+        button.setAttribute("aria-pressed", "true");
+        labels.push("planned");
+      }
+      if (labels.length > 1) button.setAttribute("aria-label", `${labels[0]} (${labels.slice(1).join(", ")})`);
       button.disabled = this.isDisabled;
       button.addEventListener("click", async () => {
-        // Already planned: nothing to save, just move on to the cook.
-        const current = this.dinnerOn(day.date);
-        if (current?.recipeId === recipe.recipeId && current.name === recipe.name) { this.planCook.focus(); return; }
-        if (await this.actions?.setDinner({ date: day.date, recipeId: recipe.recipeId, name: recipe.name })) this.planCook.focus();
+        // Already planned: nothing to save, just move on.
+        const current = this.mealOn(day.date, slot);
+        if (current?.recipeId === recipe.recipeId && current.name === recipe.name) { this.afterPlanned(); return; }
+        if (await this.saveMeal({ recipeId: recipe.recipeId, name: recipe.name })) this.afterPlanned();
       });
       item.append(button);
       return item;
     }));
+    // Who's cooking belongs to dinner only.
+    for (const node of [this.planCookLabel, this.planCook]) node.hidden = !dinner;
     const options = cookOptions(this.people);
     const none = document.createElement("option");
     none.value = "";
     none.textContent = "No one yet";
-    const current = dinner?.cookId ?? "";
+    const current = dinner ? meal?.cookId ?? "" : "";
     const list = [none, ...options.map((option) => {
       const element = document.createElement("option");
       element.value = option.id;
@@ -494,9 +672,10 @@ class KinMeals extends HTMLElement {
     }
     this.planCook.replaceChildren(...list);
     this.planCook.value = current;
-    this.planCook.disabled = this.isDisabled || !dinner;
-    this.planCookHint.hidden = Boolean(dinner);
-    this.planClear.hidden = !dinner;
+    this.planCook.disabled = this.isDisabled || !meal || !dinner;
+    this.planCookHint.hidden = !dinner || Boolean(meal);
+    this.planClear.textContent = `Clear this ${SLOT_LABELS[slot].toLowerCase()}`;
+    this.planClear.hidden = !meal;
     this.planClear.disabled = this.isDisabled;
     this.restoreFocus(focused);
   }
@@ -504,17 +683,18 @@ class KinMeals extends HTMLElement {
   async planSomethingElse() {
     const name = this.planOther.value;
     const date = this.planning?.day.date;
+    const slot = this.planning?.slot ?? "dinner";
     if (!date) return;
     this.planOtherError.hidden = true;
     try {
       // Checked here first so the message sits beside the field at once.
-      const text = normalizeDinnerName(name);
-      const current = this.dinnerOn(date);
-      if (current && !current.recipeId && current.name === text) { this.planCook.focus(); return; }
-      if (await this.actions?.setDinner({ date, recipeId: null, name })) this.planCook.focus();
+      const text = normalizeMealName(name);
+      const current = this.mealOn(date, slot);
+      if (current && !current.recipeId && current.name === text) { this.afterPlanned(); return; }
+      if (await this.saveMeal({ recipeId: null, name })) this.afterPlanned();
     } catch (error) {
       if (!(error instanceof MealFormatError)) throw error;
-      this.planOtherError.textContent = error.message;
+      this.planOtherError.textContent = slot === "dinner" ? error.message.replace(/^A meal/, "A dinner") : error.message;
       this.planOtherError.hidden = false;
       this.planOther.focus();
     }
@@ -522,13 +702,16 @@ class KinMeals extends HTMLElement {
 
   async changeCook() {
     const date = this.planning?.day.date;
-    if (!date) return;
+    if (!date || this.planning.slot !== "dinner") return;
     await this.actions?.setCook(date, this.planCook.value || null);
   }
 
   async clearPlanned() {
     const date = this.planning?.day.date;
-    if (date && await this.actions?.clearDinner(date)) this.planDialog.close();
+    const slot = this.planning?.slot ?? "dinner";
+    if (!date) return;
+    const cleared = slot === "dinner" ? await this.actions?.clearDinner(date) : await this.actions?.clearMeal?.(date, slot);
+    if (cleared) this.planDialog.close();
   }
 
   // ---- Recipes ------------------------------------------------------------
@@ -604,7 +787,7 @@ class KinMeals extends HTMLElement {
       const opener = this.editing?.opener;
       const recipeId = this.editing?.recipeId;
       this.editing = null;
-      const target = recipeId ? this.querySelector(`.recipe[data-recipe-id="${recipeId}"] button`) : null;
+      const target = recipeId ? this.querySelector(`.recipe[data-recipe-id="${recipeId}"] .recipe-actions button`) : null;
       (target?.isConnected ? target : opener?.isConnected ? opener : this.addRecipe).focus();
     });
     this.recipeDialog = dialog;
@@ -728,7 +911,7 @@ class KinMeals extends HTMLElement {
 
   async archiveEditing() {
     const recipe = this.current();
-    if (!recipe || !confirm(`Archive “${recipe.name}”? Dinners already planned keep its name.`)) return;
+    if (!recipe || !confirm(`Archive “${recipe.name}”? Meals already planned keep its name.`)) return;
     if (await this.actions?.archiveRecipe(recipe.recipeId)) this.recipeDialog.close();
   }
 }

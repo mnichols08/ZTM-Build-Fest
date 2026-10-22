@@ -326,6 +326,59 @@ record 2, note 1 with intro "Hi": `"KSIT"`, `01 00`, `00 00`, count 3, then
 then `02 00` "Hi". An empty history is `"KSIT"`, `01 00 00 00`, a zero count
 and a zero intro length.
 
+## Fuller meal plans (#679)
+
+These vectors are written out by hand in `rust/src/meals_tests.rs`
+(`meal_plan_test_vectors` and the tests beside it); recipe IDs are
+`numbered_id(n)` and 2026-10-05 is `8d 28 35 01`. JavaScript mirrors 180–182,
+184 and 185 in `web/wasm/kin-meals.test.mjs`, and the engine round trip in
+`meals-engine.test.mjs`. Numbered from 180 to stay clear of the other
+family-hub kinds.
+
+**180 — Meal payload (kind 80).** Lunch on 2026-10-05, one-off "Soup": the
+date, `02 00 00 00`, `00 00 00 00`, `04 00` "Soup" (18 bytes). Breakfast from
+recipe 7 "Porridge": the date, `01 00 00 00`, `01 00 00 00` + recipe 7, `08 00`
+"Porridge". Slot 3 (dinner), 0 or 5, a non-zero reserved byte, a trailing
+byte, " Soup" and a zero recipe fail with code 2.
+
+**181 — Meal cleared (kind 81).** The snack on 2026-10-05: the date and
+`04 00 00 00` (8 bytes). Slots 0, 3 and 5 and `01 00 01 00` fail with code 2.
+
+**182 — Favourite (kind 82).** Recipe 7 then `01 00 00 00` (on) or
+`00 00 00 00` (off), 20 bytes. A flag of 2, a trailing byte or a zero recipe
+fail with code 2.
+
+**183 — Rules.** Breakfast from recipe 1 "Porridge", lunch "Leftovers" and
+dinner "Curry" on 2026-10-05: the same breakfast again, a recipe under an old
+name, an unknown recipe and clearing an empty snack fail (code 4); clearing
+lunch leaves breakfast and dinner, and clearing dinner (kind 62) leaves
+breakfast. Once recipe 1 is archived it can't be planned or unfavourited, and
+the planned breakfast keeps reading "Porridge". A favourite twice, an
+unfavourite of a recipe that isn't one and a favourite of an unknown recipe
+fail (code 4). Replay ignores a favourite or a snack naming recipe 9, which
+the history lacks. Two lunches for one date from the same history converge
+on the later in replay order.
+
+**184 — KMLS v2.** Recipe 7 "Oats" (a favourite, no ingredients, no notes)
+and a breakfast of it on 2026-10-05: `"KMLS"`, `02 00`, `00 00`, recipe count
+1, meal count 1; recipe 7, `04 00` "Oats", `00 01 00 00`, `00 00`; then
+`8d 28 35 01`, `01 01 00 00`, recipe 7, 16 zero bytes, `04 00` "Oats". An empty
+history is `"KMLS"`, `02 00 00 00` and two zero counts. KMLS v1 of the same
+history lists no meals, since it has no dinner.
+
+**185 — KMPQ v2.** Lunch on 2026-10-05 is `"KMPQ"`, `02 00`, `00 00`, `03 02
+00 00`, 16 zero bytes, the date; the week from 2026-10-05 is the same with
+`04 00 00 00`; a dinner query stays v1 (`01 00 … 02 00 00 00`). Over
+breakfasts of Porridge (Oats, Milk linked to a Staple) on 5 and 6 October,
+lunch of Sandwiches (Bread, Cheese) on the 5th, dinner of Mac and cheese
+(cheese, Pasta) on the 7th, a one-off snack on the 8th and a snack on the
+12th, with Bread on Shopping, the week plans Oats (add), Milk (re-add
+staple), Bread (already), Cheese (add, once), Pasta (add). An empty week is
+`"KMSP"`, `01 00 00 00` and a zero count. A v1 query for the week or with a
+slot, a v2 week with a slot, slot 0 or 5 for source 3, or a week from
+9999-12-30 fail with code 2; version 3 fails with code 3; a lunch nobody
+planned fails with code 4.
+
 ## A member's private log (#489)
 
 Written out by hand in `rust/src/private_tests.rs`: household `aa` × 16,

@@ -320,7 +320,10 @@ impl Replay {
             | K::RecipeArchived { .. }
             | K::DinnerSet { .. }
             | K::DinnerCleared { .. }
-            | K::DinnerCookSet { .. } => crate::meals::apply(&mut self.meals, event)?,
+            | K::DinnerCookSet { .. }
+            | K::MealSet { .. }
+            | K::MealCleared { .. }
+            | K::RecipeFavouriteSet { .. } => crate::meals::apply(&mut self.meals, event)?,
             K::ItemEmojiSet { .. } => crate::simple::apply(&mut self.pictures, event)?,
             K::ShoppingSectionsSet { .. } | K::ItemSectionSet { .. } => {
                 crate::store_sections::apply(&mut self.store_sections, event)?

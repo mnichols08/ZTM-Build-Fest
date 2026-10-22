@@ -4,8 +4,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  MEAL_COMMANDS, MealFormatError, collapseText, decodeMeals, decodePlan, encodeDate, encodeMealIntent, encodeMealPayload,
-  encodePlanQuery, ingredientsFromText, normalizeNotes, normalizeRecipe, planSummary,
+  MEAL_COMMANDS, MEAL_PLAN_COMMANDS, MEAL_SLOTS, MealFormatError, collapseText, decodeMeals, decodePlan, encodeDate, encodeMealIntent, encodeMealPayload,
+  encodePlanQuery, ingredientsFromText, mealCommandKind, normalizeNotes, normalizeRecipe, planSummary,
 } from "./kin-meals.js";
 
 const id = (byte) => byte.toString(16).padStart(2, "0").repeat(16);
@@ -85,15 +85,68 @@ test("KMLS and KMSP decode into what the screens show", () => {
     u16(0),
     u32(20261005), [3, 0, 0, 0], raw(id(7)), raw(id(2)), u16(5), "Tacos");
   assert.deepEqual(decodeMeals(meals), {
-    recipes: [{ recipeId: id(7), name: "Tacos", notes: "", ingredients: [
+    recipes: [{ recipeId: id(7), name: "Tacos", notes: "", favourite: false, ingredients: [
       { text: "Tortillas", stapleId: id(3), staple: "active" },
       { text: "Lime", stapleId: id(4), staple: "archived" },
     ] }],
     dinners: [{ date: "2026-10-05", recipeId: id(7), cookId: id(2), name: "Tacos" }],
+    meals: [{ date: "2026-10-05", slot: "dinner", recipeId: id(7), cookId: id(2), name: "Tacos" }],
   });
   assert.throws(() => decodeMeals(bytesOf(meals, [0])), MealFormatError);
+  // v1 has no favourite flag; KMLS v3 is unknown.
+  const flagged = bytesOf(meals);
+  flagged[16 + 16 + 7 + 1] = 1;
+  assert.throws(() => decodeMeals(flagged), MealFormatError);
+  const later = bytesOf(meals);
+  later[4] = 3;
+  assert.throws(() => decodeMeals(later), MealFormatError);
   const plan = bytesOf("KMSP", u16(1), [0, 0], u32(2), [2, 0, 0, 0], raw(id(3)), u16(4), "Milk", [3, 0, 0, 0], new Array(16).fill(0), u16(5), "Bread");
   assert.deepEqual(decodePlan(plan), [{ outcome: "readd-staple", text: "Milk", stapleId: id(3) }, { outcome: "already", text: "Bread", stapleId: null }]);
+});
+
+// Fuller meal plans (#679): TEST-VECTORS 180–182, 184 and 185.
+test("meal plan payloads, KCMD actions 80–82, KMLS v2 and KMPQ v2", () => {
+  assert.deepEqual(MEAL_PLAN_COMMANDS, ["set-meal", "clear-meal", "set-recipe-favourite"]);
+  assert.deepEqual(MEAL_SLOTS, ["breakfast", "lunch", "dinner", "snack"]);
+  // 180
+  assert.deepEqual(encodeMealPayload({ type: "set-meal", date: "2026-10-05", slot: "lunch", name: " Soup " }),
+    bytesOf(raw("8d283501"), [2, 0, 0, 0], [0, 0, 0, 0], u16(4), "Soup"));
+  assert.deepEqual(encodeMealPayload({ type: "set-meal", date: "2026-10-05", slot: "breakfast", recipeId: id(7), name: "Porridge" }),
+    bytesOf(raw("8d283501"), [1, 0, 0, 0], [1, 0, 0, 0], raw(id(7)), u16(8), "Porridge"));
+  assert.throws(() => encodeMealPayload({ type: "set-meal", date: "2026-10-05", slot: "dinner", name: "Soup" }), MealFormatError);
+  assert.throws(() => encodeMealPayload({ type: "set-meal", date: "2026-10-05", slot: "brunch", name: "Soup" }), MealFormatError);
+  // 181
+  assert.deepEqual(encodeMealPayload({ type: "clear-meal", date: "2026-10-05", slot: "snack" }), bytesOf(raw("8d283501"), [4, 0, 0, 0]));
+  // 182
+  assert.deepEqual(encodeMealPayload({ type: "set-recipe-favourite", recipeId: id(7), favourite: true }), bytesOf(raw(id(7)), [1, 0, 0, 0]));
+  assert.deepEqual(encodeMealPayload({ type: "set-recipe-favourite", recipeId: id(7), favourite: false }), bytesOf(raw(id(7)), [0, 0, 0, 0]));
+  assert.throws(() => encodeMealPayload({ type: "set-recipe-favourite", recipeId: id(7), favourite: 1 }), MealFormatError);
+  const identity = { eventId: id(1), householdId: id(0xaa), actorId: id(2), deviceId: id(3), timestamp: 1_791_475_200_000, logicalTime: 4n };
+  for (const [type, kind] of [["set-meal", 80], ["clear-meal", 81], ["set-recipe-favourite", 82], ["set-dinner", 61]]) {
+    assert.equal(mealCommandKind(type), kind);
+  }
+  const packet = encodeMealIntent({ type: "clear-meal", date: "2026-10-05", slot: "snack" }, identity);
+  assert.equal(new DataView(packet.buffer).getUint16(8, true), 81);
+  // 184
+  const plans = bytesOf("KMLS", u16(2), [0, 0], u32(1), u32(1),
+    raw(id(7)), u16(4), "Oats", [0, 1, 0, 0], u16(0),
+    u32(20261005), [1, 1, 0, 0], raw(id(7)), new Array(16).fill(0), u16(4), "Oats");
+  assert.deepEqual(decodeMeals(plans), {
+    recipes: [{ recipeId: id(7), name: "Oats", notes: "", favourite: true, ingredients: [] }],
+    dinners: [],
+    meals: [{ date: "2026-10-05", slot: "breakfast", recipeId: id(7), cookId: null, name: "Oats" }],
+  });
+  const badSlot = bytesOf(plans);
+  badSlot[plans.length - 6 - 32 - 4] = 5;
+  assert.throws(() => decodeMeals(badSlot), MealFormatError);
+  // 185: v1 for a recipe or a dinner; v2 for another slot or a week.
+  assert.deepEqual([...encodePlanQuery({ date: "2026-10-05", slot: "dinner" }).subarray(0, 12)], [75, 77, 80, 81, 1, 0, 0, 0, 2, 0, 0, 0]);
+  const lunch = encodePlanQuery({ date: "2026-10-05", slot: "lunch" });
+  assert.deepEqual([...lunch.subarray(0, 12)], [75, 77, 80, 81, 2, 0, 0, 0, 3, 2, 0, 0]);
+  assert.equal(new DataView(lunch.buffer).getUint32(28, true), 20261005);
+  const week = encodePlanQuery({ week: "2026-10-05" });
+  assert.deepEqual([...week.subarray(0, 12)], [75, 77, 80, 81, 2, 0, 0, 0, 4, 0, 0, 0]);
+  assert.deepEqual([...week.subarray(12, 32)], [...new Array(16).fill(0), ...raw("8d283501")]);
 });
 
 test("feedback counts what was added, re-added and already listed", () => {
