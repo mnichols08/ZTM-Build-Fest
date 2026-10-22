@@ -35,6 +35,7 @@ import "./kin-app-badge.js";
 import "./kin-security.js";
 import "./kin-appearance.js";
 import "./kin-personal-settings.js";
+import "./kin-calendar-subscriptions.js";
 import "./kin-help.js";
 import "./kin-household-defaults.js";
 import "./kin-report.js";

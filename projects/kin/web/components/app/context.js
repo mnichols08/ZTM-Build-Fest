@@ -64,6 +64,7 @@ import { SyncController } from "./sync.js";
 import { UndoController } from "./undo.js";
 import { ViewBuilder } from "./views.js";
 import { ReportController } from "./report.js";
+import { CalendarSyncController } from "./calendar-sync.js";
 import { LocalReminders } from "../../reminders.js";
 import { EventStore } from "../../storage/event-store.js";
 import { readAutoLockPreference } from "./constants.js";
@@ -114,6 +115,8 @@ export function createAppContext(app) {
   ctx.views = new ViewBuilder(ctx);
   // Reports and suggestions to the Kin team (ADR 0021 §3).
   ctx.report = new ReportController(ctx);
+  // Outside calendars synced through the service (ADR 0022 §3, #668).
+  ctx.calendarSync = new CalendarSyncController(ctx);
   return ctx;
 }
 

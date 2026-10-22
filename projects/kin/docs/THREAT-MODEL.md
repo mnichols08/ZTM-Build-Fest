@@ -876,6 +876,36 @@ hour; the service caps stored reports at 20,000 and pictures at 1 GiB. The
 GitHub token, if configured, can write that repository's issues; scope it
 to Issues on one repository.
 
+### Synced outside calendars are readable by the service (ADR 0022 §3, #667)
+
+A calendar a member syncs is fetched by the Kin service, which reads it in
+plaintext while it holds it (at most 30 minutes in memory) and relays it to
+the devices in its audience over TLS only, not end-to-end encrypted. The
+service's database holds each calendar's private link in plaintext, because
+it must fetch it: the operator, or anyone with the database or a backup, can
+read those calendars for as long as the links work. Members are warned
+before turning sync on; importing a file instead keeps the calendar off the
+service.
+
+The fetcher is a way for members to make the service request URLs, so it is
+guarded against server-side request forgery (server/calendar-fetcher.mjs):
+`https:` on port 443 only, no credentials in the link; every address the host
+resolves to must be public unicast (no private, loopback, link-local,
+carrier-NAT, multicast, documentation, benchmarking, 6to4, Teredo or other
+reserved IPv4 or IPv6 range, and IPv4-mapped or NAT64 IPv6 judged by the
+IPv4 address), checked again on every redirect hop (5 at most, never away
+from https), and the connection goes to the address that was checked, so DNS
+rebinding between check and connect doesn't work; 2 MB and 15 seconds per
+fetch, no compressed answers; 10 calendars per member, 30 per household and
+20 additions per member an hour; backoff from 5 minutes to 6 hours after
+errors. Residual risks: the service still reaches any public HTTPS host a
+member names (it can be used to send a GET to a public site about every 30
+minutes per calendar, and to learn whether a host serves something that looks
+like a calendar); an operator whose own network treats a public address as
+internal (for example an allowlist by source address) is not protected by
+these checks. Feeds are parsed only on the devices, by the same bounded Rust
+parser as file import.
+
 ### v1.0 was not tested across every browser and device
 
 **What it is.** v1.0 shipped on the owner's decision with limited real-world

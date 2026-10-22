@@ -176,6 +176,8 @@ export class SyncController {
       if (!wasReady) void this.ctx.report?.flush();
     }
     if (value.state === "ready") void this.settlePendingShares();
+    // Outside calendars (#668): listed again when the list is 5 minutes old.
+    if (value.state === "ready") this.ctx.calendarSync?.onSync();
     // Names typed at first run are recorded once sync is ready (#557).
     if (value.state === "ready" && this.app.pendingProfile) void this.ctx.firstRun?.applyProfile();
     if (value.state === "paused") {

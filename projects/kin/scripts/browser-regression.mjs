@@ -44,6 +44,7 @@ import { weekRegressions } from "./week-regression.mjs";
 import { importRegressions } from "./import-regression.mjs";
 import { sitterRegressions } from "./sitter-regression.mjs";
 import { householdFeaturesRegressions } from "./household-features-regression.mjs";
+import { CALENDAR_HARNESS_HOUSEHOLD, calendarSyncHarness, calendarSyncRegressions, expectedCalendarRefusal } from "./calendar-sync-regression.mjs";
 import { rotationsRegressions } from "./rotations-regression.mjs";
 import { storeSectionsRegressions } from "./store-sections-regression.mjs";
 import { recurringTaskRegressions } from "./recurring-tasks-regression.mjs";
@@ -84,7 +85,11 @@ assert.ok(
 );
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../web");
 const profile = await mkdtemp(join(tmpdir(), "kin-regression-"));
+// Outside calendars (#668): the real calendar service behind /api/calendar/,
+// fetching from a fake HTTPS calendar server (calendar-sync-regression.mjs).
+const calendarHarness = await calendarSyncHarness();
 const server = createServer(async (request, response) => {
+  if (await calendarHarness.handle(request, response)) return;
   if (new URL(request.url, "http://localhost").pathname === "/api/status") {
     response.setHeader("Content-Type", "application/json");
     response.end('{"identity":null,"claim":null}');
@@ -1560,6 +1565,12 @@ try {
   // Household features (#623–#626): off, hidden everywhere, on again.
   await visit(first, "today");
   console.log(await first.evaluate(`(${householdFeaturesRegressions.toString()})()`));
+  // Outside calendars (#665): add, warning, read-only occurrences, turn off.
+  // The link the calendar's server refuses logs its 4xx; that one is expected.
+  await visit(first, "today");
+  const calendarSyncStart = problems.length;
+  console.log(await first.evaluate(`(${calendarSyncRegressions.toString()})(${JSON.stringify(CALENDAR_HARNESS_HOUSEHOLD)})`));
+  problems.push(...problems.splice(calendarSyncStart).filter((entry) => !expectedCalendarRefusal(entry)));
   await visit(first, "today");
   await setViewport(first, { width: 320, height: 640, deviceScaleFactor: 2, mobile: true });
   try {
@@ -3198,6 +3209,7 @@ try {
   for (const client of clients) client.close();
   browser.kill();
   await new Promise((done) => server.close(done));
+  await calendarHarness.close();
   // The path was created by mkdtemp above; never remove a user browser profile.
   await rm(profile, {
     recursive: true,

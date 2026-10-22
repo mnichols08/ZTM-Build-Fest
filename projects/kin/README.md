@@ -236,6 +236,26 @@ completed is Done, closed as not planned is Won't do, open with the label
 `planned` is Planned. A status set with the command holds until the issue
 changes. The token goes only to that API and is never logged.
 
+### Outside calendars members sync
+
+Adults can sync a Google, Apple or Outlook calendar into Kin by pasting its
+private iCal link ([ADR 0022](docs/decisions/0022-family-hub.md) §3). This
+service then downloads that calendar, at most about every 30 minutes and
+only when a device in its audience asks, and relays it to those devices
+over TLS: **it can read those calendars, and its database (server schema
+28, `calendar_subscriptions`) holds their private links in plaintext**, so
+treat database backups accordingly. Feeds are held in memory for at most 30
+minutes and never written to disk. The fetcher uses Node's own `https` and
+`dns`, so the service needs outbound HTTPS (port 443) to the calendar hosts;
+it refuses private, loopback, link-local and other non-public IPv4 and IPv6
+addresses after DNS resolution and on every redirect (at most 5), only
+fetches `https:` on port 443, and stops at 2 MB or 15 seconds. If your
+network treats some public addresses as internal (an allowlist by source
+address, for example), put the service where it can't reach them. Limits: 10
+calendars per member, 30 per household; errors back off from 5 minutes to
+6 hours. Rows go when a calendar is turned off, its owner leaves or is
+removed, or the household is deleted. There is nothing to configure.
+
 The service persists household identity, authorization metadata, opaque relay
 events and synchronization state. Sessions and in-flight WebAuthn/pairing
 ceremonies expire on restart, so members sign in again with a trusted device
