@@ -57,6 +57,7 @@ const CERTIFICATE_ERRORS = {
   "acme-compound": "Let's Encrypt found more than one problem. Kin tries again later.",
   "acme-connection": "Let's Encrypt couldn't connect to this server through the relay. Check that the relay shows Connected.",
   "acme-dns": "Let's Encrypt couldn't look up the name. For your own domain, check its A and AAAA records.",
+  "acme-already-replaced": "This certificate was already replaced by a newer one. Kin orders again without linking them; nothing for you to do.",
   "acme-account-binding-required": "This certificate authority needs an account set up elsewhere first. Kin uses Let's Encrypt, which doesn't.",
   "acme-incorrect-response": "Let's Encrypt reached a server that didn't answer as this one. Check that no other computer uses this name.",
   "acme-bad-contact": "Let's Encrypt refused the contact details.",
