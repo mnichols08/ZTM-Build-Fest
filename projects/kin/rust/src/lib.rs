@@ -4,6 +4,7 @@ pub mod audio;
 pub mod board;
 pub mod chat;
 pub mod chat_search;
+pub mod chores;
 pub mod codec;
 pub mod command;
 pub mod core;
@@ -78,6 +79,8 @@ mod member_name_tests;
 
 #[cfg(test)]
 mod chat_tests;
+#[cfg(test)]
+mod chore_tests;
 
 #[cfg(test)]
 mod board_tests;

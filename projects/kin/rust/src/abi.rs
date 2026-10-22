@@ -363,6 +363,13 @@ pub extern "C" fn kin_sitter_page(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::sitter_page, None)
 }
 
+/// The chore chart for a week (KCCQ + KINE context -> KCCD v1, #676,
+/// chores.rs) against the instance's history.
+#[no_mangle]
+pub extern "C" fn kin_chore_chart(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::chores::chart_export, None)
+}
+
 /// A member's things today (KMTQ + KINE context -> KMTD v1, #344) against
 /// the instance's history.
 #[no_mangle]

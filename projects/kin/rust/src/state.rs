@@ -450,6 +450,10 @@ pub struct HouseholdState {
     /// projection; hosts read it through `kin_sitter_page`. Shared with the
     /// replay, not copied.
     pub sitter_page: std::sync::Arc<crate::sitter::SitterPageState>,
+    /// The chore chart (chores.rs, #676): points, rewards, who joined and
+    /// the completions in effect. Not part of the KINS projection; hosts read
+    /// it through `kin_chore_chart`. Shared with the replay, not copied.
+    pub chores: std::sync::Arc<crate::chores::ChoresState>,
 }
 
 impl HouseholdState {
