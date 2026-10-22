@@ -42,6 +42,8 @@ id_type!(RecipeId);
 id_type!(StoreSectionId);
 // A record in a member's private log (#489, private.rs).
 id_type!(PrivateRecordId);
+// A family calendar event (#656, calendar.rs).
+id_type!(CalendarEventId);
 
 /// What a chat message's content blob holds (#109).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -467,6 +469,25 @@ pub enum EventKind {
     SitterPageSet {
         intro: String,
         entries: Vec<crate::sitter::SitterEntry>,
+    },
+    /// Family calendar (#656, calendar.rs, kind 71): the whole event,
+    /// replacing any earlier version with its ID.
+    CalendarEventSaved(Box<crate::calendar::CalendarEvent>),
+    /// Kind 72: one occurrence (by its original start) or, with `None`, the
+    /// whole series is cancelled.
+    CalendarEventCancelled {
+        event_id: CalendarEventId,
+        occurrence: Option<crate::calendar::CalendarTime>,
+    },
+    /// Kind 73: undoes a cancel of that occurrence, or of the series.
+    CalendarEventRestored {
+        event_id: CalendarEventId,
+        occurrence: Option<crate::calendar::CalendarTime>,
+    },
+    /// Kind 74: the event's own member's palette colour (0–11); `None` goes
+    /// back to the default.
+    MemberColourSet {
+        colour: Option<u8>,
     },
     /// A member's private log (#489, private.rs): the placeholder private
     /// note, set to `text`; empty text removes it.

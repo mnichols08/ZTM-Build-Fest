@@ -154,6 +154,12 @@ pub fn sitter_page(context: &[u8], history: &mut History) -> Result<Vec<u8>, Kin
     ))
 }
 
+/// The calendar between two dates (`kin_calendar_range`, #656): KCAQ and
+/// the record-less KINE context; publishes KCAL (calendar_range.rs).
+pub fn calendar_range(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    crate::calendar_range::calendar_range_export(input, history)
+}
+
 /// A member's things today (`kin_my_things`, #344): KMTQ (simple.rs) and the
 /// record-less KINE context; publishes KMTD for the context's civil date.
 pub fn my_things(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {

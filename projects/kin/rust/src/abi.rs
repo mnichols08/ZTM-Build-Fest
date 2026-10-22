@@ -363,6 +363,20 @@ pub extern "C" fn kin_sitter_page(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::sitter_page, None)
 }
 
+/// The calendar between two dates (KCAQ + KINE context -> KCAL v1, #656)
+/// against the instance's history.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_calendar_range(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::calendar_range, None)
+}
+
+/// An iCalendar file's events as Kin event payloads (.ics bytes -> KICS v1,
+/// #666, ical.rs). Touches no household state.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_ical_parse(pointer: u32, length: u32) -> i32 {
+    operate(pointer, length, crate::ical::parse_request)
+}
+
 /// A member's things today (KMTQ + KINE context -> KMTD v1, #344) against
 /// the instance's history.
 #[no_mangle]

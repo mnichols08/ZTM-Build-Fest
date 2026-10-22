@@ -81,6 +81,42 @@ impl CivilDate {
         (ordinal <= MAX_ORDINAL).then(|| Self::from_ordinal(ordinal))
     }
 
+    /// The date `day_number` days after 0001-01-01, or `None` past
+    /// 9999-12-31 (the inverse of `day_number`).
+    pub fn from_day_number(day_number: u32) -> Option<Self> {
+        (day_number <= MAX_ORDINAL).then(|| Self::from_ordinal(day_number))
+    }
+
+    /// The date `days` earlier, or `None` before 0001-01-01.
+    pub fn checked_sub_days(self, days: u32) -> Option<Self> {
+        Some(Self::from_ordinal(self.ordinal().checked_sub(days)?))
+    }
+
+    /// A date from its parts, or `None` when it doesn't exist.
+    pub fn from_ymd(year: u32, month: u32, day: u32) -> Option<Self> {
+        if !(1..=9999).contains(&year) || !(1..=12).contains(&month) {
+            return None;
+        }
+        Self::from_encoded(year * 10_000 + month * 100 + day).ok()
+    }
+
+    pub const fn year(self) -> u32 {
+        self.0 / 10_000
+    }
+
+    pub const fn month(self) -> u32 {
+        self.0 / 100 % 100
+    }
+
+    pub const fn day(self) -> u32 {
+        self.0 % 100
+    }
+
+    /// 0 Monday … 6 Sunday.
+    pub fn weekday(self) -> u32 {
+        self.ordinal() % 7
+    }
+
     pub fn monday(self) -> Self {
         let mut year = self.0 / 10_000;
         let mut month = self.0 / 100 % 100;
@@ -107,7 +143,7 @@ impl CivilDate {
 /// Ordinal of 9999-12-31, the last representable civil date.
 const MAX_ORDINAL: u32 = 3_652_058;
 
-fn days_in_month(year: u32, month: u32) -> u32 {
+pub(crate) fn days_in_month(year: u32, month: u32) -> u32 {
     match month {
         4 | 6 | 9 | 11 => 30,
         2 if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) => {
