@@ -239,7 +239,7 @@ test("an own domain is added with ADD_DOMAIN; a refused name is reported and not
 
 /** A relay that speaks just enough KTUN to sign a home server in, then does
  * whatever `behave` says. */
-async function brokenRelay(t, behave) {
+async function brokenRelay(t, behave, { pingSeconds = 1, idleSeconds = 2 } = {}) {
   const sockets = new Set();
   const server = createTlsServer({ ...RELAY_TLS, ALPNProtocols: [ALPN], minVersion: "TLSv1.3" }, (socket) => {
     sockets.add(socket);
@@ -251,7 +251,7 @@ async function brokenRelay(t, behave) {
       if (preface) {
         preface = false;
         chunk = chunk.subarray(8);
-        socket.write(encodeHello({ nonce: Buffer.alloc(32, 1), maxStreams: 4, streamWindow: 16_384, connectionWindow: 16_384, pingSeconds: 1, idleSeconds: 2 }));
+        socket.write(encodeHello({ nonce: Buffer.alloc(32, 1), maxStreams: 4, streamWindow: 16_384, connectionWindow: 16_384, pingSeconds, idleSeconds }));
       }
       for (const frame of reader.push(chunk)) behave(socket, frame);
     });
@@ -261,19 +261,34 @@ async function brokenRelay(t, behave) {
   return server.address().port;
 }
 
-test("keep-alive: a home server pings a silent relay and gives up on a dead one", TIMEOUT, async (t) => {
-  const pings = [];
-  const port = await brokenRelay(t, (socket, frame) => {
-    if (frame.type === FrameType.AUTH) socket.write(encodeReady(["fern.home.test"]));
-    if (frame.type === FrameType.PING) pings.push(frame); // never answered
+// KTUN's HELLO carries whole seconds (pingSeconds ≥ 1, idleSeconds >
+// pingSeconds), so these can't be shorter. 1 s / 2 s is the tightest pair a
+// relay may send; 1 s / 4 s leaves room to check the timing itself.
+for (const [pingSeconds, idleSeconds] of [[1, 2], [1, 4]]) {
+  test(`keep-alive (ping ${pingSeconds} s, idle ${idleSeconds} s): it pings a silent relay, then gives up on it`, TIMEOUT, async (t) => {
+    let readyAt = 0;
+    let closedAt = 0;
+    const pings = [];
+    const port = await brokenRelay(t, (socket, frame) => {
+      if (frame.type === FrameType.AUTH) {
+        socket.write(encodeReady(["fern.home.test"]));
+        readyAt = Date.now();
+        socket.once("close", () => { closedAt = Date.now(); });
+      }
+      // Recorded as each PING arrives; never answered.
+      if (frame.type === FrameType.PING) pings.push(Date.now() - readyAt);
+    }, { pingSeconds, idleSeconds });
+    const tunnel = client(t, port, { backoff: { minMs: 60_000, maxMs: 60_000 } });
+    tunnel.start();
+    await waitFor(() => tunnel.status().lastError?.code === "tunnel-dead" && closedAt, "the dead tunnel", 15_000);
+    assert.ok(pings.length >= 1, "it pinged before giving up");
+    // Windows timers can fire ~15 ms late; allow a little either side.
+    assert.ok(pings[0] >= pingSeconds * 1000 - 100, `not before the ping interval (${pings[0]} ms)`);
+    assert.ok(pings[0] < idleSeconds * 1000, `well before giving up (${pings[0]} ms)`);
+    assert.ok(closedAt - readyAt >= idleSeconds * 1000 - 100, `gave up only after the idle time (${closedAt - readyAt} ms)`);
+    if (idleSeconds >= 4) assert.ok(pings[0] <= pingSeconds * 1000 + 500, `soon after the ping interval (${pings[0]} ms)`);
   });
-  const tunnel = client(t, port);
-  const codes = [];
-  tunnel.on("status", (status) => { if (status.lastError) codes.push(status.lastError.code); });
-  tunnel.start();
-  await waitFor(() => codes.includes("tunnel-dead"), "the dead tunnel", 10_000);
-  assert.ok(pings.length >= 1, "it pinged before giving up");
-});
+}
 
 test("a tunnel reset with no GOAWAY is reported and dialled again", TIMEOUT, async (t) => {
   let signIns = 0;

@@ -260,6 +260,7 @@ class Tunnel {
     this.closed = true;
     this.state = "closed";
     clearTimeout(this.signInTimer);
+    clearInterval(this.keepAlive);
     for (const stream of this.streams.values()) { stream.resetReceived = true; stream.destroy(new Error("tunnel closed")); }
     this.streams.clear();
     for (const { reject, timer } of this.controls.values()) { clearTimeout(timer); reject(Object.assign(new Error("the tunnel closed"), { code: "tunnel-lost" })); }
@@ -306,6 +307,13 @@ class Tunnel {
 
   #signIn(payload) {
     this.hello = decodeHello(payload);
+    // Keep-alive is checked at a quarter of the ping interval (at most every
+    // second), as the relay does. A coarser check could skip the whole window
+    // between pingSeconds and idleSeconds (they may be one second apart) and
+    // give up without ever having pinged.
+    const pingMs = this.hello.pingSeconds * 1000;
+    this.keepAlive = setInterval(() => this.tick(this.client.now()), Math.min(1000, pingMs / 4));
+    this.keepAlive.unref?.();
     this.connSend = new SendWindow(this.hello.connectionWindow);
     this.connRecv = new ReceiveWindow(this.hello.connectionWindow);
     const exporter = this.socket.exportKeyingMaterial(EXPORTER_LENGTH, EXPORTER_LABEL);
@@ -486,9 +494,10 @@ class Tunnel {
     pending.resolve({ status, names });
   }
 
-  /** Keep-alive (§2): PING after pingSeconds of silence; dead after idleSeconds. */
+  /** Keep-alive (§2): PING after pingSeconds of silence; dead after
+   * idleSeconds. Runs from the tunnel's own timer once HELLO has set them. */
   tick(now) {
-    if (this.closed || this.state === "connecting") return;
+    if (this.closed || !this.keepAlive) return;
     const silent = now - this.lastReceived;
     if (silent >= this.hello.idleSeconds * 1000) { this.fail("tunnel-dead"); return; }
     const pingMs = this.hello.pingSeconds * 1000;
@@ -622,8 +631,7 @@ export class TunnelClient extends EventEmitter {
     const pingMs = (this.current?.hello.pingSeconds ?? DEFAULT_HELLO.pingSeconds) * 1000;
     // Timers don't run while the computer sleeps; the clock does. A jump of
     // more than two ping intervals means every NAT entry is likely gone.
-    if (gap > 2 * pingMs + TICK_MS) { this.reconnectNow("wake"); return; }
-    for (const tunnel of [this.current, this.pending, ...(this.retired ?? [])]) tunnel?.tick(now);
+    if (gap > 2 * pingMs + TICK_MS) this.reconnectNow("wake");
   }
 
   // ------------------------------------------------------- tunnel callbacks
