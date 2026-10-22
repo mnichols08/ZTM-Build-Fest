@@ -112,6 +112,9 @@ export class Registry {
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;");
     const version = this.db.prepare("PRAGMA user_version").get().user_version;
+    // Close before refusing, so the file isn't left open (Windows can't
+    // delete or replace an open file).
+    if (version > REGISTRY_VERSION) this.db.close();
     if (version > REGISTRY_VERSION) throw new Error(`the relay registry is version ${version}; this relay reads up to ${REGISTRY_VERSION}`);
     this.db.exec(SCHEMA);
     this.db.exec(`PRAGMA user_version = ${REGISTRY_VERSION}`);

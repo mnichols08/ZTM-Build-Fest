@@ -65,7 +65,7 @@ test("production settings: the registry file is private to the relay's account",
       assert.equal(statSync(join(dataDir, "relay")).mode & 0o777, 0o700);
       assert.equal(statSync(join(dataDir, "relay", "registry.sqlite")).mode & 0o077, 0, "no access for group or others");
     }
-  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+  } finally { rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test("the operator suspends and lifts a name, and reads error counts", () => {
@@ -85,5 +85,5 @@ test("the operator suspends and lifts a name, and reads error counts", () => {
     runAdmin(["errors"], env, (line) => out.push(line));
     assert.deepEqual(JSON.parse(out.at(-1)), { unrouted: 3 });
     assert.equal(runAdmin(["bogus"], env, () => {}), 2);
-  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+  } finally { rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

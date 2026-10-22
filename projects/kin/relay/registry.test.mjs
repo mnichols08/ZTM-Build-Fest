@@ -196,5 +196,5 @@ test("the registry file holds the ADR's columns and nothing else", () => {
     newer.db.exec("PRAGMA user_version = 2");
     newer.close();
     assert.throws(() => new Registry({ zone: "home.test", path }), /version 2/);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

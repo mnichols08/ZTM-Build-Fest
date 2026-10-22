@@ -131,11 +131,15 @@ test("refusals: unrouted names get unrecognized_name; malformed, SNI-less and re
     // Real ECH: the outer name is the ECH configuration's public name, which
     // the relay doesn't route, so it answers unrecognized_name.
     assert.deepEqual(await raw(relay, records(chromeLike("public.ech.example", { ech: echOuter(400) }))), UNRECOGNIZED_NAME_ALERT);
-    // GREASE ECH carries the real name and is routed like any hello.
-    const routed = raw(relay, records(chromeLike("x.home.test")));
-    await waitFor(() => relay.stats().streams === 1, "the GREASE-ECH hello to be routed");
-    for (const socket of relay.sockets) if (socket.remotePort && !socket.alpnProtocol) socket.destroy();
-    await routed;
+    // GREASE ECH carries the real name and is routed like any hello. The
+    // hello's key shares are fixed test patterns, so the home server's TLS
+    // refuses them with its own alert and the stream closes at once: wait
+    // for the OPEN and the home server's answer, not for an open stream.
+    const opened = once(server, "open");
+    const answer = await raw(relay, records(chromeLike("x.home.test")));
+    assert.deepEqual((await opened)[0], { family: 4, address: "127.0.0.1", name: "x.home.test" });
+    assert.equal(answer[0], 0x15, "a TLS alert from the home server came back through the relay");
+    assert.notDeepEqual(answer, UNRECOGNIZED_NAME_ALERT, "not the relay's own refusal");
     // Malformed, plain HTTP and no SNI: closed without a reply.
     assert.equal((await raw(relay, Buffer.from([22, 3, 1, 0, 0]))).length, 0);
     assert.equal((await raw(relay, Buffer.from("GET / HTTP/1.1\r\nHost: x.home.test\r\n\r\n"))).length, 0);
