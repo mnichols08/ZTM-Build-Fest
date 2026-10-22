@@ -28,9 +28,10 @@ documentation only.
   **Calendar** (bit 14); This week (bit 5) stays the Week view's switch.
   `kin_calendar_range` now lists breakfast, lunch and snacks beside dinners
   (no format change). Components `<kin-calendar>`, `<kin-calendar-today>`,
-  `<kin-event-editor>`, `<kin-member-colour>`, `<kin-calendar-import>`;
-  `ctx.calendar.setExternalOccurrences(sourceId, list)` for outside
-  calendars (#665). Unit tests for zones (DST), ranges, layout, colours,
+  `<kin-event-editor>`, `<kin-member-colour>`, `<kin-calendar-import>`.
+  Synced outside calendars (#668, `web/calendar/external.js`) show
+  read-only with their source label in every view and on Today, and their
+  settings follow the Calendar switch. Unit tests for zones (DST), ranges, layout, colours,
   repeats, import plans and undo; browser regression
   `scripts/calendar-regression.mjs`. UX §8.16, Help.
 
@@ -76,6 +77,26 @@ documentation only.
   onto Kin's repeats (the first occurrence only, flagged, when it can't
   be), EXDATE, RECURRENCE-ID overrides and STATUS:CANCELLED; at most 2 MB
   and 5,000 events. `engine.parseICalendar(bytes)`.
+- **Google, Apple and Outlook calendars, synced** (#665: #667, #668; epic
+  #651, [ADR 0022](docs/decisions/0022-family-hub.md) §3). Under Household ›
+  Identity & appearance › Outside calendars, an Adult pastes a calendar's
+  private iCal link (`https://` or `webcal://`), chooses **Just me** or
+  **Everyone in the household**, reads "Your Kin server will download this
+  calendar about every 30 minutes and can read it while it does." and turns
+  sync on. The list shows each calendar, who sees it, when it was updated
+  or why it couldn't be, and what's next; its owner or a household admin
+  turns it off for everyone. The service keeps only the link, owner,
+  audience, last fetch's status and ETag (server schema 29,
+  `calendar_subscriptions`), holds a downloaded feed in memory for at most
+  30 minutes, and fetches it with Node's own `https` and `dns` behind SSRF
+  protections (public unicast IPv4 and IPv6 only, re-checked on every
+  redirect, at most 5 redirects, port 443, 2 MB, 15 seconds, backoff on
+  errors; 10 calendars per member, 30 per household). Devices in the
+  audience fetch it through an authenticated route, parse it with
+  `parseICalendar`, keep it sealed in `kin-calendar-feeds:<household>`,
+  expand its repeats on the device and hand read-only occurrences labelled
+  "From Google" to the calendar views (`web/calendar/external.js`). They
+  never enter the household history.
 - **Fuller meal plans** (#679: #680, #681; epic #651,
   [ADR 0022](docs/decisions/0022-family-hub.md) §7). Meals plans breakfast,
   lunch, dinner and a snack for each day. Each day card has a row per meal,

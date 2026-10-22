@@ -84,6 +84,9 @@ export class SessionController {
       this.assertCurrentSession(session);
       // Household features (#625): what this device last knew was off.
       this.ctx.features.restore(snapshot.syncIdentity);
+      // Outside calendars (#668): what this device kept shows, then they
+      // refresh. Only a household that syncs has any.
+      void this.ctx.calendarSync.start(snapshot.syncIdentity, session);
       this.ctx.render.renderState();
       void this.ctx.attachments.refreshAttachmentRows();
       this.app.main.hidden = false;
@@ -273,6 +276,8 @@ export class SessionController {
     this.ctx.simple?.reset();
     this.ctx.features?.reset();
     this.ctx.chores?.reset();
+    // Synced calendars' decrypted occurrences leave memory (#668).
+    this.ctx.calendarSync?.stop();
     this.ctx.journal?.reset();
     this.app.quickAdd?.reset();
     this.app.chatShare?.reset();

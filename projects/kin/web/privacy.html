@@ -109,6 +109,7 @@
         <li><strong>Notifications</strong> (off until you turn them on, per device): we store your device's push address and its keys. A notification only says something is new: never what, who or how many.</li>
         <li><strong>Showing your household's name and icon on home screens</strong> (off until an admin turns it on): we store that name, short name, description and icon <em>unencrypted</em>, so we can build the installed app's details. Turning it off deletes our copy.</li>
         <li><strong>The count on the app icon</strong> (off until you turn it on): worked out on your device; nothing is sent to us.</li>
+        <li><strong>Syncing an outside calendar</strong> (off until an adult turns it on, per calendar): we store the calendar's private link <em>unencrypted</em>, who added it, who sees it, and when we last fetched it. Our server downloads that calendar about every 30 minutes and <em>can read it</em> while it does; it keeps the download in memory for at most 30 minutes and never saves its events. Your devices keep their copy encrypted. Turning it off deletes the link. Importing a calendar file instead never involves our server.</li>
         <li><strong>Reporting a problem or suggesting something</strong> (only when you press Send): we store what you typed, the details about your device that you kept in the preview (Kin version, browser, screen size, page name, sync state and recent error codes; never your lists, names or IDs), and a picture of the screen only if you chose to add one, <em>unencrypted</em>, so the Kin team can read them. A report you send while signed in is linked to your account so you can see its status; one sent from the lock screen is linked to nobody. If the team has set it up, a copy without the picture and without anything that identifies you is posted to the project's issue tracker, which may be public; the preview tells you before you send. Kin never sends a report on its own.</li>
       </ul>
 
@@ -135,6 +136,7 @@
         <li>Your account and your private things: while you are a member of the household.</li>
         <li>Household history, chat and fridge: while the household exists, then 30 days after a deletion request. When a chat message is deleted for everyone, its content is removed from the service straight away; a record that a message was sent and deleted stays in the history.</li>
         <li>Sign-in sessions: at most 12 hours, in memory. Rate-limit counters: minutes, in memory.</li>
+        <li>Synced calendar links: until the calendar is turned off, you leave the household, or it is deleted.</li>
         <li>Problem reports and suggestions: 180 days, then deleted; sooner when you leave the household or it is deleted. A copy posted to the issue tracker stays there until the team deletes it.</li>
         <li>The security log: the most recent 10,000 entries across the service, and removed with the household.</li>
         <li>Server backups: we keep backups to recover from failures. A backup taken before you deleted something still holds it, encrypted as described above, until that backup is deleted.</li>

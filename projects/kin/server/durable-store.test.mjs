@@ -106,7 +106,7 @@ test("failed v0-to-v1 migration rolls back and permits a clean retry", () => {
   }
 });
 
-test("server schema v1 upgrades transactionally through the chore chart schema v28", () => {
+test("server schema v1 upgrades transactionally through the calendar subscription schema v29", () => {
   const directory = temporaryDirectory();
   const databasePath = join(directory, "kin.sqlite");
   try {
@@ -114,6 +114,8 @@ test("server schema v1 upgrades transactionally through the chore chart schema v
     const legacy = openTestDatabase(databasePath);
     try {
       legacy.exec(`
+        DROP TABLE calendar_subscriptions;
+        DELETE FROM server_migrations WHERE version = 29;
         ALTER TABLE households DROP COLUMN chore_adults_revision;
         ALTER TABLE households DROP COLUMN chore_adults;
         DELETE FROM server_migrations WHERE version = 28;
@@ -210,13 +212,13 @@ test("server schema v1 upgrades transactionally through the chore chart schema v
     }
     const migrated = new DurableStore(databasePath);
     try {
-      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 28);
+      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 29);
       assert.deepEqual(
         migrated.db
           .prepare("SELECT version FROM server_migrations ORDER BY version")
           .all()
           .map(({ version }) => version),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29],
       );
       assert.equal(migrated.validate(), true);
     } finally {
@@ -529,6 +531,8 @@ test("household admins persist across restart and the v8 migration promotes only
     const legacy = openTestDatabase(databasePath);
     try {
       legacy.exec(`
+        DROP TABLE calendar_subscriptions;
+        DELETE FROM server_migrations WHERE version = 29;
         ALTER TABLE households DROP COLUMN chore_adults_revision;
         ALTER TABLE households DROP COLUMN chore_adults;
         DELETE FROM server_migrations WHERE version = 28;
@@ -604,7 +608,7 @@ test("household admins persist across restart and the v8 migration promotes only
 
     const migrated = new DurableStore(databasePath);
     try {
-      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 28);
+      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 29);
       const reloaded = new PairingService({ store: migrated });
       assert.equal(reloaded.members.get(owned.memberId).householdAdmin, true);
       assert.equal(reloaded.members.get(ownerless.memberId).householdAdmin, undefined);

@@ -4,7 +4,7 @@
 // and (later) the kitchen display. Household text only ever goes in
 // through textContent.
 import { colourClass } from "../../calendar/member-colours.js";
-import { occurrenceLabel, peopleText, whenText } from "../../calendar/calendar-layout.js";
+import { occurrenceLabel, peopleText, sourceText, whenText } from "../../calendar/calendar-layout.js";
 
 /**
  * `people` is { labelOf(memberId), colourOf(memberId) }. The chip is a
@@ -36,6 +36,13 @@ export function eventChip(placed, date, people, { open = true, compact = false, 
   who.className = "cal-event-who";
   who.textContent = peopleText(occurrence.attendees, people.labelOf);
   body.append(title, when, who);
+  // An outside calendar's occurrence (#668) says where it comes from.
+  if (placed.readonly) {
+    const source = document.createElement("span");
+    source.className = "cal-event-source";
+    source.textContent = sourceText(occurrence);
+    body.append(source);
+  }
   if (occurrence.place && !compact) {
     const place = document.createElement("span");
     place.className = "cal-event-place";

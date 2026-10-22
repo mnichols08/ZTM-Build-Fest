@@ -8,9 +8,10 @@
 //   calendar-time.js, with Intl) and split them by day (calendar-layout.js).
 //   A read covers the view plus a day either side, so an event that moves
 //   across midnight in the viewer's zone still shows.
-// - Outside calendars (#665) add read-only occurrences through
-//   `setExternalOccurrences(sourceId, list)`; they show in every view and
-//   on Today but are never saved to the household history.
+// - Outside calendars synced to this device (#668) are read from
+//   calendar/external.js (`externalOccurrences`, redrawn on
+//   `onExternalOccurrences`); they show read-only in every view and on
+//   Today with their source label and never enter the household history.
 // - Saving, cancelling, a colour and an import are ordinary household
 //   commands (kinds 71–74). Each records a "calendar" undo entry
 //   (web/undo.js) with the steps that reverse it. Before a change to an
@@ -29,6 +30,7 @@ import { importDoneText, importSummaryText, planImport, sameEvent, savedEvent } 
 import { calendarEntry, calendarEventMark, calendarMarks } from "../../undo.js";
 import { SLOT_LABELS } from "../../meals/meals-view.js";
 import { routeHash } from "../../routes.js";
+import { externalOccurrences, onExternalOccurrences } from "../../calendar/external.js";
 import { syncProgress } from "./feedback.js";
 import { SAVE_ERROR } from "./constants.js";
 
@@ -45,8 +47,9 @@ export class CalendarController {
   constructor(ctx) {
     this.ctx = ctx;
     this.app = ctx.app;
-    this.externals = new Map();
     this.reset();
+    // A synced calendar changed (#668): draw what is on screen again.
+    onExternalOccurrences(() => { if (this.app.store) void this.refresh(); });
   }
 
   /** Locking: nothing read or typed stays. Outside calendars come back
@@ -59,7 +62,6 @@ export class CalendarController {
     this.again = false;
     this.opened = null;
     this.importing = null;
-    this.externals?.clear();
   }
 
   get on() {
@@ -82,43 +84,21 @@ export class CalendarController {
     return { list, labelOf, colourOf: (id) => colourIndexFor(id, this.colours, order), myId: context.memberId };
   }
 
-  // ---- Outside calendars (#665) --------------------------------------------
+  // ---- Outside calendars (#668) --------------------------------------------
 
   /**
-   * Read-only occurrences from an outside calendar this device keeps
-   * (#665): `list` is [{ title, allDay, start: { date, minute }, end,
-   * zone, place?, attendees?, uid? }] (an all-day end is its last date);
-   * `label` names the calendar ("School"). They show in every view and on
-   * Today, marked as from that calendar, and can't be edited or cancelled
-   * here. An empty list (or clearExternalOccurrences) removes them.
+   * Read-only occurrences from outside calendars synced to this device
+   * (calendar/external.js, filled by calendar/feed-refresh.js), a day
+   * either side of `from`..`to`, as the views place them: marked external,
+   * named by their source label ("From Google"), never editable here.
    */
-  setExternalOccurrences(sourceId, list, { label = "" } = {}) {
-    const id = String(sourceId ?? "");
-    if (!id) return;
-    const clean = (Array.isArray(list) ? list : []).filter((entry) => typeof entry?.title === "string" &&
-      Number.isInteger(entry?.start?.date) && Number.isInteger(entry?.end?.date)).slice(0, 5_000)
-      .map((entry) => Object.freeze({
-        external: true, sourceId: id, sourceLabel: String(entry.sourceLabel ?? label ?? ""), uid: entry.uid ?? null,
-        eventId: null, title: entry.title, place: String(entry.place ?? ""), allDay: entry.allDay === true,
-        start: { date: entry.start.date, minute: entry.allDay ? 0 : entry.start.minute ?? 0 },
-        end: { date: entry.end.date, minute: entry.allDay ? 0 : entry.end.minute ?? 0 },
-        zone: entry.allDay ? "" : String(entry.zone ?? ""), attendees: Array.isArray(entry.attendees) ? entry.attendees : [],
-        countdown: false, cancelled: false, linked: false, event: null,
-      }));
-    if (clean.length) this.externals.set(id, clean);
-    else this.externals.delete(id);
-    void this.refresh();
-  }
-
-  clearExternalOccurrences(sourceId) {
-    this.setExternalOccurrences(sourceId, []);
-  }
-
   externalsIn(from, to) {
-    const found = [];
-    for (const list of this.externals.values())
-      for (const entry of list) if (entry.start.date <= to + 1 && entry.end.date >= from - 1) found.push(entry);
-    return found;
+    return externalOccurrences(addDays(from, -1), addDays(to, 1)).map((entry) => ({
+      external: true, sourceId: entry.sourceId, sourceLabel: entry.label ?? "", uid: entry.key ?? null,
+      eventId: null, title: entry.title, place: entry.place ?? "", allDay: entry.allDay === true,
+      start: entry.start, end: entry.end, zone: entry.allDay ? "" : entry.zone ?? "", attendees: [],
+      countdown: false, cancelled: false, linked: false, event: null,
+    }));
   }
 
   // ---- Reading ---------------------------------------------------------------

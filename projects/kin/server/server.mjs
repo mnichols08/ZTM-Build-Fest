@@ -43,6 +43,7 @@ import { clientKey, parseTrustedProxies } from "./client-key.mjs";
 import { LiveService } from "./live/live-service.mjs";
 import { FeedbackService, MAX_FEEDBACK_REQUEST_BYTES } from "./feedback-service.mjs";
 import { GitHubIssues, parseGitHubConfig } from "./feedback-github.mjs";
+import { CalendarSyncService } from "./calendar-sync-service.mjs";
 
 const FLOW_TTL_MS = 2 * 60_000;
 const MAX_ACTIVE_FLOWS = 512;
@@ -123,6 +124,8 @@ export function createKinServer(options = {}) {
     privateBlobService.forgetMember(memberId);
     // Their problem reports and suggestions too (ADR 0021 §3).
     syncService.feedbackService?.forgetMember(memberId);
+    // And the outside calendars they synced, for everyone (ADR 0022 §3).
+    syncService.calendarSyncService?.forgetMember(memberId);
   };
   // Members' encrypted key vaults (ADR 0018, #564).
   const accountVaultService = options.accountVaultService ?? new AccountVaultService({ store, now: options.now ?? (() => Date.now()) });
@@ -150,6 +153,14 @@ export function createKinServer(options = {}) {
     now: options.now ?? (() => Date.now()),
   });
   syncService.feedbackService = feedbackService;
+  // Outside calendars members sync (ADR 0022 §3, #667). The fetcher is built
+  // here without test hooks; only a test passes its own (calendarFetcher).
+  const calendarSyncService = options.calendarSyncService ?? new CalendarSyncService({
+    store,
+    fetcher: options.calendarFetcher ?? null,
+    now: options.now ?? (() => Date.now()),
+  });
+  syncService.calendarSyncService = calendarSyncService;
   const maxFlows = options.maxFlows ?? MAX_ACTIVE_FLOWS;
   const context = {
     service,
@@ -162,6 +173,7 @@ export function createKinServer(options = {}) {
     privateBlobService,
     accountVaultService,
     feedbackService,
+    calendarSyncService,
     store,
     webauthn,
     flows: new Map(),
@@ -303,7 +315,8 @@ export function createKinServer(options = {}) {
   const lifecycleTimer = setInterval(pruneExpiredDeletions, 60_000);
   lifecycleTimer.unref?.();
   feedbackService.start();
-  server.on("close", () => { clearInterval(lifecycleTimer); feedbackService.stop(); });
+  calendarSyncService.start();
+  server.on("close", () => { clearInterval(lifecycleTimer); feedbackService.stop(); calendarSyncService.stop(); });
   server.on("upgrade", (request, socket, head) => {
     try {
       liveService.handleUpgrade(request, socket, head);
@@ -329,6 +342,7 @@ export function createKinServer(options = {}) {
     privateBlobService,
     accountVaultService,
     feedbackService,
+    calendarSyncService,
     liveService,
     webauthn,
     store,
@@ -559,6 +573,39 @@ async function api(request, response, url, context) {
   }
   if (request.method === "GET" && url.pathname === "/api/feedback/mine") {
     json(response, 200, context.feedbackService.mine(service.authorize(session)));
+    return;
+  }
+  // Outside calendars (ADR 0022 §3, #667): list, add, turn off, and the feed
+  // for a device in the calendar's audience.
+  if (url.pathname === "/api/calendar/subscriptions") {
+    if (request.method === "GET") {
+      json(response, 200, context.calendarSyncService.list(syncService.authorize(session)));
+      return;
+    }
+    if (request.method === "POST") {
+      const subscription = await context.calendarSyncService.add(syncService.authorize(session), body);
+      json(response, 201, { subscription });
+      return;
+    }
+  }
+  const calendarFeed = CALENDAR_FEED_ROUTE.exec({ pathname: url.pathname })?.pathname.groups.id ?? null;
+  if (calendarFeed && request.method === "GET") {
+    const ifNoneMatch = typeof request.headers["if-none-match"] === "string" ? request.headers["if-none-match"] : null;
+    const feed = await context.calendarSyncService.feed(syncService.authorize(session), calendarFeed, { ifNoneMatch });
+    const headers = { "Cache-Control": "no-store", "X-Kin-Calendar-Fetched-At": String(feed.fetchedAt) };
+    if (feed.etag) headers.ETag = feed.etag;
+    if (feed.notModified) {
+      response.writeHead(304, headers);
+      response.end();
+      return;
+    }
+    response.writeHead(200, { ...headers, "Content-Type": "text/calendar; charset=utf-8", "Content-Length": feed.body.length });
+    response.end(feed.body);
+    return;
+  }
+  const calendarSubscription = CALENDAR_SUBSCRIPTION_ROUTE.exec({ pathname: url.pathname })?.pathname.groups.id ?? null;
+  if (calendarSubscription && request.method === "DELETE") {
+    json(response, 200, context.calendarSyncService.remove(syncService.authorize(session), calendarSubscription));
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/status") {
@@ -2444,6 +2491,8 @@ export function fingerprintedShell(html, fingerprint) {
 const INSTALL_ICON_ROUTE = new URLPattern({ pathname: "/install-icon/:file([a-z0-9\\-]+[.]png)" });
 const CHAT_BLOB_ROUTE = new URLPattern({ pathname: "/api/chat/blobs/:ref([a-f0-9]{64})" });
 const PRIVATE_BLOB_ROUTE = new URLPattern({ pathname: "/api/private/blobs/:ref([a-f0-9]{64})" });
+const CALENDAR_SUBSCRIPTION_ROUTE = new URLPattern({ pathname: "/api/calendar/subscriptions/:id([a-f0-9]{32})" });
+const CALENDAR_FEED_ROUTE = new URLPattern({ pathname: "/api/calendar/subscriptions/:id([a-f0-9]{32})/feed" });
 const ACCOUNT_VAULT_WRAPPER_ROUTE = new URLPattern({ pathname: "/api/account/vault/wrappers/:id([a-f0-9]{32})" });
 
 // The install identity (#78) a trusted device's kin_device cookie resolves

@@ -63,7 +63,7 @@ button.cal-event { cursor: pointer; }
 button.cal-event:hover:not(:disabled) { background: var(--surface-secondary); }
 .cal-event-body { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; min-width: 0; flex: 1 1 auto; }
 .cal-event-title { flex: 1 1 100%; font-weight: 650; overflow-wrap: anywhere; }
-.cal-event-when, .cal-event-who, .cal-event-place { color: var(--ink-muted); font-size: 14px; overflow-wrap: anywhere; }
+.cal-event-when, .cal-event-who, .cal-event-place, .cal-event-source { color: var(--ink-muted); font-size: 14px; overflow-wrap: anywhere; }
 .cal-event-compact { min-height: 0; padding: 3px 6px; gap: 6px; }
 .cal-event-compact .cal-event-title { font-size: 14px; }
 .cal-event-compact :is(.cal-event-when, .cal-event-who) { font-size: 12.5px; }

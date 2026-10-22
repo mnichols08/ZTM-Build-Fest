@@ -1,7 +1,7 @@
 // Placing occurrences in days and laying out overlaps (#661).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { countdownText, layoutDay, occurrenceLabel, occurrencesByDay, peopleText, placeOccurrence, whenText } from "./calendar-layout.js";
+import { countdownText, layoutDay, occurrenceLabel, occurrencesByDay, peopleText, placeOccurrence, sourceText, whenText } from "./calendar-layout.js";
 
 const occurrence = (title, start, end, extra = {}) => ({
   eventId: `${title}`.padEnd(32, "0").slice(0, 32), title, place: "", zone: "", attendees: [], allDay: false,
@@ -67,6 +67,12 @@ test("words for people, times, screen readers and countdowns", () => {
   assert.match(label, /For Alex and Sam, At Pool$/);
   const allDay = placeOccurrence(occurrence("Trip", { date: 20261006, minute: 0 }, { date: 20261008, minute: 0 }, { allDay: true }), "UTC");
   assert.equal(whenText(allDay, 20261007), "All day, 2 of 3 days");
+  // An outside calendar's occurrence (#668) names its source.
+  const outside = placeOccurrence(occurrence("School run", at(20261006, 8), at(20261006, 9), { external: true, sourceLabel: "From Google" }), "UTC");
+  assert.equal(outside.readonly, true);
+  assert.match(occurrenceLabel(outside, 20261006, labelOf), /, From Google$/);
+  assert.equal(sourceText({ sourceLabel: "School" }), "From School");
+  assert.equal(sourceText({}), "From an outside calendar");
   const next = { title: "Trip", start: { date: 20261224, minute: 0 } };
   assert.equal(countdownText(next, 20261212), "12 days until Trip");
   assert.equal(countdownText(next, 20261223), "1 day until Trip");

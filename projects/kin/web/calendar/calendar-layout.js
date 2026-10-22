@@ -170,8 +170,16 @@ export function occurrenceLabel(placed, date, labelOf) {
   if (placed.shifted) parts.push(`Your time; set in ${occurrence.zone}`);
   if (occurrence.cancelled) parts.push("Cancelled");
   if (occurrence.event?.repeat || occurrence.linked) parts.push("Repeats");
-  if (placed.readonly) parts.push(`From ${occurrence.sourceLabel || "an outside calendar"}`);
+  if (placed.readonly) parts.push(sourceText(occurrence));
   return parts.join(", ");
+}
+
+/** Where an outside calendar's occurrence comes from: its label as the
+ * sync gives it ("From Google"), or "From an outside calendar". */
+export function sourceText(occurrence) {
+  const label = String(occurrence?.sourceLabel ?? "").trim();
+  if (!label) return "From an outside calendar";
+  return /^from\s/i.test(label) ? label : `From ${label}`;
 }
 
 /** "12 days until Trip", "1 day until Trip", "Trip is today", "Trip is on

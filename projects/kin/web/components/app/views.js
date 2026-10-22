@@ -473,7 +473,14 @@ export class ViewBuilder {
     // My calendar colour (#663): the Calendar's.
     this.app.memberColour = document.createElement("kin-member-colour");
     this.app.memberColour.dataset.feature = "calendar";
-    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance, this.app.memberColour, this.app.personalSettings);
+    // Outside calendars (#668, ADR 0022 §3): Google, Apple or Outlook
+    // calendars synced through the household's Kin server. They show in the
+    // Calendar, so they leave with its switch (bit 14).
+    this.app.calendarSubscriptions = document.createElement("kin-calendar-subscriptions");
+    this.app.calendarSubscriptions.dataset.feature = "calendar";
+    this.app.calendarSubscriptions.controller = this.ctx.calendarSync;
+    this.app.calendarSubscriptions.update(this.ctx.calendarSync.view());
+    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance, this.app.memberColour, this.app.personalSettings, this.app.calendarSubscriptions);
 
     // For the sitter (#441, ADR 0017).
     const sitterPage = document.createElement("section");

@@ -367,6 +367,38 @@ export does not give a device chat access it has not been given
   IndexedDB database outside the encrypted household stores (a report can
   be written when no household key is open), until it is sent or removed.
 
+## Outside calendars synced by the service (ADR 0022 §3, #665)
+
+Turning on sync for a Google, Apple or Outlook calendar is opt-in per
+calendar, and the member is told first: "Your Kin server will download this
+calendar about every 30 minutes and can read it while it does."
+
+- **What the service reads:** the calendar itself, in plaintext, whenever it
+  downloads it (when a device in its audience asks and the service's copy is
+  30 minutes old or more). Unlike household content, a synced calendar is
+  **not** end-to-end encrypted on its way to the devices: it reaches them
+  over the same TLS connection as everything else.
+- **What the service keeps:** in its database, the calendar's private link
+  (plaintext: anyone with the link can read that calendar), who added it,
+  who sees it ("Just me" or "Everyone in the household"), when it was added
+  and last fetched, the last error code and the calendar server's ETag.
+  Never the calendar's events: a downloaded feed is held in memory for at
+  most 30 minutes and is never written to the database or logs.
+- **Who sees it:** the member who added it, or everyone in the household
+  (Limited and Temporary members included) when they chose so. Only Adults
+  can add one. Other members never get the link back from the service.
+- **The calendar's own server** sees the Kin server's address and a request
+  about every 30 minutes, with the Kin server's ETag; nothing about the
+  household.
+- **On the devices:** each device in the audience parses the feed itself
+  and keeps it sealed by its local vault (`kin-calendar-feeds:<household>`).
+  The events never enter the household history or exports.
+- **How long:** until the member turns it off (or a household admin does),
+  the member leaves or is removed, or the household is deleted; then the
+  link and status go from the service, and each device drops its copy the
+  next time it lists its calendars ([RETENTION](RETENTION.md)).
+- **Importing** a `.ics` file instead never involves the service.
+
 ## Claims boundary
 
 Kin implements client-side encrypted event sync, but it has not received independent security review or production operational hardening. Do not call the service zero-knowledge, anonymous, or robustly recoverable; do not imply cryptography protects a compromised unlocked browser/runtime.
