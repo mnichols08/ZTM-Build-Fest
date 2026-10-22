@@ -370,10 +370,12 @@ jobs:
   # started once to record the start time, and kept as the
   # kin-home-executables artifact. The injector tests then run again against
   # the official binaries the build cached (with llvm-objdump and
-  # llvm-readobj as independent readers when the runner has them). No other
-  # job waits for this one.
+  # llvm-readobj as independent readers when the runner has them). The
+  # Windows service host (#749) shipped beside kin.exe is the one the
+  # service-host job built and ran as a service on Windows. No other job
+  # waits for this one.
   home-executables:
-    needs: verify-linux
+    needs: [verify-linux, service-host]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -394,8 +396,14 @@ jobs:
           path: projects/kin/web/wasm
       - name: Check the engine against its recorded hash
         run: sha256sum -c web/wasm/kin_engine.wasm.sha256
+      - name: Download the Windows service host
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kin-service-host-windows-x64
+          path: ${{ runner.temp }}/service-host
       - name: Build the executables and record their size and start time
         run: |
+          export KIN_SERVICE_HOST_EXE="$RUNNER_TEMP/service-host/kin-service-host.exe"
           node scripts/build-sea.mjs --measure
           cat target/sea/dist/SHA256SUMS target/sea/dist/build-info.json target/sea/dist/start-time.json
           (cd target/sea/dist && sha256sum -c SHA256SUMS)
@@ -403,6 +411,7 @@ jobs:
         run: |
           llvm="$(ls -d /usr/lib/llvm-*/bin 2>/dev/null | sort -V | tail -n 1)"
           if [ -n "$llvm" ]; then export PATH="$llvm:$PATH"; fi
+          export KIN_SERVICE_HOST_EXE="$RUNNER_TEMP/service-host/kin-service-host.exe"
           node --test --test-timeout=300000 scripts/build-sea.test.mjs scripts/sea/*.test.mjs
       - name: Keep the executables
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -415,7 +424,9 @@ jobs:
   # The macOS and Windows executables built on Linux above, run on a Mac
   # (arm64) and on Windows (#747, #748): Apple's codesign accepts the ad-hoc
   # signatures, each runs --version, starts the service and answers
-  # --health. The same target is also built here, natively, and must be
+  # --health, and on Windows `kin.exe --print-service` finds the service
+  # host shipped beside it (so --install-service registers the real
+  # service). The same target is also built here, natively, and must be
   # byte-identical to the Linux build (the build is reproducible across
   # machines). The x64 Mac executable runs only if the runner has Rosetta.
   # Installing as a service and rebooting are device checks (#717). No other
@@ -454,6 +465,12 @@ jobs:
         with:
           name: kin-home-executables
           path: projects/kin/target/sea/linux
+      - name: Download the Windows service host
+        if: runner.os == 'Windows'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kin-service-host-windows-x64
+          path: ${{ runner.temp }}/service-host
       - name: Check the engine and the executables against their recorded hashes
         run: |
           # macOS has shasum but not always sha256sum.
@@ -462,15 +479,18 @@ jobs:
           (cd target/sea/linux && $sum -c SHA256SUMS)
       - name: Build ${{ matrix.target }} here and start it
         run: |
+          if [ "${{ runner.os }}" = Windows ]; then export KIN_SERVICE_HOST_EXE="$RUNNER_TEMP/service-host/kin-service-host.exe"; fi
           node scripts/build-sea.mjs --target "${{ matrix.target }}" --measure
           cat target/sea/dist/SHA256SUMS target/sea/dist/start-time.json
       - name: The Linux build is byte-identical
         run: |
-          here="$(cut -d ' ' -f 1 target/sea/dist/SHA256SUMS)"
-          linux="$(grep -- "-${{ matrix.target }}" target/sea/linux/SHA256SUMS | cut -d ' ' -f 1)"
-          echo "here:  $here"
-          echo "linux: $linux"
-          test -n "$here" && test "$here" = "$linux"
+          # Every file built here (with the service host on Windows) is
+          # listed, with the same hash, in the Linux build's SHA256SUMS.
+          cat target/sea/dist/SHA256SUMS
+          test -s target/sea/dist/SHA256SUMS
+          while read -r hash file; do
+            grep -qx "$hash  $file" target/sea/linux/SHA256SUMS || { echo "$file differs from the Linux build"; exit 1; }
+          done < target/sea/dist/SHA256SUMS
       - name: Apple's codesign accepts the ad-hoc signatures
         if: runner.os == 'macOS'
         run: |
@@ -480,7 +500,7 @@ jobs:
           done
       - name: The Linux-built executable runs, starts and answers --health
         run: |
-          exe="$(ls target/sea/linux/kin-*-${{ matrix.target }}*)"
+          exe="$(ls target/sea/linux/kin-[0-9]*-${{ matrix.target }}*)"
           chmod +x target/sea/linux/kin-*
           version="$(node -p 'require("./package.json").version')"
           test "$("$exe" --version | tr -d '\r')" = "$version"
@@ -502,6 +522,14 @@ jobs:
           cat "$RUNNER_TEMP/kin.log"
           kill "$pid" 2>/dev/null || true
           test "$healthy" -eq 0
+      - name: kin.exe finds the service host beside it
+        if: runner.os == 'Windows'
+        run: |
+          ls target/sea/linux/kin-service-host-*-win-x64.exe
+          definition="$(target/sea/linux/kin-[0-9]*-win-x64.exe --print-service)"
+          echo "$definition"
+          echo "$definition" | grep -q 'sc.exe create'
+          echo "$definition" | grep -q 'kin-service-host.exe'
 
   # The home server's container image (#715): built from deploy/home and
   # started until its own health check passes, as its unprivileged user.
@@ -531,3 +559,51 @@ jobs:
           echo "health: $status"
           test "$(docker inspect -f '{{.Config.User}}' kin-home)" = "65532:65532"
           test "$status" = healthy
+
+  # Kin's Windows service host (tools/kin-service-host, #749), Rust std only.
+  # On both systems it is formatted, linted and unit-tested (on Linux, the
+  # parts that don't need Windows); on Windows its release build is kept and
+  # run as a real Windows service: started, a failed child restarted, stopped
+  # gracefully, and a child that ignores the stop ended after the timeout.
+  service-host:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: projects/kin/tools/kin-service-host
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install 1.93.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
+          rustup default 1.93.0
+      - name: Format, lint and test
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+      - name: Build the release host
+        if: runner.os == 'Windows'
+        run: cargo build --locked --release
+      - name: Run it as a Windows service
+        if: runner.os == 'Windows'
+        working-directory: projects/kin
+        run: node scripts/service-host-smoke.mjs tools/kin-service-host/target/release/kin-service-host.exe
+      - name: Keep the host
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kin-service-host-windows-x64
+          path: projects/kin/tools/kin-service-host/target/release/kin-service-host.exe
+          if-no-files-found: error
+          retention-days: 7

@@ -8,13 +8,31 @@ import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import test from "node:test";
 import { appManifest, BuildSeaError, buildExecutable, buildSea, checkExecutable, collectAppFiles, DEFAULT_TARGETS, parseBuildArguments, PROJECT_ROOT } from "./build-sea.mjs";
 import { readElf } from "./sea/elf.mjs";
 import { checkMachOExecutable } from "./sea/macho.mjs";
 import { officialBinaries } from "./sea/official-binaries.mjs";
 import { checkPeExecutable } from "./sea/pe.mjs";
+import { findServiceHost } from "../server/service-install.mjs";
+
+// A stand-in for kin-service-host.exe (#749) when no real one is given in
+// KIN_SERVICE_HOST_EXE: just enough of a PE32+ x64 console program for
+// windows-service-host.mjs's check. Building the real one on Linux needs
+// mingw-w64; CI uses the one the service-host job built on Windows.
+function standInServiceHost(directory) {
+  const bytes = Buffer.alloc(0x200);
+  bytes.write("MZ", 0, "latin1");
+  bytes.writeUInt32LE(0x40, 0x3c);
+  bytes.writeUInt32LE(0x00004550, 0x40);
+  bytes.writeUInt16LE(0x8664, 0x44);
+  bytes.writeUInt16LE(0x20b, 0x58);
+  bytes.writeUInt16LE(3, 0x58 + 68);
+  const path = join(directory, "kin-service-host.exe");
+  writeFileSync(path, bytes);
+  return path;
+}
 import { SEA_FUSE } from "./sea/fuse.mjs";
 import { hostTarget } from "./sea/node-release.mjs";
 
@@ -187,13 +205,28 @@ for (const target of ["darwin-arm64", "darwin-x64", "win-x64"]) {
     const root = temporary(t);
     const wasm = join(root, "kin_engine.wasm");
     writeFileSync(wasm, WASM);
+    if (target === "win-x64" && !process.env.KIN_SERVICE_HOST_EXE) {
+      process.env.KIN_SERVICE_HOST_EXE = standInServiceHost(root);
+      t.after(() => { delete process.env.KIN_SERVICE_HOST_EXE; });
+    }
     const build = (out) => buildSea({ ...parseBuildArguments(["--target", target, "--node-binary", path, "--wasm", wasm, "--out", out]), work: join(root, "work") }, { log: () => {} });
     const info = await build(join(root, "one"));
     await build(join(root, "two"));
     const file = `kin-${VERSION}-${target}${target === "win-x64" ? ".exe" : ""}`;
     const bytes = readFileSync(join(root, "one", file));
     assert.equal(sha256(readFileSync(join(root, "two", file))), sha256(bytes), "reproducible");
-    assert.equal(readFileSync(join(root, "one", "SHA256SUMS"), "utf8"), `${sha256(bytes)}  ${file}\n`);
+    const sums = readFileSync(join(root, "one", "SHA256SUMS"), "utf8");
+    assert.ok(sums.startsWith(`${sha256(bytes)}  ${file}\n`), sums);
+    if (target === "win-x64") {
+      // The service host ships beside kin.exe, under the name
+      // --install-service looks for (server/service-install.mjs).
+      const host = `kin-service-host-${VERSION}-win-x64.exe`;
+      assert.equal(sums, `${sha256(bytes)}  ${file}\n${sha256(readFileSync(join(root, "one", host)))}  ${host}\n`);
+      assert.deepEqual(readFileSync(join(root, "one", host)), readFileSync(process.env.KIN_SERVICE_HOST_EXE));
+      const folder = "C:\\Downloads";
+      const beside = new Set([win32.join(folder, file), win32.join(folder, host)]);
+      assert.equal(findServiceHost({ program: { kind: "sea", executable: win32.join(folder, file) }, env: {}, exists: (candidate) => beside.has(candidate) }), win32.join(folder, host));
+    } else assert.equal(sums, `${sha256(bytes)}  ${file}\n`);
     assert.equal(info.targets[0].sha256, sha256(bytes));
     const { blob } = target === "win-x64" ? checkPeExecutable(bytes) : checkMachOExecutable(bytes);
     assert.equal(sha256(blob), info.blob.sha256);

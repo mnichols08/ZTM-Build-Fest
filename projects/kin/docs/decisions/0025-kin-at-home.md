@@ -16,8 +16,10 @@ so far (#713, [HOME-SERVER](../HOME-SERVER.md)): `KIN_MODE` (§9), the
 executables for Linux x64 and arm64, macOS arm64 and x64 and Windows x64,
 built on any machine with Kin's own ELF, Mach-O and PE injectors (#714,
 #747, #748; the macOS ones with Kin's own ad-hoc signature), the container
-image, and installing as a service, on Windows with the Task Scheduler
-fallback; the Rust service host (#749) follows.
+image, and installing as a service, on Windows as a real service run by
+the Rust service host (#749, `tools/kin-service-host`: std only, stopping
+Kin by closing its stdin, shipped beside the Windows executable), with the
+Task Scheduler fallback when the host is missing.
 
 **A word on names.** Kin's documents already call the sync service "the
 relay" (it relays encrypted events; THREAT-MODEL S4, S5). This ADR adds a

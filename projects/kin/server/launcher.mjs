@@ -8,6 +8,11 @@
 // (scripts/sea/main.cjs) can't pass Node flags on its command line, so it
 // starts a second copy of itself with the flags in NODE_OPTIONS; how the
 // service process is started is the caller's `serviceProcess`.
+//
+// On Windows the service is run by Kin's service host (tools/kin-service-host,
+// #749), which starts this launcher with --stop-on-stdin-close and asks it to
+// stop by closing its stdin: a Windows service has no console to send Ctrl+C
+// to, and ending a process gives it no chance to close its database.
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -30,6 +35,8 @@ Commands (at most one):
 
 Options:
   --supervise            restart the service when it fails (the Windows task uses it)
+  --stop-on-stdin-close  stop the service when this program's stdin closes (the
+                         Windows service host uses it)
   --log-file PATH        append the service's output to PATH
   --user NAME            macOS: the account the service runs as (default: the
                          account that ran sudo)
@@ -57,10 +64,10 @@ export class LauncherUsageError extends Error {
   }
 }
 
-/** The launcher's command line as { command, supervise, logFile, user,
- * platform, adminArgs }. Throws LauncherUsageError. */
+/** The launcher's command line as { command, supervise, stopOnStdinClose,
+ * logFile, user, platform, adminArgs }. Throws LauncherUsageError. */
 export function parseLauncherArguments(argv) {
-  const options = { command: "run", supervise: false, logFile: null, user: null, platform: null, adminArgs: [] };
+  const options = { command: "run", supervise: false, stopOnStdinClose: false, logFile: null, user: null, platform: null, adminArgs: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "admin") {
@@ -81,13 +88,14 @@ export function parseLauncherArguments(argv) {
       if (options.command !== "run") throw new LauncherUsageError("Give one command at a time.");
       options.command = COMMANDS[name];
     } else if (name === "--supervise" && equals < 0) options.supervise = true;
+    else if (name === "--stop-on-stdin-close" && equals < 0) options.stopOnStdinClose = true;
     else if (name === "--log-file") options.logFile = value();
     else if (name === "--user") options.user = value();
     else if (name === "--platform") options.platform = value();
     else throw new LauncherUsageError(`Unknown argument "${argument}".`);
   }
-  if ((options.supervise || options.logFile) && options.command !== "run")
-    throw new LauncherUsageError("--supervise and --log-file are for running Kin.");
+  if ((options.supervise || options.stopOnStdinClose || options.logFile) && options.command !== "run")
+    throw new LauncherUsageError("--supervise, --stop-on-stdin-close and --log-file are for running Kin.");
   if (options.logFile === "") throw new LauncherUsageError("--log-file needs a path.");
   if (options.user !== null && !["install-service", "print-service"].includes(options.command))
     throw new LauncherUsageError("--user is for --install-service and --print-service.");
@@ -133,9 +141,10 @@ function openLog(path) {
  * launcher should use. `serviceProcess({ flags, env })` returns the
  * { command, args, env } that starts the service with the sandbox flags.
  * With `supervise`, a service that fails is started again after a delay
- * (1 second, doubling to 1 minute, reset after a minute up).
+ * (1 second, doubling to 1 minute, reset after a minute up). With
+ * `stopOnStdinClose`, the end of `stdin` stops the service as SIGTERM does.
  */
-export function runService({ serviceProcess, env = process.env, supervise = false, logFile = null, spawnImpl = spawn, signals = process, platform = process.platform }) {
+export function runService({ serviceProcess, env = process.env, supervise = false, stopOnStdinClose = false, logFile = null, spawnImpl = spawn, signals = process, stdin = process.stdin, platform = process.platform }) {
   let log = null;
   const write = (stream, line) => {
     if (log !== null) writeSync(log, `${line}\n`);
@@ -157,7 +166,11 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
     if (log !== null) closeSync(log);
     return Promise.resolve(1);
   }
-  const serviceEnv = { ...env, KIN_DATABASE_PATH: databasePath, ...(supervise ? { KIN_STOP_WITH_LAUNCHER: "1" } : {}) };
+  // The service learns of a stop from its stdin closing when Windows has no
+  // signal to give it: under --supervise (the scheduled task ends the
+  // launcher outright) and --stop-on-stdin-close (the service host).
+  const stopByPipe = supervise || stopOnStdinClose;
+  const serviceEnv = { ...env, KIN_DATABASE_PATH: databasePath, ...(stopByPipe ? { KIN_STOP_WITH_LAUNCHER: "1" } : {}) };
   const spec = serviceProcess({ flags, env: serviceEnv });
 
   return new Promise((resolveExit) => {
@@ -166,6 +179,12 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
     let delay = RESTART_MIN_MS;
     let restartTimer = null;
     const finish = (code) => {
+      if (stopOnStdinClose) {
+        stdin.removeListener("end", onStdinClosed);
+        stdin.removeListener("error", onStdinClosed);
+        // A paused stdin no longer keeps the launcher alive.
+        stdin.pause();
+      }
       if (log !== null) closeSync(log);
       resolveExit(code);
     };
@@ -190,14 +209,27 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
       if (restartTimer) { clearTimeout(restartTimer); finish(130); return; }
       setTimeout(() => { if (child && child.exitCode === null && child.signalCode === null) forward("SIGTERM"); }, 250).unref();
     };
+    // The service host closed this launcher's stdin (or ended): close the
+    // service's stdin in turn, which it reads as "stop" (KIN_STOP_WITH_LAUNCHER).
+    const onStdinClosed = () => {
+      if (stopping) return;
+      stopping = true;
+      if (restartTimer) { clearTimeout(restartTimer); finish(0); return; }
+      if (child && child.exitCode === null && child.signalCode === null) child.stdin?.end();
+    };
     signals.on("SIGTERM", onTerm);
     signals.on("SIGINT", onInt);
+    if (stopOnStdinClose) {
+      stdin.on("end", onStdinClosed);
+      stdin.on("error", onStdinClosed);
+      stdin.resume();
+    }
     const start = () => {
       restartTimer = null;
       const startedAt = Date.now();
       const piped = log !== null;
       child = spawnImpl(spec.command, spec.args, {
-        stdio: [supervise ? "pipe" : "inherit", piped ? "pipe" : "inherit", piped ? "pipe" : "inherit"],
+        stdio: [stopByPipe ? "pipe" : "inherit", piped ? "pipe" : "inherit", piped ? "pipe" : "inherit"],
         env: spec.env,
         windowsHide: true,
       });
@@ -281,6 +313,6 @@ export async function runLauncher(argv, { serviceProcess, program, version, env 
       }
     }
     default:
-      return runService({ serviceProcess, env, supervise: options.supervise, logFile: options.logFile, platform });
+      return runService({ serviceProcess, env, supervise: options.supervise, stopOnStdinClose: options.stopOnStdinClose, logFile: options.logFile, platform });
   }
 }

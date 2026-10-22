@@ -40,7 +40,25 @@ documentation only.
   Every executable is parsed back and checked before it is written. CI
   builds all five, and `home-executables-run` checks the signatures with
   `codesign`, runs the Mac and Windows executables and compares them with
-  native builds. Still unsigned: Gatekeeper and SmartScreen warn.
+  native builds; the Windows executable ships with the service host (#749)
+  built by the `service-host` job, and CI checks that `kin.exe
+  --print-service` finds it. Still unsigned: Gatekeeper and SmartScreen
+  warn.
+- **Kin runs as a real Windows service** (#749; story #713,
+  [ADR 0025](docs/decisions/0025-kin-at-home.md) §10,
+  [HOME-SERVER](docs/HOME-SERVER.md)). `tools/kin-service-host` is a small
+  service host in Rust with only `std` (no crates; the three advapi32
+  functions it needs are declared by hand) that answers the Service Control
+  Manager, starts `kin.exe`, restarts it with a backoff if it fails, and on
+  stop, shutdown or preshutdown closes its stdin so the service closes its
+  database, ending it after 40 seconds and reporting its exit code. On
+  Windows `--install-service` now registers the service `Kin` with
+  `sc.exe create` (at boot, as LOCAL SERVICE) and restart-on-failure with
+  `sc.exe failure`; uninstall stops it, deletes it and keeps the data. The
+  scheduled task stays as the fallback when `kin-service-host.exe` isn't
+  beside `kin.exe`. The launcher gains `--stop-on-stdin-close`;
+  `scripts/build-sea.mjs` ships the host beside the Windows executable; the
+  CI job `service-host` tests it and runs it as a real service on Windows.
 - **The connection relay** (#728: #729, #730, #731, #732; epic #708,
   [ADR 0025](docs/decisions/0025-kin-at-home.md) §1–§4). A separate,
   dependency-free Node program in `relay/` that lets phones reach a home

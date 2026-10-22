@@ -24,7 +24,8 @@
 //                   empty cache and once more, and record the start times.
 //
 // Output, in --out: kin-<version>-<target>[.exe], SHA256SUMS and
-// build-info.json. The build is reproducible: the same sources, engine and
+// build-info.json; with win-x64, also the Windows service host
+// kin-service-host-<version>-win-x64.exe (scripts/sea/windows-service-host.mjs). The build is reproducible: the same sources, engine and
 // node binary give byte-identical executables (files are taken in sorted
 // order, the blob has no code cache or snapshot, and the injector is
 // deterministic). Downloaded node binaries are checked against the release's
@@ -47,6 +48,7 @@ import { flipFuse, fuseFlipped } from "./sea/fuse.mjs";
 import { checkMachOExecutable, injectMachO, readMachO, thinSlice } from "./sea/macho.mjs";
 import { checkPeExecutable, injectPe, readPe } from "./sea/pe.mjs";
 import { downloadNode, hostTarget, TARGETS } from "./sea/node-release.mjs";
+import { buildWindowsServiceHost } from "./sea/windows-service-host.mjs";
 
 export const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const DEFAULT_TARGETS = Object.freeze(["linux-x64", "linux-arm64", "darwin-arm64", "darwin-x64", "win-x64"]);
@@ -291,8 +293,10 @@ export async function buildSea(options, { log = (line) => console.log(line) } = 
     targets.push({ target, file, size: executable.length, sha256: sha256(executable), node: { sha256: sha256(base.bytes), ...(base.archive ? { archive: base.archive.archive, archiveSha256: base.archive.archiveSha256 } : { source: "--node-binary" }) } });
     log(`Built ${join(options.out, file)} (${(executable.length / 1048576).toFixed(1)} MiB)`);
   }
-  const info = { name: "kin", version, node: options.nodeVersion, bundle: manifest.bundle, files: manifest.files.length, blob: { size: blob.length, sha256: sha256(blob) }, targets };
-  writeFileSync(join(options.out, "SHA256SUMS"), targets.map(({ sha256: hash, file }) => `${hash}  ${file}\n`).join(""));
+  // The Windows service host ships beside the Windows executable (#749).
+  const serviceHost = options.targets.includes("win-x64") ? buildWindowsServiceHost({ out: options.out, version, log }) : null;
+  const info = { name: "kin", version, node: options.nodeVersion, bundle: manifest.bundle, files: manifest.files.length, blob: { size: blob.length, sha256: sha256(blob) }, targets, ...(serviceHost ? { serviceHost } : {}) };
+  writeFileSync(join(options.out, "SHA256SUMS"), [...targets, ...(serviceHost ? [serviceHost] : [])].map(({ sha256: hash, file }) => `${hash}  ${file}\n`).join(""));
   writeFileSync(join(options.out, "build-info.json"), `${JSON.stringify(info, null, 2)}\n`);
 
   if (options.measure) {
@@ -317,7 +321,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     await buildSea(parseBuildArguments(process.argv.slice(2)));
   } catch (error) {
-    if (!(error instanceof BuildSeaError) && !["ElfInjectError", "MachOInjectError", "PeInjectError", "CodeSignatureError", "FuseError", "NodeReleaseError"].includes(error?.name)) throw error;
+    if (!(error instanceof BuildSeaError) && !["ServiceHostBuildError", "ElfInjectError", "MachOInjectError", "PeInjectError", "CodeSignatureError", "FuseError", "NodeReleaseError"].includes(error?.name)) throw error;
     console.error(error.message);
     process.exitCode = 1;
   }

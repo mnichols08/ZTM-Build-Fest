@@ -1,14 +1,21 @@
 // Running Kin as a service that starts with the computer (ADR 0025 §10, #716):
 // a systemd unit on Linux, a launchd LaunchDaemon on macOS, and on Windows a
-// Task Scheduler task at startup.
+// real Windows service.
 //
 // Windows: a service registered with sc.exe must answer the Service Control
-// Manager, which a console program can't (error 1053). The ADR's answer is a
-// small std-only Rust service host; until it exists (a follow-up under
-// #713), this uses the ADR's fallback: a scheduled task that starts at boot
-// as the low-privilege LOCAL SERVICE account, with the launcher supervising
-// (restarting) the service itself, since Task Scheduler's own restart only
-// covers a task that fails to start.
+// Manager, which a console program can't (error 1053). So the program
+// Windows starts is Kin's service host, kin-service-host.exe
+// (tools/kin-service-host, #749, Rust std only), shipped beside kin.exe. It
+// runs `kin.exe --stop-on-stdin-close …` as the low-privilege LOCAL SERVICE
+// account, restarts it if it fails, and stops it by closing its stdin, so
+// the service closes its database. sc.exe registers it to start at boot and
+// to be restarted if the host itself fails.
+//
+// Without the host (a kin.exe downloaded on its own), install falls back to
+// the ADR's alternative from #716: a scheduled task that starts at boot as
+// LOCAL SERVICE, with the launcher supervising (restarting) the service
+// itself, since Task Scheduler's own restart only covers a task that fails
+// to start.
 //
 // `kin --install-service`, `--uninstall-service` and `--print-service` come
 // here from the launcher (server/launcher.mjs), outside the sandbox. Install
@@ -34,6 +41,15 @@ export const MACOS_INSTALL_DIRECTORY = "/usr/local/libexec/kin";
 export const MACOS_APP_CACHE = "/Library/Caches/Kin";
 export const MACOS_LOG_DIRECTORY = "/Library/Logs/Kin";
 export const WINDOWS_TASK_NAME = "Kin";
+export const WINDOWS_SERVICE_NAME = "Kin";
+export const SERVICE_HOST_FILE = "kin-service-host.exe";
+// The service gives itself 30 seconds to close its database; the host waits
+// 40 before it ends it, as the systemd unit and the launchd plist do.
+export const SERVICE_STOP_TIMEOUT_SECONDS = 40;
+// How long install and uninstall wait for a running service to stop.
+const SERVICE_STOP_WAIT_MS = (SERVICE_STOP_TIMEOUT_SECONDS + 20) * 1000;
+// sc.exe takes this name for LOCAL SERVICE in every language.
+const LOCAL_SERVICE_ACCOUNT = "NT AUTHORITY\\LocalService";
 // Well-known Windows accounts, by SID so they work in every language.
 const LOCAL_SERVICE = "*S-1-5-19";
 const SYSTEM = "*S-1-5-18";
@@ -226,9 +242,12 @@ export function serviceLayout(platform, env = process.env) {
       dataDirectory,
       installDirectory: win32.join(programFiles, "Kin"),
       executable: win32.join(programFiles, "Kin", "kin.exe"),
-      definition: `Task Scheduler task \\${WINDOWS_TASK_NAME}`,
+      serviceHost: win32.join(programFiles, "Kin", SERVICE_HOST_FILE),
+      definition: `Windows service ${WINDOWS_SERVICE_NAME}`,
+      taskDefinition: `Task Scheduler task \\${WINDOWS_TASK_NAME}`,
       appCache: win32.join(programData, "Kin-app"),
       logFile: win32.join(dataDirectory, "logs", "kin.log"),
+      hostLogFile: win32.join(dataDirectory, "logs", "service-host.log"),
     };
   }
   throw new ServiceInstallError(`Kin can't be installed as a service on ${platform}.`);
@@ -246,10 +265,82 @@ function serviceProgram(program, layout) {
 // Debian, Ubuntu, Raspberry Pi OS and Fedora all have it here.
 const NOLOGIN = "/usr/sbin/nologin";
 
+// --- The Windows service host ------------------------------------------------
+
+/**
+ * The service host to install, or null when there is none (then Windows
+ * falls back to a scheduled task). KIN_SERVICE_HOST names one; otherwise it
+ * is looked for beside the executable, as kin-service-host.exe or with the
+ * executable's own release name (kin-1.6.0-win-x64.exe beside
+ * kin-service-host-1.6.0-win-x64.exe), and from a checkout in the host's
+ * cargo build folder.
+ */
+export function findServiceHost({ program, env = process.env, exists = existsSync }) {
+  if (env.KIN_SERVICE_HOST) {
+    if (!exists(env.KIN_SERVICE_HOST)) throw new ServiceInstallError(`KIN_SERVICE_HOST names ${env.KIN_SERVICE_HOST}, which doesn't exist.`);
+    return env.KIN_SERVICE_HOST;
+  }
+  const candidates = [];
+  if (program?.kind === "sea") {
+    const directory = win32.dirname(program.executable);
+    const name = win32.basename(program.executable);
+    candidates.push(win32.join(directory, SERVICE_HOST_FILE));
+    if (/^kin-\d/i.test(name)) candidates.push(win32.join(directory, name.replace(/^kin-/i, "kin-service-host-")));
+  } else if (program?.kind === "node" && program.args[0]) {
+    const root = win32.dirname(win32.dirname(program.args[0]));
+    for (const target of ["release", "x86_64-pc-windows-msvc\\release"])
+      candidates.push(win32.join(root, "tools", "kin-service-host", "target", target, SERVICE_HOST_FILE));
+  }
+  return candidates.find((candidate) => exists(candidate)) ?? null;
+}
+
+/** The arguments of the launcher the service host runs. */
+function windowsLauncherArguments(run, layout, sea, { host }) {
+  const args = [...run.args, host ? "--stop-on-stdin-close" : "--supervise", "--log-file", layout.logFile];
+  if (sea) args.push("--app-cache", layout.appCache);
+  return args;
+}
+
+/** The service's command line (sc.exe's binPath): the host, its options,
+ * then `--` and the launcher's arguments. */
+export function serviceHostCommandLine({ host, program, args, layout }) {
+  return [
+    host,
+    "--program", program,
+    "--working-directory", layout.dataDirectory,
+    "--env", `KIN_DATA_DIR=${layout.dataDirectory}`,
+    "--stop-timeout", String(SERVICE_STOP_TIMEOUT_SECONDS),
+    "--log-file", layout.hostLogFile,
+    "--",
+    ...args,
+  ].map(windowsArgument).join(" ");
+}
+
+/** The sc.exe commands that register the service and its recovery, as
+ * argument lists. `create` is for a new service; `config` sets the same on
+ * one that exists (a reinstall). */
+export function windowsServiceCommands(commandLine) {
+  const settings = ["binPath=", commandLine, "start=", "auto", "obj=", LOCAL_SERVICE_ACCOUNT, "password=", "", "DisplayName=", "Kin home server"];
+  return {
+    create: ["create", WINDOWS_SERVICE_NAME, ...settings],
+    config: ["config", WINDOWS_SERVICE_NAME, ...settings],
+    description: ["description", WINDOWS_SERVICE_NAME, "Kin home server: your household's own Kin service. Starts when the computer starts."],
+    // If the host itself fails (or stops with an error), Windows starts it
+    // again after 5 seconds, then 30, then every minute; the count resets
+    // after a day. The host restarts a failing Kin on its own first.
+    failure: ["failure", WINDOWS_SERVICE_NAME, "reset=", "86400", "actions=", "restart/5000/restart/30000/restart/60000"],
+    failureFlag: ["failureflag", WINDOWS_SERVICE_NAME, "1"],
+    start: ["start", WINDOWS_SERVICE_NAME],
+  };
+}
+
+/** One command as a person would type it, for --print-service. */
+const commandText = (command, args) => [command, ...args].map(windowsArgument).join(" ");
+
 /**
  * The service definition text for `platform`: { path, content }.
  */
-export function serviceDefinition({ platform, program, env = process.env, user = null }) {
+export function serviceDefinition({ platform, program, env = process.env, user = null, exists = existsSync }) {
   const layout = serviceLayout(platform, env);
   const run = serviceProgram(program, layout);
   if (platform === "linux")
@@ -264,18 +355,33 @@ export function serviceDefinition({ platform, program, env = process.env, user =
         logPath: posix.join(layout.logDirectory, "kin.log"),
       }),
     };
-  const args = [...run.args, "--supervise", "--log-file", layout.logFile];
-  if (program.kind === "sea") args.push("--app-cache", layout.appCache);
-  return { path: layout.definition, content: scheduledTaskXml({ command: run.command, args, workingDirectory: layout.dataDirectory }) };
+  const sea = program.kind === "sea";
+  const host = findServiceHost({ program, env, exists });
+  if (host) {
+    const commands = windowsServiceCommands(serviceHostCommandLine({
+      host: sea ? layout.serviceHost : host,
+      program: run.command,
+      args: windowsLauncherArguments(run, layout, sea, { host: true }),
+      layout,
+    }));
+    const lines = [commands.create, commands.description, commands.failure, commands.failureFlag].map((args) => commandText("sc.exe", args));
+    return { path: layout.definition, content: `${lines.join("\n")}\n` };
+  }
+  const args = windowsLauncherArguments(run, layout, sea, { host: false });
+  return { path: layout.taskDefinition, content: scheduledTaskXml({ command: run.command, args, workingDirectory: layout.dataDirectory }) };
 }
+
+const sameWindowsPath = (left, right) => win32.resolve(left).toLowerCase() === win32.resolve(right).toLowerCase();
 
 /**
  * The steps that install (`action` "install") or remove ("uninstall") the
- * service. Steps: { kind: "admin" | "mkdir" | "copy" | "write" | "remove" |
- * "run", … }; a "run" step with `unless` is skipped when that command
- * succeeds, and one with `allowFailure` may fail.
+ * service. Steps: { kind: "admin" | "require" | "mkdir" | "copy" | "write" |
+ * "remove" | "task" | "stop-service" | "run", … }; a "run" step with
+ * `unless` is skipped when that command succeeds, and one with
+ * `allowFailure` may fail. `exists` decides whether the Windows service
+ * host is there (findServiceHost).
  */
-export function servicePlan(action, { platform, program, env = process.env, user = null }) {
+export function servicePlan(action, { platform, program, env = process.env, user = null, exists = existsSync }) {
   const layout = serviceLayout(platform, env);
   const run = serviceProgram(program, layout);
   const sea = program.kind === "sea";
@@ -336,8 +442,21 @@ export function servicePlan(action, { platform, program, env = process.env, user
     return { steps, notes, layout };
   }
 
-  // Windows: the scheduled-task fallback (see the top of this file).
+  // Windows: a service run by the service host, or the scheduled-task
+  // fallback without one (see the top of this file). Either install first
+  // stops and removes what an earlier install left running, so files can be
+  // replaced and Kin never runs twice.
+  const stopService = { kind: "stop-service", name: WINDOWS_SERVICE_NAME, timeoutMs: SERVICE_STOP_WAIT_MS };
+  const removeTask = [
+    { kind: "run", command: "schtasks", args: ["/End", "/TN", WINDOWS_TASK_NAME], allowFailure: true },
+    { kind: "run", command: "schtasks", args: ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"], allowFailure: true },
+  ];
+  const deleteService = { kind: "run", command: "sc.exe", args: ["delete", WINDOWS_SERVICE_NAME], allowFailure: true };
   if (action === "install") {
+    const host = findServiceHost({ program, env, exists });
+    steps.push(stopService);
+    if (host) steps.push(...removeTask);
+    else steps.push(deleteService, removeTask[0]);
     for (const path of [layout.dataDirectory, layout.appCache]) {
       steps.push({ kind: "mkdir", path });
       // Only LOCAL SERVICE (which runs Kin), SYSTEM and Administrators.
@@ -345,14 +464,32 @@ export function servicePlan(action, { platform, program, env = process.env, user
     }
     if (sea) {
       steps.push({ kind: "mkdir", path: layout.installDirectory });
-      steps.push({ kind: "copy", from: run.copyFrom, to: layout.executable });
+      // Reinstalling from the installed copy leaves it where it is.
+      if (!sameWindowsPath(run.copyFrom, layout.executable)) steps.push({ kind: "copy", from: run.copyFrom, to: layout.executable });
+      if (host && !sameWindowsPath(host, layout.serviceHost)) steps.push({ kind: "copy", from: host, to: layout.serviceHost });
     }
-    steps.push({ kind: "task", content: serviceDefinition({ platform, program, env }).content });
-    steps.push({ kind: "run", command: "schtasks", args: ["/Run", "/TN", WINDOWS_TASK_NAME] });
-    notes.push(`Kin starts with Windows as the LOCAL SERVICE account and keeps its data in ${layout.dataDirectory}. Its log is ${layout.logFile}.`);
+    if (host) {
+      const commands = windowsServiceCommands(serviceHostCommandLine({
+        host: sea ? layout.serviceHost : host,
+        program: run.command,
+        args: windowsLauncherArguments(run, layout, sea, { host: true }),
+        layout,
+      }));
+      steps.push({ kind: "run", command: "sc.exe", args: commands.create, unless: { command: "sc.exe", args: ["query", WINDOWS_SERVICE_NAME] } });
+      steps.push({ kind: "run", command: "sc.exe", args: commands.config });
+      for (const args of [commands.description, commands.failure, commands.failureFlag, commands.start])
+        steps.push({ kind: "run", command: "sc.exe", args });
+      notes.push(`Kin runs as the Windows service "${WINDOWS_SERVICE_NAME}" under the LOCAL SERVICE account, starts with Windows and keeps its data in ${layout.dataDirectory}. Its logs are ${layout.logFile} and ${layout.hostLogFile}. Check it with: sc.exe query ${WINDOWS_SERVICE_NAME}`);
+    } else {
+      steps.push({ kind: "task", content: serviceDefinition({ platform, program, env, exists }).content });
+      steps.push({ kind: "run", command: "schtasks", args: ["/Run", "/TN", WINDOWS_TASK_NAME] });
+      notes.push(
+        `Kin starts with Windows as the LOCAL SERVICE account and keeps its data in ${layout.dataDirectory}. Its log is ${layout.logFile}.`,
+        `${SERVICE_HOST_FILE} wasn't found beside ${sea ? win32.basename(program.executable) : "Kin"}, so Kin starts from a scheduled task instead of a Windows service. Put it beside kin.exe and install again to use a service (docs/HOME-SERVER.md).`,
+      );
+    }
   } else {
-    steps.push({ kind: "run", command: "schtasks", args: ["/End", "/TN", WINDOWS_TASK_NAME], allowFailure: true });
-    steps.push({ kind: "run", command: "schtasks", args: ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"], allowFailure: true });
+    steps.push(stopService, deleteService, ...removeTask);
     // Windows can't delete a running program: uninstalling from the
     // installed copy itself leaves that folder for the person to delete.
     if (sea) steps.push({ kind: "remove", path: layout.installDirectory, recursive: true, allowFailure: true });
@@ -368,13 +505,26 @@ function defaultRun(command, args) {
   return { code: result.error ? -1 : result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? result.error?.message ?? "" };
 }
 
+// A blocking pause: install and uninstall are synchronous command-line steps.
+function defaultSleep(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+// sc.exe query's "STATE : 1  STOPPED" (the number is the same in every
+// language); null when the output has none.
+export function serviceState(output) {
+  const match = /STATE\s*:\s*(\d+)/.exec(output);
+  return match ? Number(match[1]) : null;
+}
+const SERVICE_STOPPED = 1;
+
 function defaultIsAdmin(platform, run) {
   if (platform === "win32") return run("net", ["session"]).code === 0;
   return process.getuid?.() === 0;
 }
 
 /** Carries out a plan's steps in order; stops at the first failure. */
-export function executePlan(plan, { run = defaultRun, isAdmin = defaultIsAdmin, log = () => {}, fs = { chmodSync, copyFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } } = {}) {
+export function executePlan(plan, { run = defaultRun, isAdmin = defaultIsAdmin, log = () => {}, sleep = defaultSleep, now = Date.now, fs = { chmodSync, copyFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } } = {}) {
   for (const step of plan.steps) {
     switch (step.kind) {
       case "admin":
@@ -428,6 +578,26 @@ export function executePlan(plan, { run = defaultRun, isAdmin = defaultIsAdmin, 
         }
         break;
       }
+      case "stop-service": {
+        // Asks a running service to stop and waits until it has (the host
+        // gives Kin time to close its database); nothing to do when it isn't
+        // installed or already stopped.
+        const query = () => run("sc.exe", ["query", step.name]);
+        let state = query();
+        if (state.code !== 0 || serviceState(state.stdout) === SERVICE_STOPPED) break;
+        log(`Stopping the ${step.name} service`);
+        run("sc.exe", ["stop", step.name]);
+        const deadline = now() + step.timeoutMs;
+        for (;;) {
+          state = query();
+          const current = serviceState(state.stdout);
+          if (state.code !== 0 || current === null || current === SERVICE_STOPPED) break;
+          if (now() >= deadline)
+            throw new ServiceInstallError(`The ${step.name} service didn't stop within ${Math.round(step.timeoutMs / 1000)} seconds. Stop it in Services (services.msc) and try again.`);
+          sleep(500);
+        }
+        break;
+      }
       case "run": {
         if (step.unless && run(step.unless.command, step.unless.args).code === 0) break;
         const line = [step.command, ...step.args].join(" ");
@@ -447,11 +617,11 @@ export function executePlan(plan, { run = defaultRun, isAdmin = defaultIsAdmin, 
 export async function runServiceCommand(options, { program, env = process.env, platform = process.platform, stdout = process.stdout, run, isAdmin, fs } = {}) {
   if (options.command === "print-service") {
     const user = platform === "darwin" ? options.user ?? env.SUDO_USER ?? env.USER ?? null : null;
-    const definition = serviceDefinition({ platform, program, env, user });
+    const definition = serviceDefinition({ platform, program, env, user, ...(fs?.existsSync ? { exists: fs.existsSync } : {}) });
     stdout.write(`# ${definition.path}\n${definition.content}`);
     return 0;
   }
-  const plan = servicePlan(options.command === "install-service" ? "install" : "uninstall", { platform, program, env, user: options.user });
+  const plan = servicePlan(options.command === "install-service" ? "install" : "uninstall", { platform, program, env, user: options.user, ...(fs?.existsSync ? { exists: fs.existsSync } : {}) });
   executePlan(plan, { run, isAdmin, fs, log: (line) => stdout.write(`${line}\n`) });
   stdout.write(`${options.command === "install-service" ? "Kin is installed as a service." : "The Kin service is removed."}\n`);
   for (const note of plan.notes) stdout.write(`${note}\n`);
