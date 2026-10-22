@@ -78,7 +78,7 @@ export async function simpleRegressions(client, { until, ready }) {
     };
   })()`);
   assert.equal(shell.flag, "on");
-  assert.deepEqual(shell.pages, ["today", "updates", "household"], "only Today, Chat and the Fridge");
+  assert.deepEqual(shell.pages, ["today", "updates", "household", "chores"], "only Today, Chat, the Fridge and the chore chart (#676)");
   assert.deepEqual(shell.mounted, [], "no other page is in the document");
   assert.deepEqual(shell.nav, [["Today", "#today"], ["Chat", "#updates/chat"], ["Fridge", "#household/fridge"]]);
   assert.ok(!shell.quickAdd && !shell.search && shell.lock, "Quick add and Search are off; Lock stays");

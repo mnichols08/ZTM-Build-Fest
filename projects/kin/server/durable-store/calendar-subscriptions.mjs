@@ -16,7 +16,7 @@
 // purges it (calendar-sync-service.mjs forgetMember).
 import { DurableStoreError, isId, isTimestamp } from "./shared.mjs";
 
-/** The table, as created by the schema 28 migration. */
+/** The table, as created by the schema 29 migration. */
 export const CALENDAR_SUBSCRIPTIONS_SQL = `
   CREATE TABLE calendar_subscriptions (
     id TEXT PRIMARY KEY CHECK (length(id) = 32),

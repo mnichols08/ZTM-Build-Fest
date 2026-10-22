@@ -41,6 +41,7 @@ export {
   chatAccess,
   chatPolicyOf,
   CHAT_ACCESS,
+  choreChartOf,
   featureOff,
   featuresOf,
   HOUSEHOLD_FEATURE_BITS,

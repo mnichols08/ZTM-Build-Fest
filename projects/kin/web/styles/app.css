@@ -2662,7 +2662,8 @@ kin-journal { display: grid; gap: var(--space-3); min-width: 0; }
 :root[data-kin-features-off~="notes"] [data-feature~="notes"],
 :root[data-kin-features-off~="sitter"] [data-feature~="sitter"],
 :root[data-kin-features-off~="journal"] [data-feature~="journal"],
-:root[data-kin-features-off~="mine"] [data-feature~="mine"] { display: none !important; }
+:root[data-kin-features-off~="mine"] [data-feature~="mine"],
+:root[data-kin-features-off~="chores"] [data-feature~="chores"] { display: none !important; }
 .features-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .features-note[hidden] { display: none; }
 .features-note-text { flex: 1 1 16rem; margin: 0; }
@@ -2755,4 +2756,61 @@ button.show-password { justify-self: start; }
    whatever smaller size a component gives it in the regular layout. */
 :root[data-kin-easy="on"] :is(button, select, summary, textarea, input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"])) {
   min-height: var(--tap);
+}
+
+/* The chore chart (#676, ADR 0022 §6): a card per person in their colour,
+   with big tick boxes. Colour is never the only signal: the name is in the
+   card's header, and done jobs say "Done". The kitchen display reuses
+   <kin-chore-chart size="display"> with larger targets. */
+.today-chores-link { display: inline-flex; align-items: center; min-height: var(--tap); font-size: 15px; }
+.chore-chart { display: block; }
+.chore-empty { color: var(--ink-muted); }
+.chore-cards { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+@media (min-width: 720px) { .chore-cards { grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); } }
+.chore-card { overflow: hidden; border: 2px solid var(--chore-colour, var(--line-strong)); border-radius: var(--r-card); background: var(--surface); }
+.chore-card-header { padding: var(--space-2) var(--space-3); background: var(--chore-colour, var(--accent)); color: #fff; }
+.chore-card-name { margin: 0; font-size: 1.4rem; line-height: 1.25; overflow-wrap: anywhere; }
+.chore-points { margin: 4px 0 0; font-size: 1.05rem; font-weight: 600; }
+.chore-progress { display: block; inline-size: 100%; block-size: 0.9rem; margin-block-start: var(--space-1); accent-color: #fff; }
+.chore-card section > :not(header) { margin-inline: var(--space-3); }
+.chore-day-heading { margin-block: var(--space-2) var(--space-1); font-size: 1.1rem; }
+.chore-list, .chore-week-list { margin-block: 0 var(--space-2); padding: 0; list-style: none; }
+.chore-row + .chore-row { border-block-start: 1px solid var(--line); }
+.chore-tick { display: flex; align-items: center; gap: var(--space-2); min-block-size: 4rem; padding-block: var(--space-1); cursor: pointer; }
+.chore-box { flex: 0 0 auto; inline-size: 2.75rem; block-size: 2.75rem; margin: 0; accent-color: var(--chore-colour, var(--accent)); }
+.chore-box:disabled { cursor: default; }
+.chore-picture { flex: 0 0 3rem; inline-size: 3rem; block-size: 3rem; display: grid; place-items: center; overflow: hidden; border-radius: var(--r-row); background: var(--surface-secondary); font-size: 2rem; line-height: 1; }
+.chore-picture.is-empty { display: none; }
+.chore-picture img { inline-size: 100%; block-size: 100%; object-fit: cover; }
+.chore-text { flex: 1 1 auto; min-inline-size: 0; font-size: 1.15rem; font-weight: 600; overflow-wrap: anywhere; }
+.chore-worth { flex: 0 0 auto; color: var(--ink-muted); font-size: 0.9rem; }
+.chore-row.is-done .chore-text { color: var(--ink-muted); text-decoration: line-through; }
+.chore-none, .chore-all-done { margin-block: var(--space-1) var(--space-2); }
+.chore-all-done { font-weight: 700; }
+.chore-week { margin-block-end: var(--space-2); }
+.chore-week > summary { min-block-size: var(--tap); display: flex; align-items: center; cursor: pointer; }
+.chore-week-day { margin-block: var(--space-1) 2px; font-size: 1rem; }
+.chore-week-row { padding-block: 2px; overflow-wrap: anywhere; }
+.chore-week-row.is-done .chore-week-state { font-weight: 700; }
+.chore-reward { margin-block-end: var(--space-3); }
+.chore-reward-toggle { min-block-size: var(--tap); }
+.chore-reward-form { display: grid; gap: var(--space-1); margin-block-start: var(--space-2); }
+.chore-reward-form input { min-block-size: var(--tap); }
+.chore-join { margin-block-start: var(--space-3); }
+.chore-join-button { min-block-size: var(--tap); }
+.routine-chore-points { display: inline-flex; align-items: center; gap: var(--space-1); min-block-size: var(--tap); margin-inline-end: var(--space-2); }
+.routine-chore-points select { min-block-size: var(--tap); }
+.chore-adults-row { display: flex; align-items: center; gap: var(--space-2); min-block-size: var(--tap); }
+.simple-chores-link, .simple-back-link { display: flex; align-items: center; justify-content: center; min-block-size: 3.5rem; margin-block: var(--space-2); border: 2px solid var(--accent); border-radius: var(--r-control); font-size: 1.125rem; font-weight: 700; text-decoration: none; }
+.simple-chores-link[hidden] { display: none; }
+/* Easy mode: the tick boxes and job names bigger still. */
+:root[data-kin-easy="on"] .chore-box { inline-size: 3.5rem; block-size: 3.5rem; }
+:root[data-kin-easy="on"] .chore-tick { min-block-size: 5rem; }
+:root[data-kin-easy="on"] .chore-text { font-size: 1.3rem; }
+kin-chore-chart[size="display"] .chore-tick { min-block-size: 5rem; }
+kin-chore-chart[size="display"] .chore-box { inline-size: 4rem; block-size: 4rem; }
+kin-chore-chart[size="display"] .chore-text { font-size: 1.5rem; }
+@media (forced-colors: active) {
+  .chore-card { border: 2px solid CanvasText; }
+  .chore-card-header { background: Canvas; color: CanvasText; border-block-end: 2px solid CanvasText; }
 }

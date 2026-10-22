@@ -52,8 +52,9 @@ test("the service and the devices name the same feature bits", () => {
     { ...HOUSEHOLD_FEATURE_BITS },
     "web/features.js and pairing-service/shared.mjs agree",
   );
-  assert.equal(KNOWN_FEATURE_MASK, 2 ** 14 - 1);
-  assert.equal(new Set(Object.values(HOUSEHOLD_FEATURE_BITS)).size, 14, "no bit is used twice");
+  // Bits 0–13, and 15 for the chore chart (#676); 14 is the Calendar's.
+  assert.equal(KNOWN_FEATURE_MASK, 2 ** 14 - 1 + 2 ** 15);
+  assert.equal(new Set(Object.values(HOUSEHOLD_FEATURE_BITS)).size, 15, "no bit is used twice");
 });
 
 bothStores("everything is on until an admin switches something off, and status says so to every member", (h) => {

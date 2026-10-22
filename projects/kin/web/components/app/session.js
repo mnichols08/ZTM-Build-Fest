@@ -275,6 +275,7 @@ export class SessionController {
     clearLegacyDrafts();
     this.ctx.simple?.reset();
     this.ctx.features?.reset();
+    this.ctx.chores?.reset();
     // Synced calendars' decrypted occurrences leave memory (#668).
     this.ctx.calendarSync?.stop();
     this.ctx.journal?.reset();

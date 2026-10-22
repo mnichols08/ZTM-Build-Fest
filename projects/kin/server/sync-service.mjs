@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "./durable-store.mjs";
-import { boardAccess, boardPolicyOf, canManageTrust, canParticipate, chatAccess, chatPolicyOf, featuresOf, isHouseholdAdmin, PairingError, privatePolicyOf, requireTrustAuthority } from "./pairing-service.mjs";
+import { boardAccess, boardPolicyOf, canManageTrust, canParticipate, chatAccess, chatPolicyOf, choreChartOf, featuresOf, isHouseholdAdmin, PairingError, privatePolicyOf, requireTrustAuthority } from "./pairing-service.mjs";
 import { INSTALL_ICONS, installContentTag, installIconUrl, validateInstallIdentity } from "./install-identity.mjs";
 import {
   canonicalEventEnvelope,
@@ -96,6 +96,9 @@ export class EncryptedSyncService {
       // Household features (ADR 0021 §2): the switched-off set every member's
       // devices hide, its revision, and whether this member may change it.
       features: { ...featuresOf(auth.household), admin: isHouseholdAdmin(auth.member, this.now()) },
+      // The chore chart (ADR 0022 §6, #676): whether an admin allows adults
+      // to join, its revision, and whether this member may change it.
+      choreChart: { ...choreChartOf(auth.household), admin: isHouseholdAdmin(auth.member, this.now()) },
       currentEpoch: state.currentEpoch,
       enabled: state.enabled,
       rotationPending: state.rotationPending,

@@ -243,7 +243,7 @@ private iCal link ([ADR 0022](docs/decisions/0022-family-hub.md) §3). This
 service then downloads that calendar, at most about every 30 minutes and
 only when a device in its audience asks, and relays it to those devices
 over TLS: **it can read those calendars, and its database (server schema
-28, `calendar_subscriptions`) holds their private links in plaintext**, so
+29, `calendar_subscriptions`) holds their private links in plaintext**, so
 treat database backups accordingly. Feeds are held in memory for at most 30
 minutes and never written to disk. The fetcher uses Node's own `https` and
 `dns`, so the service needs outbound HTTPS (port 443) to the calendar hosts;

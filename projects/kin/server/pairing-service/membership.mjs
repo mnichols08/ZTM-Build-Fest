@@ -6,6 +6,7 @@ import {
   canParticipate,
   boardPolicyOf,
   chatPolicyOf,
+  choreChartOf,
   featuresOf,
   KNOWN_FEATURE_MASK,
   privatePolicyOf,
@@ -359,6 +360,42 @@ export const membershipMethods = {
     });
     this.persistHousehold(household.id);
     return { ...household.features, changed: true };
+  },
+
+  // Adults on the chore chart (ADR 0022 §6, #676): a service setting changed
+  // like household features — admin only, fresh passkey or password, with
+  // the revision it was made from.
+  choreChartContext(sessionToken) {
+    const { member, household, device } = this.authorize(sessionToken);
+    requireHouseholdAdmin(member, "choose whether adults can join the chore chart", this.now());
+    return { memberId: member.id, deviceId: device.id, householdId: household.id, credentialIds: [...member.credentials] };
+  },
+
+  /** Throws unless `change` is `{ adults, expectedRevision }` with a boolean
+   * and the household's current revision. */
+  checkChoreChartChange(household, change) {
+    const { adults, expectedRevision } = change ?? {};
+    if (typeof adults !== "boolean" || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
+      throw new PairingError("chore_chart_invalid", "Choose whether adults can join the chore chart.");
+    if (choreChartOf(household).revision !== expectedRevision)
+      throw new PairingError("chore_chart_stale", "The chore chart setting changed on another device. Look again and try once more.", 409);
+  },
+
+  setChoreChart(sessionToken, change, reauthenticatedMemberId) {
+    const context = this.choreChartContext(sessionToken);
+    if (reauthenticatedMemberId !== context.memberId)
+      throw new PairingError("fresh_auth_required", "Authenticate again before changing the chore chart setting.", 401);
+    const household = this.households.get(context.householdId);
+    this.checkChoreChartChange(household, change);
+    const current = choreChartOf(household);
+    if (current.adults === change.adults) return { ...current, changed: false };
+    household.choreChart = { adults: change.adults, revision: current.revision + 1 };
+    household.version += 1;
+    this.audit("chore_chart_adults_changed", {
+      householdId: household.id, actorId: context.memberId, adults: change.adults, revision: household.choreChart.revision,
+    });
+    this.persistHousehold(household.id);
+    return { ...household.choreChart, changed: true };
   },
 
   hasUsableTrustedDevice(memberId) {

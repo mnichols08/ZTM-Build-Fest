@@ -787,6 +787,20 @@ accept it, as for attachment removal above. The page can only point at
 records already in the household, so the worst case is a rearranged or
 emptied page that an Adult sets again.
 
+### The chore chart's rules are kept by the app (#676)
+
+The chore chart ([ADR 0022](decisions/0022-family-hub.md) §6) has three
+rules Rust can't fully enforce, because it doesn't know member kinds or the
+service's settings: only Adults set points (kind 77) and rewards (kind 78),
+and an adult joins (kind 79) only while a household admin allows adults.
+The app enforces them on the single command path; a Limited member running
+a modified client could change a routine's points or a reward, or an Adult
+could join while adults aren't allowed (their card shows only on devices
+where the setting is on, which it isn't). Replay does enforce that a member
+joins or leaves only for themselves: a kind-79 event naming someone else has
+no effect. Points are a household game derived from completions anyone in
+the household can already record; they protect nothing.
+
 ### Prepared invitations: a printed sheet is an invitation (#613, ADR 0021 §4)
 
 "Set up Kin for someone" lets a household admin prepare an invitation for one

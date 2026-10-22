@@ -54,6 +54,9 @@ const PAGE_TITLES = Object.freeze({
   search: "Search",
   // This week (#416): reached from Today; it marks Today in the navigation.
   week: "This week",
+  // The chore chart (#676): reached from Today (and Simple view); it marks
+  // Today in the navigation.
+  chores: "Chore chart",
   // For you (#441): a Temporary member's landing page; it marks Today.
   foryou: "For you",
   // A member's journal (#497): reached from Household (the More place), not
@@ -111,18 +114,21 @@ export const SIMPLE_ROUTES = Object.freeze({
   today: Object.freeze({ page: "today", label: "Today" }),
   chat: Object.freeze({ page: "updates", segment: "chat", label: "Chat" }),
   fridge: Object.freeze({ page: "household", segment: "fridge", label: "Fridge" }),
+  // The chore chart (#676), reached from Simple view's Today.
+  chores: Object.freeze({ page: "chores", label: "Chore chart" }),
 });
 
 /**
- * Simple view's allowlist: Today, Updates › Chat when `chat` is true and
- * Household › Fridge when `fridge` is true. Every other hash, alias, search
- * link and `/pair` resolves to Today.
+ * Simple view's allowlist: Today, Updates › Chat when `chat` is true,
+ * Household › Fridge when `fridge` is true and the chore chart when `chores`
+ * is true. Every other hash, alias, search link and `/pair` resolves to Today.
  */
-export function resolveSimpleRoute(location = {}, { chat = false, fridge = false } = {}) {
+export function resolveSimpleRoute(location = {}, { chat = false, fridge = false, chores = false } = {}) {
   const route = resolveRoute(location);
   // An old Talk link isn't Chat: Simple view has no To talk about list.
   const allowed = (chat && route.page === "updates" && route.segment === "chat" && !route.topics) ||
-    (fridge && route.page === "household" && route.segment === "fridge");
+    (fridge && route.page === "household" && route.segment === "fridge") ||
+    (chores && route.page === "chores");
   return allowed ? route : resolveRoute({ hash: "#today" });
 }
 
@@ -143,7 +149,7 @@ export function resolveRoute({ hash = "", pathname = "/" } = {}) {
     : null;
   const canonical = segments ? `${page}/${segment}` : page;
   // Search is reachable from every page; it marks no primary destination.
-  const destination = page === "search" ? null : page === "week" || page === "foryou" ? "today" : page === "journal" ? "household" : page;
+  const destination = page === "search" ? null : page === "week" || page === "foryou" || page === "chores" ? "today" : page === "journal" ? "household" : page;
   return { page, segment, canonical, destination, title: PAGE_TITLES[page], hash: segments ? routeHash(page, segment) : `#${page}`, ...(topics ? { topics: true } : {}) };
 }
 
