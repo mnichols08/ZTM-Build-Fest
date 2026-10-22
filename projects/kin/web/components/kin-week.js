@@ -1,6 +1,6 @@
 // This week (#416, #421, #425): the next seven days in one calm list. Each
 // day is a headed section with its planned items, routine occurrences,
-// dinner and maintenance due. The days and what falls on them come from Rust
+// meals (#679: every slot) and maintenance due. The days and what falls on them come from Rust
 // (`kin_week`); this component only names and draws them. Items complete and
 // reopen with the ordinary commands (Undo applies) and move to another day
 // with "Move to…"; routines complete for the current period only.
@@ -8,6 +8,7 @@ import { assigneeLabel } from "./shared/assignee-label.js";
 import { describePlanningDate, formatCivilDate, nextCivilDate } from "../today-view.js";
 import { mergePrivateIntoWeek } from "../private-items.js";
 import { privateItemRow } from "./shared/private-marker.js";
+import { SLOT_LABELS } from "../meals/meals-view.js";
 
 const CADENCE = { daily: "Every day", weekdays: "Weekdays", weekly: "Every week", biweekly: "Every two weeks", monthly: "Every month" };
 
@@ -91,7 +92,9 @@ class KinWeek extends HTMLElement {
       section.append(heading);
       const list = document.createElement("ul");
       list.className = "week-list";
-      for (const meal of day.meals) list.append(this.line("week-meal", `Dinner: ${meal.name}`));
+      // Every meal of the day (#679), in planner order; Rust's own week has
+      // the dinner only, so a meal without a slot is dinner.
+      for (const meal of day.meals) list.append(this.line("week-meal", `${SLOT_LABELS[meal.slot] ?? "Dinner"}: ${meal.name}`));
       for (const entry of day.items) {
         const item = items.get(entry.itemId);
         if (item) list.append(this.itemRow(item, entry, day.date));

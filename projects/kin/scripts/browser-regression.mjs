@@ -21,6 +21,7 @@ import {
 import { shoppingRegressions } from "./shopping-regression.mjs";
 import { mealsRegressions } from "./meals-regression.mjs";
 import { mealsAcceptanceRegressions } from "./meals-acceptance-regression.mjs";
+import { mealPlanRegressions } from "./meal-plan-regression.mjs";
 import { simpleRegressions } from "./simple-regression.mjs";
 import { easyModeRegressions } from "./easy-mode-regression.mjs";
 import { easySweepRegressions } from "./easy-sweep-regression.mjs";
@@ -1543,6 +1544,9 @@ try {
   console.log(await first.evaluate(`(${shoppingRegressions.toString()})()`));
   console.log(await first.evaluate(`(${mealsRegressions.toString()})()`));
   console.log(await mealsAcceptanceRegressions(first, until));
+  // Fuller meal plans (#679): every meal, favourites, the week's Shopping.
+  await visit(first, "lists/meals");
+  console.log(await first.evaluate(`(${mealPlanRegressions.toString()})()`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
   await visit(first, "today");
