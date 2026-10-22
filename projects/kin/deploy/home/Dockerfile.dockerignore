@@ -1,5 +1,6 @@
 # Build context is projects/kin (deploy/home/Dockerfile). Only Cargo/rust,
-# server, web, package.json and the executable's build script are used.
+# server, web, package.json, relay/ktun.mjs and the executable's build
+# script are used.
 .git
 .kin-data
 target

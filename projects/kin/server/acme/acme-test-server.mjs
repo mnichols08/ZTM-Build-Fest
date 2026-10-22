@@ -20,6 +20,9 @@
 // Knobs for failure tests: `failNext(endpoint, problem, { status, retryAfter })`,
 // `badNonceOnce()`, `holdPolls` (authorization polls answered "pending" after
 // validation, with Retry-After: 3), and `lifetimeMs` / `now` for validity.
+// `accountBase` makes account URLs (the `kid`) start with another base, such
+// as "https://acme.test", for a caller that needs an https account URI (the
+// relay's CAA records accept only those); the client never fetches it.
 import { X509Certificate, createHash, createPublicKey, generateKeyPairSync, randomBytes, verify } from "node:crypto";
 import { createServer } from "node:http";
 import { connect } from "node:tls";
@@ -89,7 +92,7 @@ export function validateTlsAlpn({ host = "127.0.0.1", port, name, keyAuthorizati
   });
 }
 
-export async function startAcmeTestServer({ validationPort, validationHost = "127.0.0.1", lifetimeMs = 90 * 24 * 60 * 60 * 1000, now = Date.now, holdPolls = 1 } = {}) {
+export async function startAcmeTestServer({ validationPort, validationHost = "127.0.0.1", lifetimeMs = 90 * 24 * 60 * 60 * 1000, now = Date.now, holdPolls = 1, accountBase = null } = {}) {
   const ca = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
   const caDer = buildCertificate({
     subjectPublicKeyInfo: spkiDer(ca), subject: "Kin Test ACME CA", notBefore: now() - 86_400_000, notAfter: now() + 3650 * 86_400_000,
@@ -175,7 +178,7 @@ export async function startAcmeTestServer({ validationPort, validationHost = "12
         const existing = [...state.accounts.entries()].find(([, account]) => account.thumbprint === thumbprint);
         if (existing) { send(response, 200, { status: "valid" }, { location: existing[0] }); return; }
         if (auth.payload?.termsOfServiceAgreed !== true) { problem(response, 403, "userActionRequired", "agree to the terms"); return; }
-        const url = `${base}/account/${token().slice(0, 12)}`;
+        const url = `${accountBase ?? base}/account/${token().slice(0, 12)}`;
         state.accounts.set(url, { key: auth.key, thumbprint });
         send(response, 201, { status: "valid" }, { location: url });
         return;

@@ -17,13 +17,15 @@ server**. A plain guide for households comes with #740.
 | Running as a service: systemd, launchd, Windows | Built (#716). On Windows a real service run by Kin's Rust service host, `kin-service-host.exe` (#749); a scheduled task when the host is missing. |
 | Device checks on each platform | #717. |
 | Control panel and first-run setup page (§11) | #718. |
-| Certificates (ACME, §5) and the tunnel to the connection relay (§2) | #723, #733. |
+| Certificates (ACME, §5) | Built (#723), started by home mode (#733): [HOME-CERTIFICATES](HOME-CERTIFICATES.md). |
+| The tunnel to the connection relay (§2) | Built (#733): [below](#reaching-it-from-anywhere-the-tunnel). |
 | Signed updates and scheduled backups (§10) | Later. |
 
-Until the tunnel (#733) and the certificate client (#723) exist, a home
-server is reachable only on its own computer, at `http://localhost:8000`.
-Phones need an HTTPS name, so for now a technical household puts it behind
-`tailscale serve` or its own TLS proxy, with `KIN_ORIGIN` set to that name
+With a name set (below), phones reach the home server through the
+connection relay. Until the control panel (#718) exists, the name and the
+CA's terms are set by hand, in the home settings file or the environment.
+A technical household can still put it behind `tailscale serve` or its own
+TLS proxy instead, with `KIN_ORIGIN` set to that name and no home name
 (README, "Running behind a TLS proxy"; ADR 0025, "Alternatives considered").
 
 ## Home mode
@@ -54,6 +56,107 @@ only this (`server/mode.mjs`):
 Everything else is the same as hosted: the sandbox, the database, every
 format, push, calendar sync. `KIN_FEEDBACK_GITHUB_*` still works and is off
 unless set; reports stay on the home server for its admins.
+
+## Reaching it from anywhere: the tunnel
+
+ADR 0025 §1–§2 and §5; `server/home/`. In home mode with a **name** set,
+the service:
+
+1. makes its **home key** on first run: an Ed25519 key in
+   `<data>/home/home-key.pem` (mode 0600, in the 0700 `home/` folder, next
+   to the certificate files). The name is bound to it for good: back it up
+   with the rest of `home/`, and keep the backup as private as the computer.
+2. dials the **connection relay** on port 443 (TLS 1.3, ALPN
+   `kin-tunnel/1`, the relay's certificate checked the normal way), and
+   signs in with the home key over a value exported from that TLS session,
+   so the signature works on that connection only.
+3. **claims its free name** (a name directly under the zone), or asks the
+   relay to route **its own domain** (which needs the `_kin-relay` TXT
+   record, ADR 0025 §3).
+4. starts the **certificate manager**
+   ([HOME-CERTIFICATES](HOME-CERTIFICATES.md)): before the first order it
+   sets the free name's CAA record at the relay to its ACME account
+   (`SET_CAA`), then answers the CA's TLS-ALPN-01 check, which travels
+   through the relay like any phone.
+5. ends TLS for each phone connection itself and hands the decrypted
+   connection to the same HTTP server as the loopback listener, so every
+   page, API route and the live channel work as they do on the hosted
+   service. The relay forwards bytes it can't read.
+
+It opens no listener beyond loopback. The origin becomes `https://<name>`
+(an explicit `KIN_ORIGIN` must be that same origin). Without a name, home
+mode runs on loopback exactly as before and logs `home_not_configured`.
+
+### Settings
+
+They live in `<data>/home/settings.json` (the control panel, #718, will
+write it), and each can be overridden from the environment:
+
+| Setting | Variable | Default |
+| --- | --- | --- |
+| `name` | `KIN_HOME_NAME` | none: the tunnel stays off |
+| `relay` | `KIN_HOME_RELAY` | `relay.kin.journeytocode.io` (port 443; `host:port` for another) |
+| `zone` | `KIN_HOME_ZONE` | `home.kin.journeytocode.io` |
+| `acmeDirectory` | `KIN_HOME_ACME_DIRECTORY` | Let's Encrypt production (must be `https://`) |
+| `acmeTermsAgreed` | `KIN_HOME_ACME_TERMS_AGREED` | `false`: no certificate until the admin agrees to the CA's terms |
+
+```json
+{ "format": 1, "name": "fern.home.kin.journeytocode.io", "acmeTermsAgreed": true }
+```
+
+A setting that can't be read stops startup with `home_settings_invalid`
+and says which one. A damaged home key stops it with `home_key_invalid`:
+it is never replaced silently, because a new key can't take over the name.
+
+### Staying connected
+
+- After a lost tunnel it waits a random time between 0 and the current
+  backoff (1 second, doubling to 5 minutes), and the backoff starts again
+  once a tunnel has stayed up a minute. Refused sign-ins, a suspended name,
+  and a tunnel taken over by another copy of the same key (a restored
+  backup running elsewhere) wait the full 5 minutes.
+- It reconnects at once when the computer's network addresses change
+  (checked every 5 seconds) or the clock jumps by more than two ping
+  intervals (it slept). The new tunnel replaces the old one at the relay.
+- It pings after 25 seconds of silence and gives up on a tunnel silent for
+  75 (the relay's values).
+- Each phone connection has credit windows both ways (256 KiB per
+  connection, 4 MiB per tunnel by default): a phone that stops reading
+  stops Kin's response at its source, and nothing piles up in the tunnel
+  or the relay.
+
+`status()` (on the running server's `home` object) is what the control
+panel (#718) will show; it holds no address or key:
+
+```text
+tunnel: { state: "connected" | "connecting" | "waiting" | "stopped", connected,
+          relay, name, names, routed, nameError: { code, at } | null,
+          lastError: { code, at } | null, since, nextAttemptAt, streams }
+certificate: CertificateManager.status() (HOME-CERTIFICATES)
+```
+
+Error codes: `relay-unreachable`, `relay-certificate`, `relay-tls`,
+`sign-in-timeout`, `auth-failed`, `replaced`, `limit`, `suspended`,
+`relay-overloaded`, `relay-shutting-down`, `protocol-error`,
+`tunnel-dead`, `connection-lost`; for the name `name-taken`,
+`name-not-allowed`, `name-limit`, `name-unknown`. The log has one JSON line
+per change (`home_tunnel_connected`, `home_tunnel_lost` with its code,
+`home_tunnel_reconnect` with `wake`, `network-change` or `relay-draining`,
+`home_tunnel_caa_set`, `home_certificate_*`), never an address.
+
+### Client addresses and rate limits
+
+Each phone connection's address comes from the relay, in the stream's
+`OPEN` frame, outside anything the phone sends. Rate limits key on it per
+IPv4 address or IPv6 /64, and `X-Forwarded-For` is ignored on tunnel
+connections, whatever `KIN_TRUSTED_PROXIES` says. Connections on the
+loopback listener keep the usual rules.
+
+### Not built: direct access on the home network
+
+ADR 0025 §4 defers it: a phone at home goes out to the relay and back. A
+household with its own DNS can still point its own domain at the home
+server and run its own TLS proxy, as `deploy/` shows.
 
 ## Building the executables
 
@@ -290,8 +393,10 @@ For a bind mount instead of a volume, give the folder to that user first:
 the image and waits for it to report healthy.
 
 Kin listens on loopback inside the container; nothing is published. That is
-on purpose (home mode opens no public listener; the tunnel, #733, will dial
-out). The hosted-style image with Caddy in front is still `deploy/`.
+on purpose: home mode opens no public listener, and with a name set it dials
+out to the relay. Set the name with `-e KIN_HOME_NAME=…` (and
+`-e KIN_HOME_ACME_TERMS_AGREED=true` once you agree to the CA's terms), or
+in `/data/home/settings.json`. The hosted-style image with Caddy in front is still `deploy/`.
 
 ## Unsigned builds: what people will see
 

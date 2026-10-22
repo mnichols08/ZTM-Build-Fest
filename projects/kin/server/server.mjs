@@ -1,6 +1,6 @@
 import { createReadStream, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { parseAssetLinks, serveAssetLinks } from "./asset-links.mjs";
-import { extname, join, relative, resolve } from "node:path";
+import { dirname, extname, join, relative, resolve } from "node:path";
 import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 import { createServer } from "node:http";
@@ -384,7 +384,18 @@ if (
       console.warn(JSON.stringify({ event: "permission_model_disabled", message: "Running without Node's permission model. Use this only for local development." }));
     const port = Number(process.env.KIN_PORT ?? 8000);
     const host = process.env.KIN_HOST ?? "127.0.0.1";
-    const origin = process.env.KIN_ORIGIN ?? `http://localhost:${port}`;
+    let origin = process.env.KIN_ORIGIN ?? `http://localhost:${port}`;
+    // Home mode (ADR 0025 §9, #733): with a name in the home settings, the
+    // origin is https://<name> and the tunnel and certificate manager start
+    // once the loopback listener is up. Without one it runs as before on
+    // loopback, for the setup page (#718). Hosted Kin never loads server/home.
+    const dataDirectory = dirname(configuredDatabasePath());
+    let homeSettings = null;
+    if (serverMode(process.env.KIN_MODE) === "home") {
+      const { homeOrigin, loadHomeSettings } = await import("./home/settings.mjs");
+      homeSettings = await loadHomeSettings(dataDirectory);
+      if (homeSettings.configured) origin = homeOrigin(homeSettings, process.env.KIN_ORIGIN);
+    }
     application = createKinServer({
       port,
       host,
@@ -421,6 +432,21 @@ if (
     });
     application.server.listen(port, host, () => {
       console.log(JSON.stringify({ event: "service_ready", origin, mode: application.mode }));
+      if (homeSettings && !homeSettings.configured)
+        console.log(JSON.stringify({ event: "home_not_configured", message: "No home server name is set, so the tunnel to the connection relay is off. Set it up on this computer (docs/HOME-SERVER.md)." }));
+      if (!homeSettings?.configured) return;
+      import("./home/home-server.mjs")
+        .then(({ startHomeServer }) => startHomeServer({
+          application, dataDirectory, settings: homeSettings, log: (event) => console.log(JSON.stringify(event)),
+        }))
+        .then((home) => { application.home = home; })
+        .catch((error) => {
+          // The home key or a home file couldn't be read or made: serving
+          // without the tunnel would look healthy and reach no one.
+          console.error(JSON.stringify({ event: "startup_failed", outcome: "home_start_failed", ...(typeof error?.code === "string" ? { code: error.code } : {}), message: error?.message ?? "Kin's home server could not start its tunnel." }));
+          process.exitCode = 1;
+          application.server.close(() => application.store?.close());
+        });
     });
     installShutdown(application);
   } catch (error) {
@@ -429,10 +455,10 @@ if (
       JSON.stringify({
         event: "startup_failed",
         outcome:
-          ["durable_lock_exists", "permission_model_required", "feedback_github_invalid", "server_mode_invalid", "home_mode_setting_refused"].includes(error.code)
+          ["durable_lock_exists", "permission_model_required", "feedback_github_invalid", "server_mode_invalid", "home_mode_setting_refused", "home_settings_invalid"].includes(error.code)
             ? error.code
             : "configuration_or_storage",
-        ...(["durable_lock_exists", "trusted_proxies_invalid", "household_policy_invalid", "permission_model_required", "feedback_github_invalid", "server_mode_invalid", "home_mode_setting_refused"].includes(error.code) ? { message: error.message } : {}),
+        ...(["durable_lock_exists", "trusted_proxies_invalid", "household_policy_invalid", "permission_model_required", "feedback_github_invalid", "server_mode_invalid", "home_mode_setting_refused", "home_settings_invalid"].includes(error.code) ? { message: error.message } : {}),
         ...(error.code === "ERR_ACCESS_DENIED" || error.cause?.code === "ERR_ACCESS_DENIED" ? { message: "Node's permission model denied access to a path the service needs. Start Kin with server/start.mjs, which allows the app and data directories." } : {}),
       }),
     );
@@ -2209,7 +2235,8 @@ function withTransaction(context, operation) {
   return context.store ? context.store.transaction(operation) : operation();
 }
 
-function installShutdown({ server, store }) {
+function installShutdown(application) {
+  const { server, store } = application;
   let shuttingDown = false;
   const shutdown = (signal) => {
     if (shuttingDown) return;
@@ -2221,14 +2248,16 @@ function installShutdown({ server, store }) {
       process.exitCode = 1;
     }, 30_000);
     timeout.unref();
-    server.close((error) => {
+    // The tunnel goes first (GOAWAY 8 to the relay), so no new phone
+    // connection arrives while the server closes.
+    Promise.resolve(application.home?.stop()).catch(() => {}).then(() => server.close((error) => {
       clearTimeout(timeout);
       if (error) {
         console.error(JSON.stringify({ event: "shutdown_failed" }));
         process.exitCode = 1;
       }
       store?.close();
-    });
+    }));
   };
   // `on`, not `once`: a terminal's Ctrl+C reaches the service and its
   // launcher together, and the launcher forwards a stop too. A repeated

@@ -125,7 +125,7 @@ run it, from least to most hands-on:
 | **Railway** | Connect the repository, attach a volume, set one variable and one DNS record. [deploy/railway/](deploy/railway/README.md) |
 | **Docker Compose** on a Linux server | Kin plus Caddy, which gets the certificate for your subdomain. `cd deploy && cp .env.example .env && docker compose up -d --build`. [deploy/](deploy/README.md) |
 | **Node behind your own proxy** | nginx, Caddy or Traefik in front of `node server/start.mjs`. |
-| **Kin at home** (in progress) | One executable for Linux x64 and arm64 (macOS and Windows follow) or a container, installed as a service on a computer at home. Phones will reach it through the connection relay once the tunnel lands (#733). [HOME-SERVER](docs/HOME-SERVER.md), [ADR 0025](docs/decisions/0025-kin-at-home.md) |
+| **Kin at home** (in progress) | One executable for Linux x64 and arm64 (macOS and Windows follow) or a container, installed as a service on a computer at home. With a name set, it dials out to the connection relay and phones reach it there over TLS that ends on the home server (#733); the control panel that sets it up is #718. [HOME-SERVER](docs/HOME-SERVER.md), [ADR 0025](docs/decisions/0025-kin-at-home.md) |
 
 Every setting, the reverse-proxy rules, health endpoints, backups and
 restore, updating, and the optional GitHub forwarding of in-app reports are in

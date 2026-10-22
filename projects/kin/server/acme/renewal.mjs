@@ -196,7 +196,9 @@ export class CertificateManager {
     } catch (error) {
       this.#failures += 1;
       this.#nextAttemptAt = this.clock.now() + backoffDelay(this.#failures, error?.retryAfterMs);
-      this.#lastError = { code: typeof error?.code === "string" && error.code.startsWith("acme-") ? error.code : "acme-error", detail: error?.detail ?? null, at: iso(this.clock.now()) };
+      // acme-* from the CA or the client; tunnel-* from beforeOrder (the
+      // home server's relay tunnel, #733: not connected, or CAA refused).
+      this.#lastError = { code: typeof error?.code === "string" && /^(?:acme|tunnel)-/.test(error.code) ? error.code : "acme-error", detail: error?.detail ?? null, at: iso(this.clock.now()) };
       this.onEvent({ type: "failed", code: this.#lastError.code, nextAttemptAt: iso(this.#nextAttemptAt) });
       throw error;
     } finally {
