@@ -36,6 +36,10 @@
 :root[data-kin-display="on"] main { max-width: none; margin: 0; padding: 0; }
 :root[data-kin-display="on"] body { overscroll-behavior: none; }
 .display-view { padding: 0; }
+/* The display takes the whole screen: not Today's two-column grid (the view
+   keeps id="today" for routing), the content width or the detail column. */
+:root[data-kin-display="on"] .workspace-controls { display: block; }
+:root[data-kin-display="on"] #today.app-view.display-view { display: block; max-width: none; animation: none; }
 .display-background[hidden] { display: none; }
 
 .kitchen-display {

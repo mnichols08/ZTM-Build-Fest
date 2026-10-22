@@ -350,6 +350,8 @@ function measureLayout() {
   const tools = fridge.querySelector(".fridge-tools").getBoundingClientRect();
   const note = fridge.querySelector(".fridge-note-text");
   return {
+    // The display is the whole screen, not squeezed into Today's grid.
+    fills: display.getBoundingClientRect().width >= document.documentElement.clientWidth - 2,
     door: { width: Math.round(door.width), height: Math.round(door.height), ratio: Math.round((door.width / door.height) * 100) / 100, inside: door.left >= 0 && door.right <= innerWidth + 1 },
     toolsBesideDoor: tools.right <= door.left + 1 && tools.top < door.bottom,
     noteSize: note ? parseFloat(getComputedStyle(note).fontSize) : 0,
@@ -454,7 +456,8 @@ export async function kitchenDisplayRegressions(client, { until, recovery }) {
       { scroll: true, small: [], side: true, beside: true, week: true }, `landscape tablet layout: ${JSON.stringify(landscape)}`);
     assert.ok(landscape.fontSize >= 18 && landscape.timeSize >= 40, `readable from across the kitchen: ${JSON.stringify(landscape)}`);
     const fridgeLayout = (view, label) => {
-      assert.ok(view.door.inside && view.door.width >= 300 && Math.abs(view.door.ratio - 0.75) < 0.02, `${label}: the whole fridge door, in its shape: ${JSON.stringify(view.door)}`);
+      assert.ok(view.fills, `${label}: the display fills the screen's width: ${JSON.stringify(view)}`);
+      assert.ok(view.door.inside && view.door.width >= 300 && view.door.height >= 400 && Math.abs(view.door.ratio - 0.75) < 0.02, `${label}: the whole fridge door, in its shape: ${JSON.stringify(view.door)}`);
       assert.ok(view.toolsBesideDoor, `${label}: the fridge's tools beside the door: ${JSON.stringify(view)}`);
       assert.ok(view.noteSize >= 26, `${label}: fridge notes readable across the kitchen: ${view.noteSize}px`);
     };

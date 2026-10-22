@@ -3446,7 +3446,8 @@ can tap.
 - **Layout.** Landscape (10"+ tablet sideways): the week across the top,
   then today, the chart and the lists in three columns, the fridge below.
   Portrait: the week, then today beside the lists, the chart, the fridge.
-  Below 720 px everything stacks. Text from 18 px (the time from 40 px, the
+  The display takes the whole screen (not the full layout's Today grid or
+  content width). Below 720 px everything stacks. Text from 18 px (the time from 40 px, the
   fridge's notes from 26 px) for reading at 2–3 m; every control, Undo's
   included, at least 64 px. Dark mode follows the
   appearance; reduced motion, "more contrast" and forced colours are
