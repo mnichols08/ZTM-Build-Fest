@@ -539,3 +539,14 @@ test("a tunnel handshake the client aborts (an untrusted certificate) doesn't ke
     assert.ok(Date.now() - started < 2000, "close() ends the handed-over sockets at once");
   }
 });
+
+test("on shutdown every home server reads GOAWAY 8 before its tunnel closes", async () => {
+  const relay = await startRelay();
+  const servers = [await homeWithName(relay, "x.home.test"), await homeWithName(relay, "y.home.test")];
+  const goaways = servers.map((server) => new Promise((resolve) => server.once("goaway", (frame) => { resolve(frame.code); server.close(); })));
+  const closing = relay.close();
+  assert.deepEqual(await Promise.all(goaways), [Code.SHUTTING_DOWN, Code.SHUTTING_DOWN]);
+  const started = Date.now();
+  await closing;
+  assert.ok(Date.now() - started < 1500, "close() doesn't wait the full two seconds once the home servers have gone");
+});

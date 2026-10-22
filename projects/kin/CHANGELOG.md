@@ -277,7 +277,10 @@ documentation only.
   connection open on the relay until Node's 120-second default, and the
   relay's `close()` waited for it. The relay now limits handshakes on its
   own name to the 10-second sign-in window and closes such connections when
-  it stops.
+  it stops. Stopping also waits (at most two seconds) for each home server
+  to close its tunnel after GOAWAY 8 instead of destroying the socket
+  straight after writing it, which could lose the GOAWAY or reset the
+  connection (seen on Windows).
 
 ## v1.6.0 — Kin for Everyone
 

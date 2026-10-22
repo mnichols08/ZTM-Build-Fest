@@ -261,12 +261,14 @@ test("the home server reconnects after the relay restarts", TIMEOUT, async (t) =
   await waitFor(() => home.tunnel.status().routed, "the first tunnel");
   assert.equal((await phoneRequest(port, "x.home.test", HOME_TLS.cert)).status, 200);
 
-  const codes = [];
-  home.tunnel.on("status", (status) => { if (status.lastError) codes.push(status.lastError.code); });
+  // The tunnel is lost. Whether the home server read GOAWAY 8 first or only
+  // saw the connection end depends on the platform's timing (relay.test.mjs
+  // checks that GOAWAY 8 is sent and flushed); either way it must come back.
+  const lost = [];
+  home.tunnel.on("status", (status) => { if (!status.connected && status.lastError) lost.push(status.lastError.code); });
   await first.close();
-  await waitFor(() => codes.includes("relay-shutting-down"), "GOAWAY 8 seen");
-  assert.equal(home.tunnel.status().connected, false);
-  assert.ok(["waiting", "connecting"].includes(home.tunnel.status().state));
+  await waitFor(() => lost.length, "the tunnel to be lost");
+  assert.ok(["relay-shutting-down", "connection-lost", "relay-unreachable"].includes(lost[0]), lost[0]);
 
   const second = await startRelay(t, { registry, port });
   await waitFor(() => home.tunnel.status().routed, "the tunnel back on the restarted relay");
@@ -279,7 +281,12 @@ test("a newer tunnel replaces an older one: after a wake on the same client, and
   const registry = new Registry({ zone: "home.test", path: ":memory:" });
   t.after(() => registry.close());
   const relay = await startRelay(t, { registry });
-  const { home, dataDirectory } = await startHome(t, { relayPort: relay.ports.tls, name: "x.home.test", registry });
+  // After being replaced it waits a random time up to the longest backoff;
+  // here that is ~30 s (random 0.99), longer than the test, so it doesn't take
+  // the tunnel back while the other copy is checked.
+  const { home, dataDirectory } = await startHome(t, {
+    relayPort: relay.ports.tls, name: "x.home.test", registry, tunnel: { backoff: { minMs: 50, maxMs: 30_000 }, random: () => 0.99 },
+  });
   await waitFor(() => home.tunnel.status().routed, "the tunnel");
   const before = [...relay.tunnels.values()][0];
 
@@ -299,13 +306,15 @@ test("a newer tunnel replaces an older one: after a wake on the same client, and
   });
   const opened = [];
   other.on("stream", (stream) => { opened.push(stream.open); stream.destroy(); });
+  const replaced = new Promise((resolve) => home.tunnel.on("status", (status) => { if (status.lastError?.code === "replaced") resolve(status); }));
   other.start();
   t.after(() => other.stop());
-  await waitFor(() => other.status().routed && home.tunnel.status().lastError?.code === "replaced", "the other copy to take over");
-  const status = home.tunnel.status();
+  const status = await replaced;
+  await waitFor(() => other.status().routed, "the other copy to hold the name");
   assert.equal(status.connected, false);
-  assert.equal(status.state, "waiting");
-  assert.ok(Date.parse(status.nextAttemptAt) - Date.now() <= FAST_BACKOFF.maxMs, "a replaced tunnel waits the longest backoff");
+  const wait = Date.parse(status.nextAttemptAt) - Date.parse(status.since);
+  assert.ok(wait > 25_000 && wait <= 30_000, `a replaced tunnel waits from the longest backoff, not the first step (${wait} ms)`);
+  assert.equal(home.tunnel.status().connected, false, "and doesn't take the tunnel back meanwhile");
   // Phones now reach the other copy.
   await phoneRequest(relay.ports.tls, "x.home.test", HOME_TLS.cert).catch(() => {});
   assert.equal(opened.length, 1);

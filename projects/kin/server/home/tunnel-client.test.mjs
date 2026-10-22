@@ -275,6 +275,24 @@ test("keep-alive: a home server pings a silent relay and gives up on a dead one"
   assert.ok(pings.length >= 1, "it pinged before giving up");
 });
 
+test("a tunnel reset with no GOAWAY is reported and dialled again", TIMEOUT, async (t) => {
+  let signIns = 0;
+  const port = await brokenRelay(t, (socket, frame) => {
+    if (frame.type !== FrameType.AUTH) return;
+    signIns += 1;
+    socket.write(encodeReady(["fern.home.test"]));
+    // The first tunnel vanishes without a word; later ones stay.
+    if (signIns === 1) setTimeout(() => socket.destroy(), 50);
+  });
+  const tunnel = client(t, port);
+  const lost = [];
+  tunnel.on("status", (status) => { if (!status.connected && status.lastError) lost.push(status.lastError.code); });
+  tunnel.start();
+  await waitFor(() => signIns >= 2 && tunnel.status().connected, "the second tunnel");
+  assert.equal(lost[0], "connection-lost");
+  assert.equal(tunnel.status().routed, true);
+});
+
 test("a refused sign-in waits the longest backoff instead of hammering the relay", TIMEOUT, async (t) => {
   const port = await brokenRelay(t, (socket, frame) => {
     if (frame.type === FrameType.AUTH) { socket.write(encodeGoaway(0, Code.AUTH_FAILED)); socket.end(); }

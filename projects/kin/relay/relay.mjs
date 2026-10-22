@@ -140,7 +140,22 @@ export class ConnectionRelay {
   async close() {
     clearInterval(this.minuteTimer);
     clearInterval(this.dayTimer);
-    for (const tunnel of [...this.tunnels.values()]) tunnel.goaway(Code.SHUTTING_DOWN);
+    // GOAWAY 8 must reach each home server before its socket goes: destroying
+    // right after the write can drop it or turn the close into a reset (seen
+    // on Windows, #733). A home server ends its side when it reads GOAWAY,
+    // so wait for each tunnel to close, at most two seconds, then destroy
+    // whatever is left.
+    const tunnels = [...this.tunnels.values()];
+    const goneAway = tunnels.map(({ socket }) => new Promise((resolve) => {
+      if (socket.destroyed) { resolve(); return; }
+      socket.once("close", resolve);
+    }));
+    for (const tunnel of tunnels) tunnel.goaway(Code.SHUTTING_DOWN);
+    if (goneAway.length) {
+      let timer;
+      await Promise.race([Promise.all(goneAway), new Promise((resolve) => { timer = setTimeout(resolve, 2000); })]);
+      clearTimeout(timer);
+    }
     for (const socket of this.sockets) socket.destroy();
     const closing = [new Promise((resolve) => this.edge.close(resolve))];
     if (this.ports?.http) { closing.push(new Promise((resolve) => this.redirect.close(resolve))); this.redirect.closeAllConnections?.(); }
