@@ -1,4 +1,5 @@
 /target/
+/tools/kin-service-host/target/
 /web/wasm/kin_engine.wasm
 /web/wasm/kin_engine.wasm.sha256
 __pycache__/
