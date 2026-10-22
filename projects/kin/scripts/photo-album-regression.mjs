@@ -143,6 +143,8 @@ export async function photoAlbumRegressions() {
   await sharing;
   await until(() => album.addDialog.open && album.addDialog.querySelectorAll(".album-add-row").length === 1, "a shared photo opens the add dialog on Family photos");
   check(app.route?.canonical === "household/photos", "on the Family photos page", app.route);
+  // The dialog sits inside the app's controls, which are disabled while Kin is busy.
+  await idle();
   album.addCancel.click();
   for (let index = 0; index < 300 && album.addDialog.open; index++) await frame();
   check(!album.addDialog.open, "Cancel closes the add dialog (share)", dialogState());
@@ -150,6 +152,8 @@ export async function photoAlbumRegressions() {
   // Chat: "Add to the family photos" on a photo opens the same dialog.
   app.onChatToRecord(new CustomEvent("kin:chat-to-record", { detail: { kind: "photos", opener: null, files: [{ name: `chat-${tag}.jpg`, type: "image/jpeg", size: 1, load: () => photoFile(`chat-${tag}.jpg`, "#8e44ad") }] } }));
   await until(() => album.addDialog.open && album.addDialog.querySelectorAll(".album-add-row").length === 1, "a chat photo opens the add dialog");
+  // The dialog sits inside the app's controls, which are disabled while Kin is busy.
+  await idle();
   album.addCancel.click();
   for (let index = 0; index < 300 && album.addDialog.open; index++) await frame();
   check(!album.addDialog.open, "Cancel closes the add dialog (chat)", dialogState());
