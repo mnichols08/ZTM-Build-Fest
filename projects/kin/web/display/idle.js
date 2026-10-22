@@ -4,7 +4,9 @@
 // them. No DOM.
 
 export class IdleTimer {
-  constructor({ minutes, onIdle = () => {}, onActive = () => {}, setTimer = globalThis.setTimeout, clearTimer = globalThis.clearTimeout, now = () => Date.now() } = {}) {
+  // The defaults are wrapped: a browser's setTimeout and clearTimeout throw
+  // "Illegal invocation" when called as another object's methods.
+  constructor({ minutes, onIdle = () => {}, onActive = () => {}, setTimer = (fn, delay) => globalThis.setTimeout(fn, delay), clearTimer = (id) => globalThis.clearTimeout(id), now = () => Date.now() } = {}) {
     this.minutes = minutes;
     this.onIdle = onIdle;
     this.onActive = onActive;
