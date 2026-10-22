@@ -192,6 +192,24 @@ documentation only.
   forced-colours, reduced-motion, text-spacing and easy-mode contracts are
   unchanged, and `--bg`, `--line-strong` and the other palette values are
   as before.
+- **Documentation for newcomers and contributors.** The README now leads
+  with what Kin is, what it does today and how to run it locally or on your
+  own server, and links a [documentation map](docs/README.md). A new
+  [SELF-HOSTING](docs/SELF-HOSTING.md) guide holds every service setting,
+  the reverse-proxy rules, health endpoints, backups and restore, updating,
+  and the optional GitHub forwarding of in-app reports, which the README
+  used to carry. The release contracts and daily plans from v0.1 through the
+  October 2026 push to v1.0 (`docs/V0.*.md`, `docs/releases/`, the preflight
+  and traceability documents, and the root `AGENT-HANDOFF.md`,
+  `REPLACEMENT-MAP.md` and `MANIFEST.json`) moved to
+  [docs/planning/](docs/planning/README.md) with every link rewritten;
+  they are history, not a backlog. `AGENTS.md` is rewritten as a current,
+  short guide. `CONTRIBUTING.md` now covers setup, branches, what a good
+  change looks like and how a PR is checked; the Code of Conduct adopts the
+  Contributor Covenant 2.1 with Kin's privacy expectations; `SECURITY.md`
+  and `SUPPORT.md` are reorganised; the issue forms gain a self-hosting form,
+  a privacy checkbox and contact links; and the PR template's checklist
+  matches the verification gate.
 
 ## v1.6.0 — Kin for Everyone
 
@@ -1824,7 +1842,7 @@ _Not tagged: a development candidate whose changes ship in v1.0.0._
 - Added npm ignore rules so a package dry run includes the built WASM runtime
   and excludes local build/data trees.
 - Recorded the intentional visual differences and deferred prototype
-  capabilities in `docs/planning/V0.14.3-DESIGN-NOTE.md`.
+  capabilities in `docs/V0.14.3-DESIGN-NOTE.md`.
 
 #### Visual correction
 
@@ -2280,11 +2298,11 @@ Added every v5 request/header/envelope/payload and result truncation boundary, 1
 
 ## v0.5.2 — Pulse Resilience & Accessibility
 
-Restored capacity-selector focus when expiry hides an active Pulse control. Added late timer, simulated sleep/wake, focus/visibility, clock forward/backward, missed invalidation, original SET/CLEAR quota/abort retry, repeated refresh failures, supersession, rapid intent, reconnect/busy, native keyboard and accessibility-mode coverage. No new capability; evidence is in docs/planning/V0.5.0.md.
+Restored capacity-selector focus when expiry hides an active Pulse control. Added late timer, simulated sleep/wake, focus/visibility, clock forward/backward, missed invalidation, original SET/CLEAR quota/abort retry, repeated refresh failures, supersession, rapid intent, reconnect/busy, native keyboard and accessibility-mode coverage. No new capability; evidence is in docs/V0.5.0.md.
 
 ## v0.5.1 — Pulse Correctness
 
-Added exhaustive Pulse payload lengths, schemas, reserved/value codes, timestamp bounds, mixed entity invariance, exact v5 layouts, malformed results and combined count limits. Legacy byte fixtures remain unchanged. No new capability or production defect found; validation evidence is in docs/planning/V0.5.0.md.
+Added exhaustive Pulse payload lengths, schemas, reserved/value codes, timestamp bounds, mixed entity invariance, exact v5 layouts, malformed results and combined count limits. Legacy byte fixtures remain unchanged. No new capability or production defect found; validation evidence is in docs/V0.5.0.md.
 
 ## v0.5.0 — Pulse
 

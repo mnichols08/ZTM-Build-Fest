@@ -1,62 +1,93 @@
 # Security Policy
 
-**Current security status:** Kin v1.6.0 (`kin-v1.6.0`, released 2026-10-21)
-includes encrypted local household storage,
-recovery/optional-PRF unlock, journalled root replacement, encrypted archives,
-passkey-authenticated pairing, client-encrypted sync, durable identity/relay
-storage, recorded household-admin authority, and encrypted shared household
-settings. It is not independently audited or production-certified. Persistent
-service databases and backups contain identity/routing metadata, authorization
-state, encrypted settings and encrypted envelopes; they do not contain
-household plaintext or content keys. Restore can roll back
-authorization/revocation state. Encryption cannot protect a compromised
-unlocked runtime, origin, privileged extension or OS, and rotation cannot erase
-data, keys or archives already copied. See [THREAT-MODEL](docs/THREAT-MODEL.md),
-[CRYPTOGRAPHY](docs/CRYPTOGRAPHY.md), [VERSIONING](docs/VERSIONING.md), and the
-[v0.47 contract](docs/HOUSEHOLD-IDENTITY-DEFAULTS.md).
+## Reporting a vulnerability
 
-## Known limitations carried into v1.1
+Please report security problems privately. Do not open a public issue, and do
+not post exploit details, household data, credentials, pairing codes,
+recovery keys or proof-of-concept material anywhere public.
 
-Kin v1.0 ships with these known limitations, each explained in plain language
-in [THREAT-MODEL](docs/THREAT-MODEL.md#known-limitations-at-v10):
+1. Use **GitHub's private vulnerability reporting** on the hosting repository
+   (`Security` → `Report a vulnerability`) if it is enabled there.
+2. Otherwise, contact the maintainer, Mikey Nichols, through the private
+   contact options on the [@mnichols08](https://github.com/mnichols08) GitHub
+   profile, and say that it concerns `projects/kin/`.
 
-- **S4:** a relay can hold back an event without the receiving device noticing.
-- **S5:** device revocation and key-rotation status come from the relay.
-- **A6:** a device that joins without sync keys is approved without a certificate (it then can't sync; nothing is exposed).
-- **C4:** most of the Content-Security-Policy is set in the page rather than an HTTP header.
-- **C5:** the recovery key can linger in memory and on the clipboard after "Copy key".
-- **C6:** an export's header (date, counts, version, vault and wrapper IDs) is readable without its key.
-- **C2 (residual):** an attachment already open in another tab stays visible after Kin locks.
-- **Attachment removal** by Limited and Temporary members is blocked by the app and relay, but not checked when devices replay the event.
+Include a concise description of the impact, the affected version or commit,
+safe reproduction steps using synthetic data only, and any mitigation you
+already see. Do not access or keep another person's household information
+while investigating.
+
+Kin is a volunteer Build Fest project. Reports are read and taken seriously,
+a fix and disclosure are coordinated where applicable, and sensitive details
+are not published before affected people can reasonably respond; but there is
+no staffed security team and no response-time or remediation guarantee.
 
 ## Supported versions
 
-Security fixes go into the latest v1.x release only; there are no separate
-maintenance branches for older versions. v0.x pre-releases are not supported:
-v1.0 starts fresh ([V1.0-COMPATIBILITY](docs/V1.0-COMPATIBILITY.md)). What v1.1
-does not protect against is listed under
-[known limitations](docs/THREAT-MODEL.md#known-limitations-at-v10).
+| Version | Supported |
+| --- | --- |
+| Latest v1.x release (currently v1.6.0, `kin-v1.6.0`, 2026-10-21) | Yes: fixes land in the next release on the same line |
+| Earlier v1.x releases | No separate maintenance branches; update to the latest |
+| v0.x pre-releases | No; v1.0 starts fresh ([V1.0-COMPATIBILITY](docs/V1.0-COMPATIBILITY.md)) |
 
-Kin is a Build Fest project and has no staffed security-support commitment or guaranteed response time. Follow the private reporting guidance below and include only synthetic data.
+## What is in scope
 
-## Reporting a vulnerability
+Kin's security-sensitive areas, which a report may concern:
 
-Please do not publish exploitable details, household data, credentials, pairing codes, private keys, or proof-of-concept material in a public issue.
+- Safe rendering of household text and imported data.
+- The WebAssembly protocol, archive parsing and memory ownership.
+- Encrypted IndexedDB storage and its migrations.
+- Recovery-key and passkey (PRF) root wrapping, root rotation and journalled
+  replacement.
+- WebAuthn, account sign-in, device certification and household-admin
+  authorization.
+- Encrypted archive export and import, lock cancellation, the static shell
+  cache, encrypted shared settings and attachments.
+- Sync authorization and the relay, the chat, fridge and private streams, and
+  the service's rate limits.
+- The service sandbox, backups and restore, and the deployment images.
 
-Use GitHub's private vulnerability reporting for the hosting repository if that feature is enabled. If it is unavailable, contact the repository maintainer through a private contact method listed on their GitHub profile and identify the affected path/version. Kin does not operate a dedicated security mailbox or promise a response-time SLA.
+Report issues against behaviour that actually exists, in the current
+release.
 
-Reports should include a concise impact description, affected version/commit, safe reproduction steps, and any mitigations already identified. Use synthetic data only. Do not access or retain another person's household information while investigating.
+## What Kin's security is, and isn't
 
-## Scope and response
+Kin v1.6.0 encrypts household content on the device before it is stored or
+sent; the service holds identity and routing metadata, authorization state,
+encrypted settings and encrypted envelopes, never household plaintext or
+content keys. Pairing is passkey-authenticated, sync is client-encrypted, and
+household-admin authority is recorded on the server. It is **not**
+independently audited or production-certified.
 
-Implemented security-sensitive areas include safe rendering, WASM
-protocol/archive parsing and memory ownership, encrypted IndexedDB migration,
-recovery/PRF root wrapping, WebAuthn, device and household-admin authorization,
-encrypted archive import, lock cancellation, static shell caching, shared
-settings encryption, and sync authorization/relay. Server identity/relay
-metadata and ciphertext are durable, but sessions and in-progress ceremonies
-remain ephemeral. A separate server backup is needed to restore service
-authority; a local encrypted archive restores local history only. Report issues
-against behavior that actually exists.
+Things no report can change, which the design accepts:
 
-Maintainers will acknowledge and assess reports when available, coordinate a fix and disclosure where applicable, and avoid publishing sensitive details before affected users can reasonably respond. No response-time or remediation guarantee is made.
+- Encryption cannot protect a compromised unlocked runtime, origin,
+  privileged browser extension or operating system.
+- Rotation cannot erase data, keys or archives already copied elsewhere.
+- A restored server backup can roll back authorization and revocation state;
+  restore procedures say so.
+- The service can read the private iCal links of outside calendars members
+  sync, and holds them in plaintext ([SELF-HOSTING](docs/SELF-HOSTING.md)).
+
+The known limitations at v1.0, each explained in plain language in the
+[threat model](docs/THREAT-MODEL.md#known-limitations-at-v10), are:
+
+- **S4:** a relay can hold back an event without the receiving device
+  noticing.
+- **S5:** device revocation and key-rotation status come from the relay.
+- **A6:** a device that joins without sync keys is approved without a
+  certificate (it then can't sync; nothing is exposed).
+- **C4:** most of the Content-Security-Policy is set in the page rather than
+  an HTTP header.
+- **C5:** the recovery key can linger in memory and on the clipboard after
+  "Copy key".
+- **C6:** an export's header (date, counts, version, vault and wrapper IDs)
+  is readable without its key.
+- **C2 (residual):** an attachment already open in another tab stays visible
+  after Kin locks.
+- **Attachment removal** by Limited and Temporary members is blocked by the
+  app and the relay, but not re-checked when devices replay the event.
+
+Deeper reading: [THREAT-MODEL](docs/THREAT-MODEL.md),
+[CRYPTOGRAPHY](docs/CRYPTOGRAPHY.md), [PRIVACY](docs/PRIVACY.md),
+[RECOVERY](docs/RECOVERY.md) and [VERSIONING](docs/VERSIONING.md).
