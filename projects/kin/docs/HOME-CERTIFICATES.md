@@ -244,9 +244,14 @@ would be.
 - **Settings:** the ACME directory is the home setting `acmeDirectory`
   (Let's Encrypt production by default; `KIN_HOME_ACME_DIRECTORY`), and the
   terms agreement is `acmeTermsAgreed` (`KIN_HOME_ACME_TERMS_AGREED`).
-- **Control panel (#718):** show `status()`, the CAA records for an own
-  domain (and check them), and the setup step where the admin agrees to the
-  CA's terms; turn `onEvent` into admin push.
+- **Control panel (#719, #720, built):** the status page shows `status()` in
+  plain words; setup shows an own domain's CAA records (and the ACME account
+  they name, made at the terms step) and checks them; the terms step writes
+  `acmeTermsAgreed`; `expiring` and `transparency-alert` become a
+  content-free push to the household admins, at most daily each
+  (`certificateAlerts` in `server/home/control-panel.mjs`, through
+  `startHomeServer`'s `onCertificateEvent`). See
+  [HOME-SERVER](HOME-SERVER.md#setting-it-up-the-control-panel).
 
 ## Not done yet (deliberately)
 

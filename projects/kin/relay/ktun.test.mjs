@@ -71,6 +71,8 @@ const VECTORS = {
     taken: [encodeControl({ requestId: 1, op: ControlOp.CLAIM, status: Code.NAME_TAKEN }), "0a00000000000000080000000100000001090000"],
     setCaa: [encodeControl({ requestId: 2, op: ControlOp.SET_CAA, body: encodeControlBody(ControlOp.SET_CAA, { name: "x.home.test", accountUri: "https://acme.test/acct/1" }) }),
       "0a000000000000002e00000002000000030026000b782e686f6d652e74657374180068747470733a2f2f61636d652e746573742f616363742f31"],
+    check: [encodeControl({ requestId: 3, op: ControlOp.CHECK, body: encodeControlBody(ControlOp.CHECK, { name: "x.home.test" }) }),
+      "0a00000000000000140000000300000007000c000b782e686f6d652e74657374"],
   },
   193: {
     newKey: [NEW_PUBLIC, "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394"],
@@ -109,7 +111,7 @@ test("constants are the ADR's", () => {
   assert.equal(MAX_PAYLOAD, 16_384);
   assert.deepEqual(FrameType, { HELLO: 1, AUTH: 2, READY: 3, OPEN: 4, DATA: 5, WINDOW: 6, RESET: 7, PING: 8, GOAWAY: 9, CONTROL: 10 });
   assert.deepEqual(Object.values(Code), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-  assert.deepEqual(ControlOp, { CLAIM: 1, RELEASE: 2, SET_CAA: 3, ADD_DOMAIN: 4, REMOVE_DOMAIN: 5, TRANSFER: 6 });
+  assert.deepEqual(ControlOp, { CLAIM: 1, RELEASE: 2, SET_CAA: 3, ADD_DOMAIN: 4, REMOVE_DOMAIN: 5, TRANSFER: 6, CHECK: 7 });
   assert.deepEqual(DEFAULT_HELLO, { maxStreams: 256, streamWindow: 262_144, connectionWindow: 4_194_304, pingSeconds: 25, idleSeconds: 75 });
 });
 
@@ -143,6 +145,10 @@ test("payloads decode back to what was encoded", () => {
   const caa = decodeControl(read(VECTORS[192].setCaa[0], "home").payload);
   assert.deepEqual(decodeControlBody(ControlOp.SET_CAA, caa.body), { name: "x.home.test", accountUri: "https://acme.test/acct/1" });
   assert.deepEqual(decodeNameList(decodeControl(read(VECTORS[192].claimed[0], "relay").payload).body), ["x.home.test"]);
+  const check = decodeControl(read(VECTORS[192].check[0], "home").payload);
+  assert.equal(check.op, 7);
+  assert.deepEqual(decodeControlBody(ControlOp.CHECK, check.body), { name: "x.home.test" });
+  assert.throws(() => decodeControlBody(ControlOp.CHECK, Buffer.concat([check.body, Buffer.from([0])])), KtunError, "a name only");
   const transfer = encodeControlBody(ControlOp.TRANSFER, { name: "x.home.test", newKey: NEW_PUBLIC, signature: VECTORS[193].signature[0] });
   const decoded = decodeControlBody(ControlOp.TRANSFER, transfer);
   assert.ok(verifyEd25519(decoded.newKey, transferMessage(decoded.name, PUBLIC, decoded.newKey), decoded.signature));

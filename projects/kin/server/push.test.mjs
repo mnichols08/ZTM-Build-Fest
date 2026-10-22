@@ -197,6 +197,26 @@ test("a sync-accepted batch notifies only other members' unmuted devices, conten
   assert.equal(h.sent[0].options.topic, "kin-new");
 });
 
+test("a home server's certificate alert reaches only household admins' unmuted devices, content-free (#718)", async () => {
+  const h = household();
+  const adminsOtherDevice = h.addDevice(h.adult, "adult-other-device");
+  const partner = h.join("partner");
+  h.subscribe(h.adult);
+  h.subscribe(adminsOtherDevice);
+  h.subscribe(partner);
+  h.push.mute(h.auth(adminsOtherDevice), "hour");
+  h.push.adminsAlerted();
+  await h.settle();
+  assert.deepEqual(h.sent.map((entry) => entry.deviceId), [h.adult.deviceId], "the admin's unmuted device only");
+  assert.equal(h.sent[0].options.payload, '{"v":1,"kind":"new"}', "the same fixed payload as every push");
+  // Once promoted, the partner is told too.
+  h.pairing.setHouseholdAdmin(h.adult.sessionToken, partner.memberId, true, h.adult.memberId);
+  await h.advance(PUSH_COALESCE_MS);
+  h.push.adminsAlerted();
+  await h.settle();
+  assert.deepEqual(h.sent.map((entry) => entry.deviceId).sort(), [h.adult.deviceId, h.adult.deviceId, partner.deviceId].sort());
+});
+
 test("a chat push skips a member the chat policy shuts out; other pushes still reach them", async () => {
   const h = household();
   const child = h.join("child", { kind: "limited" });

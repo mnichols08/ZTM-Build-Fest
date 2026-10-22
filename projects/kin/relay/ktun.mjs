@@ -52,9 +52,12 @@ export const Code = Object.freeze({
   NAME_NOT_ALLOWED: 10,
 });
 
-/** CONTROL operations (§3). */
+/** CONTROL operations (§3). 7 `CHECK` (#719) asks, without binding
+ * anything, whether this key could have a name: the control panel's live
+ * availability check during setup. A relay that predates it answers status
+ * 1, which the home server reads as "can't check; the claim will tell". */
 export const ControlOp = Object.freeze({
-  CLAIM: 1, RELEASE: 2, SET_CAA: 3, ADD_DOMAIN: 4, REMOVE_DOMAIN: 5, TRANSFER: 6,
+  CLAIM: 1, RELEASE: 2, SET_CAA: 3, ADD_DOMAIN: 4, REMOVE_DOMAIN: 5, TRANSFER: 6, CHECK: 7,
 });
 
 /** HELLO defaults (§2, §4): 256 open connections per name, 256 KiB per
@@ -436,7 +439,7 @@ export function decodeControlBody(op, body) {
   const name = body.toString("latin1", 1, 1 + nameLength);
   const rest = body.subarray(1 + nameLength);
   switch (op) {
-    case ControlOp.CLAIM: case ControlOp.RELEASE: case ControlOp.ADD_DOMAIN: case ControlOp.REMOVE_DOMAIN:
+    case ControlOp.CLAIM: case ControlOp.RELEASE: case ControlOp.ADD_DOMAIN: case ControlOp.REMOVE_DOMAIN: case ControlOp.CHECK:
       if (rest.length !== 0) fail("CONTROL body has bytes after the name");
       return { name };
     case ControlOp.SET_CAA: {

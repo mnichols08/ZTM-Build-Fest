@@ -9,6 +9,12 @@
 // starts a second copy of itself with the flags in NODE_OPTIONS; how the
 // service process is started is the caller's `serviceProcess`.
 //
+// In home mode it also watches the service's output for the control
+// panel's one-time codes (ADR 0025 §10, #719): it shows each in plain words,
+// and on first run, in a terminal, opens the browser at the setup page (the
+// service itself may not start processes). The service asks to be started
+// again, after setup writes its name, by exiting with RESTART_EXIT_CODE.
+//
 // On Windows the service is run by Kin's service host (tools/kin-service-host,
 // #749), which starts this launcher with --stop-on-stdin-close and asks it to
 // stop by closing its stdin: a Windows service has no console to send Ctrl+C
@@ -19,6 +25,7 @@ import { basename, dirname, join } from "node:path";
 import { constants } from "node:os";
 import { canonicalPath } from "./path-safety.mjs";
 import { configuredDatabasePath, permissionFlags } from "./permissions.mjs";
+import { RESTART_EXIT_CODE } from "./mode.mjs";
 
 export const USAGE = `Usage: kin [command] [options]
 
@@ -56,6 +63,43 @@ const LOG_ROTATE_BYTES = 10 * 1024 * 1024;
 const RESTART_MIN_MS = 1_000;
 const RESTART_MAX_MS = 60_000;
 const RESTART_RESET_MS = 60_000;
+const CODE_EVENT = '"event":"home_control_code"';
+const PANEL_URL = /^http:\/\/localhost:\d{1,5}\/control\/$/;
+
+/** What the launcher shows for a control-panel code the service printed
+ * (server/home/control-panel.mjs), or null for any other line. */
+export function describeCodeLine(line) {
+  if (!line.includes(CODE_EVENT)) return null;
+  let event;
+  try { event = JSON.parse(line); } catch { return null; }
+  if (event?.event !== "home_control_code" || typeof event.code !== "string" || !PANEL_URL.test(event.url ?? "")) return null;
+  const until = Number.isNaN(Date.parse(event.expiresAt)) ? "" : ` It works once, until ${new Date(event.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`;
+  const text = {
+    setup: `Set up Kin: open ${event.url} on this computer and enter the setup code ${event.code}.${until}`,
+    access: `To open Kin's control panel, go to ${event.url} on this computer and enter the code ${event.code}.${until}`,
+    confirm: `To confirm the change in Kin's control panel, enter the code ${event.code}.${until}`,
+  }[event.purpose];
+  return text ? { purpose: event.purpose, url: event.url, text } : null;
+}
+
+/** Opens `url` (the setup page on this computer) in the default browser,
+ * best effort: no browser, no desktop or a failure just leaves the printed
+ * address. Returns the spawned process or null. */
+export function openBrowser(url, { platform = process.platform, env = process.env, spawnImpl = spawn } = {}) {
+  if (!PANEL_URL.test(url)) return null;
+  const command = platform === "darwin" ? ["open", [url]]
+    : platform === "win32" ? ["rundll32.exe", ["url.dll,FileProtocolHandler", url]]
+    : env.DISPLAY || env.WAYLAND_DISPLAY ? ["xdg-open", [url]] : null;
+  if (!command) return null;
+  try {
+    const child = spawnImpl(command[0], command[1], { stdio: "ignore", detached: platform !== "win32", windowsHide: true });
+    child.on?.("error", () => {});
+    child.unref?.();
+    return child;
+  } catch {
+    return null;
+  }
+}
 
 export class LauncherUsageError extends Error {
   constructor(message) {
@@ -144,11 +188,32 @@ function openLog(path) {
  * (1 second, doubling to 1 minute, reset after a minute up). With
  * `stopOnStdinClose`, the end of `stdin` stops the service as SIGTERM does.
  */
-export function runService({ serviceProcess, env = process.env, supervise = false, stopOnStdinClose = false, logFile = null, spawnImpl = spawn, signals = process, stdin = process.stdin, platform = process.platform }) {
+export function runService({ serviceProcess, env = process.env, supervise = false, stopOnStdinClose = false, logFile = null, spawnImpl = spawn, signals = process, stdin = process.stdin, platform = process.platform, stdout = process.stdout, stderr = process.stderr, interactive = Boolean(process.stdout.isTTY), open = openBrowser }) {
   let log = null;
   const write = (stream, line) => {
     if (log !== null) writeSync(log, `${line}\n`);
     else stream.write(`${line}\n`);
+  };
+  // Home mode: the control panel's codes are shown, and the setup page
+  // opened once, in a terminal only (a service manager has no screen).
+  const watchCodes = String(env.KIN_MODE ?? "").trim().toLowerCase() === "home";
+  let browserOpened = false;
+  let pending = "";
+  const watch = (chunk) => {
+    pending += chunk.toString("utf8");
+    if (pending.length > 65_536) pending = pending.slice(-65_536);
+    let end;
+    while ((end = pending.indexOf("\n")) >= 0) {
+      const line = pending.slice(0, end);
+      pending = pending.slice(end + 1);
+      const code = describeCodeLine(line);
+      if (!code) continue;
+      if (interactive || log === null) stderr.write(`\n${code.text}\n\n`);
+      if (code.purpose === "setup" && interactive && !supervise && !stopOnStdinClose && !browserOpened && env.KIN_OPEN_BROWSER !== "0") {
+        browserOpened = true;
+        open(code.url, { platform, env });
+      }
+    }
   };
   let databasePath;
   let flags;
@@ -229,13 +294,15 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
       const startedAt = Date.now();
       const piped = log !== null;
       child = spawnImpl(spec.command, spec.args, {
-        stdio: [stopByPipe ? "pipe" : "inherit", piped ? "pipe" : "inherit", piped ? "pipe" : "inherit"],
+        stdio: [stopByPipe ? "pipe" : "inherit", piped || watchCodes ? "pipe" : "inherit", piped ? "pipe" : "inherit"],
         env: spec.env,
         windowsHide: true,
       });
       if (piped) {
-        child.stdout?.on("data", (chunk) => writeSync(log, chunk));
+        child.stdout?.on("data", (chunk) => { writeSync(log, chunk); if (watchCodes) watch(chunk); });
         child.stderr?.on("data", (chunk) => writeSync(log, chunk));
+      } else if (watchCodes) {
+        child.stdout?.on("data", (chunk) => { stdout.write(chunk); watch(chunk); });
       }
       child.on("error", (error) => {
         write(process.stderr, JSON.stringify({ event: "startup_failed", outcome: "launch_failed", message: error.message }));
@@ -245,8 +312,15 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
       });
       // With the output piped to the log, wait for "close" (exit and the
       // pipes drained) so no output arrives after the log is closed.
-      child.on(piped ? "close" : "exit", (code, signal) => {
+      child.on(piped || watchCodes ? "close" : "exit", (code, signal) => {
         const exitCode = code ?? 128 + (constants.signals[signal] ?? 0);
+        // The service asked to be started again (setup wrote its name):
+        // at once, supervised or not, unless a stop is under way.
+        if (exitCode === RESTART_EXIT_CODE && !stopping) {
+          write(stderr, JSON.stringify({ event: "service_restarting", code: exitCode, delayMs: 0, reason: "requested" }));
+          restartTimer = setTimeout(start, 0);
+          return;
+        }
         if (!supervise || stopping || exitCode === 0) {
           signals.removeListener("SIGTERM", onTerm);
           signals.removeListener("SIGINT", onInt);

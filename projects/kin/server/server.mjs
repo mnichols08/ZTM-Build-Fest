@@ -6,9 +6,10 @@ import { pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { PairingError, PairingService, CHAT_ACCESS, parseHouseholdPolicy, requireTrustAuthority } from "./pairing-service.mjs";
+import { isHouseholdAdmin } from "./pairing-service/shared.mjs";
 import { deviceLabel } from "./pairing-service/device-label.mjs";
 import { configuredDatabasePath, permissionProblem } from "./permissions.mjs";
-import { applyServerMode, serverMode } from "./mode.mjs";
+import { applyServerMode, RESTART_EXIT_CODE, serverMode } from "./mode.mjs";
 import { builtInManifest, etagMatches, INSTALL_ICONS, publishedManifest } from "./install-identity.mjs";
 import { PushService } from "./push-service.mjs";
 import { ChatBlobService } from "./chat-blob-service.mjs";
@@ -40,7 +41,7 @@ import {
   RECORD_FIXED,
 } from "../web/sync/envelope-wire.js";
 import { isInsideRoot, webRoot } from "./path-safety.mjs";
-import { clientKey, parseTrustedProxies } from "./client-key.mjs";
+import { clientKey, parseTrustedProxies, tunnelPeer } from "./client-key.mjs";
 import { LiveService } from "./live/live-service.mjs";
 import { FeedbackService, MAX_FEEDBACK_REQUEST_BYTES } from "./feedback-service.mjs";
 import { GitHubIssues, parseGitHubConfig } from "./feedback-github.mjs";
@@ -200,6 +201,9 @@ export function createKinServer(options = {}) {
     secureCookies: new URL(origin).protocol === "https:",
     origin,
     clientKey: (request) => clientKey(request, trustedProxies),
+    // The home server's control panel (ADR 0025 §11, #718), attached by
+    // home mode after the server exists; null for hosted Kin.
+    controlPanel: options.controlPanel ?? null,
   };
   // The live channel (#107): one WebSocket per trusted device at /api/live.
   const liveService = options.liveService ?? new LiveService({
@@ -226,6 +230,12 @@ export function createKinServer(options = {}) {
         }
         return;
       }
+      // The control panel's own loopback API (server/home/control-panel.mjs).
+      // It has its own origin and session rules and never reaches api().
+      if (context.controlPanel && url.pathname.startsWith("/control/api/")) {
+        await context.controlPanel.handle(request, response, url);
+        return;
+      }
       if (url.pathname.startsWith("/api/")) {
         if (request.headers.origin && request.headers.origin !== origin)
           throw new PairingError(
@@ -233,11 +243,33 @@ export function createKinServer(options = {}) {
             "The request origin was rejected.",
             403,
           );
+        // A home server with no name yet serves only its setup page: a
+        // household made on localhost would have passkeys for the wrong name.
+        if (context.controlPanel?.appBlocked())
+          throw new PairingError(
+            "home_setup_required",
+            "Finish setting up this home server first, on its own computer.",
+            503,
+          );
         store?.assertAvailable();
         await api(request, response, url, context);
         return;
       }
       if (request.method === "GET" || request.method === "HEAD") {
+        if (url.pathname === "/control" || url.pathname.startsWith("/control/")) {
+          // The control panel's page exists only on a home server.
+          if (!context.controlPanel) { response.writeHead(404); response.end("Not found"); return; }
+          serve(response, url.pathname === "/control" || url.pathname === "/control/" ? "/control/index.html" : url.pathname);
+          return;
+        }
+        // On the home server's own computer the app can't work at
+        // http://localhost (its origin is https://<name>, or not set yet),
+        // so the address the launcher prints leads to the control panel.
+        if (context.controlPanel && url.pathname === "/" && !tunnelPeer(request.socket) && /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\]):\d+$/i.test(String(request.headers.host ?? ""))) {
+          response.writeHead(303, { Location: "/control/", "Cache-Control": "no-store" });
+          response.end();
+          return;
+        }
         if (url.pathname === "/.well-known/assetlinks.json") {
           serveAssetLinks(request, response, assetLinks);
           return;
@@ -344,6 +376,8 @@ export function createKinServer(options = {}) {
   return {
     mode,
     server,
+    /** Attaches home mode's control panel (server/home/control-panel.mjs). */
+    attachControlPanel(panel) { context.controlPanel = panel; },
     service,
     syncService,
     pushService,
@@ -396,12 +430,34 @@ if (
       homeSettings = await loadHomeSettings(dataDirectory);
       if (homeSettings.configured) origin = homeOrigin(homeSettings, process.env.KIN_ORIGIN);
     }
+    // The new-household limit the control panel set (ADR 0025 §9), unless
+    // KIN_MAX_HOUSEHOLDS says otherwise.
+    const panelLimit = homeSettings?.maxHouseholds && !process.env.KIN_MAX_HOUSEHOLDS?.trim() ? { maxHouseholds: homeSettings.maxHouseholds } : {};
     application = createKinServer({
       port,
       host,
       origin,
       acquireProcessLock: true,
+      ...panelLimit,
     });
+    let shutdown = () => {};
+    // The control panel (ADR 0025 §11, #718): setup on first run, then the
+    // status page, on loopback and for household admins at https://<name>.
+    if (homeSettings) {
+      const { createControlPanel } = await import("./home/control-panel.mjs");
+      await createControlPanel({
+        application, dataDirectory, databasePath: configuredDatabasePath(), settings: homeSettings,
+        trustedProxies: parseTrustedProxies(process.env.KIN_TRUSTED_PROXIES),
+        log: (event) => console.log(JSON.stringify(event)),
+        // Setup's last step: start again under the new name. The launcher
+        // (server/launcher.mjs) starts the service again on this exit code.
+        restart: (reason) => {
+          console.log(JSON.stringify({ event: "service_restart_requested", reason }));
+          process.exitCode = RESTART_EXIT_CODE;
+          setTimeout(() => shutdown("restart"), 250).unref();
+        },
+      });
+    }
     application.server.on("error", (error) => {
       const code =
         typeof error.code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)
@@ -432,12 +488,16 @@ if (
     });
     application.server.listen(port, host, () => {
       console.log(JSON.stringify({ event: "service_ready", origin, mode: application.mode }));
+      application.controlPanel?.started();
       if (homeSettings && !homeSettings.configured)
         console.log(JSON.stringify({ event: "home_not_configured", message: "No home server name is set, so the tunnel to the connection relay is off. Set it up on this computer (docs/HOME-SERVER.md)." }));
       if (!homeSettings?.configured) return;
-      import("./home/home-server.mjs")
-        .then(({ startHomeServer }) => startHomeServer({
+      Promise.all([import("./home/home-server.mjs"), import("./home/control-panel.mjs")])
+        .then(([{ startHomeServer }, { certificateAlerts }]) => startHomeServer({
           application, dataDirectory, settings: homeSettings, log: (event) => console.log(JSON.stringify(event)),
+          // Fewer than 14 days left, or a certificate this server didn't
+          // make: the household admins get a content-free push (§5).
+          onCertificateEvent: certificateAlerts(application.pushService, { log: (event) => console.log(JSON.stringify(event)) }),
         }))
         .then((home) => { application.home = home; })
         .catch((error) => {
@@ -448,7 +508,7 @@ if (
           application.server.close(() => application.store?.close());
         });
     });
-    installShutdown(application);
+    shutdown = installShutdown(application);
   } catch (error) {
     application?.store?.close();
     console.error(
@@ -2158,6 +2218,47 @@ async function api(request, response, url, context) {
     json(response, 200, result);
     return;
   }
+  // The control panel through the household's address (ADR 0025 §11,
+  // #718): household admins only, and every change with a fresh passkey
+  // (or password), as other admin changes. The loopback panel has its own
+  // API (server/home/control-panel.mjs).
+  if (url.pathname.startsWith("/api/control/")) {
+    const panel = context.controlPanel;
+    if (!panel) throw new PairingError("not_found", "That endpoint is unavailable.", 404);
+    const auth = service.authorize(session);
+    if (!isHouseholdAdmin(auth.member, context.now()))
+      throw new PairingError("household_admin_required", "Only a household admin can use the control panel.", 403);
+    if (request.method === "GET" && url.pathname === "/api/control/status") {
+      json(response, 200, panel.status());
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/control/change/options") {
+      const change = controlChange(panel, body?.change);
+      json(response, 200, issueAuthenticationFlow(
+        { purpose: "control-change", change, memberId: auth.member.id, deviceId: auth.device.id },
+        [...auth.member.credentials],
+        context,
+      ));
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/control/change/finish") {
+      const flow = consumeFlow(body.flow, context);
+      if (flow.purpose !== "control-change" || flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+      await confirmFresh(context, request, auth.member, body, () => {
+        const credential = service.credentials.get(body.credential?.id);
+        if (!credential || credential.memberId !== auth.member.id)
+          throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+        webauthn.verifyAuthentication(body.credential, body.flow, credential);
+      });
+      // The verified signature counter is kept, as for any passkey use.
+      withTransaction(context, () => service.persistHousehold(auth.household.id));
+      let result;
+      try { result = await panel.applyChange(flow.change); } catch (error) { throw controlPairingError(error); }
+      json(response, 200, result);
+      return;
+    }
+    throw new PairingError("not_found", "That endpoint is unavailable.", 404);
+  }
   // Adults on the chore chart (ADR 0022 §6, #676): household features' flow,
   // its own purpose, with the revision checked at both steps.
   if (request.method === "POST" && url.pathname === "/api/household/chore-chart/options") {
@@ -2231,6 +2332,17 @@ async function api(request, response, url, context) {
   throw new PairingError("not_found", "That endpoint is unavailable.", 404);
 }
 
+/** A control-panel change, checked by the panel; its refusal as a PairingError. */
+function controlChange(panel, change) {
+  try { return panel.checkChange(change); } catch (error) { throw controlPairingError(error); }
+}
+
+function controlPairingError(error) {
+  if (typeof error?.code === "string" && Number.isInteger(error.status) && error.name === "ControlError")
+    return new PairingError(error.code, error.message, error.status);
+  return error;
+}
+
 function withTransaction(context, operation) {
   return context.store ? context.store.transaction(operation) : operation();
 }
@@ -2250,7 +2362,7 @@ function installShutdown(application) {
     timeout.unref();
     // The tunnel goes first (GOAWAY 8 to the relay), so no new phone
     // connection arrives while the server closes.
-    Promise.resolve(application.home?.stop()).catch(() => {}).then(() => server.close((error) => {
+    Promise.all([application.home?.stop(), application.controlPanel?.close()]).catch(() => {}).then(() => server.close((error) => {
       clearTimeout(timeout);
       if (error) {
         console.error(JSON.stringify({ event: "shutdown_failed" }));
@@ -2273,6 +2385,7 @@ function installShutdown(application) {
     process.stdin.on("error", () => shutdown("launcher_exit"));
     process.stdin.resume();
   }
+  return shutdown;
 }
 
 function defaultAnonymousCapacity(maximum) {

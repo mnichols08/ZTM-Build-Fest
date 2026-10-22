@@ -12,19 +12,34 @@
 //   acmeDirectory    KIN_HOME_ACME_DIRECTORY      Let's Encrypt production
 //   acmeTermsAgreed  KIN_HOME_ACME_TERMS_AGREED   false ("true" agrees)
 //
+// One field has no variable of its own: `maxHouseholds` (1 to 10, or absent
+// for home mode's default of 1), the new-household limit the control panel
+// raises (ADR 0025 §9, #720). KIN_MAX_HOUSEHOLDS, when set, wins over it.
+//
+// `writeHomeSettings` is the only writer: the setup page and the control
+// panel (#718). It merges a change into what the file holds, checks the
+// result, and replaces the file atomically with mode 0600 in the 0700
+// `home/` directory. Readers ignore fields they don't know, so a later
+// field never breaks an older Kin.
+//
 // The file's format is `{ "format": 1, ...fields }`. A name directly under
 // the zone (one more label) is a free name, claimed from the relay; any
 // other name is the household's own domain (ADR 0025 §3).
 //
 // This module imports nothing from the relay, so hosted Kin can load
-// server.mjs without the tunnel's code.
+// server.mjs without the tunnel's code. (It does import the ACME key store,
+// for its private-file writer and the `home/` directory it owns.)
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { CertificateStore, writePrivateFile } from "../acme/keys.mjs";
 
 export const DEFAULT_RELAY = "relay.kin.journeytocode.io";
 export const DEFAULT_ZONE = "home.kin.journeytocode.io";
 export const LETS_ENCRYPT_DIRECTORY = "https://acme-v02.api.letsencrypt.org/directory";
 export const SETTINGS_FORMAT = 1;
+/** The most households the control panel lets a home server allow (§9: "a
+ * small number", for example grandparents' own household). */
+export const MAX_HOUSEHOLDS_LIMIT = 10;
 const FIELDS = Object.freeze({
   relay: "KIN_HOME_RELAY",
   zone: "KIN_HOME_ZONE",
@@ -90,6 +105,12 @@ function parseBoolean(value, what) {
   return fail(`${what} must be true or false.`);
 }
 
+function parseMaxHouseholds(value) {
+  if (value === undefined || value === null) return null;
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_HOUSEHOLDS_LIMIT) fail(`maxHouseholds must be a whole number from 1 to ${MAX_HOUSEHOLDS_LIMIT}.`);
+  return value;
+}
+
 /**
  * The effective home settings from `file` (the parsed settings.json, or
  * null) and `env`. `configured` is true when a name is set: only then does
@@ -111,6 +132,7 @@ export function resolveHomeSettings(file, env = process.env) {
     freeName: name ? isFreeName(name, zone) : null,
     acmeDirectory: isSet(raw.acmeDirectory) ? parseDirectory(raw.acmeDirectory) : LETS_ENCRYPT_DIRECTORY,
     acmeTermsAgreed: raw.acmeTermsAgreed === undefined || raw.acmeTermsAgreed === null || raw.acmeTermsAgreed === "" ? false : parseBoolean(raw.acmeTermsAgreed, "acmeTermsAgreed"),
+    maxHouseholds: parseMaxHouseholds(file?.maxHouseholds),
     configured: name !== null,
   });
 }
@@ -118,16 +140,40 @@ export function resolveHomeSettings(file, env = process.env) {
 /** Reads `<dataDirectory>/home/settings.json` (absent is fine) and applies
  * the environment. Throws HomeSettingsError for a bad file or value. */
 export async function loadHomeSettings(dataDirectory, env = process.env) {
-  let file = null;
+  return resolveHomeSettings(await readSettingsFile(dataDirectory), env);
+}
+
+async function readSettingsFile(dataDirectory) {
   try {
-    file = JSON.parse(await readFile(homeSettingsPath(dataDirectory), "utf8"));
+    return JSON.parse(await readFile(homeSettingsPath(dataDirectory), "utf8"));
   } catch (error) {
-    if (error?.code !== "ENOENT") {
-      if (error instanceof SyntaxError) fail("home/settings.json is not valid JSON.");
-      throw error;
-    }
+    if (error?.code === "ENOENT") return null;
+    if (error instanceof SyntaxError) fail("home/settings.json is not valid JSON.");
+    throw error;
   }
-  return resolveHomeSettings(file, env);
+}
+
+/**
+ * Merges `changes` (fields of the file, as the file holds them) into
+ * `home/settings.json` and writes it with mode 0600, atomically. A field set
+ * to null is removed. The merged file is checked without the environment
+ * before anything is written, so a bad change leaves the file as it was.
+ * Resolves with the effective settings (the environment applied).
+ */
+export async function writeHomeSettings(dataDirectory, changes, env = process.env) {
+  const current = await readSettingsFile(dataDirectory);
+  if (current !== null && (typeof current !== "object" || Array.isArray(current))) fail("home/settings.json must hold a JSON object.");
+  const next = { ...(current ?? {}), format: SETTINGS_FORMAT };
+  for (const [field, value] of Object.entries(changes)) {
+    if (field === "format") continue;
+    if (value === null || value === undefined) delete next[field];
+    else next[field] = value;
+  }
+  resolveHomeSettings(next, {});
+  const store = new CertificateStore(dataDirectory);
+  await store.ensureDirectory();
+  await writePrivateFile(homeSettingsPath(dataDirectory), `${JSON.stringify(next, null, 2)}\n`);
+  return resolveHomeSettings(next, env);
 }
 
 /** The origin a configured home server serves: https://<name>. An explicit

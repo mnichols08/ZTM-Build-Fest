@@ -159,6 +159,7 @@ jobs:
           - security-ui-regression
           - passkey-regression
           - household-authority-regression
+          - control-panel-regression
         include:
           - browser: edge
             os: windows-latest

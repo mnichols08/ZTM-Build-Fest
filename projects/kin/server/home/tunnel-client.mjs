@@ -79,6 +79,16 @@ const NAME_ERRORS = {
   [Code.UNKNOWN_NAME]: "name-unknown",
   [Code.SUSPENDED]: "suspended",
 };
+/** CHECK answers (#719). PROTOCOL_ERROR is an older relay without CHECK. */
+const CHECK_ANSWERS = {
+  [Code.NONE]: "available",
+  [Code.NAME_TAKEN]: "taken",
+  [Code.NAME_NOT_ALLOWED]: "not-allowed",
+  [Code.LIMIT]: "limit",
+  [Code.UNKNOWN_NAME]: "not-proven",
+  [Code.SUSPENDED]: "taken",
+  [Code.PROTOCOL_ERROR]: "unknown",
+};
 /** Errors after which reconnecting soon can't help: wait the longest backoff.
  * "replaced" means another home server holds this key (a restored backup
  * running elsewhere); the two would otherwise take the tunnel from each other
@@ -514,7 +524,8 @@ export class TunnelClient extends EventEmitter {
   /**
    * @param {object} options
    * @param {{ host: string, port: number }} options.relay  the relay's own name and port
-   * @param {string} options.name           this home server's name
+   * @param {string|null} options.name      this home server's name; null signs in only
+   *   (the setup page's availability check, #719: nothing is claimed)
    * @param {boolean} options.freeName      true: CLAIM it; false: ADD_DOMAIN (own domain)
    * @param {import("node:crypto").KeyObject} options.privateKey  the home key (Ed25519)
    * @param {number} [options.softwareVersion]
@@ -649,7 +660,7 @@ export class TunnelClient extends EventEmitter {
     this.#log({ event: "home_tunnel_connected", names: tunnel.names.length });
     this.#changed();
     this.namesChanged(tunnel);
-    if (!this.#routed(tunnel)) this.#ensureName(tunnel);
+    if (this.options.name && !this.#routed(tunnel)) this.#ensureName(tunnel);
   }
 
   namesChanged(tunnel) {
@@ -697,7 +708,7 @@ export class TunnelClient extends EventEmitter {
 
   // --------------------------------------------------------------- the name
 
-  #routed(tunnel) { return tunnel.names.includes(this.options.name); }
+  #routed(tunnel) { return this.options.name !== null && this.options.name !== undefined && tunnel.names.includes(this.options.name); }
 
   /** CLAIM a free name, or ADD_DOMAIN an own domain, once per tunnel (§3). */
   async #ensureName(tunnel) {
@@ -741,6 +752,27 @@ export class TunnelClient extends EventEmitter {
     if (status !== Code.NONE)
       throw Object.assign(new Error(`the relay refused the CAA record (code ${status})`), { code: `tunnel-caa-${NAME_ERRORS[status] ?? "refused"}` });
     this.#log({ event: "home_tunnel_caa_set" });
+  }
+
+  /**
+   * CONTROL op 7 CHECK (#719): could this key have `name`? Resolves with
+   * "available", "taken", "not-allowed", "limit" (this key already holds a
+   * free name, or too many checks), "not-proven" (an own domain whose
+   * `_kin-relay` TXT record the relay can't see naming this key yet) or
+   * "unknown" (a relay that predates CHECK: the claim will tell). Waits up
+   * to `timeoutMs` for a signed-in tunnel.
+   */
+  async check(name, { timeoutMs = 15_000 } = {}) {
+    const deadline = this.now() + timeoutMs;
+    while (!this.current || this.current.closed || this.current.state !== "ready") {
+      if (!this.running) throw Object.assign(new Error("the tunnel is not running"), { code: "tunnel-stopped" });
+      // The tunnel's own error (relay-unreachable, relay-certificate …)
+      // says more than "not ready" when there is one.
+      if (this.now() >= deadline) throw Object.assign(new Error("the relay didn't answer"), { code: this.lastError?.code ?? "tunnel-not-ready" });
+      await new Promise((resolve) => { const timer = setTimeout(resolve, 50); timer.unref?.(); });
+    }
+    const { status } = await this.current.control(ControlOp.CHECK, { name });
+    return CHECK_ANSWERS[status] ?? "unknown";
   }
 
   /** What the control panel (#718) shows. No address, no key, no secret. */

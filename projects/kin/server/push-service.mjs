@@ -5,7 +5,7 @@
 // accepted an encrypted event, and from which member. The payload is fixed
 // ({"v":1,"kind":"new"}): no content, event type, author or count. Nothing
 // about delivery or clicks is recorded.
-import { PairingError, canParticipate, chatAccess } from "./pairing-service.mjs";
+import { PairingError, canParticipate, chatAccess, isHouseholdAdmin } from "./pairing-service.mjs";
 import { createHash } from "node:crypto";
 import { allowedPushEndpoint, b64url, fromB64url, generateVapidKeys, PUSH_TOPIC, rawPublicKey, sendPush } from "./web-push.mjs";
 
@@ -193,6 +193,26 @@ export class PushService {
       if (chat && chatAccess(this.pairingService.members.get(row.memberId), household, this.now()) === "none") continue;
       this.deviceHousehold.set(row.deviceId, householdId);
       this.schedule(row.deviceId);
+    }
+  }
+
+  /**
+   * A home server's certificate needs an admin (ADR 0025 §5, #718): it runs
+   * out within 14 days, or a certificate it didn't make appeared in the
+   * public logs. The same content-free push as any other, to every
+   * household admin's unmuted devices on this server; the control panel
+   * says what it is about. Returns at once.
+   */
+  adminsAlerted() {
+    if (!this.available) return;
+    for (const household of this.pairingService.households.values()) {
+      if (household.lifecycleState !== "active") continue;
+      for (const row of this.storage.householdPushSubscriptions(household.id)) {
+        if (!this.trusted(row) || this.muted(row)) continue;
+        if (!isHouseholdAdmin(this.pairingService.members.get(row.memberId), this.now())) continue;
+        this.deviceHousehold.set(row.deviceId, household.id);
+        this.schedule(row.deviceId);
+      }
     }
   }
 

@@ -99,7 +99,7 @@ export function parseBuildArguments(argv) {
 // tests or test helpers), package.json (the version), the engine, and the
 // KTUN codec the home server's tunnel shares with the relay (relay/ktun.mjs,
 // #733). The rest of relay/ is the relay itself and is never bundled.
-const SKIP = [/\.test\.mjs$/, /^server\/test-fixtures\//, /^server\/[^/]*-test-utils\.mjs$/, /^server\/durable-restart-worker\.mjs$/, /^web\/wasm\/kin_engine\.wasm(\.sha256)?$/];
+const SKIP = [/\.test\.mjs$/, /^server\/test-fixtures\//, /^server\/(?:[^/]+\/)*[^/]*-test-utils\.mjs$/, /^server\/durable-restart-worker\.mjs$/, /^web\/wasm\/kin_engine\.wasm(\.sha256)?$/];
 
 export function collectAppFiles({ root = PROJECT_ROOT, wasm }) {
   const files = [];

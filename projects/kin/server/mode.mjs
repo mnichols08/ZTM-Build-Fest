@@ -21,6 +21,9 @@
 import { win32 } from "node:path";
 
 export const SERVER_MODES = Object.freeze(["hosted", "home"]);
+/** The exit code with which the service asks its launcher to start it
+ * again at once (home setup's last step, #719): EX_TEMPFAIL. */
+export const RESTART_EXIT_CODE = 75;
 export const HOME_MAX_HOUSEHOLDS = 1;
 const HOSTED_ONLY_SETTINGS = Object.freeze(["KIN_ANDROID_PACKAGE", "KIN_ANDROID_CERT_SHA256"]);
 
