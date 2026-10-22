@@ -74,6 +74,9 @@ A map of what is in this folder and where to start. Documents marked
   [known limitations](THREAT-MODEL.md#known-limitations-at-v10).
 - [SELF-HOSTING](SELF-HOSTING.md): running the service yourself, every
   setting, backups and restore, reverse proxies.
+- [HOME-CERTIFICATES](HOME-CERTIFICATES.md): the dependency-free ACME client
+  for a Kin at home server's certificates (built and tested; not yet wired
+  into a running server, [ADR 0025](decisions/0025-kin-at-home.md)).
 - [DEBUGGING](DEBUGGING.md): privacy-safe diagnostics.
 - [ANDROID](ANDROID.md), [PLAY-LISTING](PLAY-LISTING.md),
   [PLAY-RELEASE](PLAY-RELEASE.md): the Google Play app.
