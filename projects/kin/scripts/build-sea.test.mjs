@@ -10,8 +10,11 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { appManifest, BuildSeaError, buildSea, collectAppFiles, DEFAULT_TARGETS, parseBuildArguments, PROJECT_ROOT } from "./build-sea.mjs";
+import { appManifest, BuildSeaError, buildExecutable, buildSea, checkExecutable, collectAppFiles, DEFAULT_TARGETS, parseBuildArguments, PROJECT_ROOT } from "./build-sea.mjs";
 import { readElf } from "./sea/elf.mjs";
+import { checkMachOExecutable } from "./sea/macho.mjs";
+import { officialBinaries } from "./sea/official-binaries.mjs";
+import { checkPeExecutable } from "./sea/pe.mjs";
 import { SEA_FUSE } from "./sea/fuse.mjs";
 import { hostTarget } from "./sea/node-release.mjs";
 
@@ -25,17 +28,16 @@ function temporary(t, prefix = "kin-sea-") {
   return directory;
 }
 
-test("the build takes the Linux targets and explains the ones that aren't built yet", { timeout: 60_000 }, () => {
-  assert.deepEqual(DEFAULT_TARGETS, ["linux-x64", "linux-arm64"]);
+test("the build takes all five targets and refuses unknown or repeated ones", { timeout: 60_000 }, () => {
+  assert.deepEqual(DEFAULT_TARGETS, ["linux-x64", "linux-arm64", "darwin-arm64", "darwin-x64", "win-x64"]);
+  assert.deepEqual(parseBuildArguments([]).targets, DEFAULT_TARGETS);
+  assert.deepEqual(parseBuildArguments(["--target", "darwin-arm64,darwin-x64,win-x64"]).targets, ["darwin-arm64", "darwin-x64", "win-x64"]);
   const options = parseBuildArguments(["--target", "linux-arm64", "--node-binary", "node-arm64", "--node-version", "v24.22.0", "--measure"]);
   assert.deepEqual(options.targets, ["linux-arm64"]);
   assert.equal(options.nodeVersion, "24.22.0");
   assert.equal(options.measure, true);
   assert.equal(parseBuildArguments([]).nodeVersion, process.version.slice(1));
   for (const [argv, message] of [
-    [["--target", "darwin-arm64"], /#747/],
-    [["--target", "darwin-x64"], /#747/],
-    [["--target", "win-x64"], /#748/],
     [["--target", "linux-riscv64"], /Unknown target/],
     [["--target", "linux-x64,linux-x64"], /listed twice/],
     [["--node-binary", "node"], /single --target/],
@@ -173,3 +175,33 @@ test("on Linux the executable builds reproducibly and serves Kin in home mode in
   assert.match(refused.stderr + refused.stdout, /home_mode_setting_refused/);
   assert.match(run(["--print-service", "--platform", "linux"], env).stdout, /^ExecStart=\/usr\/local\/lib\/kin\/kin$/m);
 });
+
+// macOS and Windows (#747, #748): built here, on any machine, from the
+// official node binaries the build cached; run on a Mac and on Windows by
+// the CI job home-executables-run and the device checks (#717).
+for (const target of ["darwin-arm64", "darwin-x64", "win-x64"]) {
+  test(`the ${target} executable builds here, reproducibly, and parses back with the blob where Node looks`, { timeout: 120_000 }, async (t) => {
+    const version = process.version.slice(1);
+    const path = officialBinaries(target).find((candidate) => candidate.includes(`node-v${version}-`));
+    if (!path) { t.skip(`no official node v${version} for ${target} is cached (run scripts/build-sea.mjs, or set KIN_SEA_NODE_DIR)`); return; }
+    const root = temporary(t);
+    const wasm = join(root, "kin_engine.wasm");
+    writeFileSync(wasm, WASM);
+    const build = (out) => buildSea({ ...parseBuildArguments(["--target", target, "--node-binary", path, "--wasm", wasm, "--out", out]), work: join(root, "work") }, { log: () => {} });
+    const info = await build(join(root, "one"));
+    await build(join(root, "two"));
+    const file = `kin-${VERSION}-${target}${target === "win-x64" ? ".exe" : ""}`;
+    const bytes = readFileSync(join(root, "one", file));
+    assert.equal(sha256(readFileSync(join(root, "two", file))), sha256(bytes), "reproducible");
+    assert.equal(readFileSync(join(root, "one", "SHA256SUMS"), "utf8"), `${sha256(bytes)}  ${file}\n`);
+    assert.equal(info.targets[0].sha256, sha256(bytes));
+    const { blob } = target === "win-x64" ? checkPeExecutable(bytes) : checkMachOExecutable(bytes);
+    assert.equal(sha256(blob), info.blob.sha256);
+    if (target !== "win-x64") assert.equal(checkMachOExecutable(bytes).signature.codeDirectory.identifier, "io.journeytocode.kin");
+
+    // A binary for another processor, and a result without the blob, are refused.
+    const other = officialBinaries(target === "darwin-arm64" ? "darwin-x64" : "darwin-arm64").at(-1);
+    if (other && target !== "win-x64") assert.throws(() => buildExecutable(target, readFileSync(other), blob), /another processor/);
+    assert.throws(() => checkExecutable(target, bytes, Buffer.from("another blob")), /doesn't hold the SEA blob/);
+  });
+}

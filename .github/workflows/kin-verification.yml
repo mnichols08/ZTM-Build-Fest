@@ -359,12 +359,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # Kin at home (ADR 0025 §10, #713, #714): the home server's single
-  # executables for Linux x64 and arm64, built from the official node
-  # binaries (checked against nodejs.org's SHASUMS256.txt) with this commit's
-  # engine, checksummed, started once to record the start time, and kept as
-  # the kin-home-executables artifact. macOS (#747) and Windows (#748) are
-  # follow-ups. No other job waits for this one.
+  # Kin at home (ADR 0025 §10, #713, #714, #747, #748): the home server's
+  # single executables for Linux x64 and arm64, macOS arm64 and x64 and
+  # Windows x64, all built here on Linux from the official node binaries
+  # (checked against nodejs.org's SHASUMS256.txt) with this commit's engine,
+  # parsed back and checked by the build, checksummed, the Linux x64 one
+  # started once to record the start time, and kept as the
+  # kin-home-executables artifact. The injector tests then run again against
+  # the official binaries the build cached (with llvm-objdump and
+  # llvm-readobj as independent readers when the runner has them). No other
+  # job waits for this one.
   home-executables:
     needs: verify-linux
     runs-on: ubuntu-latest
@@ -392,6 +396,11 @@ jobs:
           node scripts/build-sea.mjs --measure
           cat target/sea/dist/SHA256SUMS target/sea/dist/build-info.json target/sea/dist/start-time.json
           (cd target/sea/dist && sha256sum -c SHA256SUMS)
+      - name: Check the injectors against the official node binaries
+        run: |
+          llvm="$(ls -d /usr/lib/llvm-*/bin 2>/dev/null | sort -V | tail -n 1)"
+          if [ -n "$llvm" ]; then export PATH="$llvm:$PATH"; fi
+          node --test --test-timeout=300000 scripts/build-sea.test.mjs scripts/sea/*.test.mjs
       - name: Keep the executables
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -399,6 +408,97 @@ jobs:
           path: projects/kin/target/sea/dist
           if-no-files-found: error
           retention-days: 7
+
+  # The macOS and Windows executables built on Linux above, run on a Mac
+  # (arm64) and on Windows (#747, #748): Apple's codesign accepts the ad-hoc
+  # signatures, each runs --version, starts the service and answers
+  # --health. The same target is also built here, natively, and must be
+  # byte-identical to the Linux build (the build is reproducible across
+  # machines). The x64 Mac executable runs only if the runner has Rosetta.
+  # Installing as a service and rebooting are device checks (#717). No other
+  # job waits for this one.
+  home-executables-run:
+    name: home-executables-run (${{ matrix.target }})
+    needs: home-executables
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin-arm64
+          - os: windows-latest
+            target: win-x64
+    defaults:
+      run:
+        shell: bash
+        working-directory: projects/kin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - name: Download this commit's engine
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kin-engine-wasm
+          path: projects/kin/web/wasm
+      - name: Download the executables built on Linux
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kin-home-executables
+          path: projects/kin/target/sea/linux
+      - name: Check the engine and the executables against their recorded hashes
+        run: |
+          # macOS has shasum but not always sha256sum.
+          if command -v sha256sum > /dev/null; then sum="sha256sum"; else sum="shasum -a 256"; fi
+          $sum -c web/wasm/kin_engine.wasm.sha256
+          (cd target/sea/linux && $sum -c SHA256SUMS)
+      - name: Build ${{ matrix.target }} here and start it
+        run: |
+          node scripts/build-sea.mjs --target "${{ matrix.target }}" --measure
+          cat target/sea/dist/SHA256SUMS target/sea/dist/start-time.json
+      - name: The Linux build is byte-identical
+        run: |
+          here="$(cut -d ' ' -f 1 target/sea/dist/SHA256SUMS)"
+          linux="$(grep -- "-${{ matrix.target }}" target/sea/linux/SHA256SUMS | cut -d ' ' -f 1)"
+          echo "here:  $here"
+          echo "linux: $linux"
+          test -n "$here" && test "$here" = "$linux"
+      - name: Apple's codesign accepts the ad-hoc signatures
+        if: runner.os == 'macOS'
+        run: |
+          for file in target/sea/linux/kin-*-darwin-*; do
+            codesign --verify --strict --verbose=4 "$file"
+            codesign --display --verbose=4 "$file"
+          done
+      - name: The Linux-built executable runs, starts and answers --health
+        run: |
+          exe="$(ls target/sea/linux/kin-*-${{ matrix.target }}*)"
+          chmod +x target/sea/linux/kin-*
+          version="$(node -p 'require("./package.json").version')"
+          test "$("$exe" --version | tr -d '\r')" = "$version"
+          if [ "${{ runner.os }}" = macOS ]; then
+            if arch -x86_64 /usr/bin/true 2>/dev/null; then
+              test "$(target/sea/linux/kin-*-darwin-x64 --version)" = "$version"
+            else
+              echo "::notice::No Rosetta on this runner; the x64 Mac executable wasn't run."
+            fi
+          fi
+          export KIN_DATA_DIR="$RUNNER_TEMP/kin-data" KIN_APP_CACHE="$RUNNER_TEMP/kin-cache" KIN_PORT=18731
+          "$exe" > "$RUNNER_TEMP/kin.log" 2>&1 &
+          pid=$!
+          healthy=1
+          for attempt in $(seq 1 60); do
+            if "$exe" --health; then healthy=0; break; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/kin.log"
+          kill "$pid" 2>/dev/null || true
+          test "$healthy" -eq 0
 
   # The home server's container image (#715): built from deploy/home and
   # started until its own health check passes, as its unprivileged user.
