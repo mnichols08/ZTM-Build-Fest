@@ -582,7 +582,7 @@ disposal on lock.
 Rust 1.93, and Edge 154. The gate covered 300 Node/real-WASM tests (226 server),
 118 Rust tests, formatting, warnings-denied Clippy, release WASM, all product,
 storage, security UI and virtual-passkey browser runners, version consistency,
-and whitespace. See [V0.13.0](V0.13.0.md) and [RECOVERY](RECOVERY.md).
+and whitespace. See [V0.13.0](planning/V0.13.0.md) and [RECOVERY](RECOVERY.md).
 
 ## Post-v0.40 live household authority drill
 
@@ -698,7 +698,7 @@ PR #17 hardening regressions also cover canonical admin/startup web-root guards
 rollback and retry after stale-writer conflicts, fatal store failures, bounded
 durable cursor pagination, actionable stale-lock errors, admin exclusion and
 cleanup, invalid restore sources, and preservation of old WAL/SHM state. See
-[V0.11.0](V0.11.0.md#pr-17-pre-merge-hardening-evidence-2026-10-03) for gate results.
+[V0.11.0](planning/V0.11.0.md#pr-17-pre-merge-hardening-evidence-2026-10-03) for gate results.
 
 Semantic-integrity fixtures first create normal API state, then directly mutate
 synthetic SQLite databases while retaining physical/foreign-key validity.
@@ -706,7 +706,7 @@ They cover normalized JSON/envelope mismatches, impossible identity limits and
 ownership, grant/package/rotation contradictions, relay/device sequences, audit
 structure, failed startup, readiness before household access, and backup/restore
 rejection before publication/replacement. Valid historical state and bounded
-relay pages remain covered. See [v0.11.5 evidence](V0.11.0.md#v0115-semantic-integrity-evidence-2026-10-03).
+relay pages remain covered. See [v0.11.5 evidence](planning/V0.11.0.md#v0115-semantic-integrity-evidence-2026-10-03).
 
 The production smoke process also takes an exclusive service lock. A test or
 operator restoring a database must stop that process first. The lock is
@@ -965,7 +965,7 @@ Architecture/product/privacy audit confirms Rust-only reduction; separate Item/H
 
 ## v0.5.0 Pulse
 
-Pulse coverage is in rust/src/pulse_tests.rs, web/wasm/kin-engine.test.mjs and scripts/pulse-regression.mjs, called by the complete browser runner. All prior regressions remain; actual milestone evidence and gaps are in V0.5.0. See [V0.5.0](V0.5.0.md).
+Pulse coverage is in rust/src/pulse_tests.rs, web/wasm/kin-engine.test.mjs and scripts/pulse-regression.mjs, called by the complete browser runner. All prior regressions remain; actual milestone evidence and gaps are in V0.5.0. See [V0.5.0](planning/V0.5.0.md).
 
 Optional local visual evidence: set `KIN_VISUAL_CHECK=1` when running the browser regression script. Screenshots are written only to ignored `projects/kin/target/pulse-active-320.png` and `pulse-change-320.png`. They contain synthetic regression data.
 
@@ -1006,7 +1006,7 @@ Run Rust command/replay tests and `web/wasm/kin-engine.test.mjs` after
 rebuilding the release WASM. The browser regression exercises the native date
 input, local Today/Tomorrow resolution, clear behavior, event persistence,
 replay, accessibility naming, and focus restoration.
-See [V0.7.0](V0.7.0.md) for the full matrix and actual release evidence.
+See [V0.7.0](planning/V0.7.0.md) for the full matrix and actual release evidence.
 
 ## v0.23.0 Calendar Interoperability
 

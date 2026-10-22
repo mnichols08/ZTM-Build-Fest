@@ -4,7 +4,7 @@
 
 **Current implementation line: `v1.6.0` — Kin for Everyone.** Released as `kin-v1.6.0` on 2026-10-21, this minor release makes Kin easier for someone who rarely uses apps: easy mode with bigger text and buttons and fewer things on screen, Help on every screen, household features an admin can switch off for everyone, reporting a problem or suggesting a feature from inside Kin, and setting Kin up for someone else with a printed "How to open Kin" sheet. It also prepares Kin for Google Play with an Android app, a public privacy policy and a release runbook. It builds on v1.5.0 (one account and private spaces) and adds server schemas 25–27 as forward migrations; see the [changelog](CHANGELOG.md) for the compatibility notes. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
 
-The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
+The [v0.10 release record](docs/planning/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
 Kin's workspace has five destinations: Today, Lists (To do · Shopping · Staples), Routines, Updates (Handoffs · Talk) and Household, with a persistent desktop navigation, a shared item detail view, Quick add, keyboard shortcuts and a command palette, and bulk actions with undo. See [docs/WORKSPACE-UX.md](docs/WORKSPACE-UX.md).
 
@@ -29,7 +29,7 @@ protocol, or persistent index.
 
 ## Status and what's next
 
-October 2026 took Kin from the v0.11 durable service through more than thirty capability lines to v1.0. The [roadmap](docs/ROADMAP.md) records that path; the [planned release contracts](docs/releases/) describe each line.
+October 2026 took Kin from the v0.11 durable service through more than thirty capability lines to v1.0. The [roadmap](docs/ROADMAP.md) records that path; the [planned release contracts](docs/planning/releases/) describe each line.
 
 Post-v1.0 work is tracked as GitHub issues, not dated versions. v1.1 completed
 device names (#71), household home-screen identity (#78), push notifications
@@ -270,7 +270,7 @@ the backup and preserves the replaced database and WAL sidecars with a
 automatically: verify the process is stopped before deleting
 `<database-path>.service.lock`. Backups and preserved database copies contain
 sensitive identity/routing metadata and encrypted envelopes; stale restores can
-roll back revocations or key epochs. See [V0.11.0](docs/V0.11.0.md) for the
+roll back revocations or key epochs. See [V0.11.0](docs/planning/V0.11.0.md) for the
 full operational and privacy boundaries.
 
 First setup generates a recovery secret that must be confirmed and stored separately. Losing all unlock paths loses access; losing the browser profile also requires an encrypted backup. Drafts are memory-only and disappear on lock/reload. A refresh of the same tab keeps Kin unlocked (a device setting; [ADR 0010](docs/decisions/0010-reload-resume.md)); closing the tab, Lock and automatic lock still lock it. Encrypted archives restore exact history into an empty installation for local use; they do not recreate server identity or device trust. The static application shell supports offline recovery unlock after its first successful cache installation.
@@ -310,7 +310,7 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 
 ## Project documents
 
-- [Routines release contract and test matrix](docs/V0.7.0.md)
+- [Routines release contract and test matrix](docs/planning/V0.7.0.md)
 
 - [Changelog](CHANGELOG.md)
 - [Product vision](docs/PRODUCT.md)
@@ -327,8 +327,8 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [Synchronization design](docs/SYNC.md)
 - [Cryptographic posture](docs/CRYPTOGRAPHY.md)
 - [Threat model](docs/THREAT-MODEL.md)
-- [v0.8.0 Household Pairing contract](docs/V0.8.0.md)
-- [v0.9.0 Encrypted Event Sync contract](docs/V0.9.0.md)
+- [v0.8.0 Household Pairing contract](docs/planning/V0.8.0.md)
+- [v0.9.0 Encrypted Event Sync contract](docs/planning/V0.9.0.md)
 - [Implementation layout and responsibilities](docs/IMPLEMENTATION.md)
 - [JavaScript/WASM ABI](docs/ABI.md)
 - [IndexedDB storage contract](docs/STORAGE.md)
@@ -346,27 +346,27 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [Android app for Google Play](docs/ANDROID.md) and [its decision record](docs/decisions/0020-google-play-twa.md)
 - [Google Play listing and Data safety](docs/PLAY-LISTING.md) and [releasing on Google Play](docs/PLAY-RELEASE.md)
 - [Debugging and diagnostics](docs/DEBUGGING.md)
-- [Implementation preflight](docs/PREFLIGHT.md)
-- [Requirement traceability](docs/TRACEABILITY.md)
+- [Implementation preflight](docs/planning/PREFLIGHT.md)
+- [Requirement traceability](docs/planning/TRACEABILITY.md)
 - [v1.0 release acceptance matrix](docs/audits/V1.0_RELEASE_ACCEPTANCE.md), [reality check](docs/audits/V1.0_REALITY_CHECK.md), [tester guide](docs/audits/V1.0_TESTER_GUIDE.md) and [review-gate decisions](docs/audits/V1.0_REVIEW_GATES.md)
 - [v0.47 release acceptance matrix](docs/audits/V0.47_RELEASE_ACCEPTANCE.md) (superseded by the v1.0 matrix)
 - [Canonical test vectors](docs/TEST-VECTORS.md)
-- [Since You Last Looked release contract](docs/V0.6.0.md)
+- [Since You Last Looked release contract](docs/planning/V0.6.0.md)
 - [Accepted architecture decision: event-sourced household state](docs/decisions/0001-event-sourced-household-state.md)
 - [UX flows](docs/UX.md)
 - [Roadmap](docs/ROADMAP.md)
-- [Build Fest daily cadence](docs/BUILD-FEST-CADENCE.md)
-- [Platform foundation and early October sequence through v0.16](docs/BRIDGE-0.11-0.16.md)
-- [Product boundaries for the October plan](docs/PRODUCT-BOUNDARIES.md)
-- [Minor-release stabilization protocol](docs/RELEASE-LINE-PROTOCOL.md)
-- [v0.11 Durable Service & Deployment implementation candidate](docs/V0.11.0.md)
-- [v0.12 Data Lifecycle, Retention & Deletion implementation candidate](docs/V0.12.0.md)
-- [Planned v0.13 Recovery & Household Continuity contract](docs/V0.13.0.md)
-- [v0.14 UX/UI Consolidation contract](docs/V0.14.0.md)
-- [Planned v0.15 Household Areas contract](docs/releases/V0.15.0.md)
-- [v0.16 Household Notes & Reference Context contract](docs/releases/V0.16.0.md)
-- [Planned release contracts: October through v0.40 and undated v0.41–v0.45 follow-up](docs/releases/)
-- [v0.1.0 implementation specification](docs/V0.1.0.md)
-- [Handoff release contract and final validation](docs/V0.3.0.md)
+- [Build Fest daily cadence](docs/planning/BUILD-FEST-CADENCE.md)
+- [Platform foundation and early October sequence through v0.16](docs/planning/BRIDGE-0.11-0.16.md)
+- [Product boundaries for the October plan](docs/planning/PRODUCT-BOUNDARIES.md)
+- [Minor-release stabilization protocol](docs/planning/RELEASE-LINE-PROTOCOL.md)
+- [v0.11 Durable Service & Deployment implementation candidate](docs/planning/V0.11.0.md)
+- [v0.12 Data Lifecycle, Retention & Deletion implementation candidate](docs/planning/V0.12.0.md)
+- [Planned v0.13 Recovery & Household Continuity contract](docs/planning/V0.13.0.md)
+- [v0.14 UX/UI Consolidation contract](docs/planning/V0.14.0.md)
+- [Planned v0.15 Household Areas contract](docs/planning/releases/V0.15.0.md)
+- [v0.16 Household Notes & Reference Context contract](docs/planning/releases/V0.16.0.md)
+- [Planned release contracts: October through v0.40 and undated v0.41–v0.45 follow-up](docs/planning/releases/)
+- [v0.1.0 implementation specification](docs/planning/V0.1.0.md)
+- [Handoff release contract and final validation](docs/planning/V0.3.0.md)
 
-- [Talk release contract and validation](docs/V0.4.0.md)
+- [Talk release contract and validation](docs/planning/V0.4.0.md)

@@ -218,7 +218,7 @@ User-authorized follow-up patch: a failed canonical refresh retains the original
 
 ## v0.4.0 Talk
 
-kin-talk-list owns the single labeled input and semantic Open/Resolved lists. Bubbling/composed commands: kin:add-talk { text }, kin:resolve-talk { talkId }, kin:reopen-talk { talkId }, kin:archive-talk { talkId }. KinApp validates through Rust and persists; the component only renders and dispatches intent. See [V0.4.0](V0.4.0.md).
+kin-talk-list owns the single labeled input and semantic Open/Resolved lists. Bubbling/composed commands: kin:add-talk { text }, kin:resolve-talk { talkId }, kin:reopen-talk { talkId }, kin:archive-talk { talkId }. KinApp validates through Rust and persists; the component only renders and dispatches intent. See [V0.4.0](planning/V0.4.0.md).
 
 ## v1.1 Chat (#112)
 
@@ -298,7 +298,7 @@ whatever the grapheme count; the client's `chatTextProblem` and Rust's
 
 ## v0.5.0 Pulse
 
-kin-pulse provides native Current capacity/For selects and Set pulse/Change/Clear buttons. kin:set-pulse {value,hours} and kin:clear-pulse bubble/composed. KinApp freezes SET timestamp/expiry and owns persistence, time refresh and retry. Component renders Rust status only. See [V0.5.0](V0.5.0.md).
+kin-pulse provides native Current capacity/For selects and Set pulse/Change/Clear buttons. kin:set-pulse {value,hours} and kin:clear-pulse bubble/composed. KinApp freezes SET timestamp/expiry and owns persistence, time refresh and retry. Component renders Rust status only. See [V0.5.0](planning/V0.5.0.md).
 
 ## v0.6.0 Since You Last Looked
 
@@ -306,7 +306,7 @@ kin-pulse provides native Current capacity/For selects and Set pulse/Change/Clea
 
 ## v0.7.0 Routines
 
-`<kin-routines>` receives canonical `routines` and `disabled` properties. It dispatches bubbling/composed `kin:create-routine`, `kin:complete-routine-occurrence`, `kin:reopen-routine-occurrence`, and `kin:archive-routine` intents. Occurrence intents carry the rendered key. KinApp owns storage, retries, status and lifecycle refresh. The component uses native form/list/button semantics and restores row focus after updates. See [V0.7.0](V0.7.0.md).
+`<kin-routines>` receives canonical `routines` and `disabled` properties. It dispatches bubbling/composed `kin:create-routine`, `kin:complete-routine-occurrence`, `kin:reopen-routine-occurrence`, and `kin:archive-routine` intents. Occurrence intents carry the rendered key. KinApp owns storage, retries, status and lifecycle refresh. The component uses native form/list/button semantics and restores row focus after updates. See [V0.7.0](planning/V0.7.0.md).
 
 ## v0.19.0 Shared Shopping Lists
 
@@ -315,7 +315,7 @@ classification selector and `kin:add-item` intent. `<kin-app>` constructs a
 Shopping-filtered `<kin-today>` on the Lists page and passes the same
 Rust-derived Item/Area projection used by Today and Needs. Existing Item
 commands and lifecycle focus restoration apply without a new component or
-event family. See [V0.19.0](releases/V0.19.0.md).
+event family. See [V0.19.0](planning/releases/V0.19.0.md).
 
 ## v0.20.0 Staples & Replenishment
 
@@ -324,7 +324,7 @@ event family. See [V0.19.0](releases/V0.19.0.md).
 dispatches `kin:replenish-staple` with only the staple Item ID; the app reads
 the canonical staple text and appends a separate Shopping Item, preserving
 list focus and leaving the staple active. Archiving the staple does not affect
-the Shopping Item. See [V0.20.0](releases/V0.20.0.md).
+the Shopping Item. See [V0.20.0](planning/releases/V0.20.0.md).
 
 ## v0.22.0 Lightweight Planning Dates
 
@@ -333,7 +333,7 @@ controls for existing non-archived Items. The browser resolves shortcuts to
 fixed local civil dates and dispatches `kin:set-item-planning-date`; `<kin-app>`
 persists that intent through the same event-store transaction as other Item
 changes. Archived Items are read-only. See
-[V0.22.0](releases/V0.22.0.md).
+[V0.22.0](planning/releases/V0.22.0.md).
 
 ## v0.23.0 Calendar Interoperability
 
@@ -342,14 +342,14 @@ exists. It serializes the existing Rust-derived Item projection into a
 bounded, local iCalendar all-day export, then uses a browser Blob download.
 No event is appended and no calendar service is contacted. The UI discloses
 that the downloaded file contains plaintext Item text. See
-[V0.23.0](releases/V0.23.0.md).
+[V0.23.0](planning/releases/V0.23.0.md).
 
 ## v0.24.0 Useful Household History
 
 `<kin-item>` renders the Rust-derived `lastChangedAt` as a localized,
 date-only “Last changed” text label. It receives no actor/device identity and
 does not expose a read receipt, exact time, or timeline. It adds no command or
-event. See [V0.24.0](releases/V0.24.0.md).
+event. See [V0.24.0](planning/releases/V0.24.0.md).
 
 ## Bulk actions
 
@@ -396,4 +396,4 @@ up to 100 results with the total count. Classification, status, and Area
 filters narrow Item and checklist-Step matches only. Native labeled controls,
 keyboard focus retention, and a polite live result count support accessible
 use. Search queries and filters are discarded on lock and are not persisted,
-exported, or synchronized. See [V0.25.0](releases/V0.25.0.md).
+exported, or synchronized. See [V0.25.0](planning/releases/V0.25.0.md).

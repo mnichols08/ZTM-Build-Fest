@@ -181,7 +181,7 @@ All releases through `v0.0.12` are **planning and documentation releases only**.
 
 No functional application code should be introduced during these versions.
 
-Planning/specification through `v0.0.9` is complete; `v0.0.10` added project community documentation, `v0.0.11` recorded the implementation-cycle handoff and release discipline, and `v0.0.12` established the project changelog. `v0.1.0` is the first implementation release. Before implementation, read [V0.1.0](docs/V0.1.0.md), [PREFLIGHT](docs/PREFLIGHT.md), [TEST-VECTORS](docs/TEST-VECTORS.md), [TRACEABILITY](docs/TRACEABILITY.md), accepted ADRs under `docs/decisions/`, and the community/security policies. Do not allow features assigned to later versions to leak into v0.1.0.
+Planning/specification through `v0.0.9` is complete; `v0.0.10` added project community documentation, `v0.0.11` recorded the implementation-cycle handoff and release discipline, and `v0.0.12` established the project changelog. `v0.1.0` is the first implementation release. Before implementation, read [V0.1.0](docs/planning/V0.1.0.md), [PREFLIGHT](docs/planning/PREFLIGHT.md), [TEST-VECTORS](docs/TEST-VECTORS.md), [TRACEABILITY](docs/planning/TRACEABILITY.md), accepted ADRs under `docs/decisions/`, and the community/security policies. Do not allow features assigned to later versions to leak into v0.1.0.
 
 The first implementation release is:
 

@@ -3,7 +3,7 @@
 **Status:** Household deletion and server lifecycle retention are implemented
 through the v0.12.3 review candidate. The service holds opaque ciphertext and
 limited authorization/routing metadata; it does not hold household plaintext or
-content keys. See [V0.12.0](V0.12.0.md) for the user-facing lifecycle contract.
+content keys. See [V0.12.0](planning/V0.12.0.md) for the user-facing lifecycle contract.
 
 ## Distinct operations
 

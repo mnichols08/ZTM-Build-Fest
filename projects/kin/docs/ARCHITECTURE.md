@@ -12,7 +12,7 @@ archives are intentionally local-only copies; they authorize no sync reattachmen
 v0.10 preserves v0.9.3 encrypted relay sync, two-adult passkey pairing,
 recipient-bound key provisioning, deterministic v8 replay, exact-envelope retries
 and revocation/epoch rotation. It additionally encrypts local persistent content
-and gates replay on successful unlock. The [implementation record](V0.10.0.md)
+and gates replay on successful unlock. The [implementation record](planning/V0.10.0.md)
 contains the baseline, frozen contract and validation evidence.
 
 ```text
@@ -66,7 +66,7 @@ historical signatures. Portable archives use an independent versioned encrypted
 container, validated completely before an atomic import. The service worker only
 caches an explicit static-shell allowlist; API/user data cannot enter Cache Storage.
 Offline startup uses the same lock boundary. See [PORTABILITY](PORTABILITY.md)
-and [V0.10.0](V0.10.0.md).
+and [V0.10.0](planning/V0.10.0.md).
 
 The post-v0.10 roadmap first closes platform gaps: v0.11 makes identity and relay
 state durable and defines deployment/restart behavior; v0.12 implements
@@ -76,7 +76,7 @@ Only then does v0.14 own holistic navigation, visual and interaction refinement.
 Basic accessible lock, unsupported-unlock, recovery, migration and corruption
 states remain required in v0.10. The architecture is not complete if v0.14 must
 redesign encryption, storage, commands, service durability, deletion or recovery.
-See [ROADMAP](ROADMAP.md) and the [v0.11](V0.11.0.md)–[v0.14](V0.14.0.md)
+See [ROADMAP](ROADMAP.md) and the [v0.11](planning/V0.11.0.md)–[v0.14](planning/V0.14.0.md)
 planning contracts.
 
 ## v0.9.3 system shape (baseline)
@@ -202,11 +202,11 @@ The domain event envelope, event naming, ordering requirements, and replay behav
 
 ## v0.5.0 Pulse
 
-Pulse adds Rust rebuild_at(events, as_of). Timers request canonical reprojection; Rust never reads ambient time. Same events plus same explicit time yield identical state. See [V0.5.0](V0.5.0.md).
+Pulse adds Rust rebuild_at(events, as_of). Timers request canonical reprojection; Rust never reads ambient time. Same events plus same explicit time yield identical state. See [V0.5.0](planning/V0.5.0.md).
 
 ## v0.6.0 Since You Last Looked
 
-Rust protocol v6 derives structured summary entries and the exact through-event boundary from the ordered canonical stream plus an optional stable event-ID cursor. IndexedDB local_sequence remains browser-only. Browser local_context holds the installation cursor; no summary view or acknowledgement is a household event. See [V0.6.0](V0.6.0.md).
+Rust protocol v6 derives structured summary entries and the exact through-event boundary from the ordered canonical stream plus an optional stable event-ID cursor. IndexedDB local_sequence remains browser-only. Browser local_context holds the installation cursor; no summary view or acknowledgement is a household event. See [V0.6.0](planning/V0.6.0.md).
 
 ## v0.7.0 Routines and v0.18.0 Richer Scheduling
 
@@ -216,4 +216,4 @@ as_of for Pulse. JS obtains local year/month/day from one browser clock sample;
 timers only request replay. Inside occurrence append transactions, JS compares
 the frozen intent key with Rust’s fresh canonical current key before candidate
 replay. This is identity checking, not a browser recurrence reducer. See
-[V0.7.0](V0.7.0.md) and [V0.18.0](releases/V0.18.0.md).
+[V0.7.0](planning/V0.7.0.md) and [V0.18.0](planning/releases/V0.18.0.md).

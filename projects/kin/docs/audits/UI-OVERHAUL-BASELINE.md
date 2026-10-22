@@ -8,7 +8,7 @@
 
 Can somebody who did not build Kin join their household, complete one everyday task, and return without a walkthrough? Which steps cause hesitation, incorrect decisions, or uncertainty about what saved?
 
-The repository's [workspace UX contract](../WORKSPACE-UX.md) and [product boundaries](../PRODUCT-BOUNDARIES.md) remain authoritative unless subsequent approved issues intentionally revise presentation. No user is required to become a tester.
+The repository's [workspace UX contract](../WORKSPACE-UX.md) and [product boundaries](../planning/PRODUCT-BOUNDARIES.md) remain authoritative unless subsequent approved issues intentionally revise presentation. No user is required to become a tester.
 
 ## Consent and study setup
 
@@ -79,4 +79,4 @@ A story is not “done” because this script exists. **#262 cannot be closed un
 - Preserve local-first encryption, member/device authorization, export/recovery and version-1 compatibility. Do not add telemetry.
 - All proposed UX changes must have testable observable behavior, truthful save/sync messaging, mobile/desktop and accessibility checks.
 - Working branch for the epic: `kin-ui-overhaul`. Keep each change on a short-lived branch and PR into that branch; integration/release into `kin-development`, and later promotion to `kin-testing`, happen only at the user's stated gates.
-- Release semantics follow [RELEASE-LINE-PROTOCOL.md](../RELEASE-LINE-PROTOCOL.md): tags record completed releases, **not** unmerged work. Patch candidates can mark incremental tasks; a finished user story can justify a minor capability bump after review, but final version/tag belongs at the integration gate.
+- Release semantics follow [RELEASE-LINE-PROTOCOL.md](../planning/RELEASE-LINE-PROTOCOL.md): tags record completed releases, **not** unmerged work. Patch candidates can mark incremental tasks; a finished user story can justify a minor capability bump after review, but final version/tag belongs at the integration gate.

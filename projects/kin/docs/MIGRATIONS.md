@@ -28,7 +28,7 @@ current product, not compatibility with old data:
 - **Local protection setup.** `EventStore.migrate` (phases `preparing`,
   `cleanup-pending`, `encrypted`) is how a new household's plaintext setup
   becomes encrypted storage. It stages, verifies and replaces every store and
-  is described in [V0.10.0](V0.10.0.md). Removing it would change security
+  is described in [V0.10.0](planning/V0.10.0.md). Removing it would change security
   setup, which no refactor slice authorizes.
 - **Sync key preparation.** `migrateSyncKeys` / `finalizeSyncKeyMigration` run
   inside that setup and inside root rotation.

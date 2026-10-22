@@ -116,7 +116,7 @@ Parent A
   Parent B
 ```
 
-The browser encrypts the exact canonical event bytes and signs envelopes with a device key. The service authorizes, stores, and forwards opaque envelopes; it does not reduce household semantics or hold plaintext epoch keys. Passkeys authenticate members and are not content keys. Full implementation details are in [V0.9.0](V0.9.0.md).
+The browser encrypts the exact canonical event bytes and signs envelopes with a device key. The service authorizes, stores, and forwards opaque envelopes; it does not reduce household semantics or hold plaintext epoch keys. Passkeys authenticate members and are not content keys. Full implementation details are in [V0.9.0](planning/V0.9.0.md).
 
 The service still sees household/member/device/session IDs, event IDs, per-device sequences, key epochs, cursors, ciphertext sizes, event counts/timing, provisioning participants, revocation timing, IP addresses, and connection patterns. It can infer which devices share a household and when they synchronize. Encryption does not make traffic anonymous.
 
@@ -145,7 +145,7 @@ restore merges newer tombstones; restoring without the newer database/ledger
 remains a disclosed rollback limitation. Local event bytes, keys and exported
 copies remain on devices that hold them. New/replacement adults do not receive
 pre-join epoch keys in v0.9; missing history may be unavailable. All
-trusted-device/key loss can make content unrecoverable. See [V0.11.0](V0.11.0.md)
+trusted-device/key loss can make content unrecoverable. See [V0.11.0](planning/V0.11.0.md)
 and the [Threat Model](THREAT-MODEL.md).
 
 Push notifications (v1.1, #85): off by default, per device. The service
@@ -493,8 +493,8 @@ Kin implements client-side encrypted event sync, but it has not received indepen
 
 ## v0.5.0 Pulse
 
-Fixed Pulse value/expiry stay in local canonical events. No analytics, history UI, scores, interpretation, external service or content-bearing broadcasts. Expiry hides current detail without deleting source events. No actor ID/name is displayed. See [V0.5.0](V0.5.0.md).
+Fixed Pulse value/expiry stay in local canonical events. No analytics, history UI, scores, interpretation, external service or content-bearing broadcasts. Expiry hides current detail without deleting source events. No actor ID/name is displayed. See [V0.5.0](planning/V0.5.0.md).
 
 ## v0.6.0 Since You Last Looked
 
-The summary derives household changes without monitoring people. It includes no read receipt, member-view tracking, actor attribution, contribution analytics, individual event timestamps, activity timeline, or summary history. It is processed locally, with no analytics, AI, or external service. See [V0.6.0](V0.6.0.md).
+The summary derives household changes without monitoring people. It includes no read receipt, member-view tracking, actor attribution, contribution analytics, individual event timestamps, activity timeline, or summary history. It is processed locally, with no analytics, AI, or external service. See [V0.6.0](planning/V0.6.0.md).

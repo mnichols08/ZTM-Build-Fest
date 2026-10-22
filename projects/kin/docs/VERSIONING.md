@@ -50,7 +50,7 @@ The v0.2.0 implementation reads event schema 1 for all supported kinds and schem
 
 ## Compatibility policy
 
-The table records implemented decoders and migrations, validated in [V0.10.0](V0.10.0.md). v0.10.1 preserves every v0.10.0 persistent format and requires no additional database migration.
+The table records implemented decoders and migrations, validated in [V0.10.0](planning/V0.10.0.md). v0.10.1 preserves every v0.10.0 persistent format and requires no additional database migration.
 v0.10.2 keeps event/key DB versions 3/4 and stores versioned staging values in
 existing security stores. An unrotated root remains readable by v0.10.0/0.10.1;
 after explicit rotation those clients fail closed on manifest/local-envelope v2.
@@ -97,19 +97,19 @@ Kin has published v0.1.x event history. v0.2.0 explicitly reads schema-v1 legacy
 
 ## v0.4.0 Talk
 
-Current compatibility: protocols 1/2/3/4; writer v4; Item add schemas 1/2, lifecycle and Handoff/Talk schema 1. IndexedDB schema 1. Legacy events retain exact source bytes. Protocols 1–3 reject Talk rather than omit it. See [V0.4.0](V0.4.0.md).
+Current compatibility: protocols 1/2/3/4; writer v4; Item add schemas 1/2, lifecycle and Handoff/Talk schema 1. IndexedDB schema 1. Legacy events retain exact source bytes. Protocols 1–3 reject Talk rather than omit it. See [V0.4.0](planning/V0.4.0.md).
 
 ## v0.5.0 Pulse
 
-Supported protocols 1/2/3/4/5; writer v5; Pulse kinds 12/13 schema 1; previous schemas unchanged. IndexedDB schema 1, no byte migration. Protocols 1–4 reject Pulse histories, even cleared histories. See [V0.5.0](V0.5.0.md).
+Supported protocols 1/2/3/4/5; writer v5; Pulse kinds 12/13 schema 1; previous schemas unchanged. IndexedDB schema 1, no byte migration. Protocols 1–4 reject Pulse histories, even cleared histories. See [V0.5.0](planning/V0.5.0.md).
 
 ## v0.6.0 Since You Last Looked
 
-Supported protocols 1–6; current writer v6. Protocol v6 preserves explicit v5 `as_of` and adds the stable summary cursor/result; v1–v5 bytes and behavior remain unchanged. Event schema stays 1/2 for existing kinds, codes 1–13 remain unchanged, and IndexedDB remains schema 1 with no migration. See [V0.6.0](V0.6.0.md).
+Supported protocols 1–6; current writer v6. Protocol v6 preserves explicit v5 `as_of` and adds the stable summary cursor/result; v1–v5 bytes and behavior remain unchanged. Event schema stays 1/2 for existing kinds, codes 1–13 remain unchanged, and IndexedDB remains schema 1 with no migration. See [V0.6.0](planning/V0.6.0.md).
 
 ## v0.7.0 Routines
 
-Supported protocols 1–7; current writer v7. New Routine kinds 14–17 use event schema 1. Old event kinds/schemas and bytes are unchanged; old protocols fail closed for Routine history. IndexedDB stays schema 1. See [V0.7.0](V0.7.0.md).
+Supported protocols 1–7; current writer v7. New Routine kinds 14–17 use event schema 1. Old event kinds/schemas and bytes are unchanged; old protocols fail closed for Routine history. IndexedDB stays schema 1. See [V0.7.0](planning/V0.7.0.md).
 
 ## v0.16.0 Notes
 
@@ -209,4 +209,4 @@ there is no new canonical event or persistent migration.
 
 ## v0.9.x Encrypted Sync
 
-Protocol v8 is additive. It appends an authenticated target household ID and up to 256 fixed 96-byte legacy identity bindings to the v7 request header, followed by the same immutable 88-byte event records. v8 validates original canonical bytes, resolves effective identity for projection, sorts a copy for distributed state replay, and preserves original input/local-arrival order for catch-up boundaries. Protocols v1-v7 retain their original behavior. IndexedDB schema 2 adds sync state/outbox/binding stores; pre-sync event rows and bytes remain unchanged. Cryptographic envelopes, key wrapping, relay, migration, and historical entitlement are documented in [V0.9.0](V0.9.0.md).
+Protocol v8 is additive. It appends an authenticated target household ID and up to 256 fixed 96-byte legacy identity bindings to the v7 request header, followed by the same immutable 88-byte event records. v8 validates original canonical bytes, resolves effective identity for projection, sorts a copy for distributed state replay, and preserves original input/local-arrival order for catch-up boundaries. Protocols v1-v7 retain their original behavior. IndexedDB schema 2 adds sync state/outbox/binding stores; pre-sync event rows and bytes remain unchanged. Cryptographic envelopes, key wrapping, relay, migration, and historical entitlement are documented in [V0.9.0](planning/V0.9.0.md).

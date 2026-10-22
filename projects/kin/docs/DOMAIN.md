@@ -99,7 +99,7 @@ v0.2.0 includes adding an item as Today or Need, completion, reopening, and arch
 Shopping is a third classification of the existing Item entity. It uses the
 same identity, completion, reopening, and archival lifecycle as Today and
 Needs Items; it does not add quantity, price, purchase assignment, or
-inventory state. See [V0.19.0](releases/V0.19.0.md).
+inventory state. See [V0.19.0](planning/releases/V0.19.0.md).
 
 ## v0.20.0 Staples & Replenishment
 
@@ -107,7 +107,7 @@ Staples are reusable Items on a dedicated list. A household member explicitly
 adds a staple to Shopping when needed; the app does not infer stock, quantity,
 or timing, and the staple remains active. The resulting Shopping Item is
 independent and follows the regular Shopping lifecycle. See
-[V0.20.0](releases/V0.20.0.md).
+[V0.20.0](planning/releases/V0.20.0.md).
 
 ## v0.21.0 Household Modes
 
@@ -138,7 +138,7 @@ twice. Kin doesn't track quantities, pantry stock or nutrition. See
 
 ## Handoff
 
-A Handoff is a short context transfer one household member wants another to know. Its conceptual lifecycle is created, unacknowledged, acknowledged, and archived. Acknowledgement means receipt, not agreement, approval, or evaluation. Handoffs are implemented in v0.3.0 as a separate typed entity; see [V0.3.0](V0.3.0.md). Repeated acknowledgement is a valid no-op. Creator and acknowledger may be the same local actor; no verified identity is inferred.
+A Handoff is a short context transfer one household member wants another to know. Its conceptual lifecycle is created, unacknowledged, acknowledged, and archived. Acknowledgement means receipt, not agreement, approval, or evaluation. Handoffs are implemented in v0.3.0 as a separate typed entity; see [V0.3.0](planning/V0.3.0.md). Repeated acknowledgement is a valid no-op. Creator and acknowledger may be the same local actor; no verified identity is inferred.
 
 ## Talk
 
@@ -162,19 +162,19 @@ An Event is an immutable, identified fact describing a domain change. The v0.2.0
 
 ## v0.5.0 Pulse
 
-Pulse is the latest capacity per actor: enum Good/Okay/Drained/RoughDay/NeedQuiet, set_at, expires_at, active/expired status. No PulseId, arbitrary text, name or acknowledgement. Actor IDs remain unverified placeholders. See [V0.5.0](V0.5.0.md).
+Pulse is the latest capacity per actor: enum Good/Okay/Drained/RoughDay/NeedQuiet, set_at, expires_at, active/expired status. No PulseId, arbitrary text, name or acknowledgement. Actor IDs remain unverified placeholders. See [V0.5.0](planning/V0.5.0.md).
 
 ## v0.6.0 Since You Last Looked
 
-The summary is a derived household projection over existing Item, Handoff and Talk events. It adds no domain entity or event kind. The catch-up cursor belongs to one browser installation's local UI context; it does not represent a member, device identity claim, acknowledgement, or read receipt. Pulse events advance the snapshot boundary but do not create summary entries. See [V0.6.0](V0.6.0.md).
+The summary is a derived household projection over existing Item, Handoff and Talk events. It adds no domain entity or event kind. The catch-up cursor belongs to one browser installation's local UI context; it does not represent a member, device identity claim, acknowledgement, or read receipt. Pulse events advance the snapshot boundary but do not create summary entries. See [V0.6.0](planning/V0.6.0.md).
 
 ## v0.7.0 Routines
 
-Routines are immutable Daily/Weekly definitions with derived occurrences. Monday starts a week. Complete/reopen applies to the current occurrence; archive ends the definition. Editing means archive and create anew. No reminders, missed counts, assignments or history UI. See [V0.7.0](V0.7.0.md).
+Routines are immutable Daily/Weekly definitions with derived occurrences. Monday starts a week. Complete/reopen applies to the current occurrence; archive ends the definition. Editing means archive and create anew. No reminders, missed counts, assignments or history UI. See [V0.7.0](planning/V0.7.0.md).
 
 ## v0.15.0 Areas
 
 An Area is optional, flat place/context for supported household content. It has
 a stable ID, user-controlled display name, and archived flag. Item assignment
 is optional; there are no Area permissions, nested Areas, projects, or hard
-deletion. See [v0.15.0](releases/V0.15.0.md).
+deletion. See [v0.15.0](planning/releases/V0.15.0.md).

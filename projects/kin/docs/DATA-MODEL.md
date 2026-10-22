@@ -48,7 +48,7 @@ The envelope is a domain contract, not the JS/WASM byte encoding. The field mean
 - **Agreement:** A deliberately recorded household understanding, never inferred.
 - **Event:** An immutable identified fact from which current state is reconstructed.
 
-See [DOMAIN](DOMAIN.md) for definitions and release scope, and [LIFECYCLES](LIFECYCLES.md) for transition rules. Item, Handoff and Talk are implemented; see [V0.4.0](V0.4.0.md).
+See [DOMAIN](DOMAIN.md) for definitions and release scope, and [LIFECYCLES](LIFECYCLES.md) for transition rules. Item, Handoff and Talk are implemented; see [V0.4.0](planning/V0.4.0.md).
 
 ## Data evolution and ownership
 
@@ -62,15 +62,15 @@ An event history can support reconstruction after reload, household history, eve
 
 ## v0.5.0 Pulse
 
-PulseState has actor_id, fixed enum value, set_at, expires_at and active/expired status. No mutable persistent Pulse table; canonical events remain the sole authority. See [V0.5.0](V0.5.0.md).
+PulseState has actor_id, fixed enum value, set_at, expires_at and active/expired status. No mutable persistent Pulse table; canonical events remain the sole authority. See [V0.5.0](planning/V0.5.0.md).
 
 ## v0.6.0 Since You Last Looked
 
-`last_looked_event_id`, `last_looked_local_sequence`, and `last_looked_at` are installation-local view metadata in `local_context`, not fields on Household, Member, or Event. Rust summary records expose only source event ID, semantic kind, entity kind, text, and optional Item classification; actor and device provenance are not part of the presentation projection. See [V0.6.0](V0.6.0.md).
+`last_looked_event_id`, `last_looked_local_sequence`, and `last_looked_at` are installation-local view metadata in `local_context`, not fields on Household, Member, or Event. Rust summary records expose only source event ID, semantic kind, entity kind, text, and optional Item classification; actor and device provenance are not part of the presentation projection. See [V0.6.0](planning/V0.6.0.md).
 
 ## v0.7.0 Routines
 
-Routine occurrence identity is `(routine_id, civil period start date)`, not a random occurrence ID. Current state is derived; only definitions and human lifecycle actions persist. Civil dates use validated YYYYMMDD u32, Monday-start weeks. No time-zone preference is persisted in v0.7. See [V0.7.0](V0.7.0.md).
+Routine occurrence identity is `(routine_id, civil period start date)`, not a random occurrence ID. Current state is derived; only definitions and human lifecycle actions persist. Civil dates use validated YYYYMMDD u32, Monday-start weeks. No time-zone preference is persisted in v0.7. See [V0.7.0](planning/V0.7.0.md).
 
 ## v0.18.0 Richer Routine Scheduling
 
@@ -80,7 +80,7 @@ Completion remains keyed by `(routine_id, period start date)` and never
 automatically resets or creates events. The source `created_on` anchors every
 device's biweekly schedule; the supplied civil date selects the current period.
 No reminder, assignment, streak, or calendar entity is introduced. See
-[V0.18.0](releases/V0.18.0.md).
+[V0.18.0](planning/releases/V0.18.0.md).
 
 ## v0.19.0 Shared Shopping Lists
 
@@ -90,7 +90,7 @@ and archive events, and therefore inherit local-first persistence, encrypted
 sync, and archive import/export behavior. Protocol 13 adds classification code
 2; protocols 1–12 reject Shopping-bearing state rather than silently projecting
 it into Today or Needs. No persistent storage migration is required. See
-[V0.19.0](releases/V0.19.0.md).
+[V0.19.0](planning/releases/V0.19.0.md).
 
 ## v0.20.0 Staples & Replenishment
 
@@ -99,7 +99,7 @@ or inventory model. A member can manually add the staple's text as a new,
 independent Shopping Item; the source staple remains active. Both records use
 canonical Item events and share encrypted persistence, sync, and archive
 behavior. Protocol 14 adds Staples while protocols 1–13 reject Staple-bearing
-history or projections. See [V0.20.0](releases/V0.20.0.md).
+history or projections. See [V0.20.0](planning/releases/V0.20.0.md).
 
 ## v0.21.0 Household Modes
 
@@ -108,7 +108,7 @@ Household mode is a closed four-value projection (`normal`, `vacation`,
 a mode event default to `normal`. A non-Normal mode pauses routine occurrences
 but does not mutate routine definitions or create per-occurrence records.
 Mode is household-wide context, not a member/device preference or a schedule.
-See [V0.21.0](releases/V0.21.0.md).
+See [V0.21.0](planning/releases/V0.21.0.md).
 
 ## v0.22.0 Lightweight Planning Dates
 
@@ -119,7 +119,7 @@ no time, time zone, reminder, or automatic rollover. A new Item has no
 planning date; the user edits it afterward as a separate canonical event.
 Archived Items remain hidden from ordinary lists and read-only in the UI, but
 a previously authored stale offline date event still replays so it cannot
-invalidate shared history. See [V0.22.0](releases/V0.22.0.md).
+invalidate shared history. See [V0.22.0](planning/releases/V0.22.0.md).
 
 `ItemState.last_changed_at` is a derived event timestamp, initialized from
 `ITEM_ADDED` and advanced when replay changes the effective Item area,
@@ -140,4 +140,4 @@ Items carry `area_id: Option<AreaId>`; other entity classes are not assigned in
 this line. No Area is a valid state. Archived associations remain intact and
 visible as historical context. Households can create at most 32 Areas over
 their lifetime, including archived Areas. There are no nested Areas or hard
-deletion. See [Household Events](EVENTS.md) and [v0.15.0](releases/V0.15.0.md).
+deletion. See [Household Events](EVENTS.md) and [v0.15.0](planning/releases/V0.15.0.md).
