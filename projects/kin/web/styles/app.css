@@ -2898,6 +2898,7 @@ kin-photo-frame:focus-visible { outline: 3px solid var(--accent); outline-offset
 .chore-reward-toggle { min-block-size: var(--tap); }
 .chore-reward-form { display: grid; gap: var(--space-1); margin-block-start: var(--space-2); }
 .chore-reward-form input { min-block-size: var(--tap); }
+.chore-reward-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .chore-join { margin-block-start: var(--space-3); }
 .chore-join-button { min-block-size: var(--tap); }
 .routine-chore-points { display: inline-flex; align-items: center; gap: var(--space-1); min-block-size: var(--tap); margin-inline-end: var(--space-2); }
