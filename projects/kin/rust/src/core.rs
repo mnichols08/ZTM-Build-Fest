@@ -165,6 +165,16 @@ pub fn sitter_page(context: &[u8], history: &mut History) -> Result<Vec<u8>, Kin
     ))
 }
 
+/// The family album (`kin_album`, #673): the record-less KINE context
+/// against the household history; publishes KALB (album.rs).
+pub fn album(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    Ok(crate::album::encode_album(&state.album))
+}
+
 /// The calendar between two dates (`kin_calendar_range`, #656): KCAQ and
 /// the record-less KINE context; publishes KCAL (calendar_range.rs).
 pub fn calendar_range(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {

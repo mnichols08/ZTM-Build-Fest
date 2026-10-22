@@ -34,6 +34,9 @@ const SHELL = [
   "/calendar/external.js", "/calendar/feed-cache.js", "/calendar/feed-expand.js", "/calendar/feed-link.js", "/calendar/feed-refresh.js", "/components/app/calendar-sync.js", "/components/kin-calendar-subscriptions.js",
   // Household features (#625, ADR 0021).
   "/features.js", "/features-cache.js", "/components/app/features.js", "/components/kin-household-features.js",
+  // Family photos (#673).
+  "/wasm/kin-album.js", "/album/album-blobs.js", "/album/album-image.js", "/album/album-session.js", "/album/album-store.js",
+  "/components/kin-album.js", "/components/kin-photo-frame.js", "/components/app/album.js",
   // The chore chart (#676, ADR 0022 §6).
   "/wasm/kin-chores.js", "/chores/chore-chart-view.js", "/components/app/chores.js", "/components/kin-chore-chart.js", "/components/kin-chore-adults.js",
   // Just for me (#510).

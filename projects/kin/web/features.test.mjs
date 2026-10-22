@@ -16,7 +16,7 @@ test("the switchable features, in the ADR's order, with stable small bits", () =
   assert.deepEqual(FEATURES.map((entry) => [entry.label, entry.bit]), [
     ["Chat", 0], ["Fridge", 1], ["Meals", 2], ["Routines", 3], ["Taking turns", 4], ["This week", 5], ["Talk later", 6],
     ["Store sections", 7], ["Shopping mode", 8], ["Maintenance", 9], ["Notes & reference", 10], ["Sitter page", 11],
-    ["Journal", 12], ["Just for me", 13], ["Calendar", 14], ["Chore chart", 15], ["Kitchen display", 17],
+    ["Journal", 12], ["Just for me", 13], ["Calendar", 14], ["Chore chart", 15], ["Family photos", 16], ["Kitchen display", 17],
   ]);
   assert.equal(new Set(FEATURES.map((entry) => entry.id)).size, FEATURES.length);
   // Each bit is used once, and the mask is exactly the listed bits.
@@ -136,4 +136,18 @@ test("the members' note and the line after a closed route are calm and plain", (
   assert.equal(unavailableLine(null), "");
   for (const text of [turnedOffNote(FEATURES), unavailableLine(featureById("chat"))])
     assert.doesNotMatch(text, /error|fail|denied|forbidden|!/i, "nothing alarming");
+});
+
+test("Family photos (#673) leave the Household page, the share sheet and chat while off", () => {
+  const photos = off("photos");
+  assert.equal(featureById("photos").bit, 16);
+  assert.equal(routeAvailable(resolveRoute({ hash: "#household/photos" }), photos), false);
+  assert.equal(routeAvailable(resolveRoute({ hash: "#household/photos" }), 0), true);
+  assert.equal(blockingFeature("household/photos", photos)?.id, "photos");
+  assert.deepEqual([...shareDestinations(["todo", "photos"], photos)], ["todo"]);
+  assert.deepEqual([...shareDestinations(["todo", "photos"], 0)], ["todo", "photos"]);
+  assert.ok(hiddenChatActions(photos).includes("to-photos"));
+  assert.ok(!hiddenChatActions(0).includes("to-photos"));
+  // A bit this Kin doesn't know is left alone.
+  assert.deepEqual(parseFeatureSet({ off: 2 ** 30 + 2 ** 16, revision: 3 }), { off: 2 ** 16, revision: 3 });
 });

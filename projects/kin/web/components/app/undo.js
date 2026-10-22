@@ -107,7 +107,17 @@ export class UndoController {
     }
     // Calendar changes (#660) carry their own steps (web/undo.js).
     if (entry.kind === "calendar") return this.runCalendar(entry, direction);
-    const outcome = reversalStatus(entry, this.app.state);
+    // Family-album entries (#673) also need the album, which isn't part of
+    // the projection; it is read again after each step.
+    const album = typeof entry.kind === "string" && entry.kind.startsWith("album-");
+    const read = async () => (album ? { ...this.app.state, ...(await this.ctx.album.undoState()) } : this.app.state);
+    let current = this.app.state;
+    if (album) {
+      // Held while the album is read, so a second press waits its turn.
+      this.running = true;
+      try { current = await read(); } catch { /* the album check below refuses */ } finally { this.running = false; }
+    }
+    const outcome = reversalStatus(entry, current);
     if (outcome !== "ready") {
       // Refused, so it is dropped: trying again would meet the same change.
       this.hideToast();
@@ -115,7 +125,7 @@ export class UndoController {
       return;
     }
     const session = this.ctx.session.captureSession();
-    const before = this.app.state;
+    const before = current;
     const memberIds = this.ctx.detail.responsibilityContext?.()?.memberIds ?? null;
     let appended = 0;
     // Pin, owner and area are restored when they can be; a refusal there
@@ -126,7 +136,7 @@ export class UndoController {
     this.ctx.status.clearAlert();
     this.ctx.status.setStatus(direction === "redo" ? "Redoing…" : "Undoing…");
     try {
-      for (let command, steps = 0; steps < MAX_STEPS && (command = nextReversalStep(entry, this.app.state, { memberIds, skip })); steps++) {
+      for (let command, steps = 0; steps < MAX_STEPS && (command = nextReversalStep(entry, await read(), { memberIds, skip })); steps++) {
         try {
           await this.ctx.append.appendCommand(command);
           appended++;
@@ -144,7 +154,8 @@ export class UndoController {
       if (entry.kind === "routine-created") void this.ctx.privatePrefs?.endReminder(`routine:${entry.routineId}`, "canceled").catch(() => {});
       this.ctx.render.renderState();
       this.ctx.peers.broadcastEventChange();
-      const inverse = inverseEntry(entry, before, this.app.state);
+      const inverse = inverseEntry(entry, before, await read());
+      if (album) void this.ctx.album.refresh();
       if (inverse) this.history.settle(direction, inverse);
       const message = `${describeReversal(entry, direction, "done")}${this.ctx.sync.offlineSyncSuffix?.() ?? ""}`;
       this.ctx.status.setStatus(message);

@@ -39,6 +39,7 @@ import { ChoresController } from "./chores.js";
 import { EasyController } from "./easy.js";
 import { HelpController } from "./help.js";
 import { SitterController } from "./sitter.js";
+import { AlbumController } from "./album.js";
 import { JournalController } from "./journal.js";
 import { RotationsController } from "./rotations.js";
 import { ImportController } from "./import.js";
@@ -102,6 +103,7 @@ export function createAppContext(app) {
   // The chore chart (#676, ADR 0022 §6).
   ctx.chores = new ChoresController(ctx);
   ctx.sitter = new SitterController(ctx);
+  ctx.album = new AlbumController(ctx);
   // The member's journal (#496): private, never household state.
   ctx.journal = new JournalController(ctx);
   ctx.rotations = new RotationsController(ctx);
@@ -307,7 +309,11 @@ export function initializeAppState(app) {
     app.onOpenItem = (event) => app.ctx.detail.openItemDetail(event.detail.itemId, { opener: event.detail.opener ?? event.target });
     app.onCloseItemDetail = () => app.ctx.detail.closeItemDetail({ restoreFocus: true });
     app.onOpenSearchResult = (event) => app.ctx.navigation.handleOpenSearchResult(event.detail);
-    app.onChatToRecord = (event) => app.ctx.chatShare.open({ ...event.detail, opener: event.detail?.opener ?? null });
+    app.onChatToRecord = (event) => {
+      // "Add to the family photos" (#673): the photo goes to Family photos.
+      if (event.detail?.kind === "photos") { void app.ctx.album.offer(event.detail.files ?? [], { opener: event.detail.opener ?? null }); return; }
+      app.ctx.chatShare.open({ ...event.detail, opener: event.detail?.opener ?? null });
+    };
     app.onOpenChatMessage = (event) => app.ctx.navigation.handleOpenChatMessage(event.detail);
     app.onPlaybookIntent = (event) => app.ctx.routines.handlePlaybookIntent(event);
     app.onLocalReminder = (event) => app.ctx.records.handleLocalReminder(event.detail);

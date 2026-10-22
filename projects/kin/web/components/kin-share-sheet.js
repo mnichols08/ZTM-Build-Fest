@@ -10,6 +10,8 @@ const DESTINATIONS = Object.freeze([
   ["note", "Save as a note"],
   ["handoff", "Make a handoff"],
   ["chat", "Send in Chat"],
+  // Family photos (#673): only when photos were shared.
+  ["photos", "Add to family photos"],
   // A member's own journal (#508): private, never household data.
   ["journal", "Add to my journal"],
   // A calendar file (.ics, #660): its events, after a preview.

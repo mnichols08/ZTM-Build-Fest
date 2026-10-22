@@ -225,6 +225,8 @@ export class SessionController {
     this.app.shoppingSections = null;
     this.app.sitterPage = null;
     this.app.sitterLanded = false;
+    // Family photos (#673): open images, thumbnails and the album store.
+    this.ctx.album?.clear();
     this.app.rotations = null;
     if (this.ctx.rotations) this.ctx.rotations.raw = null;
     this.app.pendingCapture = null;

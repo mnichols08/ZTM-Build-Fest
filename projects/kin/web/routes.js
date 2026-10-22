@@ -41,6 +41,8 @@ export const SEGMENTS = Object.freeze({
     Object.freeze({ id: "hub", label: "Household" }),
     // The family fridge (#317): a shared drawing board.
     Object.freeze({ id: "fridge", label: "Fridge" }),
+    // Family photos (#673): the household's album and its slideshow.
+    Object.freeze({ id: "photos", label: "Family photos" }),
     Object.freeze({ id: "notes", label: "Notes & reference" }),
     // The sitter page (#441): what a babysitter or guest sees first.
     Object.freeze({ id: "sitter", label: "For the sitter" }),

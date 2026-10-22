@@ -23,6 +23,7 @@ kin_week(ptr, len)                   KWKQ + KINE context -> KWKD (#417)
 kin_shopping_sections(ptr, len)      replay the history: KINE context -> KSHS (#411)
 kin_routine_rotations(ptr, len)      replay the history: KINE context -> KRRS (#429)
 kin_sitter_page(ptr, len)            replay the history: KINE context -> KSIT (#442)
+kin_album(ptr, len)                  replay the history: KINE context -> KALB (#673)
 kin_chore_chart(ptr, len)            KCCQ + KINE context -> KCCD (#676)
 kin_calendar_range(ptr, len)         KCAQ + KINE context -> KCAL (#656)
 kin_ical_parse(ptr, len)             .ics file bytes -> KICS (#666); no household state
@@ -297,6 +298,8 @@ N  payload
 | 68 | ROUTINE_ROTATION_SET (#429) | routine ID [16] (non-zero), member count u8 (0, or 2–12), current index u8 (below the count; 0 when the count is 0), reserved u16, then each member ID [16] (non-zero, no repeats): 20 + 16 × count bytes. An empty list ends the rotation |
 | 69 | ROUTINE_TURN_SET (#429) | routine ID [16] (non-zero), member ID [16] (non-zero): 32 bytes |
 | 70 | SITTER_PAGE_SET (#442) | entry count u16 (0–30), reserved u16, then each entry: kind u8 (1 note, 2 reference record, 3 routine), 3 reserved, record ID [16] (non-zero; no entry twice); then the intro (u16 length + UTF-8; trimmed, 0–500 bytes, no controls but newline) |
+| 75 | ALBUM_PHOTO_ADDED (#673) | photo ID [16] (non-zero), attachment ID [16] (starts `a1 b0`, not the prefix alone), caption (u16 length + UTF-8; trimmed, 0–200 bytes, no control characters) |
+| 76 | ALBUM_PHOTO_REMOVED (#673) | photo ID [16] (non-zero): 16 bytes |
 | 80 | MEAL_SET (#679) | civil date u32 (YYYYMMDD), slot u8 (1 breakfast, 2 lunch, 4 snack; never 3 dinner) + 3 reserved, recipe flag u8 (0 or 1) + 3 reserved, recipe ID [16] when flagged, name (u16 + UTF-8, as a dinner's) |
 | 81 | MEAL_CLEARED (#679) | civil date u32, slot u8 (1, 2 or 4) + 3 reserved: 8 bytes |
 | 82 | RECIPE_FAVOURITE_SET (#679) | recipe ID [16] (non-zero), favourite u8 (0 or 1) + 3 reserved: 20 bytes |
@@ -713,6 +716,28 @@ tuned for printed codes under heavy blur.
   0 for none). The host takes titles, fields and text from the KINS
   projection by ID, so nothing is copied. A household that never set a page
   reports no entries and no intro.
+- **The family album (kinds 75–76, #673).** The payloads are strict: they
+  re-encode to the same bytes, so a zero photo ID, an attachment ID without
+  the album prefix `a1 b0` (or with nothing after it), an untrimmed caption,
+  a control character or more than 200 caption bytes fail with code 2. KCMD
+  actions 75 (`add-album-photo`) and 76 (`remove-album-photo`) carry the
+  exact payload as their text with a zero entity ID and no option, date or
+  expiry; the host trims the caption and makes it one line first
+  (`kin-album.js`). Rust checks them against the album
+  (`AlbumState::check_command`, code 4): a new photo ID, an attachment no
+  live photo uses, at most 500 photos; a removal names a live photo. Only
+  whoever added a photo or a household admin may remove it: Rust can't tell
+  who is an admin, so the host's command append path reads the album and
+  refuses it for anyone else (`canRemoveAlbumPhoto`); replay accepts a
+  removal from any member ([THREAT-MODEL](THREAT-MODEL.md)).
+- **KALB v1** (the family album, `kin_album`): `"KALB"`, version 1,
+  reserved u16, photo count u32 (≤ 500), removal count u32 (≤ 64); then each
+  live photo, newest first: photo ID [16], attachment ID [16], added by
+  (member ID) [16], added at i64 (Unix ms, the event's timestamp), caption
+  (u16 + UTF-8); then each recent removal, newest first: photo ID [16],
+  attachment ID [16], removed at i64. JavaScript decodes it as `{ photos:
+  [{ photoId, attachmentId, addedBy, addedAt, caption }], removed: [{
+  photoId, attachmentId, removedAt }] }`.
 - **The family calendar (kinds 71–74, #656, `rust/src/calendar.rs`).** The
   payloads are strict like store sections: they re-encode to the same bytes.
   Kind 71, the event (72 fixed bytes, then attendees and texts):

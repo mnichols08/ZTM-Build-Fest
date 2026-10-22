@@ -33,7 +33,8 @@ export const EASY_CORE = Object.freeze({
     // The Calendar (#661): Week and Day; Month waits until it is used.
     week: Object.freeze(["week", "day"]),
     updates: Object.freeze(["handoffs", "chat"]),
-    household: Object.freeze(["hub"]),
+    // Family photos (#673) stay on hand: it's for grandparents too.
+    household: Object.freeze(["hub", "photos"]),
   }),
 });
 

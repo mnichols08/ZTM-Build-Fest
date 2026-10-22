@@ -488,6 +488,17 @@ pub enum EventKind {
         intro: String,
         entries: Vec<crate::sitter::SitterEntry>,
     },
+    /// The family album (#673, album.rs): a photo, the album attachment
+    /// holding its encrypted image, and a caption (empty for none).
+    AlbumPhotoAdded {
+        photo_id: [u8; 16],
+        attachment_id: [u8; 16],
+        caption: String,
+    },
+    /// Takes a photo out of the album.
+    AlbumPhotoRemoved {
+        photo_id: [u8; 16],
+    },
     /// Family calendar (#656, calendar.rs, kind 71): the whole event,
     /// replacing any earlier version with its ID.
     CalendarEventSaved(Box<crate::calendar::CalendarEvent>),

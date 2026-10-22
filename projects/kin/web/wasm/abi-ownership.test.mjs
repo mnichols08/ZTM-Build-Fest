@@ -39,6 +39,7 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_routine_rotations: status,
       kin_sitter_page: status,
       kin_calendar_range: status,
+      kin_album: status,
       kin_ical_parse: status,
       kin_chore_chart: status,
       kin_event_metadata: status,
@@ -804,4 +805,74 @@ test("the calendar decodes from KCAL, its commands encode as KCMD 71–74 and .i
   assert.deepEqual(icsFake.frees.at(-1), [POINTER, ics.length]);
   assert.deepEqual(parser.parseICalendar(new Uint8Array(0)).events, [], "an empty file has no events");
   assert.throws(() => parser.parseICalendar(new Uint8Array(2 * 1024 * 1024 + 1)), (error) => error instanceof KinEngineError && error.code === 5);
+});
+
+// The family album (#673): KALB v1 decodes through engine.album(); album
+// commands travel as KCMD 75 and 76 carrying their canonical payloads, and
+// kinds 75 and 76 name ALBUM_PHOTO_ADDED and ALBUM_PHOTO_REMOVED in event
+// metadata.
+test("the album decodes from KALB and its commands encode as KCMD 75 and 76", () => {
+  const text = new TextEncoder();
+  const idOf = (byte) => new Uint8Array(16).fill(byte);
+  const hexOf = (byte) => byte.toString(16).padStart(2, "0").repeat(16);
+  const album = (byte) => `a1b0${byte.toString(16).padStart(2, "0").repeat(14)}`;
+  const albumBytes = (byte) => Uint8Array.from([0xa1, 0xb0, ...new Uint8Array(14).fill(byte)]);
+  const at = new Uint8Array(8);
+  new DataView(at.buffer).setBigInt64(0, 1_791_475_200_000n, true);
+  const kalb = Uint8Array.from([
+    ...text.encode("KALB"), 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+    ...idOf(0x33), ...albumBytes(0x44), ...idOf(0x55), ...at, 2, 0, ...text.encode("Hi"),
+  ]);
+  const read = (bytes) => createEngine(substituteExports({ operation: () => 0, result: bytes }).exports)
+    .album([], 1_760_000_000_000, 20261003);
+  assert.deepEqual(read(kalb), {
+    photos: [{ photoId: hexOf(0x33), attachmentId: album(0x44), addedBy: hexOf(0x55), addedAt: 1_791_475_200_000, caption: "Hi" }],
+    removed: [],
+  });
+  for (const broken of [kalb.slice(0, -1), Uint8Array.of(...kalb, 0)]) {
+    assert.throws(() => read(broken), (error) => error instanceof KinEngineError && error.code === 6);
+  }
+
+  for (const [kind, name] of [[75, "ALBUM_PHOTO_ADDED"], [76, "ALBUM_PHOTO_REMOVED"]]) {
+    const kmet = new Uint8Array(92);
+    kmet.set(text.encode("KMET"));
+    kmet[4] = 1;
+    new DataView(kmet.buffer).setUint16(90, kind, true);
+    assert.equal(createEngine(substituteExports({ operation: () => 0, result: kmet }).exports).eventMetadata(new Uint8Array(92)).kind, name);
+  }
+
+  const identity = {
+    eventId: idOf(1), householdId: idOf(2), actorId: idOf(3), deviceId: idOf(4), timestamp: 1, logicalTime: 1n,
+  };
+  const send = (command) => {
+    let request = null;
+    const fake = substituteExports({ operation: () => 0 });
+    const engine = createEngine({ ...fake.exports, kin_execute: () => {
+      request = new Uint8Array(fake.exports.memory.buffer.slice(POINTER, POINTER + fake.allocations.at(-1)));
+      return 0;
+    } });
+    // The substitute returns no KCMT, so the call fails after sending.
+    assert.throws(() => engine.executeCommand(command, identity, [], 1_760_000_000_000, null, 20261003), KinEngineError);
+    const length = new DataView(request.buffer).getUint32(0, true);
+    return request.subarray(4, 4 + length);
+  };
+  const added = send({ type: "add-album-photo", photoId: hexOf(0x22), attachmentId: album(0x44), caption: " Beach " });
+  const view = new DataView(added.buffer, added.byteOffset);
+  assert.equal(String.fromCharCode(...added.subarray(0, 4)), "KCMD");
+  assert.equal(view.getUint16(8, true), 75);
+  assert.ok(added.subarray(92, 124).every((byte) => byte === 0), "no entity, date, option or expiry");
+  assert.deepEqual([...added.subarray(128)], [...idOf(0x22), ...albumBytes(0x44), 5, 0, ...text.encode("Beach")]);
+  const removed = send({ type: "remove-album-photo", photoId: hexOf(0x22) });
+  assert.equal(new DataView(removed.buffer, removed.byteOffset).getUint16(8, true), 76);
+  assert.deepEqual([...removed.subarray(128)], [...idOf(0x22)]);
+
+  const engine = createEngine(substituteExports({ operation: () => 0 }).exports);
+  for (const bad of [
+    { type: "add-album-photo", photoId: hexOf(0x22), attachmentId: hexOf(0x44), caption: "" },
+    { type: "add-album-photo", photoId: hexOf(0x22), attachmentId: album(0x44), caption: "x".repeat(201) },
+    { type: "remove-album-photo", photoId: "0".repeat(32) },
+  ]) {
+    assert.throws(() => engine.executeCommand(bad, identity, [], 1_760_000_000_000, null, 20261003),
+      (error) => error instanceof KinEngineError && error.code === 2);
+  }
 });

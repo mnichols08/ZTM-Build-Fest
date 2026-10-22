@@ -16,6 +16,7 @@ import "./kin-chore-chart.js";
 import "./kin-chore-adults.js";
 import "./kin-just-for-me.js";
 import "./kin-sitter-editor.js";
+import "./kin-album.js";
 import "./kin-journal.js";
 import "./kin-import.js";
 import "./kin-command-palette.js";

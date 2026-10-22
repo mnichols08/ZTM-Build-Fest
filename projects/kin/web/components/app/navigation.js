@@ -99,6 +99,7 @@ export class NavigationController {
     }
     if (route.page === "chores" || route.page === "routines") void this.ctx.chores?.refresh();
     void this.ctx.sitter?.refresh();
+    void this.ctx.album?.refresh();
     // Details stay open only within the page that opened them.
     if (this.app.selection && this.app.selection.page !== route.page) this.ctx.detail.closeItemDetail({ restoreFocus: false });
     this.ctx.detail.mountDetail();

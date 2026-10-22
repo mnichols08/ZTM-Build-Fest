@@ -26,6 +26,7 @@ import { decodeWeek, encodeWeekQuery } from "./kin-week.js";
 import { SECTION_COMMANDS, SECTION_EVENT_KINDS, SectionFormatError, decodeShoppingSections, encodeSectionIntent } from "./kin-sections.js";
 import { ROTATION_COMMANDS, ROTATION_EVENT_KINDS, RotationFormatError, decodeRoutineRotations, encodeRotationIntent } from "./kin-rotations.js";
 import { SITTER_COMMANDS, SITTER_EVENT_KINDS, SitterFormatError, decodeSitterPage, encodeSitterIntent } from "./kin-sitter.js";
+import { ALBUM_COMMANDS, ALBUM_EVENT_KINDS, AlbumFormatError, FIRST_ALBUM_KIND, decodeAlbum, encodeAlbumIntent } from "./kin-album.js";
 import { CALENDAR_COMMANDS, CALENDAR_EVENT_KINDS, CalendarFormatError, MAX_ICAL_BYTES, decodeCalendarRange, decodeICalendar, encodeCalendarIntent, encodeCalendarRangeQuery } from "./kin-calendar.js";
 import { CHORE_COMMANDS, CHORE_EVENT_KINDS, ChoreFormatError, FIRST_CHORE_KIND, decodeChoreChart, encodeChartQuery, encodeChoreIntent } from "./kin-chores.js";
 import { FIRST_PRIVATE_KIND, MAX_PRIVATE_EVENT_COUNT, PRIVATE_EVENT_KINDS, decodePrivate } from "./kin-private.js";
@@ -120,6 +121,7 @@ export function createEngine(instanceExports) {
     "kin_shopping_sections",
     "kin_routine_rotations",
     "kin_sitter_page",
+    "kin_album",
     "kin_calendar_range",
     "kin_ical_parse",
     "kin_chore_chart",
@@ -365,6 +367,13 @@ export function createEngine(instanceExports) {
     sitterPage: (records, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodeSitterPage(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_sitter_page"),
+      )),
+    // The family album (#673, ADR 0022 §5): { photos: [{ photoId,
+    // attachmentId, addedBy, addedAt, caption }], removed: [{ photoId,
+    // attachmentId, removedAt }] }, both newest first.
+    album: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeAlbum(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_album"),
       )),
     // The calendar from `from` to `to` (civil dates, at most 400 days; #656,
     // ADR 0022): occurrences of calendar events with cancellations applied,
@@ -1287,6 +1296,11 @@ PRIVATE_ITEM_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_PRIVATE_IT
 JOURNAL_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_JOURNAL_KIND + index] = kind; });
 // Reminders and settings (#520): kinds 120, 121 and 130.
 for (const [kind, code] of Object.entries(PREFS_KIND_CODES)) EVENT_KINDS[code] = kind;
+// The family album (#673): kinds and KCMD actions 75–76, encoded by
+// kin-album.js. Placed by number, so the kinds other stories add (71–74,
+// 77–82) can sit around them.
+ALBUM_COMMANDS.forEach((type, index) => { COMMAND_TYPES[FIRST_ALBUM_KIND + index] = type; });
+ALBUM_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_ALBUM_KIND + index] = kind; });
 // Fuller meal plans (#679): kinds 80–82.
 MEAL_PLAN_EVENT_KINDS.forEach((kind, index) => { EVENT_KINDS[FIRST_MEAL_PLAN_KIND + index] = kind; });
 
@@ -1401,6 +1415,14 @@ function encodeIntentPacket(command, identity) {
     try { return encodeSitterIntent(command, identity); }
     catch (error) {
       if (error instanceof SitterFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // The family album (75–76) carries its canonical payloads (kin-album.js).
+  if (kind === FIRST_ALBUM_KIND || kind === FIRST_ALBUM_KIND + 1) {
+    try { return encodeAlbumIntent(command, identity); }
+    catch (error) {
+      if (error instanceof AlbumFormatError) throw new KinEngineError(2, error.message);
       throw error;
     }
   }
