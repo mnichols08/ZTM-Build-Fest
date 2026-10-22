@@ -193,7 +193,6 @@ export class CertificateManager {
       this.#lastError = null;
       this.#lastRenewedAt = this.clock.now();
       this.onEvent({ type: "renewed", notAfter: iso(facts.notAfter) });
-      return this.status();
     } catch (error) {
       this.#failures += 1;
       this.#nextAttemptAt = this.clock.now() + backoffDelay(this.#failures, error?.retryAfterMs);
@@ -204,6 +203,7 @@ export class CertificateManager {
       this.#renewing = false;
       this.#plan();
     }
+    return this.status();
   }
 
   /** Run the CT check now and keep the result. */

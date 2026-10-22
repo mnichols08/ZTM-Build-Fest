@@ -362,6 +362,12 @@ document calls "the relay" (S4, S5). Nothing here is claimed as protection
 until it is built and reviewed (#740 requires an independent review of the
 relay, the tunnel, the SNI parser and the ACME client).
 
+The ACME client itself (#723) is now built and tested in `server/acme/`
+([HOME-CERTIFICATES](HOME-CERTIFICATES.md)) but not yet run by any server:
+TLS-ALPN-01 answered only for a pending name, keys made on the home server
+and stored 0600, CAA records built from the account URL, and the daily CT
+check. It protects nothing until home mode and the tunnel (#733) start it.
+
 | Threat | What the design does | What remains |
 | --- | --- | --- |
 | The connection relay reads household traffic | TLS ends on the home server with its own key and certificate; the relay holds no key or certificate for any home server's name and never serves a page, script or service worker for one. App code always comes from the home server. | The relay sees names, phones' and the home server's IP addresses, connection times and sizes, and the home server's uptime (PRIVACY). |
