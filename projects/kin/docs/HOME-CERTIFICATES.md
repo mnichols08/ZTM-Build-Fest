@@ -5,11 +5,12 @@ Story #723 (tasks #724–#727), epic #708, following
 relay and the home server can learn and hold) and §10 (the `home/`
 directory).
 
-**Status: built and tested, not wired into a running server yet.** The code
-lives in `server/acme/` and has no dependencies (Node's `crypto`, `tls`,
-`https`, `fs` only). Nothing in hosted Kin imports it. Home mode (`KIN_MODE`,
-§9), the tunnel (#733) and the control panel (#718) are what will start it;
-"What is left to wire" below lists exactly what they must do.
+**Status: built and tested; home mode starts it (#733).** The code lives in
+`server/acme/` and has no dependencies (Node's `crypto`, `tls`, `https`,
+`fs` only). Nothing in hosted Kin imports it. Home mode with a name
+(`server/home/home-server.mjs`, [HOME-SERVER](HOME-SERVER.md#reaching-it-from-anywhere-the-tunnel))
+starts one `CertificateManager`; "How home mode wires it" below says how,
+and what the control panel (#718) still has to add.
 
 ## Modules
 
@@ -162,22 +163,33 @@ previous result stays. CT can't name the ACME account, so "not ours" means
 "not for a key this server made", which is what an attacker's certificate
 would be.
 
-## What is left to wire (#733, #718, §9)
+## How home mode wires it (#733), and what #718 adds
 
-- **Home mode / tunnel (#733):** create the TLS server that ends the
-  household's connections with `...acmeTlsServerOptions({ responder })`,
-  call `closeChallengeConnections(server)`, feed tunnel streams into it
-  (`server.emit("connection", duplex)`), and start one `CertificateManager`
-  with that server. Its `beforeOrder` must send relay `CONTROL` op 3
-  `SET_CAA` with `accountUrl` before an order (ADR 0025 §5); for an own
-  domain it can check the household's published CAA instead.
+- **TLS for tunnel streams.** `HomeTlsEndpoint` (`server/home/home-server.mjs`)
+  makes a server-side `TLSSocket` for each tunnel stream with the current
+  certificate's secure context and `...acmeTlsServerOptions({ responder })`,
+  closes acme-tls/1 connections after the handshake as
+  `closeChallengeConnections` does, and hands the others to Kin's HTTP
+  server. It makes the socket itself rather than calling
+  `tls.Server.emit("connection", stream)`, because the phone's address from
+  the stream's `OPEN` frame must be attached to the very socket HTTP sees,
+  and a `tls.Server` never hands back the socket it wraps. The endpoint has
+  `setSecureContext`, so `CertificateManager` hot-swaps certificates on it
+  exactly as on a `tls.Server`.
+- **One `CertificateManager`** for the home server's name, with the stored
+  certificate loaded at start. Its `beforeOrder` sends the relay `CONTROL`
+  op 3 `SET_CAA` with the account URL, after waiting (up to two minutes)
+  for the tunnel to route the name; a failure stops the order and shows as
+  `lastError.code` `tunnel-not-ready` or `tunnel-caa-*`. Such a failure is
+  retried as soon as the tunnel routes the name, not after the hour's
+  backoff. For an own domain there is nothing to send: CAA is in the
+  household's own DNS.
+- **Settings:** the ACME directory is the home setting `acmeDirectory`
+  (Let's Encrypt production by default; `KIN_HOME_ACME_DIRECTORY`), and the
+  terms agreement is `acmeTermsAgreed` (`KIN_HOME_ACME_TERMS_AGREED`).
 - **Control panel (#718):** show `status()`, the CAA records for an own
-  domain, and the setup step where the admin agrees to the CA's terms
-  (`termsOfServiceAgreed`); turn `onEvent` into admin push.
-- **Settings:** the ACME directory is Let's Encrypt production
-  (`LETS_ENCRYPT_PRODUCTION`) in home mode; a setting for another CA or
-  staging belongs with the other home settings.
-- `server/server.mjs` is unchanged by this story.
+  domain (and check them), and the setup step where the admin agrees to the
+  CA's terms; turn `onEvent` into admin push.
 
 ## Not done yet (deliberately)
 
@@ -191,7 +203,9 @@ would be.
 ## Tests
 
 `node --test server/acme/*.test.mjs` (part of `npm run verify`). They never
-contact a real CA or crt.sh.
+contact a real CA or crt.sh. `server/home/home-tunnel.test.mjs` also gets a
+certificate end to end through the real relay: the in-process ACME server
+validates TLS-ALPN-01 by connecting to the relay's port.
 
 - `client.test.mjs`: the full flow against `acme-test-server.mjs`, which
   checks every JWS (alg, single-use nonce, `url`, `jwk` vs `kid`, signature),

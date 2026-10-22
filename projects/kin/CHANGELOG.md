@@ -44,7 +44,29 @@ documentation only.
   redirects, a SQLite registry with 30 days of hourly counters, and client
   addresses in memory only. KTUN vectors are TEST-VECTORS 186–193; the
   deploy and operator guide is `relay/README.md`. The home server's side
-  of the tunnel is #733.
+  of the tunnel is the next entry.
+- **Kin at home: the home server's side of the tunnel** (#733: #734, #735,
+  #736; epic #708, [ADR 0025](docs/decisions/0025-kin-at-home.md) §2, §5,
+  §9, [HOME-SERVER](docs/HOME-SERVER.md#reaching-it-from-anywhere-the-tunnel)).
+  With `KIN_MODE=home` and a name in the home settings
+  (`<data>/home/settings.json` or `KIN_HOME_NAME`, `KIN_HOME_RELAY`,
+  `KIN_HOME_ZONE`, `KIN_HOME_ACME_DIRECTORY`, `KIN_HOME_ACME_TERMS_AGREED`),
+  the service dials the connection relay over TLS 1.3, signs in with an
+  Ed25519 home key made on first run (`home/home-key.pem`, 0600) and bound
+  to the TLS session's exporter, claims its free name (or adds its own
+  domain), sets the CAA record before its first certificate order, and
+  starts the ACME certificate manager. Each phone connection arrives as a
+  KTUN stream with credit flow control both ways; the service ends TLS on
+  it with its own certificate and the TLS-ALPN-01 hook, and hands the
+  decrypted socket to Kin's existing HTTP server, so every route and the
+  live WebSocket work unchanged. Reconnects with full-jitter backoff (1 s to
+  5 min), at once after sleep or a network change; keep-alive pings; a
+  newer tunnel replaces an older one; `status()` for the control panel
+  (#718). Rate limits key on the phone's address from the stream's `OPEN`
+  frame, per IPv4 address or IPv6 /64, ignoring `X-Forwarded-For` on tunnel
+  streams only. Without a name, home mode runs on loopback as before. The
+  executable and container image now include `relay/ktun.mjs`. Tested end
+  to end on loopback with the real relay and the in-process ACME server.
 
 - **Kitchen display mode** (#669: #670, #671, #672; epic #651,
   [ADR 0022](docs/decisions/0022-family-hub.md) §4). An Adult turns a tablet
@@ -206,7 +228,7 @@ documentation only.
   CAA records with `accounturi` and `validationmethods`, and a daily
   Certificate Transparency check. Keys are stored 0600. Tested end to end
   against an in-process ACME server with a real loopback TLS validation;
-  not yet started by any server (home mode and the tunnel, #733, wire it).
+  started by home mode with the tunnel (#733, entry above).
   [HOME-CERTIFICATES](docs/HOME-CERTIFICATES.md), TEST-VECTORS.
 
 ### Changed
@@ -247,6 +269,15 @@ documentation only.
   and `SUPPORT.md` are reorganised; the issue forms gain a self-hosting form,
   a privacy checkbox and contact links; and the PR template's checklist
   matches the verification gate.
+
+### Fixed
+
+- **The connection relay frees a tunnel handshake its client aborts**
+  (#733). A home server that refused the relay's certificate left the
+  connection open on the relay until Node's 120-second default, and the
+  relay's `close()` waited for it. The relay now limits handshakes on its
+  own name to the 10-second sign-in window and closes such connections when
+  it stops.
 
 ## v1.6.0 — Kin for Everyone
 

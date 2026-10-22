@@ -354,7 +354,8 @@ The Play app is a Trusted Web Activity: it opens
 ## Unreleased (Kin at home, ADR 0025): the home server and the connection relay
 
 **Partly built.** The connection relay is built in `relay/` (#728) and not yet
-deployed; the home server's side is not built. [ADR 0025](decisions/0025-kin-at-home.md) (epic #708)
+deployed; the home server's side of the tunnel is built in `server/home/`
+(#733); the control panel (#718), updates and backups are not. [ADR 0025](decisions/0025-kin-at-home.md) (epic #708)
 decides a home server reached through a **connection relay**: a cloud
 program that reads only the server name (SNI) from each TLS ClientHello and
 splices the still-encrypted bytes to the home server over a tunnel the home
@@ -363,11 +364,26 @@ document calls "the relay" (S4, S5). Nothing here is claimed as protection
 until it is built and reviewed (#740 requires an independent review of the
 relay, the tunnel, the SNI parser and the ACME client).
 
-The ACME client itself (#723) is now built and tested in `server/acme/`
-([HOME-CERTIFICATES](HOME-CERTIFICATES.md)) but not yet run by any server:
-TLS-ALPN-01 answered only for a pending name, keys made on the home server
-and stored 0600, CAA records built from the account URL, and the daily CT
-check. It protects nothing until home mode and the tunnel (#733) start it.
+The ACME client (#723, [HOME-CERTIFICATES](HOME-CERTIFICATES.md)) is
+started by home mode with a name (#733): TLS-ALPN-01 answered only for a
+pending name, keys made on the home server and stored 0600, the free name's
+CAA record set at the relay before the first order, and the daily CT check.
+
+What the home side of the tunnel (#733) does, as built and tested on
+loopback (`server/home/*.test.mjs`): the home key is made on the home
+server, stored 0600 and never sent; the sign-in signature covers a TLS
+exporter value, so it can't be replayed on another connection; the relay's
+certificate is checked the normal way; TLS for each phone ends in the
+service, and a test searches every byte the relay handled for HTTP text, a
+session cookie and its token and finds none. Each stream is flow-controlled
+(a stalled phone stops the response at its source). Client addresses are
+taken from `OPEN` only on sockets the tunnel made, so a direct connection
+can't claim one, and `X-Forwarded-For` is ignored on tunnel sockets even if
+`KIN_TRUSTED_PROXIES` lists the address. Logs carry no address. A damaged
+home key stops startup instead of being replaced. Two copies of one home
+key (a restored backup running elsewhere) take the tunnel from each other,
+each waiting a random time up to five minutes after losing it; the control
+panel must explain `replaced` (#718).
 
 | Threat | What the design does | What remains |
 | --- | --- | --- |

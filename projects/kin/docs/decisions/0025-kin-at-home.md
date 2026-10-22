@@ -16,7 +16,15 @@ so far (#713, [HOME-SERVER](../HOME-SERVER.md)): `KIN_MODE` (§9), the
 executables for Linux x64 and arm64 with Kin's own ELF injector, the
 container image, and installing as a service, on Windows with the Task
 Scheduler fallback; the macOS and Windows executables (#747, #748) and the
-Rust service host (#749) follow.
+Rust service host (#749) follow. Built by #733 (`server/home/`,
+[HOME-SERVER](../HOME-SERVER.md#reaching-it-from-anywhere-the-tunnel)): the
+home side of the tunnel (§2) with the home key, name claiming and
+`SET_CAA` (§3, §5), reconnecting with backoff, on wake and on network
+changes, TLS ended in the service with the ACME client (#723) started
+(§9), and client addresses from `OPEN` for rate limits; the home settings
+file `home/settings.json` (§9–§10), whose fields can also be set from
+`KIN_HOME_*` environment variables for containers and technical
+households. Direct LAN access stays deferred (§4).
 
 **A word on names.** Kin's documents already call the sync service "the
 relay" (it relays encrypted events; THREAT-MODEL S4, S5). This ADR adds a

@@ -2,7 +2,9 @@
 // guessing; bootstrap limits reuse it).
 //
 // Kin listens on loopback, so a hosted deployment sits behind a TLS proxy and
-// every request arrives from the proxy's address. Without configuration that
+// every request arrives from the proxy's address. (A home server's tunnel
+// connections are the exception: their address comes from the relay, see
+// trustTunnelPeer below.) Without configuration that
 // is all Kin can see, and every client shares one limit. An operator who runs
 // a proxy that appends the real client address to X-Forwarded-For lists that
 // proxy's address in KIN_TRUSTED_PROXIES. Only then is the header read, and

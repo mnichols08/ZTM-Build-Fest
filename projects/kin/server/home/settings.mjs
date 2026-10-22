@@ -1,9 +1,9 @@
 // Home settings (ADR 0025 §9–§10, #733): which connection relay the home
 // server dials, the relay's zone, the server's one name, and the ACME
 // directory and terms agreement for its certificate. They live in the data
-// directory, in `home/settings.json` (mode 0600, written by the control panel,
-// #718), and each can be overridden by an environment variable for a
-// technical household or a container:
+// directory, in `home/settings.json` (which the control panel, #718, will
+// write with mode 0600), and each can be overridden by an environment
+// variable for a technical household or a container:
 //
 //   field            variable                     default
 //   relay            KIN_HOME_RELAY               relay.kin.journeytocode.io (port 443; "host:port" for another)

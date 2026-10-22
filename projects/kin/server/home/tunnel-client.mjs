@@ -250,7 +250,8 @@ class Tunnel {
   /** Tells the relay this side is stopping, then closes. */
   goaway(code) {
     if (this.closed) return;
-    this.write(encodeGoaway(this.lastStream, code));
+    // Before the preface there is no KTUN session to say goodbye in.
+    if (this.state !== "connecting") this.write(encodeGoaway(this.lastStream, code));
     this.fail(null, null);
   }
 
