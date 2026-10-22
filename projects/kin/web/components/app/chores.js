@@ -211,10 +211,11 @@ export class ChoresController {
   /** The kitchen display's check for a reward change (#705): the adult's
    * passkey or password (app/display.js confirmAdult). Undo and Redo of a
    * reward ask through here too (app/undo.js). Resolves true when
-   * confirmed, false otherwise. */
-  async confirmOnDisplay() {
+   * confirmed, false otherwise. `onSettle(value)` is called synchronously
+   * as the dialog closes (app/display.js confirmAdult). */
+  async confirmOnDisplay({ onSettle = null } = {}) {
     try {
-      return (await this.ctx.display?.confirmAdult?.("reward")) === true;
+      return (await this.ctx.display?.confirmAdult?.("reward", { onSettle })) === true;
     } catch {
       return false;
     }

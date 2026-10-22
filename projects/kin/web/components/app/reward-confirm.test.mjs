@@ -148,41 +148,92 @@ test("Undo and Redo of a reward on the display ask too; cancelled, nothing is wr
   assert.deepEqual(asked, ["reward", "reward", "reward", "reward"]);
 });
 
-test("a press while the display's check is open, or still closing, is ignored and keeps the entry; once settled, Undo asks again", async () => {
-  // The real display controller's guard, with the dialog as a promise the
-  // test answers (what the kitchen display regression does by hand).
-  const { app, ctx, undo, appended, rewards } = workspace({ display: true });
+/** The display controller with a dialog stand-in that behaves like
+ * askAdultDialog: onSettle runs synchronously as it closes, then the
+ * promise resolves. `dialogs` holds an answer function per dialog shown. */
+function realDisplay(app, ctx = { app }) {
+  const wasOn = app.displayMode;
   app.displayMode = false;
-  const display = new DisplayController({ app });
-  app.displayMode = true;
-  ctx.display = display;
-  let answer = null;
-  let shown = 0;
+  const display = new DisplayController(ctx);
+  app.displayMode = wasOn;
+  const dialogs = [];
   display.adultCheck = {
     readManifest: async () => ({ wrappers: [{ id: "r", type: "recovery" }] }),
-    dialog: () => { shown += 1; return new Promise((resolve) => { answer = resolve; }); },
+    dialog: (options) => new Promise((resolve) => {
+      dialogs.push((value) => { options.onSettle?.(value); resolve(value); });
+    }),
   };
+  return { display, dialogs };
+}
+const ticks = async (count = 50) => { for (let index = 0; index < count; index++) await null; };
+
+test("cancel Leave, then press Leave again straight away: it asks again (#705)", async () => {
+  const app = { displayMode: true, vault: { vaultId: "ab".repeat(16) } };
+  const statuses = [];
+  const { display, dialogs } = realDisplay(app, { app, status: { setStatus: (text) => statuses.push(text) } });
+  let reloads = 0;
+  display.reload = () => { reloads += 1; };
+  display.forget = () => {};
+  const first = display.leave();
+  await ticks();
+  assert.equal(dialogs.length, 1);
+  assert.equal(await display.leave(), false, "a double press while the dialog is open asks nothing more");
+  assert.equal(dialogs.length, 1);
+  dialogs[0](false); // Stay in display mode
+  const second = display.leave(); // straight away, before the first press's promise chain unwinds
+  await ticks();
+  assert.equal(dialogs.length, 2, "the second press opens the dialog again");
+  assert.equal(await first, false);
+  dialogs[1](true);
+  assert.equal(await second, true);
+  assert.equal(reloads, 1);
+  assert.equal(display.asking, null);
+});
+
+test("cancel a reward save, then save again straight away: it asks again", async () => {
+  const { app, ctx, chores, appended } = workspace({ display: true });
+  const { display, dialogs } = realDisplay(app, ctx);
+  ctx.display = display;
+  const first = chores.setReward({ memberId: CHILD, goal: 20, text: "Movie night" });
+  await ticks();
+  dialogs[0](false);
+  const second = chores.setReward({ memberId: CHILD, goal: 20, text: "Movie night" });
+  await ticks();
+  assert.equal(dialogs.length, 2);
+  assert.equal((await first).ok, false);
+  assert.deepEqual(appended, [], "the cancelled one wrote nothing");
+  dialogs[1](true);
+  assert.equal((await second).ok, true);
+  assert.equal(appended.length, 1);
+});
+
+test("cancel a reward's Undo, then press Undo again straight away: the entry is back and it asks again", async () => {
+  const { app, ctx, undo, appended, rewards, statuses } = workspace({ display: true });
+  const { display, dialogs } = realDisplay(app, ctx);
+  ctx.display = display;
   rewards.set(CHILD, MOVIE);
   undo.record(choreRewardEntry({ memberId: CHILD, name: "Sam", from: null, to: MOVIE }));
   const first = undo.run("undo");
-  while (!shown) await null;
+  await ticks();
+  assert.equal(dialogs.length, 1);
   await undo.run("undo");
-  assert.equal(shown, 1, "a second press while the dialog is open asks nothing");
-  answer(false);
-  // Right after Cancel the run is still unwinding: a press now is ignored.
-  assert.equal(undo.running, true);
-  await undo.run("undo");
-  assert.equal(shown, 1);
-  await first;
+  assert.equal(dialogs.length, 1, "a press while the dialog is open asks nothing more");
+  dialogs[0](false);
+  // Synchronously at the close: the entry is back, the run let go, said so.
   assert.equal(undo.running, false);
-  assert.equal(undo.history.undoStack.length, 1, "the entry is back");
-  assert.deepEqual(appended, []);
-  const second = undo.run("undo");
-  while (shown < 2) await null;
-  assert.equal(shown, 2, "once settled, Undo asks again");
-  answer(false);
-  await second;
   assert.equal(undo.history.undoStack.length, 1);
+  assert.equal(statuses.at(-1), "Not undone: the reward wasn't changed.");
+  const second = undo.run("undo");
+  await ticks();
+  assert.equal(dialogs.length, 2, "Undo asks again");
+  await first;
+  assert.deepEqual(appended, [], "nothing written yet");
+  dialogs[1](true);
+  await second;
+  assert.deepEqual(appended, [{ type: "set-chore-reward", memberId: CHILD, goal: 0, text: "" }]);
+  assert.equal(undo.history.undoStack.length, 0);
+  assert.equal(undo.history.redoStack.length, 1);
+  assert.equal(undo.running, false);
 });
 
 test("Undo of a reward on the phone doesn't ask", async () => {
@@ -218,7 +269,7 @@ test("the display's check is the one leaving uses: the device's methods, one dia
   display.adultCheck.dialog = () => new Promise((resolve) => { release = resolve; });
   const first = display.confirmAdult("reward");
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(await display.confirmAdult("leave"), false);
+  assert.equal(await display.confirmAdult("leave"), false, "a double press while a dialog is open");
   release(true);
   assert.equal(await first, true);
 

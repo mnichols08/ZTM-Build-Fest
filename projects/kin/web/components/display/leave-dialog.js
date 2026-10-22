@@ -14,9 +14,12 @@ const LABELS = { passkey: "Use my passkey", password: "Use my password", "backup
  * resolves, false when it is cancelled. `check` rejects with an Error whose
  * `code` is "unlock_failed" (or "password_rejected") for a wrong secret.
  * The words come from ADULT_CHECKS[purpose] unless given: `title`, `lead`,
- * `none`, `stay` and `canceled`.
+ * `none`, `stay` and `canceled`. `onSettle(value)`, when given, is called
+ * synchronously as the dialog closes, before the promise resolves: the
+ * caller releases its guard there, so a press straight after a cancel is
+ * a new press, not one caught in the promise chain's microtasks (#705).
  */
-export function askAdultDialog({ methods, check, host = document.body, purpose = "leave", ...words }) {
+export function askAdultDialog({ methods, check, host = document.body, purpose = "leave", onSettle = null, ...words }) {
   const text = { ...(ADULT_CHECKS[purpose] ?? ADULT_CHECKS.leave), ...words };
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
@@ -64,7 +67,7 @@ export function askAdultDialog({ methods, check, host = document.body, purpose =
       input.value = "";
       if (dialog.open) dialog.close();
       dialog.remove();
-      resolve(value);
+      try { onSettle?.(value); } finally { resolve(value); }
     };
     const setBusy = (value) => {
       busy = value;

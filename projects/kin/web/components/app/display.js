@@ -203,19 +203,30 @@ export class DisplayController {
    * "reward" for a child's reward, #705) with their passkey or password,
    * checked on this device (display/leave.js askAdult). Resolves true once
    * confirmed; false when cancelled, refused, not a display, or while
-   * another check is open. */
-  async confirmAdult(purpose) {
+   * another check's dialog is open (a double press).
+   *
+   * `asking` holds this check's token while its dialog is open and is
+   * released synchronously as the dialog closes (the dialog's onSettle),
+   * not after the promise chain unwinds: a press on Leave, Save reward or
+   * Undo straight after a cancel opens a new dialog rather than being
+   * ignored, as leaving did before it shared this check. `onSettle(value)`
+   * is passed on for the caller to release its own guard the same way. */
+  async confirmAdult(purpose, { onSettle = null } = {}) {
     if (!this.on || this.asking) return false;
-    this.asking = true;
+    const token = { purpose };
+    this.asking = token;
+    const release = () => { if (this.asking === token) this.asking = null; };
     try {
       const confirmed = await askAdult(purpose, {
         readManifest: this.adultCheck.readManifest,
         vaultId: this.app.vault?.vaultId ?? null,
-        ask: (options) => this.adultCheck.dialog({ ...options, host: this.app }),
+        ask: (options) => this.adultCheck.dialog({ ...options, host: this.app, onSettle: (value) => { release(); onSettle?.(value); } }),
       });
       return confirmed && this.on;
     } finally {
-      this.asking = false;
+      // A dialog that never settled (it threw), or a stand-in without
+      // onSettle; never another check's token.
+      release();
     }
   }
 
@@ -265,7 +276,7 @@ export class DisplayController {
     this.frame = null;
     this.elements = null;
     this.weekView = { view: "week", focus: null };
-    this.asking = false;
+    this.asking = null;
     if (typeof document !== "undefined") {
       for (const type of ["pointerdown", "keydown", "wheel"]) document.removeEventListener(type, this.onActivity, { capture: true });
       delete document.documentElement.dataset.kinDisplay;

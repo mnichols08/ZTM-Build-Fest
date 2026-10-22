@@ -206,8 +206,7 @@ async function rewardOnDisplay(recovery) {
   check(dialogTargets().length === 0, "the dialog's targets are 64px", dialogTargets());
   dialog().querySelector(".display-leave-cancel").click();
   await until(() => !dialog(), "Don't change it closes the dialog");
-  // The cancelled save finishes a few microtasks after the dialog goes: wait
-  // for it to say so, which is after the display's check is released.
+  // The display's check lets go as the dialog closes.
   await until(() => !app.ctx.display.asking, "the cancelled save settles");
   await idle();
   check(line() === before && charted() === null, "cancelled: no reward", { line: line(), reward: charted() });
@@ -239,9 +238,8 @@ async function rewardOnDisplay(recovery) {
   await until(() => dialog()?.open && dialog().dataset.purpose === "reward", "Undo asks who you are (#705)");
   dialog().querySelector(".display-leave-cancel").click();
   await until(() => !dialog(), "Don't change it closes the dialog");
-  // The cancelled Undo puts its entry back and stops running a few
-  // microtasks after the dialog goes; a press before then is ignored (the
-  // toast never left, so it can't tell). Wait for it to say so.
+  // The cancelled Undo puts its entry back and lets go as the dialog closes,
+  // so the next press is a new Undo.
   await until(() => !app.ctx.undo.running && app.ctx.undo.history.undoStack.length === stacked,
     "the cancelled Undo settles", () => ({ status: app.status?.textContent, running: app.ctx.undo.running, entries: app.ctx.undo.history.undoStack.length, stacked }));
   check(/^Not undone: the reward wasn't changed\./.test(app.status?.textContent ?? ""), "and says so", app.status?.textContent);
