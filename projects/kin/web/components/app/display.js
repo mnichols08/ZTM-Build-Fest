@@ -316,11 +316,11 @@ export class DisplayController {
 
   /** Something added to Shopping from the display. */
   async addShopping({ text, done } = {}) {
+    // One plain add command: a half-saved capture from the full layout
+    // (Quick add's pending draft) must not hold the display's box up.
     const id = crypto.randomUUID().replaceAll("-", "");
-    await this.ctx.items.handleAddItem({ detail: { text, classification: "shopping", id, composer: null } });
-    const ok = Boolean(this.app.state?.items.some((item) => item.itemId === id));
-    done?.(ok);
-    if (ok) this.ctx.status.setStatus(`Added “${text}” to Shopping.`);
+    const result = await this.ctx.chores.run({ type: "add", id, text, classification: "shopping" }, `Added “${text}” to Shopping.`);
+    done?.(result.ok === true);
     this.refresh();
   }
 

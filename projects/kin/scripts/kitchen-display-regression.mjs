@@ -53,7 +53,7 @@ async function enterDisplay() {
   const routineId = app.state.routines.find((routine) => routine.text === chore).routineId;
   await app.ctx.append.appendCommand({ type: "change-responsibility", targetKind: "routine", id: routineId, memberId: child });
   const milk = `Oat milk ${tag}`;
-  await app.ctx.items.handleAddItem({ detail: { text: milk, classification: "shopping" } });
+  await app.ctx.append.appendCommand({ type: "add", id: crypto.randomUUID().replaceAll("-", ""), text: milk, classification: "shopping" });
   await idle();
   app.ctx.render.renderState();
   Object.assign(window.__kitchen, { eventTitle, dinner, chore, routineId, milk });
