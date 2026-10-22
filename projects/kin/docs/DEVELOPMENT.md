@@ -1,6 +1,6 @@
 # Development Workflow
 
-**Status:** v0.12.3 Data Lifecycle implementation candidate; awaiting full regression and human review. Earlier version sections remain historical contracts.
+**Status:** current as of v1.6.0. For running Kin on a server rather than developing it, see [SELF-HOSTING](SELF-HOSTING.md); for the contributor workflow, [CONTRIBUTING](../CONTRIBUTING.md).
 
 ## Build and run
 
@@ -238,12 +238,4 @@ corruption stops startup or returns readiness HTTP 503 without exposing rows or
 paths; `/health` remains liveness. Backup source/copy and restore source use the
 same validator. Kin does not automatically repair inconsistent authorization.
 Validation pages relay history but runs synchronously, so readiness latency
-grows with stored history; see [measurements](V0.11.0.md#v0115-semantic-integrity-evidence-2026-10-03).
-
-## v0.5.0 Pulse
-
-Pulse uses the established build/run scripts and complete regression runner. No runtime dependency or parent-level build changes. See [V0.5.0](V0.5.0.md).
-
-## v0.6.0 Since You Last Looked
-
-Catch-up behavior is local to the browser installation and uses the canonical event store plus the existing WASM build and browser regression workflows. Use synthetic test events only; do not put real household history into fixtures or diagnostics. The v0.6 browser suite exercises cursor races, reload, keyboard/focus, content-free tab invalidation, and accessibility modes. No additional runtime dependency or parent-level build change is required. See [V0.6.0](V0.6.0.md).
+grows with stored history; see [measurements](planning/V0.11.0.md#v0115-semantic-integrity-evidence-2026-10-03).

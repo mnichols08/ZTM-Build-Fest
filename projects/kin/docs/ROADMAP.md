@@ -111,7 +111,7 @@ Specify household/member/device/credential identity, pairing and device revocati
 
 ### `v0.0.6` — Implementation Contract
 
-Freeze the initial v0.1.0 scope and specify its ABI, protocol, local storage, components, testing, accessibility, and release gate. The `.0.7`–`.0.9` planning releases add durability, contributor guidance, and final preflight; v0.0.6 does not ship an app. See [IMPLEMENTATION](IMPLEMENTATION.md), [ABI](ABI.md), [STORAGE](STORAGE.md), [COMPONENTS](COMPONENTS.md), [TESTING](TESTING.md), [ACCESSIBILITY](ACCESSIBILITY.md), and [V0.1.0](V0.1.0.md).
+Freeze the initial v0.1.0 scope and specify its ABI, protocol, local storage, components, testing, accessibility, and release gate. The `.0.7`–`.0.9` planning releases add durability, contributor guidance, and final preflight; v0.0.6 does not ship an app. See [IMPLEMENTATION](IMPLEMENTATION.md), [ABI](ABI.md), [STORAGE](STORAGE.md), [COMPONENTS](COMPONENTS.md), [TESTING](TESTING.md), [ACCESSIBILITY](ACCESSIBILITY.md), and [V0.1.0](planning/V0.1.0.md).
 
 ### `v0.0.7` — Data Durability & Evolution
 
@@ -123,7 +123,7 @@ Document human contribution expectations, intended cross-platform development se
 
 ### `v0.0.9` — Implementation Preflight
 
-Complete the specification audit, accepted decision records, canonical test vectors, and requirement traceability for the frozen v0.1.0 scope. This Specification Release Candidate 1 completes technical planning; it does not begin implementation. See [PREFLIGHT](PREFLIGHT.md), [TEST-VECTORS](TEST-VECTORS.md), [TRACEABILITY](TRACEABILITY.md), and [accepted decisions](decisions/0001-event-sourced-household-state.md).
+Complete the specification audit, accepted decision records, canonical test vectors, and requirement traceability for the frozen v0.1.0 scope. This Specification Release Candidate 1 completes technical planning; it does not begin implementation. See [PREFLIGHT](planning/PREFLIGHT.md), [TEST-VECTORS](TEST-VECTORS.md), [TRACEABILITY](planning/TRACEABILITY.md), and [accepted decisions](decisions/0001-event-sourced-household-state.md).
 
 ### `v0.0.10` — GitHub Community & Project Documentation
 
@@ -139,13 +139,13 @@ Establish a Kin-scoped changelog from actual tagged release history and document
 
 ## First coded release
 
-Each minor release represents a new product capability. Its initial stabilization patches address correctness (`.1`), resilience/accessibility (`.2`), and hardening (`.3`) when needed; additional fixes remain patches `.4` and onward. Earlier lines used a human feedback checkpoint before the next feature. Historical work follows the [daily cadence](BUILD-FEST-CADENCE.md) and [release-line protocol](RELEASE-LINE-PROTOCOL.md); v1.0.0 and every later release remain subject to the same validation, compatibility and human-review gates.
+Each minor release represents a new product capability. Its initial stabilization patches address correctness (`.1`), resilience/accessibility (`.2`), and hardening (`.3`) when needed; additional fixes remain patches `.4` and onward. Earlier lines used a human feedback checkpoint before the next feature. Historical work follows the [daily cadence](planning/BUILD-FEST-CADENCE.md) and [release-line protocol](planning/RELEASE-LINE-PROTOCOL.md); v1.0.0 and every later release remain subject to the same validation, compatibility and human-review gates.
 
 ### `v0.1.0` — Household Heartbeat
 
-Implemented: Rust compiled to WebAssembly, a native `<kin-app>` with focused child custom elements, the manual versioned JS/WASM ABI, `ITEM_ADDED` and `ITEM_COMPLETED`, deterministic Rust replay, IndexedDB event-only persistence, and add/complete/reload behavior using local placeholder identities. No partner login, sync, or other product areas are included. See [V0.1.0.md](V0.1.0.md) for the frozen contract and release checks.
+Implemented: Rust compiled to WebAssembly, a native `<kin-app>` with focused child custom elements, the manual versioned JS/WASM ABI, `ITEM_ADDED` and `ITEM_COMPLETED`, deterministic Rust replay, IndexedDB event-only persistence, and add/complete/reload behavior using local placeholder identities. No partner login, sync, or other product areas are included. See [V0.1.0.md](planning/V0.1.0.md) for the frozen contract and release checks.
 
-The detailed boundary and acceptance scope are in [V0.1.0.md](V0.1.0.md); release history is in [CHANGELOG](../CHANGELOG.md).
+The detailed boundary and acceptance scope are in [V0.1.0.md](planning/V0.1.0.md); release history is in [CHANGELOG](../CHANGELOG.md).
 
 ### `v0.1.1` — Core Correctness
 
@@ -215,7 +215,7 @@ Completed: add project-local PowerShell and POSIX shell launchers that build the
 
 ### `v0.4.0` — Talk
 
-Implemented: short Talk capture, Open/Resolved lists, resolve, reopen and terminal archive. Resolution is workflow state only. See [V0.4.0](V0.4.0.md).
+Implemented: short Talk capture, Open/Resolved lists, resolve, reopen and terminal archive. Resolution is workflow state only. See [V0.4.0](planning/V0.4.0.md).
 
 ### `v0.4.1` — Talk Correctness
 
@@ -231,11 +231,11 @@ Completed: parser truncation/length boundaries, maximum mixed replay, real WASM 
 
 ### `v0.5.0` — Pulse
 
-Implemented: fixed actor-scoped capacity, set/replace/clear, deterministic explicit-time expiry and protocol v5. No acknowledgement, scoring or interpretation. See [V0.5.0](V0.5.0.md).
+Implemented: fixed actor-scoped capacity, set/replace/clear, deterministic explicit-time expiry and protocol v5. No acknowledgement, scoring or interpretation. See [V0.5.0](planning/V0.5.0.md).
 
 ### `v0.6.0` — Since You Last Looked
 
-Completed: derive a bounded, Rust-owned summary of Item, Handoff and Talk changes since this installation's explicit local cursor. Pulse is excluded. Protocol v6 preserves the exact snapshot boundary; IndexedDB remains schema 1 and no household event records a view. See [V0.6.0](V0.6.0.md).
+Completed: derive a bounded, Rust-owned summary of Item, Handoff and Talk changes since this installation's explicit local cursor. Pulse is excluded. Protocol v6 preserves the exact snapshot boundary; IndexedDB remains schema 1 and no household event records a view. See [V0.6.0](planning/V0.6.0.md).
 
 ### `v0.6.1` — Summary Correctness
 
@@ -251,7 +251,7 @@ Completed: audited v6 parser/result boundaries, 10,000-event replay, WASM memory
 
 ### `v0.7.0` — Routines
 
-Implemented: Daily and Monday-start Weekly Routines with deterministic civil-date occurrence keys, current-period complete/reopen, terminal archive, catch-up summary integration and browser lifecycle reprojection. See [V0.7.0](V0.7.0.md).
+Implemented: Daily and Monday-start Weekly Routines with deterministic civil-date occurrence keys, current-period complete/reopen, terminal archive, catch-up summary integration and browser lifecycle reprojection. See [V0.7.0](planning/V0.7.0.md).
 
 ### `v0.7.1` — Routine Correctness
 
@@ -271,11 +271,11 @@ Reject stale same-period completion/reopen commands before persistence, add mult
 
 ### `v0.8.0` — Household Pairing
 
-Completed through v0.8.8: one household with exactly two active adult-member slots, manual pairing codes/invitation URLs, passkeys, member-bound approval and activation, trusted-device controls and session invalidation, reauthentication, protected membership removal, replacement after removal or leave with historical membership retention, terminal-claim cleanup, and bounded authentication flows. QR is deferred. At the v0.8.8 boundary, household content sync remained unimplemented; v0.9.x adds it. The implementation record is [V0.8.0](V0.8.0.md).
+Completed through v0.8.8: one household with exactly two active adult-member slots, manual pairing codes/invitation URLs, passkeys, member-bound approval and activation, trusted-device controls and session invalidation, reauthentication, protected membership removal, replacement after removal or leave with historical membership retention, terminal-claim cleanup, and bounded authentication flows. QR is deferred. At the v0.8.8 boundary, household content sync remained unimplemented; v0.9.x adds it. The implementation record is [V0.8.0](planning/V0.8.0.md).
 
 ### `v0.9.0` — Encrypted Sync
 
-Completed as the first encrypted-sync iteration: reviewed threat/key lifecycle contract, versioned AES-GCM event envelopes with device signatures, opaque authorized push/pull relay, exact retry outbox, bounded cursoring, additive IndexedDB schema 2, and offline Rust/WASM/browser fixtures. Existing canonical bytes remain unchanged. See [V0.9.0](V0.9.0.md).
+Completed as the first encrypted-sync iteration: reviewed threat/key lifecycle contract, versioned AES-GCM event envelopes with device signatures, opaque authorized push/pull relay, exact retry outbox, bounded cursoring, additive IndexedDB schema 2, and offline Rust/WASM/browser fixtures. Existing canonical bytes remain unchanged. See [V0.9.0](planning/V0.9.0.md).
 
 ### `v0.9.1` — Device Provisioning, Epochs, and Revocation
 
@@ -291,7 +291,7 @@ Completed: recovery and metadata threat assessment, encrypted logging/privacy bo
 
 ### `v0.10.x` — Portable Core + Local Security
 
-The final local architecture/security development line. v0.10.0 implements cryptographically locked local household data, independent credential/recovery wrappers, recoverable plaintext migration, Rust-owned command semantics and canonical codecs, encrypted export/import, native domain tests, a static offline shell and signed transport-key migration. v0.10.1 corrects overlapping unlock feedback, asynchronous trusted-device pinning and interrupted key-rotation recovery; v0.10.2 adds local root rotation; v0.10.3 hardens bounded storage/archive processing and closes this implementation line. The evidence inventory, compatibility, measured limits and readiness work are in [V0.10.0](V0.10.0.md). Human review of the v0.10 gate preceded the next implementation line; its v1.0 decision is in [review gates](audits/V1.0_REVIEW_GATES.md).
+The final local architecture/security development line. v0.10.0 implements cryptographically locked local household data, independent credential/recovery wrappers, recoverable plaintext migration, Rust-owned command semantics and canonical codecs, encrypted export/import, native domain tests, a static offline shell and signed transport-key migration. v0.10.1 corrects overlapping unlock feedback, asynchronous trusted-device pinning and interrupted key-rotation recovery; v0.10.2 adds local root rotation; v0.10.3 hardens bounded storage/archive processing and closes this implementation line. The evidence inventory, compatibility, measured limits and readiness work are in [V0.10.0](planning/V0.10.0.md). Human review of the v0.10 gate preceded the next implementation line; its v1.0 decision is in [review gates](audits/V1.0_REVIEW_GATES.md).
 
 Increase the Rust footprint by increasing the amount of Kin that is deterministic, portable, invariant-driven, and independently testable — not by moving browser-native capabilities into Wasm. Web Crypto and networking remain browser/server adapter responsibilities.
 
@@ -303,7 +303,7 @@ corruption handling, an exclusive production-process lock, and verified
 online-backup/offline-restore commands. Automated tests include a spawned HTTP
 process restart and persistence of reauthentication, event identity, cursor and
 device sequence. It was a review candidate, never published on its own; its
-v1.0 gate decision is item G2 in [review gates](audits/V1.0_REVIEW_GATES.md). See [V0.11.0](V0.11.0.md).
+v1.0 gate decision is item G2 in [review gates](audits/V1.0_REVIEW_GATES.md). See [V0.11.0](planning/V0.11.0.md).
 
 ### `v0.12.x` — Data Lifecycle, Retention & Deletion
 
@@ -311,14 +311,14 @@ The implementation defines `active → deletion_pending → deleted`, fresh-pass
 authorization, a 30-day cancellation window, final server-side purge, permanent
 minimal tombstones, stale-client rejection and explicit backup restore
 acknowledgement. It preserves full encrypted history until final deletion and
-documents local/exported-copy and rollback limitations. See [V0.12.0](V0.12.0.md).
+documents local/exported-copy and rollback limitations. See [V0.12.0](planning/V0.12.0.md).
 
 ### `v0.13.x` — Recovery & Household Continuity
 
 Define explicit recovery outcomes for lost credentials, devices, server state and
 archives; preserve the boundary between household history and identity/device
 authority; and ensure replacement enrollment is not an authorization bypass.
-Unrecoverable cases must be stated honestly. See [V0.13.0](V0.13.0.md).
+Unrecoverable cases must be stated honestly. See [V0.13.0](planning/V0.13.0.md).
 
 ### `v0.14.x` — UX/UI Consolidation
 
@@ -327,7 +327,7 @@ architecture, navigation, onboarding, security/recovery/deletion presentation,
 responsive behavior, accessibility, interaction and visual consistency across
 Kin's existing product areas. This line presents stable platform behavior; it
 does not redesign encryption, storage, service durability, deletion, recovery,
-canonical events or sync semantics. See [V0.14.0](V0.14.0.md).
+canonical events or sync semantics. See [V0.14.0](planning/V0.14.0.md).
 
 ## Foundation and early October sequence
 
@@ -335,56 +335,56 @@ Keep the platform work in order: durable service, lifecycle/deletion, recovery a
 
 | Release | Status | Purpose and contract |
 |---|---|---|
-| `v0.11.x` | Tagged through `kin-v0.11.7`; v1.0 gate decision G2 in [review gates](audits/V1.0_REVIEW_GATES.md) | [Durable Service & Deployment](V0.11.0.md) — restart-safe identity/relay acceptance while preserving the encrypted relay boundary. |
-| `v0.12.x` | Tagged through `kin-v0.12.4`; v1.0 gate decision G3 in [review gates](audits/V1.0_REVIEW_GATES.md) | [Data Lifecycle, Retention & Deletion](V0.12.0.md) — explicit deletion, retention, archive, revocation, backup and stale-device behavior. |
-| `v0.13.x` | Tagged candidate through `v0.13.5` | [Recovery & Household Continuity](V0.13.0.md) — explicit outcomes for loss of credentials, devices, browser profiles, server data and recovery material. |
-| `v0.14.x` | Complete through `v0.14.5` | [UX/UI Consolidation](V0.14.0.md) — one coherent, accessible presentation of the settled platform and household workflows. |
-| `v0.15.x` | Complete through v0.15.5 | [Household Areas](releases/V0.15.0.md) — optional, bounded place/context without project management. |
-| `v0.16.x` | v0.16.3 Notes hardening candidate | [Household Notes & Reference Context](releases/V0.16.0.md), [v0.16.1](releases/V0.16.1.md), [v0.16.2](releases/V0.16.2.md), and [v0.16.3](releases/V0.16.3.md) — concurrent cross-device archives converge; stale rearchives remain rejected. |
-| `v0.17.x` | Complete through the existing v0.17.0 Checklist Steps candidate; preserve its tag | [Checklist Steps](releases/V0.17.0.md). |
-| `v0.18.x` | Authorized fast-track | [Richer Routine Scheduling](releases/V0.18.0.md). |
-| `v0.19.x` | Authorized fast-track | [Shared Shopping Lists](releases/V0.19.0.md). |
-| `v0.20.x` | Authorized fast-track | [Staples & Replenishment](releases/V0.20.0.md). |
+| `v0.11.x` | Tagged through `kin-v0.11.7`; v1.0 gate decision G2 in [review gates](audits/V1.0_REVIEW_GATES.md) | [Durable Service & Deployment](planning/V0.11.0.md) — restart-safe identity/relay acceptance while preserving the encrypted relay boundary. |
+| `v0.12.x` | Tagged through `kin-v0.12.4`; v1.0 gate decision G3 in [review gates](audits/V1.0_REVIEW_GATES.md) | [Data Lifecycle, Retention & Deletion](planning/V0.12.0.md) — explicit deletion, retention, archive, revocation, backup and stale-device behavior. |
+| `v0.13.x` | Tagged candidate through `v0.13.5` | [Recovery & Household Continuity](planning/V0.13.0.md) — explicit outcomes for loss of credentials, devices, browser profiles, server data and recovery material. |
+| `v0.14.x` | Complete through `v0.14.5` | [UX/UI Consolidation](planning/V0.14.0.md) — one coherent, accessible presentation of the settled platform and household workflows. |
+| `v0.15.x` | Complete through v0.15.5 | [Household Areas](planning/releases/V0.15.0.md) — optional, bounded place/context without project management. |
+| `v0.16.x` | v0.16.3 Notes hardening candidate | [Household Notes & Reference Context](planning/releases/V0.16.0.md), [v0.16.1](planning/releases/V0.16.1.md), [v0.16.2](planning/releases/V0.16.2.md), and [v0.16.3](planning/releases/V0.16.3.md) — concurrent cross-device archives converge; stale rearchives remain rejected. |
+| `v0.17.x` | Complete through the existing v0.17.0 Checklist Steps candidate; preserve its tag | [Checklist Steps](planning/releases/V0.17.0.md). |
+| `v0.18.x` | Authorized fast-track | [Richer Routine Scheduling](planning/releases/V0.18.0.md). |
+| `v0.19.x` | Authorized fast-track | [Shared Shopping Lists](planning/releases/V0.19.0.md). |
+| `v0.20.x` | Authorized fast-track | [Staples & Replenishment](planning/releases/V0.20.0.md). |
 
-The [bridge plan](BRIDGE-0.11-0.16.md) records the dependency order. v0.12–v0.16 occupy October 3–7 in the daily schedule, followed by v0.17 on October 8. Each line requires the preceding gate; only v0.11 must be settled before the first daily target. A release contract is a plan, not evidence of completion.
+The [bridge plan](planning/BRIDGE-0.11-0.16.md) records the dependency order. v0.12–v0.16 occupy October 3–7 in the daily schedule, followed by v0.17 on October 8. Each line requires the preceding gate; only v0.11 must be settled before the first daily target. A release contract is a plan, not evidence of completion.
 
 ## October daily feature plan
 
 These are planning targets, with each release linked to its contract. Start each day by defining the smallest complete end-to-end feature and its acceptance criteria. Keep capture fast and preserve existing household history, offline behavior, accessibility and privacy. If a capability is too large for one day, narrow it or move its date; do not compress unfinished prerequisites into a nominal release.
 
-The [Build Fest cadence](BUILD-FEST-CADENCE.md) covers the daily loop; the [release-line protocol](RELEASE-LINE-PROTOCOL.md) covers correctness, resilience/accessibility and hardening. Create stabilization patches only for real changes. Hardening and release-candidate follow-ups are now undated: if they add no product capability, deliver them as patches to the current minor line and revise the proposed numbering instead of inventing a feature release.
+The [Build Fest cadence](planning/BUILD-FEST-CADENCE.md) covers the daily loop; the [release-line protocol](planning/RELEASE-LINE-PROTOCOL.md) covers correctness, resilience/accessibility and hardening. Create stabilization patches only for real changes. Hardening and release-candidate follow-ups are now undated: if they add no product capability, deliver them as patches to the current minor line and revise the proposed numbering instead of inventing a feature release.
 
 | Target date | Proposed release / contract | Capability |
 |---|---|---|
-| 2026-10-03 | [`v0.12.x`](V0.12.0.md) | **Data Lifecycle, Retention & Deletion** — Make deletion, retention, archive and stale-device behavior explicit and testable. |
-| 2026-10-04 | [`v0.13.x`](V0.13.0.md) | **Recovery & Household Continuity** — Define recovery outcomes without confusing history with identity/device authority. |
-| 2026-10-04 | [`v0.14.x`](V0.14.0.md) | **UX/UI Consolidation** — Completed through tagged v0.14.5. |
-| 2026-10-04 | [`v0.15.x`](releases/V0.15.0.md) | **Household Areas** — User-authorized full release line; implement and validate one milestone at a time. |
-| 2026-10-07 | [`v0.16.x`](releases/V0.16.0.md) | **Household Notes & Reference Context** — Add short reference context without chat or a document editor. |
-| 2026-10-08 | [`v0.17.x`](releases/V0.17.0.md) | **Checklist Steps** — Add lightweight ordered substeps to actionable items while keeping capture fast. |
-| 2026-10-09 | [`v0.18.x`](releases/V0.18.0.md) | **Richer Routine Scheduling** — Make recurring household work flexible enough for real life without building a calendar engine. |
-| 2026-10-10 | [`v0.19.x`](releases/V0.19.0.md) | **Shared Shopping Lists** — Make common shopping capture and completion fast, shared, and offline-friendly. |
-| 2026-10-11 | [`v0.20.x`](releases/V0.20.0.md) | **Staples & Replenishment** — Support recurring household supplies without becoming inventory management. |
-| 2026-10-12 | [`v0.21.x`](releases/V0.21.0.md) | **Household Modes (implemented candidate)** — Pause routine occurrences in temporary household modes without rewriting routine definitions. |
-| 2026-10-13 | [`v0.22.x`](releases/V0.22.0.md) | **Lightweight Planning Dates (implemented candidate)** — Add optional fixed civil dates to Items without reminders or calendar behavior. |
-| 2026-10-14 | [`v0.23.x`](releases/V0.23.0.md) | **Calendar Interoperability** — Let Kin exchange intentional dated household context with calendars using open formats. |
-| 2026-10-15 | [`v0.24.x`](releases/V0.24.0.md) | **Useful Household History** — Answer 'when did we last do/change this?' without creating surveillance. |
-| 2026-10-16 | [`v0.25.x`](releases/V0.25.0.md) | **Search & Filters (implemented candidate)** — Make accumulated household context findable locally and privately. |
-| 2026-10-17 | [`v0.26.x`](releases/V0.26.0.md) | **Pins & Quick Access (implementation candidate)** — Let households keep a few important things immediately reachable. |
-| 2026-10-18 | [`v0.27.x`](releases/V0.27.0.md) | **Household Playbooks** — Turn repeatable household situations into user-authored templates. |
-| 2026-10-19 | [`v0.28.x`](releases/V0.28.0.md) | **Local Reminders** — Provide restrained opt-in reminders for explicit dated/routine work. |
-| 2026-10-20 | [`v0.29.x`](releases/V0.29.0.md) | **PWA & Offline Install Polish** — Make Kin feel dependable as an installed household tool. |
-| 2026-10-21 | [`v0.30.x`](releases/V0.30.0.md) | **Home Reference Records** — Add small structured reference cards for household things people repeatedly need to look up. |
-| 2026-10-22 | [`v0.31.x`](releases/V0.31.0.md) | **Maintenance Records** — Track simple maintenance facts and next actions around household reference records. |
-| 2026-10-23 | [`v0.32.x`](releases/V0.32.0.md) | **Encrypted Attachments Foundation** — Support small private attachments without weakening Kin's encrypted/local-first boundaries. |
-| 2026-10-24 | [`v0.33.x`](releases/V0.33.0.md) | **Attachment UX & Lifecycle** — Make attachments understandable, removable, and resilient across sync/offline states. |
-| 2026-10-25 | [`v0.34.x`](releases/V0.34.0.md) | **Responsibility Ownership** — Allow explicit lightweight ownership without scoring household contribution. |
-| 2026-10-26 | [`v0.35.x`](releases/V0.35.0.md) | **More Adult Members** — Implementation candidate: four active adults, existing admission ceremony, and member-ID responsibility assignment. |
-| 2026-10-27 | [`v0.36.x`](releases/V0.36.0.md) | **Limited Household Members** — Introduce one constrained member class for teens/caregivers/limited participants. |
-| 2026-10-28 | [`v0.37.x`](releases/V0.37.0.md) | **Guest & Caregiver Access** — Support deliberately temporary household participation. |
-| 2026-10-29 | [`v0.38.x`](releases/V0.38.0.md) | **Modes & Member Context Polish** — Make temporary household context work cleanly with expanded membership without surveillance. |
-| 2026-10-30 | [`v0.39.x`](releases/V0.39.0.md) | **Portable Household Export v2** — Create a comprehensive, versioned portable household package covering the expanded product. |
-| 2026-10-31 | [`v0.40.x`](releases/V0.40.0.md) | **Restore & Device Migration UX** — Make moving Kin to a new browser/device understandable and testable. |
+| 2026-10-03 | [`v0.12.x`](planning/V0.12.0.md) | **Data Lifecycle, Retention & Deletion** — Make deletion, retention, archive and stale-device behavior explicit and testable. |
+| 2026-10-04 | [`v0.13.x`](planning/V0.13.0.md) | **Recovery & Household Continuity** — Define recovery outcomes without confusing history with identity/device authority. |
+| 2026-10-04 | [`v0.14.x`](planning/V0.14.0.md) | **UX/UI Consolidation** — Completed through tagged v0.14.5. |
+| 2026-10-04 | [`v0.15.x`](planning/releases/V0.15.0.md) | **Household Areas** — User-authorized full release line; implement and validate one milestone at a time. |
+| 2026-10-07 | [`v0.16.x`](planning/releases/V0.16.0.md) | **Household Notes & Reference Context** — Add short reference context without chat or a document editor. |
+| 2026-10-08 | [`v0.17.x`](planning/releases/V0.17.0.md) | **Checklist Steps** — Add lightweight ordered substeps to actionable items while keeping capture fast. |
+| 2026-10-09 | [`v0.18.x`](planning/releases/V0.18.0.md) | **Richer Routine Scheduling** — Make recurring household work flexible enough for real life without building a calendar engine. |
+| 2026-10-10 | [`v0.19.x`](planning/releases/V0.19.0.md) | **Shared Shopping Lists** — Make common shopping capture and completion fast, shared, and offline-friendly. |
+| 2026-10-11 | [`v0.20.x`](planning/releases/V0.20.0.md) | **Staples & Replenishment** — Support recurring household supplies without becoming inventory management. |
+| 2026-10-12 | [`v0.21.x`](planning/releases/V0.21.0.md) | **Household Modes (implemented candidate)** — Pause routine occurrences in temporary household modes without rewriting routine definitions. |
+| 2026-10-13 | [`v0.22.x`](planning/releases/V0.22.0.md) | **Lightweight Planning Dates (implemented candidate)** — Add optional fixed civil dates to Items without reminders or calendar behavior. |
+| 2026-10-14 | [`v0.23.x`](planning/releases/V0.23.0.md) | **Calendar Interoperability** — Let Kin exchange intentional dated household context with calendars using open formats. |
+| 2026-10-15 | [`v0.24.x`](planning/releases/V0.24.0.md) | **Useful Household History** — Answer 'when did we last do/change this?' without creating surveillance. |
+| 2026-10-16 | [`v0.25.x`](planning/releases/V0.25.0.md) | **Search & Filters (implemented candidate)** — Make accumulated household context findable locally and privately. |
+| 2026-10-17 | [`v0.26.x`](planning/releases/V0.26.0.md) | **Pins & Quick Access (implementation candidate)** — Let households keep a few important things immediately reachable. |
+| 2026-10-18 | [`v0.27.x`](planning/releases/V0.27.0.md) | **Household Playbooks** — Turn repeatable household situations into user-authored templates. |
+| 2026-10-19 | [`v0.28.x`](planning/releases/V0.28.0.md) | **Local Reminders** — Provide restrained opt-in reminders for explicit dated/routine work. |
+| 2026-10-20 | [`v0.29.x`](planning/releases/V0.29.0.md) | **PWA & Offline Install Polish** — Make Kin feel dependable as an installed household tool. |
+| 2026-10-21 | [`v0.30.x`](planning/releases/V0.30.0.md) | **Home Reference Records** — Add small structured reference cards for household things people repeatedly need to look up. |
+| 2026-10-22 | [`v0.31.x`](planning/releases/V0.31.0.md) | **Maintenance Records** — Track simple maintenance facts and next actions around household reference records. |
+| 2026-10-23 | [`v0.32.x`](planning/releases/V0.32.0.md) | **Encrypted Attachments Foundation** — Support small private attachments without weakening Kin's encrypted/local-first boundaries. |
+| 2026-10-24 | [`v0.33.x`](planning/releases/V0.33.0.md) | **Attachment UX & Lifecycle** — Make attachments understandable, removable, and resilient across sync/offline states. |
+| 2026-10-25 | [`v0.34.x`](planning/releases/V0.34.0.md) | **Responsibility Ownership** — Allow explicit lightweight ownership without scoring household contribution. |
+| 2026-10-26 | [`v0.35.x`](planning/releases/V0.35.0.md) | **More Adult Members** — Implementation candidate: four active adults, existing admission ceremony, and member-ID responsibility assignment. |
+| 2026-10-27 | [`v0.36.x`](planning/releases/V0.36.0.md) | **Limited Household Members** — Introduce one constrained member class for teens/caregivers/limited participants. |
+| 2026-10-28 | [`v0.37.x`](planning/releases/V0.37.0.md) | **Guest & Caregiver Access** — Support deliberately temporary household participation. |
+| 2026-10-29 | [`v0.38.x`](planning/releases/V0.38.0.md) | **Modes & Member Context Polish** — Make temporary household context work cleanly with expanded membership without surveillance. |
+| 2026-10-30 | [`v0.39.x`](planning/releases/V0.39.0.md) | **Portable Household Export v2** — Create a comprehensive, versioned portable household package covering the expanded product. |
+| 2026-10-31 | [`v0.40.x`](planning/releases/V0.40.0.md) | **Restore & Device Migration UX** — Make moving Kin to a new browser/device understandable and testable. |
 
 ## Product arcs
 
@@ -418,12 +418,12 @@ proposals and reassess their numbering from evidence.
 
 | Proposed release / contract | Follow-up purpose |
 |---|---|
-| [`v0.41.x`](releases/V0.41.0.md) | **Mobile Experience & Passkey-First UX** — Implementation candidate ([v0.41.1](releases/V0.41.1.md) corrects mobile photo/file attaching): passkey-first unlock with recovery as the fallback, clear create/join/add-device onboarding, context-sensitive capture, attachment previews, and phone-first item rows. Authorized after real-world mobile testing; not a published release. |
-| [Backup Safety & Disaster Drills](releases/BACKUP-SAFETY-DRILLS-PROPOSAL.md) | Deferred proposal (formerly numbered v0.41.0) — Turn recovery claims into routinely tested product behavior. Renumber after the feedback gate. |
-| [`v0.42.x`](releases/V0.42.0.md) | **Cross-Browser & Mobile Hardening** — Broaden confidence beyond the primary desktop development environment. |
-| [`v0.43.x`](releases/V0.43.0.md) | **Performance & Scale Closure** — Make the full feature set responsive within explicit household-scale bounds. |
-| [`v0.44.x`](releases/V0.44.0.md) | **Release-Candidate Stabilization** — Freeze feature scope and remove known correctness, accessibility, migration, and documentation gaps. |
-| [`v0.45.x`](releases/V0.45.0.md) | **Build Fest Release Candidate** — Retain the final validation checklist for a coherent, demoable pre-1.0 product; its scope and version are to be revisited after October. |
+| [`v0.41.x`](planning/releases/V0.41.0.md) | **Mobile Experience & Passkey-First UX** — Implementation candidate ([v0.41.1](planning/releases/V0.41.1.md) corrects mobile photo/file attaching): passkey-first unlock with recovery as the fallback, clear create/join/add-device onboarding, context-sensitive capture, attachment previews, and phone-first item rows. Authorized after real-world mobile testing; not a published release. |
+| [Backup Safety & Disaster Drills](planning/releases/BACKUP-SAFETY-DRILLS-PROPOSAL.md) | Deferred proposal (formerly numbered v0.41.0) — Turn recovery claims into routinely tested product behavior. Renumber after the feedback gate. |
+| [`v0.42.x`](planning/releases/V0.42.0.md) | **Cross-Browser & Mobile Hardening** — Broaden confidence beyond the primary desktop development environment. |
+| [`v0.43.x`](planning/releases/V0.43.0.md) | **Performance & Scale Closure** — Make the full feature set responsive within explicit household-scale bounds. |
+| [`v0.44.x`](planning/releases/V0.44.0.md) | **Release-Candidate Stabilization** — Freeze feature scope and remove known correctness, accessibility, migration, and documentation gaps. |
+| [`v0.45.x`](planning/releases/V0.45.0.md) | **Build Fest Release Candidate** — Retain the final validation checklist for a coherent, demoable pre-1.0 product; its scope and version are to be revisited after October. |
 
 ## Beyond October — `v1.0.0` Stable Kin Platform
 
@@ -435,7 +435,7 @@ A stable release establishes compatibility/support commitments, upgrade guarante
 
 The v0.11–v0.14 platform-completion lines retain their existing scope and two-adult household model. Areas, notes, calendar interoperability, reminders, attachments and broader membership enter only at their designated later planning lines, after their prerequisites and authority/privacy boundaries are settled. Do not pull these features into the platform bridge or treat their appearance here as implemented support.
 
-Through the October plan, preserve the [product principles](PRINCIPLES.md) and [product boundaries](PRODUCT-BOUNDARIES.md):
+Through the October plan, preserve the [product principles](PRINCIPLES.md) and [product boundaries](planning/PRODUCT-BOUNDARIES.md):
 
 - No AI runtime, household-content interpretation or recommendation engine.
 - No points, streak pressure, rankings, contribution percentages or spouse scoring.

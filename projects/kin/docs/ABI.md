@@ -1121,5 +1121,5 @@ Reference Records, v21 Maintenance, v22 attachments, v23 responsibility, and
 v24 Weekdays plus next-occurrence dates. Protocol 24's layout is the
 accumulation of those sections. Refactor Slice 4 regrouped the KINS body into
 per-domain sections behind a section table with revisions. The per-version contracts are in the release
-records (for example [V0.7.0](V0.7.0.md), [V0.9.0](V0.9.0.md),
-[V0.10.0](V0.10.0.md) and `releases/`).
+records (for example [V0.7.0](planning/V0.7.0.md), [V0.9.0](planning/V0.9.0.md),
+[V0.10.0](planning/V0.10.0.md) and `releases/`).

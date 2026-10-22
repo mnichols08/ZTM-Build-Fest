@@ -75,7 +75,7 @@ no reminder titles. It keeps only suspended reminders' record ids, due times and
 local vault id, and it cannot show a notification ([PRIVACY](PRIVACY.md)).
 v0.9.3 does not provide this protection:
 its canonical events, draft text and usable sync CryptoKeys survive logout.
-The [v0.10 record](V0.10.0.md) gates this claim on complete migration, including
+The [v0.10 record](planning/V0.10.0.md) gates this claim on complete migration, including
 outbox duplicates and legacy provisioning/decryption capabilities.
 
 **Exception, refresh resume (#351, [ADR 0010](decisions/0010-reload-resume.md)).**
@@ -290,7 +290,7 @@ epic #546), with the wrapper-set rules the service enforces (CRYPTOGRAPHY,
 | Offline conflicting edits                         | Stable IDs, Lamport ordering, deterministic replay and domain validation                                            | Equal-time archive conflict policy is deterministic; intent may still need user review                                     | Inferring human intent or who is right                                         |
 | Rollback/replay of old ciphertext                 | Exact event IDs/envelopes, local applied bytes and cursor high-water checks                                         | Relay restart is detectable against local high-water and cached own envelopes are retried                                  | Fresh-device completeness and global rollback detection                        |
 
-The detailed design and guarantees are in [V0.9.0](V0.9.0.md). The following table is the historical v0.8 pairing assessment.
+The detailed design and guarantees are in [V0.9.0](planning/V0.9.0.md). The following table is the historical v0.8 pairing assessment.
 
 ## v0.8 Pairing Threat Notes
 

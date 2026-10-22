@@ -4,7 +4,7 @@
 
 A push tells a device that something is new in its household. It never says
 what, who added it or how many, and Kin records nothing about whether it was
-delivered, shown or tapped (no read receipts; [PRODUCT-BOUNDARIES](PRODUCT-BOUNDARIES.md)).
+delivered, shown or tapped (no read receipts; [PRODUCT-BOUNDARIES](planning/PRODUCT-BOUNDARIES.md)).
 
 ## What a member sees
 

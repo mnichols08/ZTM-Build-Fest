@@ -5,8 +5,8 @@ Status: Accepted (owner decision, #105, for the household chat epic #104)
 ## Context
 
 Kin's boundaries kept chat out of scope. The roadmap said "No chat
-replacement", the Talk contract ([V0.4.0](../V0.4.0.md)) excluded chat,
-replies and threads, and [PRODUCT-BOUNDARIES](../PRODUCT-BOUNDARIES.md)
+replacement", the Talk contract ([V0.4.0](../planning/V0.4.0.md)) excluded chat,
+replies and threads, and [PRODUCT-BOUNDARIES](../planning/PRODUCT-BOUNDARIES.md)
 listed hidden read receipts, presence and activity monitoring under "Avoid".
 The owner decided to add one household chat room beside Talk's short topics
 to come back to, with read receipts, typing and "online now" in scope

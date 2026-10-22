@@ -3,7 +3,7 @@
 Status: **Proposed (not planned yet)** (#650). The owner parked the idea on
 2026-10-21 ("keep this idea on the back burner"). Nothing here is scheduled.
 Section 4 (bigger groups) **needs an owner decision** before any work on it,
-because it changes [PRODUCT-BOUNDARIES](../PRODUCT-BOUNDARIES.md) and the
+because it changes [PRODUCT-BOUNDARIES](../planning/PRODUCT-BOUNDARIES.md) and the
 scope in [AGENTS.md](../../AGENTS.md). Related: ADR 0023 (add-ons), written
 at the same time.
 

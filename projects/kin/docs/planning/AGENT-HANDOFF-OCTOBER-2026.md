@@ -22,8 +22,8 @@ The broader October roadmap still targets
 v0.40.x, with v0.41–v0.45 as undated proposals for reassessment after
 October feedback.
 
-Follow the current user-authorized scope in [AGENTS.md](AGENTS.md) and the
-[release process](docs/RELEASES.md). This handoff does not authorize
+Follow the current user-authorized scope in [AGENTS.md](../../AGENTS.md) and the
+[release process](../RELEASES.md). This handoff does not authorize
 publication, tagging, or branch merge.
 
 Never fake tags to satisfy dates.

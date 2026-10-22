@@ -62,7 +62,7 @@ a trusted device. Final deletion purges membership, credential and device
 authorization records and cannot be cancelled or recovered. A minimal server
 tombstone prevents this database from reviving an older household backup.
 Existing local data and exports are not remotely erased. See
-[V0.12.0](V0.12.0.md) for authorization and restoration limits.
+[V0.12.0](planning/V0.12.0.md) for authorization and restoration limits.
 
 ## Passkey direction
 
@@ -267,7 +267,7 @@ A device is trusted only after explicit enrollment by an active member through t
 
 Conceptual device states are pending, authorized, and revoked. Each enrolled sync-capable device locally generates separate non-extractable P-256 ECDH and ECDSA private keys. The service stores only public JWKs and a SHA-256 fingerprint. During pairing the joining device compares its locally computed fingerprint with the inviter's displayed value; approval is blocked on mismatch. Passkeys never supply or derive content keys.
 
-Only authorized devices may submit or receive encrypted household events. Device revocation and member removal immediately invalidate target sessions and reserve a new household epoch; the remaining trusted devices must provision that epoch before sync resumes. A revoked device receives no later epoch, but keeps any old plaintext/key it already possessed. See [Pairing](PAIRING.md), [Sync](SYNC.md), and [V0.9.0](V0.9.0.md).
+Only authorized devices may submit or receive encrypted household events. Device revocation and member removal immediately invalidate target sessions and reserve a new household epoch; the remaining trusted devices must provision that epoch before sync resumes. A revoked device receives no later epoch, but keeps any old plaintext/key it already possessed. See [Pairing](PAIRING.md), [Sync](SYNC.md), and [V0.9.0](planning/V0.9.0.md).
 
 An open browser checks authorization on focus/return and every 30 seconds while visible. Once the service can be reached, a revoked session clears its session cookie and a removed/revoked device also clears its device cookie; the UI stops sync and shows the signed-out state while retaining local household data. A disconnected device cannot learn of revocation until it reconnects or returns to the service.
 
@@ -363,4 +363,4 @@ household deletion, cancellation and final tombstoning without changing the
 client encryption boundary. The v0.13 line must
 define replacement-device and household recovery against current membership,
 deletion and revocation state. It remains planned; see [ROADMAP](ROADMAP.md)
-and the [v0.11](V0.11.0.md)/[v0.13](V0.13.0.md) contracts.
+and the [v0.11](planning/V0.11.0.md)/[v0.13](planning/V0.13.0.md) contracts.

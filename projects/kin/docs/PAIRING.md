@@ -67,7 +67,7 @@ The pairing invitation must not itself be a durable login credential or contain 
 - Bind confirmation to the exact key-exchange transcript. Both devices should show matching human-readable verification information (such as a short fingerprint/word sequence derived using a standard protocol) before approval. The representation and usability must be security-reviewed; it is not an ad hoc cryptographic primitive.
 - Show the inviter and invitee which household and member/device are being added, and require clear confirmation from both.
 
-The v0.8.6 implementation uses a ten-minute Pending invitation and starts a separate fifteen-minute approval window after a successful claim. It validates a code before returning WebAuthn registration options. v0.9 adds recipient-bound provisioning and encrypted sync; see [V0.9.0](V0.9.0.md).
+The v0.8.6 implementation uses a ten-minute Pending invitation and starts a separate fifteen-minute approval window after a successful claim. It validates a code before returning WebAuthn registration options. v0.9 adds recipient-bound provisioning and encrypted sync; see [V0.9.0](planning/V0.9.0.md).
 
 Household capacity is derived from active membership records at both invitation creation and final approval. An inactive historical member does not consume one of the two active-adult slots, but remains stored; a full household cannot create an invitation or approve an in-flight claim.
 

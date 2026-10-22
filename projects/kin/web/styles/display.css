@@ -112,6 +112,7 @@
   border: 1px solid var(--line);
   border-radius: var(--r-card);
   background: var(--surface);
+  box-shadow: var(--shadow-1);
   box-sizing: border-box;
 }
 .display-panel[data-size="l"] { flex: 2 1 auto; }

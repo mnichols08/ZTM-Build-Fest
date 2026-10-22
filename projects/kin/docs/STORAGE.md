@@ -106,7 +106,7 @@ retain defensive copying. Final native migration/restore/rotation transactions
 abort on local lock. Complete plaintext results remain required at the bounded
 10,000-event/64 MiB Rust replay and KARC v1 interfaces.
 
-The [v0.10 contract](V0.10.0.md) defines the complete baseline inventory, minimal
+The [v0.10 contract](planning/V0.10.0.md) defines the complete baseline inventory, minimal
 routing metadata, AES-GCM envelope/AAD, key hierarchy and transaction requirements.
 All event values, duplicate canonical outbox values, protected context and sync
 metadata require encryption. The schema version, envelope version and event
@@ -403,21 +403,21 @@ The independent draft key is `kin.handoff.draft`; it is best-effort, tab-scoped,
 
 ## v0.4.0 Talk
 
-IndexedDB remains schema 1 without structural migration. Talk commands use the existing atomic event/counter transaction and Rust validation. Independent best-effort session draft kin.talk.draft clears only after its matching submission succeeds; older retry/completion preserves newer text. Content-free invalidation remains { type: "events-changed" }. See [V0.4.0](V0.4.0.md).
+IndexedDB remains schema 1 without structural migration. Talk commands use the existing atomic event/counter transaction and Rust validation. Independent best-effort session draft kin.talk.draft clears only after its matching submission succeeds; older retry/completion preserves newer text. Content-free invalidation remains { type: "events-changed" }. See [V0.4.0](planning/V0.4.0.md).
 
 ## v0.5.0 Pulse
 
-IndexedDB remains schema 1; no migration or second authority. Pulse shares atomic event/counter transactions. Original failed SET retry preserves timestamp/value/expiry. BroadcastChannel remains exactly { type: "events-changed" }; peers reload canonical events through Rust with explicit time. See [V0.5.0](V0.5.0.md).
+IndexedDB remains schema 1; no migration or second authority. Pulse shares atomic event/counter transactions. Original failed SET retry preserves timestamp/value/expiry. BroadcastChannel remains exactly { type: "events-changed" }; peers reload canonical events through Rust with explicit time. See [V0.5.0](planning/V0.5.0.md).
 
 ## v0.6.0 Since You Last Looked
 
 The three catch-up fields extend the existing `local_context` singleton; database version remains 1 with no store, key, or index change. A legacy context with all three fields absent is initialized in a read/write transaction over `events` and `local_context`, capturing the current tail without changing events or `next_logical_time`. Partial/corrupt metadata fails closed. `getCatchUpState()` reads ordered events and the local cursor in one readonly transaction. `markCaughtUpThrough(snapshotBoundary)` verifies the request and captured snapshot tail rows, then transactionally advances only when its local sequence is newer. It changes no canonical event and preserves `next_logical_time`.
 
-Protocol v6 carries the stable cursor event ID; IndexedDB `local_sequence` stays browser-only. `events-changed` remains content-free. After a cursor commit, tabs send only `{ type: "view-state-changed" }`; receivers reread IndexedDB and recompute. Neither message includes an ID, cursor, count, text, actor, or device. See [V0.6.0](V0.6.0.md).
+Protocol v6 carries the stable cursor event ID; IndexedDB `local_sequence` stays browser-only. `events-changed` remains content-free. After a cursor commit, tabs send only `{ type: "view-state-changed" }`; receivers reread IndexedDB and recompute. Neither message includes an ID, cursor, count, text, actor, or device. See [V0.6.0](planning/V0.6.0.md).
 
 ## v0.7.0 Routines
 
-Routine kinds 14–17 share schema-1 atomic event/counter transactions. Current-period writes first project saved bytes in Rust inside the transaction and compare the intent key; stale keys never retarget. No occurrence table or source-byte migration. `kin.routine.draft` is best-effort tab-local text/cadence, not household truth. See [V0.7.0](V0.7.0.md).
+Routine kinds 14–17 share schema-1 atomic event/counter transactions. Current-period writes first project saved bytes in Rust inside the transaction and compare the intent key; stale keys never retarget. No occurrence table or source-byte migration. `kin.routine.draft` is best-effort tab-local text/cadence, not household truth. See [V0.7.0](planning/V0.7.0.md).
 
 ## v0.9.x Encrypted Sync Storage
 

@@ -172,7 +172,7 @@ The browser runner covers delayed Handoff persistence across reconnect/peer refr
 
 ## v0.4.0 Talk
 
-Talk uses semantic heading/lists, native labels/buttons, textual status and input focus restoration after add/resolve/reopen/archive and peer action replacement. Busy state disables all controls. Require 48px targets, 320px reflow and accessibility modes; do not claim untested assistive-technology certification. See [V0.4.0](V0.4.0.md).
+Talk uses semantic heading/lists, native labels/buttons, textual status and input focus restoration after add/resolve/reopen/archive and peer action replacement. Busy state disables all controls. Require 48px targets, 320px reflow and accessibility modes; do not claim untested assistive-technology certification. See [V0.4.0](planning/V0.4.0.md).
 
 ## v0.4.2 resilience and accessibility evidence
 
@@ -186,7 +186,7 @@ Passed 58 Rust tests and 19 Node bridge/real-WASM tests, formatting, Clippy with
 
 ## v0.5.0 Pulse
 
-Pulse uses semantic heading, labeled native selects/buttons, textual state, visible focus and 48px targets. Busy disables controls, success is polite, errors assertive. Refresh preserves selections/focus. Report actual zoom/assistive-technology coverage per milestone. See [V0.5.0](V0.5.0.md).
+Pulse uses semantic heading, labeled native selects/buttons, textual state, visible focus and 48px targets. Busy disables controls, success is polite, errors assertive. Refresh preserves selections/focus. Report actual zoom/assistive-technology coverage per milestone. See [V0.5.0](planning/V0.5.0.md).
 
 ## v0.5.2 resilience and accessibility evidence
 
@@ -200,7 +200,7 @@ The catch-up section uses a semantic heading and unordered list, a visible nativ
 
 ## v0.6.1 cursor correctness evidence
 
-The correctness audit covered empty/first/middle/latest cursor cases, exact and conflicting duplicate event IDs, eight/nine-entry caps, and malformed/partial cursor metadata preservation. Browser evidence includes stale-tab monotonicity and preservation of stored metadata on failure. Recorded validation passed 81 Rust tests, 29 Node/real-WASM tests, and the complete Chrome 154.0.8037.95 browser suite; this adds no assistive-technology or other-browser certification. See [V0.6.0](V0.6.0.md) and the [changelog](../CHANGELOG.md).
+The correctness audit covered empty/first/middle/latest cursor cases, exact and conflicting duplicate event IDs, eight/nine-entry caps, and malformed/partial cursor metadata preservation. Browser evidence includes stale-tab monotonicity and preservation of stored metadata on failure. Recorded validation passed 81 Rust tests, 29 Node/real-WASM tests, and the complete Chrome 154.0.8037.95 browser suite; this adds no assistive-technology or other-browser certification. See [V0.6.0](planning/V0.6.0.md) and the [changelog](../CHANGELOG.md).
 
 ## v0.6.2 resilience and accessibility evidence
 
@@ -210,11 +210,11 @@ Catch-up quota and transaction-abort tests preserve the cursor and restore focus
 
 The hardening/polish audit covered summary copy, omitted count, empty state, placement, mobile wrapping, and focus visibility alongside malformed v6 results, truncation boundaries, 10,000-event replay, memory growth, and copied-result lifetime. Commit `45ca041` fixes a committed cursor followed by a failed snapshot reload: the displayed summary is preserved, peers receive content-free invalidation, and retry reloads canonical state without another cursor write. Two-tab recovery and quota/abort no-broadcast regressions preserve the distinction between refresh failure and failed writes.
 
-Recorded revalidation passed 82 Rust tests, 31 Node/real-WASM tests, and the complete Chrome 154.0.8037.95 runner (12 initial scenarios and 21 PASS groups). Existing 320px reflow, forced colors, increased spacing, reduced motion, and 200% Chromium page-scale emulation passed. Firefox, Safari, macOS, native desktop zoom, NVDA, and VoiceOver remain unverified; page-scale emulation is not native zoom and no screen-reader certification is claimed. See [V0.6.0](V0.6.0.md) and the [changelog](../CHANGELOG.md).
+Recorded revalidation passed 82 Rust tests, 31 Node/real-WASM tests, and the complete Chrome 154.0.8037.95 runner (12 initial scenarios and 21 PASS groups). Existing 320px reflow, forced colors, increased spacing, reduced motion, and 200% Chromium page-scale emulation passed. Firefox, Safari, macOS, native desktop zoom, NVDA, and VoiceOver remain unverified; page-scale emulation is not native zoom and no screen-reader certification is claimed. See [V0.6.0](planning/V0.6.0.md) and the [changelog](../CHANGELOG.md).
 
 ## v0.7.0 Routines
 
-Routine capture uses labeled native text/cadence controls, a semantic list and named native actions. Text says Open/Done today or this week. Focus follows the corresponding row action, or returns to capture after archive; quiet periodic refresh does not announce a fabricated household change. Verify keyboard create/complete/reopen/archive, visible focus, 48px targets, forced colors, 320px reflow, spacing and zoom. Actual assistive-technology gaps remain in [V0.7.0](V0.7.0.md).
+Routine capture uses labeled native text/cadence controls, a semantic list and named native actions. Text says Open/Done today or this week. Focus follows the corresponding row action, or returns to capture after archive; quiet periodic refresh does not announce a fabricated household change. Verify keyboard create/complete/reopen/archive, visible focus, 48px targets, forced colors, 320px reflow, spacing and zoom. Actual assistive-technology gaps remain in [V0.7.0](planning/V0.7.0.md).
 
 ## Easy mode and Help on every screen (#616, #620, ADR 0021)
 
