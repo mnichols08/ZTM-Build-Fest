@@ -107,8 +107,9 @@ export async function photoAlbumRegressions() {
   check(album.frame.getAttribute("role") === "region" && album.frame.getAttribute("aria-roledescription") === "slideshow", "the frame is a labelled slideshow region");
   check(showing().querySelector(".photo-frame-added-by").textContent === "Added by You", "the frame says who added it", showing().textContent);
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const fade = getComputedStyle(showing()).transitionDuration;
-  check(reduce ? fade === "0s" : fade !== "0s", "it crossfades, except with reduced motion", { reduce, fade });
+  // Reduced motion makes every transition next to instant (app.css).
+  const fade = Number.parseFloat(getComputedStyle(showing()).transitionDuration);
+  check(reduce ? fade <= 0.01 : fade >= 1, "it crossfades, except with reduced motion", { reduce, fade });
   check(album.frame.querySelector(".photo-frame-pause")?.getAttribute("aria-pressed") === "false", "Pause is offered");
   // Hidden page: it pauses; shown again: it carries on.
   pageHidden = true;
@@ -150,6 +151,11 @@ export async function photoAlbumRegressions() {
     await idle();
   }
   app.ctx.undo.clear();
+  // Let the sync passes these changes started finish, so their re-render
+  // doesn't land in the middle of the next regression.
+  await app.syncCoordinator?.syncNow?.();
+  await app.syncCoordinator?.syncNow?.();
+  await idle();
   app.ctx.navigation.navigate("#today");
   return "PASS family photos: added with captions, thumbnails, viewer, remove with Undo, slideshow (crossfade, pause when hidden, tap returns), share sheet and chat (#673)";
 }
