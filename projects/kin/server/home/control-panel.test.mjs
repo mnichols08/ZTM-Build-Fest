@@ -14,7 +14,7 @@ import { trustTunnelPeer } from "../client-key.mjs";
 import { DurableStore } from "../durable-store.mjs";
 import { PairingError } from "../pairing-service.mjs";
 import { createKinServer } from "../server.mjs";
-import { createControlPanel, loopbackProblem, writeProblem } from "./control-panel.mjs";
+import { ALERT_INTERVAL_MS, certificateAlerts, createControlPanel, loopbackProblem, writeProblem } from "./control-panel.mjs";
 import { loadHomeSettings, resolveHomeSettings } from "./settings.mjs";
 
 const TIMEOUT = { timeout: 30_000 };
@@ -349,4 +349,23 @@ test("hosted Kin has no control panel", TIMEOUT, async (t) => {
   assert.equal((await call(port, "/control/api/state")).status, 404);
   assert.equal((await call(port, "/api/control/status")).status, 404);
   assert.equal((await call(port, "/")).status, 200, "the app as before");
+});
+
+test("certificate alerts: expiring and transparency alerts push to admins, at most daily each", TIMEOUT, () => {
+  let now = 0;
+  let alerts = 0;
+  const logged = [];
+  const alert = certificateAlerts({ adminsAlerted: () => { alerts += 1; } }, { now: () => now, log: (event) => logged.push(event) });
+  alert({ type: "renewed" });
+  alert({ type: "failed", code: "acme-network" });
+  assert.equal(alerts, 0, "renewals and ordinary failures don't wake anyone");
+  alert({ type: "expiring" });
+  alert({ type: "expiring" });
+  alert({ type: "transparency-alert", count: 1 });
+  assert.equal(alerts, 2);
+  now += ALERT_INTERVAL_MS;
+  alert({ type: "expiring" });
+  assert.equal(alerts, 3, "again the next day");
+  assert.deepEqual(logged.map((event) => event.reason), ["expiring", "transparency-alert", "expiring"]);
+  certificateAlerts(null)({ type: "expiring" });
 });

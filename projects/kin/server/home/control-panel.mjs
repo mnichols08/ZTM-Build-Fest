@@ -418,6 +418,28 @@ export class ControlPanel {
   }
 }
 
+/** Certificate events that need an admin (ADR 0025 §5): fewer than 14
+ * days left, or a certificate this server didn't make in the CT logs. */
+export const ALERT_EVENTS = Object.freeze(["expiring", "transparency-alert"]);
+export const ALERT_INTERVAL_MS = 24 * 60 * 60_000;
+
+/**
+ * Turns the certificate manager's events into the admins' content-free
+ * push, at most once a day per kind (the manager reports "expiring" each
+ * time it plans, which can be hourly while renewal retries).
+ */
+export function certificateAlerts(pushService, { now = Date.now, log = () => {} } = {}) {
+  const lastSent = new Map();
+  return (event) => {
+    if (!ALERT_EVENTS.includes(event?.type)) return;
+    const last = lastSent.get(event.type);
+    if (last !== undefined && now() - last < ALERT_INTERVAL_MS) return;
+    lastSent.set(event.type, now());
+    pushService?.adminsAlerted?.();
+    log({ event: "home_admins_alerted", reason: event.type });
+  };
+}
+
 /**
  * Builds home mode's control panel for a running Kin server: the settings
  * it reads and writes, its stored sessions and the setup flow, and

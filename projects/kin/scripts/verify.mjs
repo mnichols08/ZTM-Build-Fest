@@ -18,6 +18,8 @@ const BROWSER_RUNNERS = [
   ["security UI regression", "security-ui-regression.mjs"],
   ["passkey regression", "passkey-regression.mjs"],
   ["household authority regression", "household-authority-regression.mjs"],
+  // The home server's control panel (#718): setup through the real relay.
+  ["control panel regression", "control-panel-regression.mjs"],
 ];
 
 async function terminateProcessTree(child, signal) {

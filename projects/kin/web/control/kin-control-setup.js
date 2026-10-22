@@ -115,7 +115,8 @@ export class KinControlSetup extends HTMLElement {
       certificate: () => this.#progressStep(),
       done: () => this.#doneStep(),
     }[step]?.() ?? [el("p", { text: "Kin is getting ready…" })];
-    this.replaceChildren(progress, ...body, this.message);
+    // replaceChildren would turn a null into the text "null".
+    this.replaceChildren(progress, ...body.filter(Boolean), this.message);
     if (this.#renderedStep !== null && this.#renderedStep !== step) this.querySelector?.("#control-step-title")?.focus();
     this.#renderedStep = step;
   }
@@ -192,7 +193,8 @@ export class KinControlSetup extends HTMLElement {
 
   #termsStep() {
     const view = this.#view;
-    const agree = el("input", { id: "control-terms", type: "checkbox", required: true });
+    // Not `required`: Kin says why in its own words instead of the browser's.
+    const agree = el("input", { id: "control-terms", type: "checkbox" });
     const link = el("a", { href: this.termsUrl ?? "https://letsencrypt.org/repository/", target: "_blank", rel: "noopener noreferrer", text: "Read Let's Encrypt's Subscriber Agreement" });
     if (!this.termsUrl) this.api.post("setup/terms-url").then(({ url }) => { if (url) { this.termsUrl = url; link.href = url; } }).catch(() => {});
     const go = el("button", { type: "submit", className: "primary-action", text: "Agree and continue" });

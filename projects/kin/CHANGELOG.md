@@ -82,6 +82,34 @@ documentation only.
   streams only. Without a name, home mode runs on loopback as before. The
   executable and container image now include `relay/ktun.mjs`. Tested end
   to end on loopback with the real relay and the in-process ACME server.
+- **Kin at home: the control panel's setup and status pages** (#718: #719,
+  #720; epic #708, [ADR 0025](docs/decisions/0025-kin-at-home.md) §10–§11,
+  [HOME-SERVER](docs/HOME-SERVER.md#setting-it-up-the-control-panel)).
+  On first run a home server listens on loopback only, keeps the app's API
+  closed, and prints a one-time setup code (10 characters without
+  look-alikes, one hour, once, five tries); the launcher shows it in plain
+  words and opens the browser at `http://localhost:<port>/control/` when
+  started in a terminal. The setup page then: checks the name with the relay
+  as it is typed (new `CONTROL` op 7 `CHECK`, which binds nothing), takes the
+  agreement to Let's Encrypt's terms (linked from the CA's directory), shows
+  and checks an own domain's A/AAAA, `_kin-relay` TXT, CAA (with
+  `accounturi`) and HTTPS (no ECH) records, writes `home/settings.json`
+  (0600) and restarts once (exit code 75, which the launcher starts again),
+  follows the claim and the certificate, and sends the person to
+  `https://<name>` to create the household. The status page shows the
+  relay connection, name, certificate and CT check, storage, and households
+  and devices as counts only, with every state and error code in plain
+  words; backups (#721) and updates (#722) have their cards and seams. The
+  panel is reachable on loopback (its own API with loopback, Host,
+  forwarding-header and same-origin checks, after a code, with a 30-day
+  session) or at `https://<name>/control/` for signed-in household admins;
+  every change needs a fresh confirmation (a printed code on the computer,
+  the admin's passkey or password otherwise). The first change is the
+  new-household limit (1–10). A certificate running out within 14 days, or
+  one this server didn't make, sends the admins the usual content-free push.
+  Tested in Node, end to end through the restart against the real relay and
+  the in-process CA, and in a browser (`scripts/control-panel-regression.mjs`,
+  a new CI suite).
 
 - **Kitchen display mode** (#669: #670, #671, #672; epic #651,
   [ADR 0022](docs/decisions/0022-family-hub.md) §4). An Adult turns a tablet

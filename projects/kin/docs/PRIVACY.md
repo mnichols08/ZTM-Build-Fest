@@ -483,6 +483,13 @@ built version can be checked against it.
   certificate, a daily check of a Certificate Transparency search service
   (crt.sh by default) for its own name, and a daily check for updates. None
   of these carries household content.
+- **The home server's control panel** (#719, #720, built) shows its
+  operator and the household admins the connection, the certificate, the
+  storage used and how many households and trusted devices there are: counts,
+  never what a household keeps, nor any member's or device's name. Its
+  one-time codes are printed to the home server's own window and log; the
+  browser on that computer keeps a control-panel session whose token is
+  stored on the server only as a hash.
 - **Backups on the home server** hold the database (as encrypted as the
   service's) and the home server's keys; they stay on the household's
   computer, or a drive it chooses.

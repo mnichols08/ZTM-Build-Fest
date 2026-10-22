@@ -492,9 +492,12 @@ if (
       if (homeSettings && !homeSettings.configured)
         console.log(JSON.stringify({ event: "home_not_configured", message: "No home server name is set, so the tunnel to the connection relay is off. Set it up on this computer (docs/HOME-SERVER.md)." }));
       if (!homeSettings?.configured) return;
-      import("./home/home-server.mjs")
-        .then(({ startHomeServer }) => startHomeServer({
+      Promise.all([import("./home/home-server.mjs"), import("./home/control-panel.mjs")])
+        .then(([{ startHomeServer }, { certificateAlerts }]) => startHomeServer({
           application, dataDirectory, settings: homeSettings, log: (event) => console.log(JSON.stringify(event)),
+          // Fewer than 14 days left, or a certificate this server didn't
+          // make: the household admins get a content-free push (§5).
+          onCertificateEvent: certificateAlerts(application.pushService, { log: (event) => console.log(JSON.stringify(event)) }),
         }))
         .then((home) => { application.home = home; })
         .catch((error) => {

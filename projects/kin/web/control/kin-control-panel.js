@@ -35,6 +35,11 @@ export class KinControlPanel extends HTMLElement {
 
   connectedCallback() {
     this.api ??= new ControlApi();
+    // The notice is there from the start: the first request may fail too.
+    if (!this.noticeElement) {
+      this.noticeElement = el("p", { className: "control-notice", role: "status", hidden: true });
+      this.replaceChildren(this.noticeElement, el("p", { text: "Loading…" }));
+    }
     globalThis.document?.addEventListener?.("visibilitychange", this.onVisibility);
     this.addEventListener("signed-in", () => this.refresh());
     this.addEventListener("view", (event) => this.#setupView(event.detail));
@@ -136,11 +141,19 @@ export class KinControlPanel extends HTMLElement {
       status.status = state.status;
       const settings = this.#part("kin-control-settings");
       settings.status = state.status;
+      // Setup's last step: no household yet, so the way to Kin comes first.
+      if (!state.remote && state.status.counts?.households === 0 && state.status.origin) {
+        children.push(el("section", { className: "control-card control-ready", "aria-labelledby": "control-ready-title" },
+          el("h2", { id: "control-ready-title", tabIndex: -1, text: "Kin is ready" }),
+          el("p", { text: `Open Kin at ${state.status.origin} to create your household, on the phone or computer you'll use most. Add your other devices and people from there.` }),
+          el("p", { className: "control-actions" }, el("a", { className: "control-button primary-action", href: state.status.origin, text: `Open ${state.status.origin}` })),
+          el("p", { className: "control-hint", text: "Create the household there, not here: passkeys and each device's saved data belong to that address." })));
+      }
       children.push(el("h2", { id: "control-status-title", tabIndex: -1, text: "Status" }), status, settings);
       if (!state.remote) {
-        children.push(
-          el("p", { className: "control-hint" }, "Kin is at ", el("a", { href: state.status.origin, text: state.status.origin }), ". Open your household there."),
-          el("p", { className: "control-actions" }, el("button", { type: "button", className: "secondary", text: "Sign out of the control panel", onclick: () => this.signOut() })));
+        if (state.status.counts?.households > 0 && state.status.origin)
+          children.push(el("p", { className: "control-hint" }, "Kin is at ", el("a", { href: state.status.origin, text: state.status.origin }), "."));
+        children.push(el("p", { className: "control-actions" }, el("button", { type: "button", className: "secondary", text: "Sign out of the control panel", onclick: () => this.signOut() })));
       }
     } else if (screen === "remote-sign-in") {
       children.push(el("h2", { tabIndex: -1, text: "Sign in first" }), el("p", {}, "The control panel is for this home server's household admins. ", el("a", { href: "/", text: "Open Kin and sign in" }), ", then come back."));

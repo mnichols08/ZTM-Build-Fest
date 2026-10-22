@@ -3488,3 +3488,70 @@ can tap.
 - `scripts/kitchen-display-regression.mjs` checks the flow in the browser at
   tablet sizes; [KITCHEN-DISPLAY-CHECKLIST](KITCHEN-DISPLAY-CHECKLIST.md) is
   the owner's check on a real wall tablet.
+
+## The home server's control panel (#718: #719, #720)
+
+[ADR 0025](decisions/0025-kin-at-home.md) §10–§11: the person who runs Kin at
+home sets it up and checks on it in a browser, never a terminal. It is the
+server's own page, `/control/` (`web/control/`), built from Kin's tokens,
+buttons and focus rings (`/styles/app.css`) plus `web/control/control.css`;
+details in [HOME-SERVER](HOME-SERVER.md#setting-it-up-the-control-panel).
+
+- **Who it is for.** Not household members: the person with the computer,
+  and household admins. Members never see it; the app doesn't link to it.
+- **Getting in.** On the computer itself, "Enter the setup code" (first run)
+  or "Open the control panel": one box for the 10-character code Kin
+  printed, which accepts lower case and a missing hyphen, explains in one
+  sentence why it is asked ("keeps other programs on this computer out"),
+  says how many tries are left after a wrong one, and offers **Print a new
+  code**. Through the household's address, a signed-out person is sent to
+  sign in, and a member who isn't an admin is told it is for admins.
+- **Setup, one step at a time.** A numbered step list (the current step
+  marked for screen readers), one heading and one main action per step, and
+  focus on the new step's heading when it changes:
+  1. **Choose this home server's name.** Two big choices, "A free name" and
+     "Our own domain", each with a one-line example. The free name's box
+     shows the zone after it, so people type one word. The relay's answer
+     appears as they type ("Available.", "Taken: …") in a polite live region.
+     It says plainly that the name is chosen once.
+  2. **Agree to Let's Encrypt's terms.** What Let's Encrypt is, a link to
+     its Subscriber Agreement (opens in a new tab, and says so), one
+     checkbox, **Agree and continue**. Kin's own words, not the browser's,
+     if the box isn't ticked.
+  3. **Add these DNS records** (own domain only). A table of type, name and
+     value with a **Copy** button per value, a note about CNAME and ECH, and
+     **Check the records**, whose result lists each record as in place or
+     what to fix, in plain words.
+  4. **Connect.** One button; it says Kin restarts once and the page waits.
+  5. **Connecting / Getting the certificate.** Relay, name and certificate,
+     each marked done, working or a problem, with the problem explained and
+     **Try again now** for a certificate error. The page updates itself
+     every two seconds and says "Kin is restarting…" while Kin is away.
+  6. **Kin is ready.** The address, and a button to open it there to create
+     the household; it says why not here (passkeys and saved data belong to
+     that address).
+  Every step but the last has **Choose another name**.
+- **Status.** One headline ("Everything is working.", "Phones can't reach
+  this home server right now.", "The certificate runs out soon.", or a red
+  one when a certificate this server didn't make appears), then cards:
+  Connection, Name, Certificate, Backups, Storage, Households and devices
+  ("Counts only. The control panel never shows what households keep in
+  Kin."), Version and updates. Every state and error code is a sentence
+  (`web/control/explain.js`), with what to do where there is something to
+  do. Backups and updates say they aren't part of this version yet (#721,
+  #722 fill those cards). It refreshes every 30 seconds while visible
+  without moving the focus.
+- **Settings.** For now one: **New households**, how many households this
+  server allows (1–10), with why someone would raise it. Saving asks for a
+  fresh confirmation: on the computer a code Kin prints ("Confirmation
+  code", with Confirm and Cancel), through the household's address the
+  admin's passkey or password, in the same dialog as Kin's other admin
+  changes. A limit set on the computer (`KIN_MAX_HOUSEHOLDS`) is shown, not
+  offered.
+- **Accessibility.** One `h1`, a heading per step and card, labels on every
+  field, `role="status"` for progress and availability and `role="alert"`
+  for errors, `aria-invalid` on a wrong code, 48 px controls, visible focus,
+  320 px reflow (the records table scrolls inside its own region), dark
+  mode, forced colours and reduced motion. `scripts/control-panel-regression.mjs`
+  checks labels, names, targets and reflow on every screen at 320 and
+  1024 px.

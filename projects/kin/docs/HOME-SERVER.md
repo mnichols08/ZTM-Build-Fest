@@ -16,14 +16,15 @@ server**. A plain guide for households comes with #740.
 | Container image for NAS and server users | Built (#715): `deploy/home/Dockerfile`. |
 | Running as a service: systemd, launchd, Windows | Built (#716). On Windows a real service run by Kin's Rust service host, `kin-service-host.exe` (#749); a scheduled task when the host is missing. |
 | Device checks on each platform | #717. |
-| Control panel and first-run setup page (§11) | #718. |
+| Control panel: first-run setup page and status page (§10, §11) | Built (#719, #720): [below](#setting-it-up-the-control-panel). Scheduled backups (#721) and updates (#722) come next. |
 | Certificates (ACME, §5) | Built (#723), started by home mode (#733): [HOME-CERTIFICATES](HOME-CERTIFICATES.md). |
 | The tunnel to the connection relay (§2) | Built (#733): [below](#reaching-it-from-anywhere-the-tunnel). |
 | Signed updates and scheduled backups (§10) | Later. |
 
 With a name set (below), phones reach the home server through the
-connection relay. Until the control panel (#718) exists, the name and the
-CA's terms are set by hand, in the home settings file or the environment.
+connection relay. The setup page on the computer itself chooses the name and
+records the agreement to the CA's terms; a technical household can still set
+them by hand, in the home settings file or the environment.
 A technical household can still put it behind `tailscale serve` or its own
 TLS proxy instead, with `KIN_ORIGIN` set to that name and no home name
 (README, "Running behind a TLS proxy"; ADR 0025, "Alternatives considered").
@@ -36,9 +37,11 @@ image run in home mode unless `KIN_MODE` says otherwise. Home mode changes
 only this (`server/mode.mjs`):
 
 - **One household.** `KIN_MAX_HOUSEHOLDS` defaults to 1, so creating a
-  household closes once the owner's exists. Set `KIN_MAX_HOUSEHOLDS` to allow
-  a few more (for grandparents' own household, say); the control panel will
-  offer this (#718). `KIN_ALLOW_NEW_HOUSEHOLDS=false` still closes creation.
+  household closes once the owner's exists. The control panel raises it to a
+  few more (up to 10, for grandparents' own household, say), with a fresh
+  confirmation, and keeps it as `maxHouseholds` in the home settings;
+  `KIN_MAX_HOUSEHOLDS`, when set, wins and the panel shows it without
+  offering a change. `KIN_ALLOW_NEW_HOUSEHOLDS=false` still closes creation.
   Invitations into an existing household are never affected.
 - **No Google Play settings.** `KIN_ANDROID_PACKAGE` and
   `KIN_ANDROID_CERT_SHA256` stop startup with an explanation: the Play app is
@@ -85,12 +88,14 @@ the service:
 
 It opens no listener beyond loopback. The origin becomes `https://<name>`
 (an explicit `KIN_ORIGIN` must be that same origin). Without a name, home
-mode runs on loopback exactly as before and logs `home_not_configured`.
+mode serves only the setup page on loopback, logs `home_not_configured` and
+prints a setup code ([below](#setting-it-up-the-control-panel)).
 
 ### Settings
 
-They live in `<data>/home/settings.json` (the control panel, #718, will
-write it), and each can be overridden from the environment:
+They live in `<data>/home/settings.json`, which the setup page and the
+control panel write (mode 0600, replaced atomically, checked before
+anything is written), and each can be overridden from the environment:
 
 | Setting | Variable | Default |
 | --- | --- | --- |
@@ -99,6 +104,7 @@ write it), and each can be overridden from the environment:
 | `zone` | `KIN_HOME_ZONE` | `home.kin.journeytocode.io` |
 | `acmeDirectory` | `KIN_HOME_ACME_DIRECTORY` | Let's Encrypt production (must be `https://`) |
 | `acmeTermsAgreed` | `KIN_HOME_ACME_TERMS_AGREED` | `false`: no certificate until the admin agrees to the CA's terms |
+| `maxHouseholds` | (`KIN_MAX_HOUSEHOLDS` wins when set) | none: home mode's 1 |
 
 ```json
 { "format": 1, "name": "fern.home.kin.journeytocode.io", "acmeTermsAgreed": true }
@@ -126,7 +132,7 @@ it is never replaced silently, because a new key can't take over the name.
   or the relay.
 
 `status()` (on the running server's `home` object) is what the control
-panel (#718) will show; it holds no address or key:
+panel's status page shows; it holds no address or key:
 
 ```text
 tunnel: { state: "connected" | "connecting" | "waiting" | "stopped", connected,
@@ -157,6 +163,140 @@ loopback listener keep the usual rules.
 ADR 0025 §4 defers it: a phone at home goes out to the relay and back. A
 household with its own DNS can still point its own domain at the home
 server and run its own TLS proxy, as `deploy/` shows.
+
+## Setting it up: the control panel
+
+ADR 0025 §10–§11; `server/home/control-panel.mjs`, `server/home/setup.mjs`
+and the pages in `web/control/`. The control panel is the home server's own
+pages: no separate app, no terminal needed after the first start.
+
+### First run
+
+1. **Start Kin** (the executable, `node server/start.mjs` with
+   `KIN_MODE=home`, or the service). With no name yet it listens on
+   loopback only, keeps the app's API closed (`home_setup_required`, so no
+   household is made on `localhost`, where its passkeys would belong to the
+   wrong name) and prints a **setup code**:
+
+   ```text
+   Set up Kin: open http://localhost:8000/control/ on this computer and enter the setup code ABCDE-23456. It works once, until 14:05.
+   ```
+
+   The service logs it as a `home_control_code` JSON line; the launcher shows
+   it in plain words and, started in a terminal (not as a service), opens the
+   browser at that address. `KIN_OPEN_BROWSER=0` stops that. On a computer
+   without a screen, open the address from a browser on the same computer,
+   or read the code from the log (`journalctl -u kin`, the log file, or
+   `docker logs`).
+2. **Enter the code.** It is 10 letters and digits without look-alikes, works
+   once, for an hour, and five wrong tries destroy it. "Print a new code"
+   prints another (at most one every 30 seconds). The browser then keeps a
+   control session for 30 days (an HttpOnly cookie for `/control` only),
+   stored on the server as a hash in `home/control-sessions.json`.
+3. **Choose the name.** A free name (`<word>.home.kin.journeytocode.io`) or
+   the household's own domain. The page checks the name with the relay as
+   you type (`CONTROL` op 7 `CHECK`, which claims nothing): available, taken,
+   not allowed, or "this server already has a name". Choose it once:
+   passkeys, the installed app and every device's saved data belong to it.
+4. **Agree to Let's Encrypt's terms**, linked from the CA's own directory.
+   Until then no ACME account exists and no certificate is ordered. For an own
+   domain the ACME account is made at this step, because its CAA record names
+   the account.
+5. **Own domain only: the DNS records.** The page shows the exact records,
+   each with a copy button, and checks them before going on:
+
+   | Record | Value |
+   | --- | --- |
+   | `<domain>` A / AAAA | the relay's addresses (not a CNAME: CAA lookups follow a CNAME back to the relay's zone) |
+   | `_kin-relay.<domain>` TXT | the base64url SHA-256 of this server's home key |
+   | `<domain>` CAA | `0 issue "letsencrypt.org; accounturi=<this server's account>; validationmethods=tls-alpn-01"` and `0 issuewild ";"` |
+   | `<domain>` HTTPS | none with an `ech` parameter (some DNS providers add one; the relay can't route Encrypted Client Hello) |
+
+   It also asks the relay whether it sees the TXT record, since the relay
+   routes the domain only after it does. Another CAA `issue` entry, a
+   CNAME, or an address that isn't the relay's is reported in plain words.
+6. **Connect.** Kin writes `home/settings.json` (the name and the terms
+   agreement, mode 0600) and **restarts once**: it exits with code 75, which
+   the launcher reads as "start me again now" (with or without
+   `--supervise`). Started directly (`node server/server.mjs`), it just
+   stops; start it again. It comes back as `https://<name>`, connects to the
+   relay, claims the name, sets CAA and gets its certificate. The page waits
+   through the restart and shows each part as it happens; a certificate error
+   is explained, with "Try again now".
+7. **Open Kin** at `https://<name>` and create the household there, with
+   Kin's normal first run, on the phone or computer you'll use most. The page
+   becomes the status page.
+
+If the relay refuses the name at the claim (taken since the check), the page
+goes back to step 3. Once a certificate exists the name can't be changed
+here: that is a move to a new address (ADR 0025 §12). With `KIN_HOME_NAME`
+set, the page shows progress but doesn't offer the name.
+
+### Reaching the control panel later
+
+- **On this computer:** `http://localhost:<port>/control/` (the root address
+  leads there too). A browser with a control session opens it at once;
+  otherwise "Print a new code" prints an access code to Kin's window and
+  log.
+- **From anywhere:** `https://<name>/control/`, for a signed-in **household
+  admin** of a household on this server. Anyone else is told to sign in, or
+  that it is for admins.
+
+**Every change needs a fresh confirmation.** Through the household's address
+it is the admin's passkey, or their password for an admin without one, as
+Kin's other admin changes. On this computer the panel asks Kin to print a
+**confirmation code** (valid 10 minutes, once, five tries) in its window and
+log. Setup itself (steps 3–6) is confirmed by the setup code, before there
+is anything to protect: no name, no certificate, no household.
+
+### The origin: why the panel has its own API on loopback
+
+A set-up home server's app origin is `https://<name>`, and the app's API
+refuses any other `Origin`; the browser on the computer itself is at
+`http://localhost:<port>`. Rather than give the app a second origin (which
+would weaken `assertSecureOrigin`, WebAuthn's relying party and the API's
+cross-site check), the loopback panel has its own small API,
+`/control/api/*`, which the app's API never serves. It answers only:
+
+- connections from the loopback listener, never a tunnel stream (whatever
+  its `Host` header says);
+- a loopback peer, with a `Host` of `localhost`, `127.x.x.x` or `[::1]` and
+  the listener's own port, so a page on another name that resolves to
+  127.0.0.1 (DNS rebinding) is refused;
+- requests without `X-Forwarded-For`, `Forwarded` or `X-Real-IP`; with
+  `KIN_TRUSTED_PROXIES` set the loopback panel is off altogether, because a
+  proxy in front makes "loopback" mean anyone;
+- for changes, an `Origin` of exactly `http://<that Host>`, a JSON body, and
+  `Sec-Fetch-Site: same-origin` when the browser sends it.
+
+Through the household's address the panel uses the app's own API
+(`/api/control/status`, `/api/control/change/options` and `/finish`),
+behind the app's origin check and session like every other route.
+
+### The status page
+
+It shows, in plain words, with every state and error code explained:
+
+- **Connection:** connected to the relay or not, since when, the next try,
+  and why (for example `replaced`: another computer runs this home server's
+  key, a restored backup; `name-taken`; `relay-certificate`: check the
+  clock).
+- **Name:** the address, free or own domain, and whether the relay routes it.
+- **Certificate:** valid until, next renewal, the issuer, the last error
+  (`acme-*`, or `tunnel-caa-*` when the relay didn't set the CAA record) and
+  the daily certificate-log (CT) check.
+- **Backups:** "not part of this version yet" until #721.
+- **Storage:** the database's size and the disk's free space.
+- **Households and devices:** counts only. The status holds no household
+  content, no identifier of a household, member or device, no device label,
+  no key and no address.
+- **Version and updates:** the version; updates come with #722.
+- **Settings:** new households allowed (1–10).
+
+For #721 and #722: `panel.provide("backups" | "updates", () => object)`
+fills a status section, `panel.registerChange(kind, { check, apply })` adds a
+change that both ways in confirm the same way, and `SECTIONS` and
+`SETTINGS` in `web/control/` render them.
 
 ## Building the executables
 
@@ -221,7 +361,9 @@ chmod +x kin-1.6.0-linux-x64
 KIN_DATA_DIR=~/kin-data ./kin-1.6.0-linux-x64
 ```
 
-Open `http://localhost:8000`. Without `KIN_DATA_DIR` it uses
+Open `http://localhost:8000` on the same computer: the first time, it is the
+setup page, with the code the program printed
+([above](#setting-it-up-the-control-panel)). Without `KIN_DATA_DIR` it uses
 `/var/lib/kin`, which an ordinary account can't write: install it as a
 service instead (below), or set `KIN_DATA_DIR`. The other settings are the
 server's usual ones (README): `KIN_PORT`, `KIN_ORIGIN`,
@@ -437,5 +579,10 @@ and Windows, and on Windows builds it and runs it as a real service
 (`scripts/service-host-smoke.mjs`): it must start without error 1053,
 restart a failed child, stop gracefully with exit code 0, and end a child
 that ignores the stop.
+The control panel's setup runs end to end against the real relay in test
+mode and the in-process CA, in Node and in a headless browser (TESTING, "The
+home server's control panel"); a first run against the production relay and
+Let's Encrypt, and opening the browser from the launcher on Windows and
+macOS, are for #740 and #717.
 #717 records install, reboot and uninstall on Windows, macOS, Linux and a
 Raspberry Pi.

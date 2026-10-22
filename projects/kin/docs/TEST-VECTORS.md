@@ -1074,7 +1074,7 @@ and GOAWAY with last stream 7 and code 3 (replaced by a newer tunnel):
 **192 — CONTROL.** CLAIM `x.home.test` as request 1; the relay's answer on
 success, whose body is the name list now routed to the tunnel; the answer
 "name taken" (status 9, no body); SET_CAA request 2 for account
-`https://acme.test/acct/1`:
+`https://acme.test/acct/1`; CHECK (op 7, #719) request 3 for `x.home.test`:
 
 ```text
 0a00000000000000140000000100000001000c000b782e686f6d652e74657374
@@ -1083,13 +1083,19 @@ success, whose body is the name list now routed to the tunnel; the answer
 0a00000000000000080000000100000001090000
 0a000000000000002e00000002000000030026000b782e686f6d652e74657374
 180068747470733a2f2f61636d652e746573742f616363742f31
+0a00000000000000140000000300000007000c000b782e686f6d652e74657374
 ```
 
-Request bodies: CLAIM, RELEASE, ADD_DOMAIN and REMOVE_DOMAIN carry
+Request bodies: CLAIM, RELEASE, ADD_DOMAIN, REMOVE_DOMAIN and CHECK carry
 `nameLength:u8 name`; SET_CAA adds `uriLength:u16 accountUri` (1 to 512
 bytes); TRANSFER adds `newKey:32 signature:64`. Names are full host names
 (`x.home.test`, not `x`). A request whose status isn't 0 is a protocol
-error; an unknown op or a malformed body is answered with status 1.
+error; an unknown op or a malformed body is answered with status 1. CHECK
+binds nothing: it answers what CLAIM (a name in the zone) or ADD_DOMAIN
+(any other name) would, with status 0, 4 (this key already holds a free
+name, or too many checks), 6 (an own domain whose `_kin-relay` TXT record
+doesn't name this key yet), 9 or 10. A relay that predates CHECK answers
+status 1, which the home server reads as "can't check ahead".
 
 **193 — TRANSFER.** The new key's public key, the message
 `"kin-tunnel-transfer/1" 00 "x.home.test" 00 oldKey newKey` and the new

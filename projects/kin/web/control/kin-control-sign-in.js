@@ -33,12 +33,12 @@ export class KinControlSignIn extends HTMLElement {
     const lead = this.configured
       ? "To open the control panel on this computer, enter a code from Kin. Kin writes it in its own window and in its log; this keeps other programs on this computer out."
       : "Kin printed a setup code when it started: in its own window, and in its log on a computer without a screen. Enter it here to begin. It keeps other programs on this computer from setting Kin up.";
-    this.replaceChildren(
+    this.replaceChildren(...[
       el("h2", { id: "control-step-title", tabIndex: -1, text: this.configured ? "Open the control panel" : "Enter the setup code" }),
       el("p", { text: lead }),
       this.codeExpiresAt ? el("p", { className: "control-muted", text: `The current code works once, until ${formatDateTime(this.codeExpiresAt)}.` }) : null,
       this.form,
-    );
+    ].filter(Boolean));
   }
 
   #say(text, alert = false) {

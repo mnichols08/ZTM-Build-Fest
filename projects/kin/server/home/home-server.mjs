@@ -98,12 +98,16 @@ export class HomeTlsEndpoint {
  * and `relayCa` for the tunnel, `directoryUrl`, `acmeTransport` and
  * `ctTransport` for ACME, `tunnel` for TunnelClient options and
  * `certificates` for CertificateManager options (such as `sleep`).
+ * `onCertificateEvent(event)` hears the certificate manager's events
+ * (renewed, failed, expiring, transparency-alert) after they are logged:
+ * server.mjs turns the last two into an admin push (#718).
  *
  * Resolves with { tunnel, certificates, endpoint, status(), stop() }.
  */
 export async function startHomeServer({
   application, dataDirectory, settings, softwareVersion = softwareVersionNumber(), log = () => {},
   connectHost, relayCa, directoryUrl, acmeTransport, ctTransport, ctBaseUrl, tunnel: tunnelOptions = {}, certificates: certificateOptions = {},
+  onCertificateEvent = () => {},
 }) {
   if (!settings?.configured) throw new TypeError("home settings with a name are required");
   const privateKey = await loadOrCreateHomeKey(dataDirectory);
@@ -129,7 +133,10 @@ export async function startHomeServer({
     // before the first order. It waits for the tunnel to route the name.
     beforeOrder: ({ accountUrl }) => tunnel.setCaa(accountUrl),
     ...certificateOptions,
-    onEvent: (event) => log({ event: `home_certificate_${event.type}`, ...(event.code ? { code: event.code } : {}), ...(event.notAfter ? { notAfter: event.notAfter } : {}) }),
+    onEvent: (event) => {
+      log({ event: `home_certificate_${event.type}`, ...(event.code ? { code: event.code } : {}), ...(event.notAfter ? { notAfter: event.notAfter } : {}) });
+      try { onCertificateEvent(event); } catch { /* an alert must never stop renewal */ }
+    },
   });
   await certificates.start();
   // A renewal that failed only because the tunnel wasn't up yet is tried

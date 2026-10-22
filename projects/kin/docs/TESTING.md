@@ -625,6 +625,41 @@ Results and limits are recorded in
 Separate browser profiles on one machine are not physical devices, different
 networks or independent people; those drills remain manual.
 
+## The home server's control panel (#718)
+
+The control panel's setup and status ([HOME-SERVER](HOME-SERVER.md#setting-it-up-the-control-panel),
+[ADR 0025](decisions/0025-kin-at-home.md) §10–§11) are covered at three
+levels, all on loopback with nothing reaching the internet:
+
+- **Server units** (`server/home/setup.test.mjs`): the one-time codes
+  (alphabet, single use, one-hour expiry, five tries), `home/settings.json`
+  written 0600 in a 0700 `home/` and left alone by a bad change, the stored
+  control sessions, the name rules, the setup state machine (free name, own
+  domain with its account and records, the restart, a refused name, done,
+  `KIN_HOME_NAME`), the own-domain DNS checks and the HTTPS-record reader.
+- **Server HTTP** (`server/home/control-panel.test.mjs`): the loopback
+  panel's rules (no tunnel streams, loopback Host only, no proxies,
+  same-origin JSON writes), the app's API closed until setup, the status
+  holding counts and never content, admin-only access through the
+  household's address with a fresh passkey, and a printed confirmation code
+  for changes on the computer itself. `control-setup-e2e.test.mjs` runs setup
+  end to end against the real relay in test mode and the in-process ACME
+  server, through the restart, to a certificate a phone can use.
+- **Components** (`web/control/control-panel.test.mjs`): every code the home
+  server sends has plain words, and each component renders and acts on a
+  small DOM stand-in (`web/control/test-dom.mjs`).
+- **Browser** (`scripts/control-panel-regression.mjs`, its own CI job): a
+  headless browser opens the address the launcher prints, enters the code,
+  checks and chooses a name, agrees, connects, follows Kin's restart on the
+  same port and the certificate to "Kin is ready" and the status page,
+  checking labels, focus, live regions, 40 px targets and 320 px reflow on
+  each screen. It uses `server/home/test-harness.mjs`, the same harness as
+  the end-to-end test.
+
+```sh
+node scripts/verify.mjs --browser-only --suite control-panel-regression
+```
+
 ## v0.13 recovery release gate
 
 Recovery tests cover same-member replacement, member-assisted fresh credential

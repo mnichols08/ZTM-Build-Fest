@@ -26,7 +26,12 @@ changes, TLS ended in the service with the ACME client (#723) started
 (§9), and client addresses from `OPEN` for rate limits; the home settings
 file `home/settings.json` (§9–§10), whose fields can also be set from
 `KIN_HOME_*` environment variables for containers and technical
-households. Direct LAN access stays deferred (§4).
+households. Direct LAN access stays deferred (§4). Built by #719 and #720
+(`server/home/control-panel.mjs`, `setup.mjs`, `web/control/`;
+[HOME-SERVER](../HOME-SERVER.md#setting-it-up-the-control-panel)): the
+first-run setup page and the status page of the control panel (§10, §11),
+with the additions and choices recorded at the end of §11; backups (#721)
+and updates (#722) follow.
 
 **A word on names.** Kin's documents already call the sync service "the
 relay" (it relays encrypted events; THREAT-MODEL S4, S5). This ADR adds a
@@ -265,6 +270,15 @@ below allow it. One home key holds **one** free name.
 key hasn't connected for 365 days stops routing and its DNS answers stop
 (§4), but it stays bound to that key: connecting again with the key brings
 it back. It is never offered to anyone else.
+
+**Checking (added by #719).** `CONTROL` op 7 `CHECK`, with the name, asks
+without binding anything whether this key could have it: the answer is what
+`CLAIM` (a name in the zone) or `ADD_DOMAIN` (any other name) would say,
+or "unknown name" for an own domain whose TXT record doesn't name the key
+yet. It is limited to 30 a minute per key and counts toward no claim limit.
+The setup page uses it for a live availability check over a sign-in-only
+tunnel. A relay without it answers status 1, which the home server reads as
+"can't check ahead"; the claim still decides.
 
 **Releasing.** `CONTROL` op 2 `RELEASE`, from the key, stops routing and
 retires the name: it can never be claimed again, by anyone, including the
@@ -744,6 +758,41 @@ command shows today.
   household) needs a fresh confirmation: the admin's passkey, or their
   password for an admin without one, as elsewhere in Kin
   ([ADR 0018](0018-account-key-vault.md)).
+
+**As built (#719, #720).** Where building it needed a choice this record
+didn't make:
+
+- **The page is `/control/`**, not `/setup`: one page for setup and status.
+  The root address on loopback leads there.
+- **The loopback panel has its own API** (`/control/api/*`) instead of a
+  second app origin: a set-up server's app origin is `https://<name>` and
+  stays the only one (`assertSecureOrigin`, the WebAuthn relying party and
+  the app API's origin check are unchanged). It answers only loopback
+  listener sockets (never tunnel streams), a loopback `Host` with the
+  listener's port, no forwarding headers (and is off with
+  `KIN_TRUSTED_PROXIES`), and same-origin JSON writes.
+- **A fresh confirmation on loopback is a printed code.** An admin's passkey
+  belongs to `https://<name>`, not `localhost`, and the loopback panel knows
+  no member, so a change there needs a confirmation code Kin prints to its
+  window and log (10 minutes, once, five tries), the same channel as the
+  setup code. Through the public name it is the admin's passkey or
+  password, as above.
+- **Setup is confirmed by the setup code.** Choosing the name, agreeing to
+  the terms and connecting happen before anything exists to protect, within
+  the session the code opened, and are refused once a certificate exists.
+- **Access codes after setup.** On loopback without a control session, the
+  page asks Kin to print a new code (at most one every 30 seconds).
+- **The restart.** Setup writes the name and asks the launcher to start the
+  service again (exit code 75), so the service comes back with the new
+  origin; tunnel, claim and certificate are then the ordinary home-mode
+  start.
+- **An own domain's ACME account is made at the terms step**, so the CAA
+  record shown names it before the first order.
+- **New-household limit** is the first change (1 to 10, `maxHouseholds` in
+  the home settings; `KIN_MAX_HOUSEHOLDS` wins).
+- **Certificate alerts** (§5) use the existing content-free push, sent to
+  household admins' devices at most daily per kind; the control panel says
+  what it is about.
 
 ### 12. Moving a household from the hosted service to a home server
 

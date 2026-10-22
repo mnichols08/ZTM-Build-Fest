@@ -75,7 +75,8 @@ A map of what is in this folder and where to start. Documents marked
 - [SELF-HOSTING](SELF-HOSTING.md): running the service yourself, every
   setting, backups and restore, reverse proxies.
 - [HOME-SERVER](HOME-SERVER.md): Kin at home, building the one-file home
-  server, running it, installing it as a service and the container image
+  server, running it, setting it up with the control panel, installing it
+  as a service and the container image
   ([ADR 0025](decisions/0025-kin-at-home.md)).
 - [HOME-CERTIFICATES](HOME-CERTIFICATES.md): the dependency-free ACME client
   for a Kin at home server's certificates (built and tested; not yet wired

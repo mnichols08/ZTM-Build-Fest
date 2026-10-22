@@ -355,7 +355,8 @@ The Play app is a Trusted Web Activity: it opens
 
 **Partly built.** The connection relay is built in `relay/` (#728) and not yet
 deployed; the home server's side of the tunnel is built in `server/home/`
-(#733); the control panel (#718), updates and backups are not. [ADR 0025](decisions/0025-kin-at-home.md) (epic #708)
+(#733); the control panel's setup and status pages (#719, #720) are built
+in `server/home/` and `web/control/`; updates and backups are not. [ADR 0025](decisions/0025-kin-at-home.md) (epic #708)
 decides a home server reached through a **connection relay**: a cloud
 program that reads only the server name (SNI) from each TLS ClientHello and
 splices the still-encrypted bytes to the home server over a tunnel the home
@@ -383,7 +384,47 @@ can't claim one, and `X-Forwarded-For` is ignored on tunnel sockets even if
 home key stops startup instead of being replaced. Two copies of one home
 key (a restored backup running elsewhere) take the tunnel from each other,
 each waiting a random time up to five minutes after losing it; the control
-panel must explain `replaced` (#718).
+panel's status page explains `replaced` in plain words.
+
+What the control panel (#719, #720) does, as built and tested on loopback
+(`server/home/control-panel.test.mjs`, `setup.test.mjs`,
+`control-setup-e2e.test.mjs`, `scripts/control-panel-regression.mjs`):
+
+- **The setup code.** On first run (no name) the service prints a one-time
+  code to its window and log: 10 characters from 29 without look-alikes,
+  valid for one hour, used once, destroyed after five wrong tries, and only
+  its SHA-256 is kept, in memory. A new code replaces the old one, at most
+  one every 30 seconds. Anyone who can read Kin's log (the computer's
+  administrators, `journalctl`, `docker logs`) can set Kin up; that is the
+  same trust as running it. Until a name is set the app's own API is
+  closed, so no household is made on `localhost`.
+- **The loopback panel.** `http://localhost:<port>/control/` has its own API
+  (`/control/api/*`), separate from the app's: only sockets from the
+  loopback listener (never a tunnel stream, whatever its `Host` says), a
+  loopback peer, a `Host` that is a loopback name with the listener's port
+  (so a DNS-rebinding page is refused), no forwarding headers, and none at
+  all when `KIN_TRUSTED_PROXIES` is set. Changes need `Origin` to be exactly
+  the panel's, a JSON body and `Sec-Fetch-Site: same-origin` when sent, so
+  another site can't drive it from the person's browser. After the code the
+  browser gets a 30-day session (random 32 bytes, an HttpOnly, SameSite=Strict
+  cookie for `/control`; its hash is stored 0600 in
+  `home/control-sessions.json`).
+- **Changes need a fresh confirmation.** On loopback, a confirmation code
+  Kin prints to its window and log (10 minutes, once, five tries); through
+  the household's address, the household admin's fresh passkey, or password
+  for an admin without one, through the app's own flows and origin check.
+  The setup steps themselves (name, terms, connect) are confirmed by the
+  setup code and are refused once a certificate exists.
+- **The status holds counts, not content:** states, dates, error codes,
+  sizes and the number of households and trusted devices. No household
+  content, no household, member or device identifier, no device label, no
+  key, no ACME account URL and no address.
+- **The app's origin is not widened.** `assertSecureOrigin`, WebAuthn's
+  relying party and the app API's origin check keep the one origin,
+  `https://<name>`.
+- **Certificate alerts.** Fewer than 14 days left on the certificate, or a
+  certificate in the CT logs this server didn't make, sends the household
+  admins the usual content-free push, at most daily for each.
 
 | Threat | What the design does | What remains |
 | --- | --- | --- |
@@ -398,7 +439,7 @@ panel must explain `replaced` (#718).
 | Misuse of a name for something other than Kin | Per-name connection and bandwidth limits, claim limits, an abuse address and suspension. | The relay can't look inside connections, by design. |
 | Relay down or unreachable | Devices are local-first and keep working; the home server reconnects with backoff; push, calendar sync and certificate renewal are outbound and don't need the relay. | No access from outside, or from inside without the relay (direct LAN access is deferred). |
 | A malicious update | Releases are signed with an offline Ed25519 key built into the home server; the launcher verifies the signature, size and SHA-256 before replacing anything, backs up first and rolls back on a failed health check. | A stolen release key. |
-| The home server's control panel | Loopback with a one-time setup code, or a signed-in household admin; every change needs a fresh passkey or password. | Programs on the same computer can reach loopback; the code limits them to setup. |
+| The home server's control panel | Loopback with a one-time code from Kin's window or log (single use, an hour, five tries), then a 30-day HttpOnly session; its own API with loopback-only, Host, forwarding-header and same-origin checks; or a signed-in household admin through the app's API. Every change needs a fresh confirmation: a printed code on the computer, the admin's passkey or password through the household's address. Built (#719, #720). | Anyone who can read Kin's log or window, or who holds a control session cookie on that computer, can use the loopback panel; a program running as the person who started Kin can read both. The browser opened by the launcher and the person's other tabs share the `localhost` cookie jar with any other local web app on that host. |
 | The home server reaches into the LAN | The calendar fetcher's guard against private, loopback and link-local addresses stays on. | As for the hosted service ("Synced outside calendars"). |
 
 ## Security principles

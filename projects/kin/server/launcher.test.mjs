@@ -8,7 +8,9 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { checkHealth, healthUrl, LauncherUsageError, parseLauncherArguments, runLauncher, runService } from "./launcher.mjs";
+import { PassThrough } from "node:stream";
+import { checkHealth, describeCodeLine, healthUrl, LauncherUsageError, openBrowser, parseLauncherArguments, runLauncher, runService } from "./launcher.mjs";
+import { RESTART_EXIT_CODE } from "./mode.mjs";
 import { APP_ROOT } from "./permissions.mjs";
 import { canonicalPath } from "./path-safety.mjs";
 
@@ -117,6 +119,89 @@ test("without supervision the launcher exits with the service's code", { timeout
   assert.equal(calls.length, 1);
   assert.equal(calls[0].options.stdio[0], "inherit");
   assert.equal(calls[0].options.env.KIN_STOP_WITH_LAUNCHER, undefined);
+});
+
+// A service whose output and exits the test scripts: each run prints its
+// lines on stdout, then closes with its code.
+function scriptedSpawn(runs) {
+  const calls = [];
+  const spawnImpl = (command, args, options) => {
+    const child = new EventEmitter();
+    child.exitCode = null;
+    child.signalCode = null;
+    child.stdout = new PassThrough();
+    child.kill = () => {};
+    calls.push({ command, args, options, child });
+    const run = runs[calls.length - 1];
+    setImmediate(() => {
+      for (const line of run.lines ?? []) child.stdout.write(`${line}\n`);
+      child.stdout.end();
+      child.exitCode = run.code;
+      setImmediate(() => { child.emit("exit", run.code, null); child.emit("close", run.code, null); });
+    });
+    return child;
+  };
+  return { spawnImpl, calls };
+}
+
+const codeLine = (purpose, url = "http://localhost:8000/control/") => JSON.stringify({ event: "home_control_code", purpose, code: "ABCDE-23456", expiresAt: "2026-10-22T13:00:00.000Z", url });
+
+test("home mode: a restart request starts the service again at once; codes are shown and the setup page opened once", { timeout: 20_000 }, async (t) => {
+  const root = temporary(t);
+  const { spawnImpl, calls } = scriptedSpawn([
+    { lines: ['{"event":"service_ready"}', codeLine("setup")], code: RESTART_EXIT_CODE },
+    { lines: [codeLine("setup"), codeLine("access")], code: 0 },
+  ]);
+  const shown = new PassThrough();
+  let text = "";
+  shown.on("data", (chunk) => { text += chunk; });
+  const out = new PassThrough();
+  let passed = "";
+  out.on("data", (chunk) => { passed += chunk; });
+  const opened = [];
+  const code = await runService({
+    serviceProcess: ({ env }) => ({ command: "kin-service", args: [], env }), env: { KIN_DATA_DIR: join(root, "data"), KIN_MODE: "home" },
+    spawnImpl, signals: new EventEmitter(), stdout: out, stderr: shown, interactive: true, open: (url) => opened.push(url), platform: "linux",
+  });
+  assert.equal(code, 0);
+  assert.equal(calls.length, 2, "started again after the restart request, without --supervise");
+  assert.equal(calls[0].options.stdio[1], "pipe", "home mode reads the service's output");
+  assert.match(passed, /service_ready/, "the output still reaches the terminal");
+  assert.match(text, /Set up Kin: open http:\/\/localhost:8000\/control\/ on this computer and enter the setup code ABCDE-23456\./);
+  assert.match(text, /To open Kin's control panel/);
+  assert.match(text, /"service_restarting".*"reason":"requested"/);
+  assert.deepEqual(opened, ["http://localhost:8000/control/"], "the browser opens once, for setup");
+});
+
+test("the browser is not opened for a service manager or when asked not to; odd lines are ignored", { timeout: 20_000 }, async (t) => {
+  const root = temporary(t);
+  for (const options of [{ supervise: true }, { interactive: false }, { env: { KIN_OPEN_BROWSER: "0" } }]) {
+    const { spawnImpl } = scriptedSpawn([{ lines: [codeLine("setup")], code: 0 }]);
+    const opened = [];
+    await runService({
+      serviceProcess: ({ env }) => ({ command: "kin-service", args: [], env }), env: { KIN_DATA_DIR: join(root, "data"), KIN_MODE: "home", ...options.env },
+      spawnImpl, signals: new EventEmitter(), stdout: new PassThrough(), stderr: new PassThrough(), interactive: options.interactive ?? true,
+      supervise: options.supervise ?? false, open: (url) => opened.push(url), platform: "linux",
+    });
+    assert.deepEqual(opened, [], JSON.stringify(options));
+  }
+  assert.equal(describeCodeLine('{"event":"service_ready"}'), null);
+  assert.equal(describeCodeLine(codeLine("setup", "http://evil.test/control/")), null, "only the panel's own loopback address");
+  assert.equal(describeCodeLine(`${codeLine("setup").slice(0, -2)}`), null, "a cut line");
+  assert.match(describeCodeLine(codeLine("confirm")).text, /confirm the change/);
+  // How the browser is opened on each system; nothing on a Linux without a desktop.
+  const spawned = [];
+  const spawnImpl = (command, args) => { spawned.push([command, ...args]); return new EventEmitter(); };
+  openBrowser("http://localhost:8000/control/", { platform: "darwin", spawnImpl });
+  openBrowser("http://localhost:8000/control/", { platform: "win32", spawnImpl });
+  openBrowser("http://localhost:8000/control/", { platform: "linux", env: { DISPLAY: ":0" }, spawnImpl });
+  assert.equal(openBrowser("http://localhost:8000/control/", { platform: "linux", env: {}, spawnImpl }), null);
+  assert.equal(openBrowser("http://localhost:8000/control/?x=1", { platform: "darwin", spawnImpl }), null);
+  assert.deepEqual(spawned, [
+    ["open", "http://localhost:8000/control/"],
+    ["rundll32.exe", "url.dll,FileProtocolHandler", "http://localhost:8000/control/"],
+    ["xdg-open", "http://localhost:8000/control/"],
+  ]);
 });
 
 // A stdin the test closes, as the service host closes the launcher's.
