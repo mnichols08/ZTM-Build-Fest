@@ -39,6 +39,7 @@ import { lifecycleMethods } from "./durable-store/lifecycle.mjs";
 import { feedbackMethods } from "./durable-store/feedback.mjs";
 import { preparedInvitationMethods } from "./durable-store/prepared-invitations.mjs";
 import { calendarSubscriptionMethods } from "./durable-store/calendar-subscriptions.mjs";
+import { householdMoveMethods } from "./durable-store/household-moves.mjs";
 import {
   acquireDatabaseMaintenanceLock,
   acquireDatabaseProcessLock,
@@ -479,4 +480,4 @@ export class DurableStore {
   }
 }
 
-addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, chatBlobMethods, chatEventMethods, boardEventMethods, privateEventMethods, privateBlobMethods, chatHiddenMethods, chatKeyMethods, chatReceiptMethods, accountVaultMethods, lifecycleMethods, authorityMethods, envelopeMethods, feedbackMethods, preparedInvitationMethods, calendarSubscriptionMethods);
+addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, chatBlobMethods, chatEventMethods, boardEventMethods, privateEventMethods, privateBlobMethods, chatHiddenMethods, chatKeyMethods, chatReceiptMethods, accountVaultMethods, lifecycleMethods, authorityMethods, envelopeMethods, feedbackMethods, preparedInvitationMethods, calendarSubscriptionMethods, householdMoveMethods);

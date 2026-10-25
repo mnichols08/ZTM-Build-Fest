@@ -45,7 +45,7 @@ export const MOVED_TABLES = Object.freeze([
 /** Household tables whose rows stay with the old service. */
 export const STAYING_TABLES = Object.freeze([
   "credentials", "prepared_invitations", "provisioning_grants", "push_subscriptions",
-  "feedback", "feedback_screenshots", "security_audit",
+  "feedback", "feedback_screenshots", "security_audit", "household_moves",
 ]);
 /** The server's own tables: never a household's. */
 export const SERVER_TABLES = Object.freeze(["push_vapid_keys", "server_migrations"]);

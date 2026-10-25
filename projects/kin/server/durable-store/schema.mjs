@@ -16,6 +16,7 @@ import {
 import { FEEDBACK_TABLES_SQL } from "./feedback.mjs";
 import { PREPARED_INVITATIONS_SQL } from "./prepared-invitations.mjs";
 import { CALENDAR_SUBSCRIPTIONS_SQL } from "./calendar-subscriptions.mjs";
+import { HOUSEHOLD_MOVES_SQL } from "./household-moves.mjs";
 
 export const schemaMethods = {
   migrate(migrationFault) {
@@ -1050,6 +1051,22 @@ export const schemaMethods = {
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;
         throw new DurableStoreError("Kin could not complete the calendar subscription migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 29) {
+      try {
+        this.transaction(() => {
+          // ADR 0026 §5 (#738): a household moving, or moved, to a home
+          // server (durable-store/household-moves.mjs). The new address and
+          // when; nothing about the household's content.
+          this.db.exec(HOUSEHOLD_MOVES_SQL);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(30, Date.now());
+          sqlitePragma(this.db, "user_version = 30");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the household move migration.", { cause: error });
       }
     }
   },

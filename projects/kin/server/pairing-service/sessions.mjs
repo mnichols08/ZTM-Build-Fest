@@ -109,7 +109,7 @@ export const sessionMethods = {
       if (session.expiresAt <= now) this.sessions.delete(sessionHash);
   },
 
-  authorize(sessionToken, { requireTrusted = true } = {}) {
+  authorize(sessionToken, { requireTrusted = true, allowMoving = false } = {}) {
     this.store?.assertAvailable();
     this.pruneSessions();
     const session = this.sessions.get(hash(String(sessionToken ?? "")));
@@ -134,6 +134,7 @@ export const sessionMethods = {
         "This household was deleted and can no longer sync.",
         410,
       );
+    this.assertNotMoved(household, { allowMoving });
     if (!member?.active || !canParticipate(member, this.now())) {
       throw new PairingError(
         "membership_removed",
@@ -164,7 +165,7 @@ export const sessionMethods = {
     return value;
   },
 
-  trustedDevice(deviceToken, { allowDeletionPending = false } = {}) {
+  trustedDevice(deviceToken, { allowDeletionPending = false, allowMoved = false } = {}) {
     this.store?.assertAvailable();
     const tokenHash = hash(String(deviceToken ?? ""));
     const device = this.devices.get(this.deviceTokens.get(tokenHash));
@@ -203,7 +204,22 @@ export const sessionMethods = {
         "This household is pending deletion and can no longer sync.",
         410,
       );
+    if (!allowMoved) this.assertNotMoved(household);
     return { device, member };
+  },
+
+  /**
+   * A household moving to a home server is frozen, and one that moved
+   * refuses every session, pointing at its new address (ADR 0026 §5,
+   * #738). `allowMoving` lets the admin who started a move follow it.
+   */
+  assertNotMoved(household, { allowMoving = false } = {}) {
+    const move = household && this.householdMoves?.get(household.id);
+    if (!move) return;
+    if (move.state === "sending" && !allowMoving)
+      throw new PairingError("household_moving", "This household is moving to its home server. Try again in a few minutes.", 409);
+    if (move.state === "moved")
+      throw new PairingError("household_moved", `This household moved to ${move.targetOrigin}. Open it there and sign in.`, 410);
   },
 
   reauthenticationCredentialIds(deviceToken) {

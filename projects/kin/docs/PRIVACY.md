@@ -500,8 +500,17 @@ built version can be checked against it.
   anywhere; a copy to a drive the household chooses is planned. The control
   panel shows their dates and sizes only. Whoever has a copy can act as the
   home server, so they are as private as the computer.
-- **Moving from the hosted service** uses the household export; nothing is
-  deleted from the hosted service until the household closes it there.
+- **Moving from the hosted service** ([ADR 0026](decisions/0026-moving-a-household.md),
+  #738, #739): when a household admin moves the household, with a fresh
+  passkey or password and a code read on the home server, the service sends
+  that household's records to the home server's address: the same
+  encrypted history, chat, fridge, private spaces and attachments, account
+  vaults (only their password and backup-code wrappers), password and
+  backup-code checks, members, and devices' public keys. No device token,
+  passkey, push subscription, invitation, report or audit record is sent.
+  The hosted service keeps a record that the household moved and where to,
+  and refuses its sessions; nothing is deleted there until an admin closes
+  the household (the usual 30 days).
 
 
 

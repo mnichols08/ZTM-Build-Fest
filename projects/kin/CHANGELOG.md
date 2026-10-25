@@ -149,6 +149,20 @@ documentation only.
   data as it was and says why. Before a name is chosen, the setup page
   offers a backup copied into the folder, which also brings its `home/`:
   moving a home server to a new computer.
+- **Moving a household to a home server: the sending side's server**
+  (#738; [ADR 0026](docs/decisions/0026-moving-a-household.md)). A
+  household admin, with a fresh passkey or password, gives the home server's
+  address and the move code read there; the service freezes the household
+  (sessions get `household_moving`), builds its package and sends it in
+  pieces, only to a host name over https whose every address is public (the
+  calendar fetcher's guard), then marks it moved: every session gets
+  `household_moved` (410) with the new address, and `/api/status` says where
+  it went. A failed or interrupted send leaves it in use. Readiness lists
+  which members can sign in at the new address (a password or backup code);
+  at least one admin must. Within a day an admin can undo the move; closing
+  the old household is the existing deletion, both through the trusted
+  device. Server schema 30 adds `household_moves`. The app's screens come
+  next.
 - **Moving a household to a home server: the receiving side** (#739; story
   #737, epic #708, [ADR 0026](docs/decisions/0026-moving-a-household.md),
   [HOME-SERVER](docs/HOME-SERVER.md#moving-a-household-here)). ADR 0026

@@ -21,7 +21,7 @@ server**. A plain guide for households comes with #740.
 | The tunnel to the connection relay (§2) | Built (#733): [below](#reaching-it-from-anywhere-the-tunnel). |
 | Scheduled backups and restore (§10) | Built (#721): [below](#backups-and-restore). The copy to a second folder (a USB drive) is later. |
 | Signed updates (§10) | Built (#722): [below](#updates). Off until the project's release key is made and built in. |
-| Moving a household here from another Kin server ([ADR 0026](decisions/0026-moving-a-household.md)) | The receiving side is built (#739): [below](#moving-a-household-here). The sending side on the hosted service comes next (#738). |
+| Moving a household here from another Kin server ([ADR 0026](decisions/0026-moving-a-household.md)) | The receiving side (#739) and the sending side's server (#738) are built: [below](#moving-a-household-here). The app's screens for it come next. |
 
 With a name set (below), phones reach the home server through the
 connection relay. The setup page on the computer itself chooses the name and

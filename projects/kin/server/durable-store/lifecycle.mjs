@@ -47,6 +47,7 @@ export function purgeHouseholdData(database, householdId) {
   database.prepare("DELETE FROM prepared_invitations WHERE household_id = ?").run(householdId);
   // Outside calendars members synced, and their links (ADR 0022 §3).
   database.prepare("DELETE FROM calendar_subscriptions WHERE household_id = ?").run(householdId);
+  database.prepare("DELETE FROM household_moves WHERE household_id = ?").run(householdId);
   database
     .prepare("DELETE FROM provisioning_grants WHERE household_id = ?")
     .run(householdId);
