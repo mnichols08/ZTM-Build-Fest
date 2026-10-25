@@ -847,3 +847,110 @@ test("the claim poll leaves a newer view alone and doesn't repaint an unchanged 
     globalThis.setTimeout = realSetTimeout;
   }
 });
+
+// Moving the household to a home server (ADR 0026, #737).
+const everything = (items) => items.flatMap((item) => [item, ...everything(item.children ?? [])]);
+const texts = (component) => everything(component.children).map((child) => child.textContent).filter(Boolean);
+
+test("a moved household says where it went; only an admin may undo it or close it here", () => {
+  const moved = (admin, undoUntil, remindAt) => {
+    const component = new KinHousehold();
+    component.householdLifecycle = { state: "moved", movedTo: "https://fern.home.kin.journeytocode.io", movedAt: "2026-10-25T12:00:00.000Z", undoUntil, remindAt, admin, message: "This household moved." };
+    component.render();
+    return component;
+  };
+  const later = new Date(Date.now() + 60 * 60_000).toISOString();
+  const member = moved(false, later, later);
+  assert.ok(texts(member).includes("Your household moved"));
+  const link = everything(member.children).find((child) => child.tagName === "a");
+  assert.equal(link.href, "https://fern.home.kin.journeytocode.io");
+  assert.ok(texts(member).some((text) => /username and password, or your backup code/.test(text)));
+  assert.ok(texts(member).some((text) => /passkey for this address doesn't work at the new one/.test(text)));
+  assert.equal(everything(member.children).some((child) => child.tagName === "button"), false, "a member gets no admin controls");
+  const admin = moved(true, later, later);
+  const buttons = everything(admin.children).filter((child) => child.tagName === "button").map((button) => button.textContent);
+  assert.ok(buttons.some((label) => label.startsWith("Undo the move (until")));
+  assert.ok(buttons.includes("Close the household here"));
+  assert.equal(texts(admin).some((text) => /It's been a week/.test(text)), false);
+  const weekOn = moved(true, new Date(Date.now() - 1000).toISOString(), new Date(Date.now() - 1000).toISOString());
+  const afterDay = everything(weekOn.children).filter((child) => child.tagName === "button").map((button) => button.textContent);
+  assert.deepEqual(afterDay, ["Close the household here"], "undo is gone after a day");
+  assert.ok(texts(weekOn).some((text) => /It's been a week since the move/.test(text)));
+});
+
+test("while the household is moving, the panel says so and looks again", () => {
+  const component = new KinHousehold();
+  component.householdLifecycle = { state: "moving", movedTo: "https://fern.home.kin.journeytocode.io" };
+  component.render();
+  try {
+    assert.ok(texts(component).includes("Your household is moving"));
+    assert.ok(component.poll, "it asks again");
+  } finally {
+    clearTimeout(component.poll);
+  }
+});
+
+test("the admin's move screen: who can sign in there, then the address, the code and a fresh passkey", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "founder" };
+  component.run = async (action) => action();
+  component.memberNames = { load: async () => [{ memberId: "founder", preferredName: "Sam" }, { memberId: "partner", preferredName: "Alex" }] };
+  const calls = [];
+  component.api = async (path, options = {}) => {
+    calls.push([path, options.body ? JSON.parse(options.body) : null]);
+    if (path === "/api/household/move") return {
+      readiness: { canStart: true, members: [
+        { memberId: "founder", kind: "adult", admin: true, account: true, ready: "password" },
+        { memberId: "partner", kind: "adult", admin: false, account: true, ready: null },
+        { memberId: "child", kind: "limited", admin: false, account: false, ready: null },
+      ] },
+      move: { state: "none", lastError: { code: "move-code-wrong", attemptsLeft: 3 } },
+    };
+    if (path === "/api/household/move/options") return { flow: "flow", targetOrigin: "https://fern.home.kin.journeytocode.io", publicKey: { challenge: "YQ", allowCredentials: [{ id: "Yg" }] } };
+    if (path === "/api/household/move/finish") return { state: "sending" };
+    throw new Error(`unexpected ${path}`);
+  };
+  await component.ctx.move.show();
+  const lines = texts(component);
+  assert.ok(lines.includes("Move to a home server"));
+  assert.ok(lines.some((text) => /That move code isn't right.*3 more tries/.test(text)), "the last attempt's reason");
+  const readiness = everything(component.children).filter((child) => child.dataset?.memberId);
+  assert.deepEqual(readiness.map((item) => [item.dataset.memberId, item.dataset.ready]), [["founder", "yes"], ["partner", "no"], ["child", "no"]]);
+  assert.match(readiness[0].textContent, /^Sam \(you\) can sign in with their password/);
+  assert.match(readiness[1].textContent, /^Alex has only a passkey\. Ask them to save a backup code first/);
+  assert.match(readiness[2].textContent, /no account yet, so they re-join with an invitation/);
+  assert.ok(everything(component.children).some((child) => child.tagName === "form"), "the address and code");
+  globalThis.confirm = () => true;
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { credentials: { get: async () => ({ id: "credential-founder", type: "public-key", response: { clientDataJSON: new Uint8Array([1]), getTransports: () => [] } }) } },
+  });
+  await component.ctx.move.start("fern.home.kin.journeytocode.io", "ABCDE-23456");
+  try {
+    assert.deepEqual(calls.slice(1).map(([path]) => path), ["/api/household/move/options", "/api/household/move/finish"]);
+    assert.deepEqual(calls[1][1], { address: "fern.home.kin.journeytocode.io" });
+    assert.equal(calls[2][1].code, "ABCDE-23456");
+    assert.equal(calls[2][1].flow, "flow");
+    assert.equal(calls[2][1].credential.id, "credential-founder");
+    assert.ok(texts(component).includes("Moving the household"), "it follows the move");
+  } finally {
+    clearTimeout(component.poll);
+  }
+});
+
+test("without a ready admin there is nothing to start, and refusals are said in plain words", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "founder" };
+  component.run = async (action) => action();
+  component.api = async (path) => {
+    if (path === "/api/household/move") return { readiness: { canStart: false, members: [{ memberId: "founder", kind: "adult", admin: true, account: true, ready: null }] }, move: { state: "none", lastError: null } };
+    throw Object.assign(new Error("refused"), { code: "move-address-refused" });
+  };
+  await component.ctx.move.show();
+  assert.equal(everything(component.children).some((child) => child.tagName === "form"), false);
+  assert.ok(texts(component).some((text) => /At least one household admin needs a password or a backup code/.test(text)));
+  globalThis.confirm = () => true;
+  await component.ctx.move.start("printer.local", "ABCDE-23456");
+  const message = component.children.find((child) => child.className === "household-message");
+  assert.match(message.textContent, /private or local network/);
+});

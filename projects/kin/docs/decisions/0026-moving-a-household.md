@@ -11,8 +11,18 @@ the home server's receiving side, the move code and `/api/move/*`
 (`server/home/move-receive.mjs`, #739; [HOME-SERVER](../HOME-SERVER.md#moving-a-household-here)).
 The sending side's server (#738: the move routes, the frozen and moved
 states, the sender, undo and closing; `server/household-move.mjs`,
-`server/move-sender.mjs`) is built too; its screens and the re-joining
-guide come next.
+`server/move-sender.mjs`) is built too, and so are the app's screens (#737): the admin's
+*Move to a home server* (Household access), the moving and moved screens in
+the household panel and on Today, and sync stopping for good on
+`household_moved` and waiting on `household_moving`
+(`web/components/household/move.js`). Re-joining uses the existing
+new-device sign-in, and the existing Today card offers the new passkey
+(a new address has no passkey and fresh storage).
+
+*As built (#737, screens).* Marking devices carried over from the old
+address, and removing them together (§6), is left for a follow-up: they
+show as trusted devices in People & devices, and an admin removes each with
+the existing revoke.
 
 *As built (#738, server).* Three choices this record didn't make:
 

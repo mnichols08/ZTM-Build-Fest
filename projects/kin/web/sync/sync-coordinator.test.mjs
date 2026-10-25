@@ -517,3 +517,25 @@ test("a member listed twice must agree field by field", () => {
   for (const change of [{ memberStatus: "removed", memberActive: false }, { memberExpiresAt: 9_001 }])
     assert.throws(() => portableMembershipFromDirectory([entry, { ...entry, ...change }]), /conflicting membership/);
 });
+
+test("a household that moved to a home server stops sync for good; one that is moving only waits (#737)", async () => {
+  const run = async (code) => {
+    const states = [];
+    const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { deviceId: "device" }, onState: (state) => states.push(state) });
+    coordinator.runOnce = async () => { throw Object.assign(new Error(code), { code }); };
+    try {
+      await coordinator.syncNow();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { states, terminal: coordinator.terminal };
+    } finally {
+      coordinator.stop();
+    }
+  };
+  const moved = await run("household_moved");
+  assert.equal(moved.terminal, true);
+  assert.deepEqual({ state: moved.states.at(-1).state, lifecycleState: moved.states.at(-1).lifecycleState }, { state: "deleted", lifecycleState: "moved" });
+  const moving = await run("household_moving");
+  assert.equal(moving.terminal, false, "it tries again");
+  assert.equal(moving.states.at(-1).state, "paused");
+  assert.match(moving.states.at(-1).message, /moving to its home server/);
+});

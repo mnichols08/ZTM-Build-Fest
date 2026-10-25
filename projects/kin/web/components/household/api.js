@@ -102,6 +102,8 @@ export class HouseholdApi {
         claimState: this.host.claim?.state ?? null,
         memberKind: this.host.syncStatus?.memberKind ?? null,
         lifecycle: this.host.householdLifecycle?.state ?? null,
+        // A household that moved to a home server (#737): its new address.
+        movedTo: this.host.householdLifecycle?.movedTo ?? null,
         // Household features (#625, ADR 0021): the switched-off set.
         features: this.host.identity ? this.host.syncStatus?.features ?? null : null,
         // Whether adults may join the chore chart (#676).

@@ -21,7 +21,7 @@ server**. A plain guide for households comes with #740.
 | The tunnel to the connection relay (§2) | Built (#733): [below](#reaching-it-from-anywhere-the-tunnel). |
 | Scheduled backups and restore (§10) | Built (#721): [below](#backups-and-restore). The copy to a second folder (a USB drive) is later. |
 | Signed updates (§10) | Built (#722): [below](#updates). Off until the project's release key is made and built in. |
-| Moving a household here from another Kin server ([ADR 0026](decisions/0026-moving-a-household.md)) | The receiving side (#739) and the sending side's server (#738) are built: [below](#moving-a-household-here). The app's screens for it come next. |
+| Moving a household here from another Kin server ([ADR 0026](decisions/0026-moving-a-household.md)) | Built (#737, #738, #739): [below](#moving-a-household-here). |
 
 With a name set (below), phones reach the home server through the
 connection relay. The setup page on the computer itself chooses the name and
@@ -383,9 +383,12 @@ them is ever handed to anyone.
    a one-time move code in its window and log, like its other codes: it
    works once, for an hour, with five tries. The server must be set up (its
    name and certificate) and have room under its household limit.
-2. On the old address, a household admin opens *Household › Move to a home
-   server* and enters this server's address and the code (the sending side,
-   #738).
+2. On the old address, a household admin opens *Household › Household
+   access › Move to a home server*, checks who can sign in at the new address
+   (a password or a backup code; anyone with only a passkey is asked to save
+   a backup code first, or re-joins by invitation), and enters this server's
+   address and the code, confirming with their passkey or password.
+   Everyone's app on the old address then says where the household went.
 3. The old server sends the household here in 8 MiB pieces (it can resume
    after a dropped connection), at most 4 GB. Kin checks the whole package
    (size and SHA-256), then opens it as a Kin database, which runs the same

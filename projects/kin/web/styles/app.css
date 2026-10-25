@@ -3081,3 +3081,6 @@ kin-chore-chart[size="display"] .chore-text { font-size: 1.5rem; }
   .chore-card { border: 2px solid CanvasText; }
   .chore-card-header { background: Canvas; color: CanvasText; border-block-end: 2px solid CanvasText; }
 }
+
+/* The moved household's link to its new address (#737): a link that looks like the main button. */
+.move-open { display: inline-flex; align-items: center; min-height: var(--tap); border: 1px solid; border-radius: var(--radius, 12px); text-decoration: none; }
