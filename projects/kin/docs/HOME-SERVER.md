@@ -21,6 +21,7 @@ server**. A plain guide for households comes with #740.
 | The tunnel to the connection relay (§2) | Built (#733): [below](#reaching-it-from-anywhere-the-tunnel). |
 | Scheduled backups and restore (§10) | Built (#721): [below](#backups-and-restore). The copy to a second folder (a USB drive) is later. |
 | Signed updates (§10) | Built (#722): [below](#updates). Off until the project's release key is made and built in. |
+| Moving a household here from another Kin server ([ADR 0026](decisions/0026-moving-a-household.md)) | The receiving side is built (#739): [below](#moving-a-household-here). The sending side on the hosted service comes next (#738). |
 
 With a name set (below), phones reach the home server through the
 connection relay. The setup page on the computer itself chooses the name and
@@ -368,6 +369,44 @@ The schedule runs inside the service, and the backups stay inside its data
 folder, which is all the service may write (the permission model). Copying
 each backup to a second folder, such as a USB drive, is planned and needs
 the launcher, which runs outside that sandbox.
+
+## Moving a household here
+
+A household on the hosted service (or another Kin server) can move here and
+keep everything: accounts, members, devices' history, chat, the fridge,
+private spaces and attachments ([ADR 0026](decisions/0026-moving-a-household.md)).
+The old server sends this one the household's records directly; no file of
+them is ever handed to anyone.
+
+1. Here, on the home server's own computer, open the control panel and
+   choose **Get a move code** (under *Moving a household here*). Kin prints
+   a one-time move code in its window and log, like its other codes: it
+   works once, for an hour, with five tries. The server must be set up (its
+   name and certificate) and have room under its household limit.
+2. On the old address, a household admin opens *Household › Move to a home
+   server* and enters this server's address and the code (the sending side,
+   #738).
+3. The old server sends the household here in 8 MiB pieces (it can resume
+   after a dropped connection), at most 4 GB. Kin checks the whole package
+   (size and SHA-256), then opens it as a Kin database, which runs the same
+   checks as at startup and refuses one from a newer Kin ("update this home
+   server first"), and refuses it if this server already has that household,
+   one of its members or devices, or one of its usernames. It adds the
+   household in one transaction, so a failure changes nothing, and restarts.
+4. People open this server's address and sign in with the same username and
+   password, or their backup code. Their device downloads the whole
+   history, then Kin offers a new passkey: passkeys belong to the old
+   address.
+
+What arrives has no device tokens and no passkeys, so nothing is signed in
+here until people sign in. The control panel shows when a household last
+moved here.
+
+The receiving end is `/api/move/*` on this server's address
+(`server/home/move-receive.mjs`): `start` with the move code opens one
+transfer and returns a bearer token for it (two hours); `chunk`, `status`,
+`finish` and `DELETE /api/move` use that token. The package format is in
+`server/move-package.mjs`.
 
 ## Building the executables
 

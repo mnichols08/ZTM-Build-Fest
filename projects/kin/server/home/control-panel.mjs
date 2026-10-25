@@ -39,17 +39,23 @@
 // "backup-hour" and "restore"; updates (#722, updater.mjs) the "updates"
 // section, read from the file the launcher writes, and the changes
 // "update-install" and "auto-update".
+//
+// Moving a household here (ADR 0026, #739): on loopback, after setup, the
+// panel prints a one-time move code ("move-code"); the old server sends the
+// household to /api/move/* on this server's address with it
+// (move-receive.mjs), and the status shows the last move received.
 import { readFileSync, statSync, statfsSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { isIP } from "node:net";
 import { parseHouseholdPolicy } from "../pairing-service/bootstrap-limits.mjs";
 import { tunnelPeer } from "../client-key.mjs";
 import { readJsonBody } from "../http-body.mjs";
-import { CONFIRM_CODE_TTL_MS, OneTimeCode, SETUP_CODE_TTL_MS, displayCode } from "./access-codes.mjs";
+import { CONFIRM_CODE_TTL_MS, MOVE_CODE_TTL_MS, OneTimeCode, SETUP_CODE_TTL_MS, displayCode } from "./access-codes.mjs";
 import { SESSION_COOKIE, SESSION_TTL_MS } from "./control-sessions.mjs";
 import { BackupError, isBackupHour } from "./backups.mjs";
 import { releasePublicKey } from "./release.mjs";
 import { readUpdateStatus, writeUpdateRequest } from "./updater.mjs";
+import { MoveReceiver, RECEIPT_FILE, moveDirectory } from "./move-receive.mjs";
 import { MAX_HOUSEHOLDS_LIMIT, writeHomeSettings } from "./settings.mjs";
 import { SetupError } from "./setup.mjs";
 
@@ -149,7 +155,9 @@ export class ControlPanel {
     this.codes = {
       access: new OneTimeCode({ purpose: "access", ttlMs: SETUP_CODE_TTL_MS, now }),
       confirm: new OneTimeCode({ purpose: "confirm", ttlMs: CONFIRM_CODE_TTL_MS, reissueAfterUse: true, now }),
+      move: new OneTimeCode({ purpose: "move", ttlMs: MOVE_CODE_TTL_MS, now }),
     };
+    this.moveReceiver = null;
     this.sections = new Map([
       ["backups", () => (this.backups ? this.backups.status() : { state: "not-built" })],
       // #722 provides these: the update policy and what is available.
@@ -375,6 +383,7 @@ export class ControlPanel {
       } : null,
       storage: this.#storage(),
       counts: this.#counts(),
+      lastMove: this.#lastMove(),
       limits: {
         maxHouseholds: policy.maxHouseholds,
         allowNew: policy.allowNew,
@@ -383,6 +392,20 @@ export class ControlPanel {
       },
       ...sections,
     };
+  }
+
+  /** The last household moved here (#739): when, and how many members. */
+  #lastMove() {
+    try {
+      const receipt = JSON.parse(readFileSync(join(moveDirectory(this.dataDirectory), RECEIPT_FILE), "utf8"));
+      return receipt?.format === 1 ? { at: receipt.at, members: receipt.members } : null;
+    } catch { return null; }
+  }
+
+  /** Whether the household limit has room for one more (a move here). */
+  canAddHousehold() {
+    const { allowNew, maxHouseholds } = this.application.service.householdPolicy;
+    return allowNew !== false && (maxHouseholds === null || maxHouseholds === undefined || this.application.service.countLiveHouseholds() < maxHouseholds);
   }
 
   /** True while a home server has no name: the app's own API is off, so no
@@ -408,6 +431,7 @@ export class ControlPanel {
       version: this.version,
       configured: this.settings.configured,
       codeExpiresAt: access.active ? new Date(access.expiresAt).toISOString() : null,
+      ...(signedIn ? { moveCodeExpiresAt: this.codes.move.active ? new Date(this.codes.move.expiresAt).toISOString() : null } : {}),
       ...(signedIn ? { setup: this.setup.view(), status: this.status() } : {}),
     };
   }
@@ -469,6 +493,14 @@ export class ControlPanel {
       case "setup/connect": return this.setup.connect();
       case "setup/retry": return this.setup.retryCertificate();
       case "confirm-code": return this.issueCode("confirm");
+      case "move-code": {
+        // Only a server people can reach, with its certificate, takes a move.
+        if (!this.application.home?.certificates.status()?.certificate)
+          throw new ControlError("control-move-not-ready", "Finish setting up this home server first.", 409);
+        if (!this.canAddHousehold())
+          throw new ControlError("control-move-limit", "This home server's household limit is reached. Raise it first.", 409);
+        return { ...this.issueCode("move"), address: `https://${this.settings.name}` };
+      }
       case "change": {
         // Checked before the code is spent, so a wrong value doesn't cost one.
         this.checkChange(body.change);
@@ -546,6 +578,8 @@ export async function createControlPanel({ application, dataDirectory, databaseP
     ? new HomeBackups({ store: application.store, dataDirectory, getSettings, version: resolvedVersion, restart, log, now, ...backupOptions })
     : null;
   const panel = new ControlPanel({ application, dataDirectory, databasePath, getSettings, setSettings, setup, sessions, backups, trustedProxies, env, log, now, version: resolvedVersion });
+  if (application.store)
+    panel.moveReceiver = new MoveReceiver({ dataDirectory, store: application.store, codes: panel.codes.move, canAddHousehold: () => panel.canAddHousehold(), restart, log, now });
   application.attachControlPanel(panel);
   application.controlPanel = panel;
   return panel;

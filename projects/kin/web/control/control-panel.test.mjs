@@ -22,7 +22,7 @@ const TIMEOUT = { timeout: 30_000 };
 
 test("every code the home server sends has plain words of its own", TIMEOUT, () => {
   const codes = [
-    ...TUNNEL_ERRORS, ...ACME_ERROR_CODES, ...DOMAIN_PROBLEMS, ...BACKUP_ERROR_CODES, "control-backup-hour-invalid", ...UPDATE_ERROR_CODES, "control-update-unknown", "control-update-manual", "control-update-busy",
+    ...TUNNEL_ERRORS, ...ACME_ERROR_CODES, ...DOMAIN_PROBLEMS, ...BACKUP_ERROR_CODES, "control-backup-hour-invalid", ...UPDATE_ERROR_CODES, "control-update-unknown", "control-update-manual", "control-update-busy", "control-move-not-ready", "control-move-limit",
     "tunnel-caa-name-taken", "tunnel-caa-name-not-allowed", "tunnel-caa-name-limit", "tunnel-caa-name-unknown", "tunnel-caa-suspended", "tunnel-caa-refused",
     "tunnel-not-ready", "tunnel-timeout", "tunnel-lost", "tunnel-stopped",
     "setup-name-empty", "setup-name-invalid", "setup-name-length", "setup-name-taken", "setup-name-not-allowed",
@@ -452,6 +452,33 @@ test("settings, updates: install now names the release; automatic updates on or 
     assert.equal(settings.querySelector('[data-setting="update-install"]'), null);
   } finally {
     settings.remove();
+  }
+});
+
+test("moving a household here: a move code printed on this computer, and the last move", TIMEOUT, async () => {
+  await import("./kin-control-move.js");
+  const api = fakeApi({ "move-code": { expiresAt: "2026-10-25T13:00:00.000Z", address: "https://fern.home.kin.journeytocode.io" } });
+  const move = document.createElement("kin-control-move");
+  move.api = api;
+  document.body.append(move);
+  try {
+    move.status = { ...STATUS, lastMove: null };
+    assert.equal(move.querySelector("h2").textContent, "Moving a household here");
+    assert.match(move.textContent, /signs in here again with their password or backup code/);
+    move.querySelector("button").click();
+    await settle();
+    assert.deepEqual(api.calls.at(-1), ["move-code", undefined]);
+    assert.match(move.querySelector(".control-message").textContent, /printed a move code .* with https:\/\/fern\.home\.kin\.journeytocode\.io, on the old address/);
+    move.status = { ...STATUS, lastMove: { at: "2026-10-25T12:30:00.000Z", members: 3 } };
+    assert.match(move.textContent, /A household moved here on .*, with 3 members/);
+    const refused = fakeApi({ "move-code": new ControlApiError("control-move-limit", "full", 409) });
+    move.api = refused;
+    move.querySelector("button").click();
+    await settle();
+    assert.equal(move.querySelector(".control-message").getAttribute("role"), "alert");
+    assert.match(move.querySelector(".control-message").textContent, /household limit is reached/);
+  } finally {
+    move.remove();
   }
 });
 

@@ -134,6 +134,8 @@ const UPDATE_ERRORS = {
   "control-update-unknown": "That update isn't available any more. Reload the page.",
   "control-update-manual": "This copy of Kin can't update itself. Download the new version from the releases page.",
   "control-update-busy": "Kin is installing an update now.",
+  "control-move-not-ready": "Finish setting up this home server first: it needs its name and certificate before a household can move here.",
+  "control-move-limit": "This home server's household limit is reached. Raise it under New households first.",
 };
 
 const SETUP_ERRORS = {

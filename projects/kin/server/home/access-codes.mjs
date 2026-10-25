@@ -6,7 +6,8 @@
 //
 // A code is 10 characters from an alphabet without look-alikes (no 0/O,
 // 1/I/L, U/V), 29 in all, shown as two groups of five. It is valid for one purpose
-// (`access` signs a browser in; `confirm` confirms one change), expires,
+// (`access` signs a browser in; `confirm` confirms one change; `move` lets
+// another server send a household here, #739), expires,
 // is used once, and is destroyed after `maxAttempts` wrong tries, so a
 // guessing program gets a handful of guesses per printed code: with 29^10
 // (about 4 × 10^14) codes, five guesses succeed about once in 10^14. Only the SHA-256 of a code is
@@ -22,6 +23,8 @@ export const CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTWXYZ";
 export const CODE_LENGTH = 10;
 export const SETUP_CODE_TTL_MS = 60 * 60_000;
 export const CONFIRM_CODE_TTL_MS = 10 * 60_000;
+/** A move code (ADR 0026 §1.1) is typed on another server: an hour. */
+export const MOVE_CODE_TTL_MS = 60 * 60_000;
 export const MAX_ATTEMPTS = 5;
 export const ISSUE_INTERVAL_MS = 30_000;
 

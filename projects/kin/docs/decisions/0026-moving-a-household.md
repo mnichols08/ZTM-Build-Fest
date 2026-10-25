@@ -6,7 +6,20 @@ straight to the home server, which the admin authorizes on both ends, and
 answered the open questions the same day (recorded at the end). It replaces
 the plan in [ADR 0025](0025-kin-at-home.md) §12, which assumed the existing
 household export could carry a household to a new server; it can't
-(Context). Not built yet.
+(Context). Built so far: the move package (`server/move-package.mjs`) and
+the home server's receiving side, the move code and `/api/move/*`
+(`server/home/move-receive.mjs`, #739; [HOME-SERVER](../HOME-SERVER.md#moving-a-household-here)).
+The hosted side (#738) and the re-joining guide come next.
+
+*As built (#739).* The package travels in pieces (§3): `start` with the
+move code returns a bearer token for one transfer (two hours, kept as its
+hash), then 8 MiB `chunk`s by offset, `status` to resume, and `finish`,
+which checks the size and SHA-256 before the package is opened. Node's
+request time limit (5 minutes) and slow home uplinks make one 4 GB request
+impractical. After the import Kin restarts, as after setup, so every part of
+the service loads the household. A device's stored record carries its token
+hash too; the package clears both. Marking carried-over devices (§6) comes
+with the re-joining guide.
 
 ## Context
 

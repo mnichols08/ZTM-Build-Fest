@@ -252,6 +252,9 @@ export function createKinServer(options = {}) {
             503,
           );
         store?.assertAvailable();
+        // A household moved here from another Kin server (ADR 0026, #739):
+        // its own authentication, a one-time move code and a bearer token.
+        if (await context.controlPanel?.moveReceiver?.handle(request, response, url)) return;
         await api(request, response, url, context);
         return;
       }

@@ -149,6 +149,20 @@ documentation only.
   data as it was and says why. Before a name is chosen, the setup page
   offers a backup copied into the folder, which also brings its `home/`:
   moving a home server to a new computer.
+- **Moving a household to a home server: the receiving side** (#739; story
+  #737, epic #708, [ADR 0026](docs/decisions/0026-moving-a-household.md),
+  [HOME-SERVER](docs/HOME-SERVER.md#moving-a-household-here)). ADR 0026
+  replaces ADR 0025 §12: the old server sends the household's own records
+  (the same household, member and device IDs, so every event, vault and
+  signature stays valid) straight to the home server. `server/move-package.mjs`
+  builds a package of one household's rows (every table is classified as
+  moving, staying or the server's own, and a test fails on a new one) with
+  no device token, passkey or passkey wrapper, and imports it in one
+  transaction after the full startup checks. On the home server, the control
+  panel prints a one-time move code; `/api/move/*` takes the package in
+  resumable 8 MiB pieces (at most 4 GB) with the code and a per-transfer
+  token, checks it, adds the household and restarts. The sending side on the
+  hosted service (#738) comes next.
 - **Kin at home: signed, safe updates** (#722; story #718, epic #708,
   [ADR 0025](docs/decisions/0025-kin-at-home.md) §10,
   [HOME-SERVER](docs/HOME-SERVER.md#updates)). Releases carry

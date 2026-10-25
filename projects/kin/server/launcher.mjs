@@ -82,6 +82,7 @@ export function describeCodeLine(line) {
     setup: `Set up Kin: open ${event.url} on this computer and enter the setup code ${event.code}.${until}`,
     access: `To open Kin's control panel, go to ${event.url} on this computer and enter the code ${event.code}.${until}`,
     confirm: `To confirm the change in Kin's control panel, enter the code ${event.code}.${until}`,
+    move: `To move a household to this home server, enter the move code ${event.code} on the address it is moving from.${until}`,
   }[event.purpose];
   return text ? { purpose: event.purpose, url: event.url, text } : null;
 }
