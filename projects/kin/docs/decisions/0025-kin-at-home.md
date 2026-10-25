@@ -803,6 +803,11 @@ didn't make:
 
 ### 12. Moving a household from the hosted service to a home server
 
+*Superseded by [ADR 0026](0026-moving-a-household.md) (proposed): the
+export can't start a household on another server, so the hosted service
+sends the household's records to the home server instead. The plan as first
+written:*
+
 Uses what exists (#737):
 
 1. An admin exports the household on the hosted service (PORTABILITY).
