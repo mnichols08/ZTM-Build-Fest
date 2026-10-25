@@ -269,9 +269,6 @@ export class StatusController {
     card.hidden = true;
   }
 
-  /** Today's account card, if one is due; false when none is shown. The
-   * account summary loads once per unlock (security/account.js refresh,
-   * which renders this again when it arrives). */
   /** The household moved, or is moving, to a home server (ADR 0026,
    * #737): where to go, in plain words; details in the household panel. */
   renderMoved(card, heading, status) {
@@ -291,6 +288,9 @@ export class StatusController {
     actions.append(open, more);
     card.append(actions);
   }
+  /** Today's account card, if one is due; false when none is shown. The
+   * account summary loads once per unlock (security/account.js refresh,
+   * which renders this again when it arrives). */
   renderAccountOffer(card, heading) {
     const account = this.app.security?.account;
     const security = this.app.accountSecurity;
