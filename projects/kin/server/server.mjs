@@ -426,6 +426,11 @@ if (
     const dataDirectory = dirname(configuredDatabasePath());
     let homeSettings = null;
     if (serverMode(process.env.KIN_MODE) === "home") {
+      // A restore the control panel asked for (#721) runs before the
+      // database is opened, and before the settings are read: a backup put
+      // back on a new computer brings its home settings with it.
+      const { runPendingRestore } = await import("./home/backups.mjs");
+      await runPendingRestore({ dataDirectory, databasePath: configuredDatabasePath(), log: (event) => console.log(JSON.stringify(event)) });
       const { homeOrigin, loadHomeSettings } = await import("./home/settings.mjs");
       homeSettings = await loadHomeSettings(dataDirectory);
       if (homeSettings.configured) origin = homeOrigin(homeSettings, process.env.KIN_ORIGIN);

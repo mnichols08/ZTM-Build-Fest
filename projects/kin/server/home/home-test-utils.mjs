@@ -12,6 +12,7 @@ import { startAcmeTestServer } from "../acme/acme-test-server.mjs";
 import { createHttpsTransport } from "../acme/transport.mjs";
 import { DurableStore } from "../durable-store.mjs";
 import { createKinServer } from "../server.mjs";
+import { runPendingRestore } from "./backups.mjs";
 import { createControlPanel } from "./control-panel.mjs";
 import { startHomeServer } from "./home-server.mjs";
 import { loadHomeSettings, writeHomeSettings } from "./settings.mjs";
@@ -45,6 +46,8 @@ export async function startHomeHarness() {
   const running = new Set();
 
   async function boot(port = 0) {
+    // As server.mjs: a restore the panel asked for runs first (#721).
+    await runPendingRestore({ dataDirectory: data, databasePath });
     const settings = await loadHomeSettings(data, {});
     const store = new DurableStore(databasePath);
     const application = createKinServer({ store, mode: "home", origin: settings.configured ? `https://${settings.name}` : "http://localhost:8000", host: "127.0.0.1" });

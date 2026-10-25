@@ -1,12 +1,19 @@
 // The control panel's settings (ADR 0025 §9, §11; #718). Every change
 // needs a fresh confirmation: on this computer a code Kin prints in its
 // window and log, through the household's address the admin's passkey or
-// password (control-api.js). For now it holds the new-household limit;
-// backups (#721) and updates (#722) add their settings as more entries in
-// SETTINGS, each a { kind, title, render(status), change(form) }.
+// password (control-api.js). Each entry in SETTINGS is one change: the
+// new-household limit, and backups (#721): back up now, the daily time
+// and restore. Updates (#722) add theirs the same way. An entry without a
+// `field` is a button alone; `action` names the button and `done(result)`
+// says what happened.
+//
+// `kinds`, when set, shows only those entries: the setup screen shows
+// "restore" alone, for moving a home server to a new computer.
 import { el } from "./dom.js";
 import { explain } from "./explain.js";
-import { countOf } from "./format.js";
+import { countOf, formatDateTime, formatHour } from "./format.js";
+
+const backupsReady = (status) => Array.isArray(status.backups?.backups) && !["restoring", "not-built", "error"].includes(status.backups.state);
 
 export const SETTINGS = [
   {
@@ -24,7 +31,50 @@ export const SETTINGS = [
     },
     change: (control) => ({ kind: "households-limit", maxHouseholds: Number(control.value) }),
   },
+  {
+    kind: "backup-now",
+    title: "Back up now",
+    describe: () => "Make a backup straight away, as well as the daily one. Kin keeps the 14 newest.",
+    available: (status) => backupsReady(status) && status.backups.state !== "off",
+    unavailable: (status) => (status.backups?.state === "off" ? "Backups start once this home server is set up." : "Backups aren't available right now."),
+    action: "Back up now",
+    change: () => ({ kind: "backup-now" }),
+    done: (result) => `Backup made: ${formatDateTime(result?.backup?.createdAt)}.`,
+  },
+  {
+    kind: "backup-hour",
+    title: "Daily backup time",
+    describe: () => "Kin backs up once a day at this time. If the computer is off or asleep then, Kin backs up soon after it starts again.",
+    available: (status) => backupsReady(status) && Number.isInteger(status.backups.hour),
+    unavailable: () => "Backups aren't available right now.",
+    field: (status) => {
+      const select = el("select", { id: "control-setting-backup-hour", name: "hour" });
+      for (let hour = 0; hour < 24; hour += 1)
+        select.append(el("option", { value: String(hour), selected: hour === status.backups.hour, text: formatHour(hour) }));
+      return { label: "Back up every day at", control: select };
+    },
+    change: (control) => ({ kind: "backup-hour", hour: Number(control.value) }),
+  },
+  {
+    kind: "restore",
+    title: "Restore a backup",
+    describe: () => "Puts Kin back as it was when the backup was made. Kin stops for a moment and starts again. Anything added since then comes back from people's phones and computers when they next connect, and households deleted since then stay deleted. Kin keeps the data it replaces in its folder.",
+    available: (status) => backupsReady(status) && status.backups.backups.length > 0,
+    unavailable: (status) => (status.backups?.state === "restoring" ? "Kin is restoring a backup now." : "There's no backup to restore yet."),
+    field: (status) => {
+      const select = el("select", { id: "control-setting-restore", name: "id" });
+      for (const backup of status.backups.backups)
+        select.append(el("option", { value: backup.id, text: `${formatDateTime(backup.createdAt)}${backup.reason === "manual" ? " (made by hand)" : ""}` }));
+      return { label: "Backup to restore", control: select };
+    },
+    action: "Restore",
+    change: (control) => ({ kind: "restore", id: control.value }),
+    done: () => "Kin is starting again to restore the backup. This page comes back by itself in a minute.",
+  },
 ];
+
+/** What, in the status, the settings show: they redraw only when it changes. */
+const shown = (status) => JSON.stringify([status?.limits, status?.backups?.state === "restoring", status?.backups?.hour, status?.backups?.backups?.map((backup) => backup.id)]);
 
 export class KinControlSettings extends HTMLElement {
   #status = null;
@@ -34,6 +84,8 @@ export class KinControlSettings extends HTMLElement {
     this.api = null;
     this.busy = false;
     this.pending = null;
+    this.kinds = null;
+    this.heading = "Settings";
   }
 
   get status() { return this.#status; }
@@ -42,21 +94,26 @@ export class KinControlSettings extends HTMLElement {
     this.#status = value;
     // Redraw only when a setting's value changed, and never under a change
     // someone is confirming.
-    if (before === null || (!this.busy && !this.pending && JSON.stringify(before.limits) !== JSON.stringify(value?.limits))) this.render();
+    if (before === null || (!this.busy && !this.pending && shown(before) !== shown(value))) this.render();
   }
 
   render() {
     const status = this.#status;
     if (!status) { this.replaceChildren(); return; }
-    this.message = el("p", { className: "control-message", role: "status" });
+    // A change's own result redraws the settings (a new backup to restore):
+    // what was just said, and where focus was, stay.
+    this.message ??= el("p", { className: "control-message", role: "status" });
+    const focused = this.contains?.(document.activeElement) ? document.activeElement.closest?.("[data-setting]")?.dataset.setting : null;
+    const settings = SETTINGS.filter((setting) => !this.kinds || this.kinds.includes(setting.kind));
     this.replaceChildren(
-      el("h2", { id: "control-settings-title", text: "Settings" }),
+      el("h2", { id: this.kinds ? `control-settings-title-${this.kinds.join("-")}` : "control-settings-title", text: this.heading }),
       el("p", { className: "control-muted", text: this.api?.loopback
         ? "Each change asks for a confirmation code that Kin prints in its window and log on this computer."
         : "Each change asks you to confirm with your passkey or password." }),
-      ...SETTINGS.map((setting) => this.#setting(setting, status)),
+      ...settings.map((setting) => this.#setting(setting, status)),
       this.message,
     );
+    if (focused) this.querySelector(`[data-setting="${focused}"] button`)?.focus();
   }
 
   #setting(setting, status) {
@@ -67,10 +124,10 @@ export class KinControlSettings extends HTMLElement {
       section.append(el("p", { className: "control-muted", text: setting.unavailable(status) }));
       return section;
     }
-    const { label, control } = setting.field(status);
-    const save = el("button", { type: "submit", className: "primary-action", text: "Save" });
-    const form = el("form", { className: "control-form", onsubmit: (event) => { event.preventDefault(); this.save(setting.change(control), save, form); } },
-      el("label", { for: control.id, text: label }), control,
+    const { label, control } = setting.field?.(status) ?? {};
+    const save = el("button", { type: "submit", className: "primary-action", text: setting.action ?? "Save" });
+    const form = el("form", { className: "control-form", onsubmit: (event) => { event.preventDefault(); this.save(setting.change(control), save, form, setting.done); } },
+      ...(control ? [el("label", { for: control.id, text: label }), control] : []),
       el("div", { className: "control-actions" }, save));
     section.append(form);
     return section;
@@ -83,15 +140,14 @@ export class KinControlSettings extends HTMLElement {
 
   /** Saves `change` after a fresh confirmation. On this computer that is
    * a printed code, asked for in a small form under the setting. */
-  async save(change, button, form) {
+  async save(change, button, form, done = () => "Saved.") {
     if (this.busy) return;
-    if (this.api.loopback) { await this.#askForCode(change, form); return; }
+    if (this.api.loopback) { await this.#askForCode(change, form, done); return; }
     this.busy = true;
     button.disabled = true;
     this.#say("Confirm the change when Kin asks.");
     try {
-      await this.api.change(change);
-      this.#say("Saved.");
+      this.#say(done(await this.api.change(change)));
       this.dispatchEvent(new CustomEvent("changed", { bubbles: true }));
     } catch (error) {
       this.#say(error?.name === "NotAllowedError" ? "Cancelled. Nothing changed." : explain(error.code), true);
@@ -101,7 +157,7 @@ export class KinControlSettings extends HTMLElement {
     }
   }
 
-  async #askForCode(change, form) {
+  async #askForCode(change, form, done) {
     try {
       await this.api.post("confirm-code");
     } catch (error) {
@@ -118,10 +174,10 @@ export class KinControlSettings extends HTMLElement {
       this.busy = true;
       confirm.disabled = true;
       try {
-        await this.api.change(this.pending, { code: input.value });
+        const result = await this.api.change(this.pending, { code: input.value });
         this.pending = null;
         box.remove();
-        this.#say("Saved.");
+        this.#say(done(result));
         this.dispatchEvent(new CustomEvent("changed", { bubbles: true }));
       } catch (error) {
         this.#say(`${explain(error.code)}${Number.isInteger(error.attemptsLeft) ? ` ${error.attemptsLeft} more ${error.attemptsLeft === 1 ? "try" : "tries"}.` : ""}`, true);

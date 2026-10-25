@@ -2,7 +2,8 @@
 // and keeps it current.
 //
 //   on this computer, no session      → <kin-control-sign-in>
-//   on this computer, setting up      → <kin-control-setup>
+//   on this computer, setting up      → <kin-control-setup>, and restoring a
+//                                       backup when one waits in Kin's folder
 //   set up (here, or as an admin)     → <kin-control-status> and <kin-control-settings>
 //   through the household's address,
 //   not signed in or not an admin     → a sentence and a link to Kin
@@ -91,14 +92,26 @@ export class KinControlPanel extends HTMLElement {
     this.noticeElement.hidden = !text;
   }
 
-  #part(tag) {
-    let node = this.parts?.get(tag);
+  #part(tag, key = tag) {
+    let node = this.parts?.get(key);
     if (!node) {
       node = document.createElement(tag);
       node.api = this.api;
-      (this.parts ??= new Map()).set(tag, node);
+      (this.parts ??= new Map()).set(key, node);
     }
     return node;
+  }
+
+  /** Moving to a new computer (#721): before a name is chosen, a backup
+   * copied into Kin's backups folder can be restored, which brings the old
+   * computer's name and keys with it. Null when there is none. */
+  #moving(state) {
+    if (state.configured || state.setup?.step !== "name" || !state.status?.backups?.backups?.length) return null;
+    const restore = this.#part("kin-control-settings", "moving");
+    restore.kinds = ["restore"];
+    restore.heading = "Moving from another computer?";
+    restore.status = state.status;
+    return restore;
   }
 
   /** Which screen the state calls for. */
@@ -118,7 +131,12 @@ export class KinControlPanel extends HTMLElement {
     if (screen === this.lastScreen) {
       // The same screen: update in place, so focus and a form being filled
       // in stay where they are.
-      if (screen === "setup") this.#part("kin-control-setup").view = state.setup;
+      if (screen === "setup") {
+        this.#part("kin-control-setup").view = state.setup;
+        const moving = this.#moving(state);
+        if (moving && !moving.isConnected) this.append(moving);
+        if (!moving) this.parts?.get("moving")?.remove();
+      }
       if (screen === "status") {
         this.#part("kin-control-status").status = state.status;
         this.#part("kin-control-settings").status = state.status;
@@ -136,6 +154,8 @@ export class KinControlPanel extends HTMLElement {
       const setup = this.#part("kin-control-setup");
       setup.view = state.setup;
       children.push(setup);
+      const moving = this.#moving(state);
+      if (moving) children.push(moving);
     } else if (screen === "status") {
       const status = this.#part("kin-control-status");
       status.status = state.status;

@@ -11,7 +11,11 @@
 // guessing program gets a handful of guesses per printed code: with 29^10
 // (about 4 × 10^14) codes, five guesses succeed about once in 10^14. Only the SHA-256 of a code is
 // kept, in memory; asking for a new code replaces the old one and is
-// limited to one every `issueIntervalMs`.
+// limited to one every `issueIntervalMs`. With `reissueAfterUse` (the
+// confirmation code, which only a signed-in session can ask for), a code
+// that was used correctly doesn't make the next one wait, so one change can
+// follow another (#721: back up, then restore); a code that ran out or was
+// locked by wrong tries keeps the wait, so guessing gets no faster.
 import { createHash, randomInt, timingSafeEqual } from "node:crypto";
 
 export const CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTWXYZ";
@@ -53,14 +57,15 @@ export class OneTimeCode {
   #expiresAt = 0;
   #attempts = 0;
   #issuedAt = null;
+  #used = false;
 
-  constructor({ purpose, ttlMs, maxAttempts = MAX_ATTEMPTS, issueIntervalMs = ISSUE_INTERVAL_MS, now = Date.now, random = randomInt }) {
-    Object.assign(this, { purpose, ttlMs, maxAttempts, issueIntervalMs, now, random });
+  constructor({ purpose, ttlMs, maxAttempts = MAX_ATTEMPTS, issueIntervalMs = ISSUE_INTERVAL_MS, reissueAfterUse = false, now = Date.now, random = randomInt }) {
+    Object.assign(this, { purpose, ttlMs, maxAttempts, issueIntervalMs, reissueAfterUse, now, random });
   }
 
   /** Whether a new code may be issued now; else when (ms since epoch). */
   nextIssueAt() {
-    return this.#issuedAt === null ? this.now() : this.#issuedAt + this.issueIntervalMs;
+    return this.#issuedAt === null || (this.reissueAfterUse && this.#used) ? this.now() : this.#issuedAt + this.issueIntervalMs;
   }
 
   /** Issues a new code (replacing any), or returns null inside the issue
@@ -73,6 +78,7 @@ export class OneTimeCode {
     this.#issuedAt = this.now();
     this.#expiresAt = this.#issuedAt + this.ttlMs;
     this.#attempts = 0;
+    this.#used = false;
     return { code: value, expiresAt: this.#expiresAt };
   }
 
@@ -87,7 +93,7 @@ export class OneTimeCode {
     if (code === null) return "malformed";
     if (this.#hash === null) return "none";
     if (this.now() >= this.#expiresAt) { this.revoke(); return "expired"; }
-    if (timingSafeEqual(digest(code), this.#hash)) { this.revoke(); return "ok"; }
+    if (timingSafeEqual(digest(code), this.#hash)) { this.revoke(); this.#used = true; return "ok"; }
     this.#attempts += 1;
     if (this.#attempts >= this.maxAttempts) { this.revoke(); return "locked"; }
     return "wrong";

@@ -1,7 +1,8 @@
 // Plain words for every state and error code the control panel shows (ADR
-// 0025 §11, #719, #720). The codes come from the home server: the tunnel
-// (server/home/tunnel-client.mjs), the certificate manager and ACME client
-// (server/acme/), the setup flow and the panel (server/home/). Each answer
+// 0025 §11, #719, #720, #721). The codes come from the home server: the
+// tunnel (server/home/tunnel-client.mjs), the certificate manager and ACME
+// client (server/acme/), the setup flow, the panel and the backups
+// (server/home/). Each answer
 // says what happened and, where there is one, what to do. A code this file
 // doesn't know still gets a sentence by its family, never a raw code alone.
 
@@ -94,6 +95,28 @@ const TRANSPARENCY = {
   alert: "A certificate for this name that this server didn't make appears in the public logs. Someone may be pretending to be your home server. Read “If a certificate you didn't make appears” in the guide.",
 };
 
+const BACKUP_STATES = {
+  ok: "Kin backs this home server up every day by itself.",
+  none: "No backup yet. Kin makes the first one within a few minutes.",
+  running: "Making a backup now…",
+  failed: "The last backup didn't work. Kin tries again in an hour.",
+  restoring: "Kin is starting again to restore a backup. This page comes back by itself in a minute.",
+  off: "Backups start once this home server is set up.",
+};
+
+const BACKUP_ERRORS = {
+  "backup-failed": "Kin couldn't make a backup. Check that this computer's disk is working and has room; Kin tries again in an hour.",
+  "backup-disk-full": "The disk is full, so Kin couldn't make a backup. Free some space; Kin tries again in an hour.",
+  "backup-busy": "Another backup or restore was using Kin's data at the same time. Kin tries again in an hour.",
+  "backup-restore-pending": "Kin is about to restore a backup, so it isn't making new ones.",
+  "backup-unknown": "Kin doesn't have that backup any more. Reload the page and choose another.",
+  "backup-unreadable": "That backup doesn't open, so Kin won't restore it. Choose another one.",
+  "control-backup-hour-invalid": "Choose an hour of the day.",
+  "restore-failed": "Something went wrong putting the backup back.",
+  "restore-deletion-pending": "A household on this server is being deleted. Cancel the deletion or let it finish, then restore.",
+  "restore-newer-household": "The backup is older than a household that's on this server now, and restoring it would remove that household. Choose a newer backup.",
+};
+
 const SETUP_ERRORS = {
   "setup-name-empty": "Type a name.",
   "setup-name-invalid": "Use only letters a–z, digits and hyphens, with dots only between parts of your own domain.",
@@ -160,6 +183,7 @@ const FAMILY = [
   [/^(?:tunnel|relay|name)-/, "There's a problem with the connection to the relay. Kin keeps trying."],
   [/^dns-/, "A DNS record isn't right yet."],
   [/^setup-/, "Setup couldn't do that. Reload the page and try again."],
+  [/^(?:backup|restore)-/, "Something went wrong with a backup. Look at Kin's log on this computer."],
   [/^control-/, "The control panel couldn't do that. Reload the page and try again."],
 ];
 
@@ -171,21 +195,23 @@ function family(code) {
 /** Plain words for any code the panel shows; `known` says whether this
  * file has a sentence of its own for it. */
 export function explain(code) {
-  const text = TUNNEL_ERRORS[code] ?? CERTIFICATE_ERRORS[code] ?? SETUP_ERRORS[code] ?? PANEL_ERRORS[code] ?? DNS_PROBLEMS[code];
+  const text = TUNNEL_ERRORS[code] ?? CERTIFICATE_ERRORS[code] ?? SETUP_ERRORS[code] ?? PANEL_ERRORS[code] ?? DNS_PROBLEMS[code] ?? BACKUP_ERRORS[code];
   return text ?? family(String(code ?? ""));
 }
 
 export function isExplained(code) {
-  return Boolean(TUNNEL_ERRORS[code] ?? CERTIFICATE_ERRORS[code] ?? SETUP_ERRORS[code] ?? PANEL_ERRORS[code] ?? DNS_PROBLEMS[code]);
+  return Boolean(TUNNEL_ERRORS[code] ?? CERTIFICATE_ERRORS[code] ?? SETUP_ERRORS[code] ?? PANEL_ERRORS[code] ?? DNS_PROBLEMS[code] ?? BACKUP_ERRORS[code]);
 }
 
 export const explainTunnelState = (state) => TUNNEL_STATES[state] ?? "The connection's state isn't known.";
 export const explainCertificateState = (state) => CERTIFICATE_STATES[state] ?? "The certificate's state isn't known.";
 export const explainTransparency = (state) => TRANSPARENCY[state] ?? TRANSPARENCY["not-checked"];
+export const explainBackupState = (state) => BACKUP_STATES[state] ?? "The backups' state isn't known.";
 
 /** Every state with words of its own, for tests. */
 export const KNOWN = Object.freeze({
   tunnelStates: Object.keys(TUNNEL_STATES),
   certificateStates: Object.keys(CERTIFICATE_STATES),
   transparency: Object.keys(TRANSPARENCY),
+  backupStates: Object.keys(BACKUP_STATES),
 });

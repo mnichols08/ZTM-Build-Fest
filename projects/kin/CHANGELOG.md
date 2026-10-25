@@ -132,6 +132,23 @@ documentation only.
   Tested in Node, end to end through the restart against the real relay and
   the in-process CA, and in a browser (`scripts/control-panel-regression.mjs`,
   a new CI suite).
+- **Kin at home: scheduled backups and restore** (#721; story #718, epic
+  #708, [ADR 0025](docs/decisions/0025-kin-at-home.md) §10,
+  [HOME-SERVER](docs/HOME-SERVER.md#backups-and-restore)). A home server
+  backs itself up every day at 03:00 local time (the hour is a setting), or
+  soon after it starts when it missed that time, into
+  `backups/kin-<time>/` in its data folder: the verified database copy
+  (`VACUUM INTO`, then opened and validated), the `home/` keys, certificate
+  and settings, and a manifest written last. The 14 newest are kept; a
+  failure is shown and tried again an hour later. The control panel shows
+  the last and next backup, how many are kept and their size, and offers
+  back up now, the daily time and restore, each confirmed like any other
+  change. Restore checks that the backup opens, restarts Kin, and runs the
+  existing restore before the database is opened (keeping the replaced
+  database, deletions and current authority); a refused restore leaves the
+  data as it was and says why. Before a name is chosen, the setup page
+  offers a backup copied into the folder, which also brings its `home/`:
+  moving a home server to a new computer.
 
 - **Kitchen display mode** (#669: #670, #671, #672; epic #651,
   [ADR 0022](docs/decisions/0022-family-hub.md) §4). An Adult turns a tablet
