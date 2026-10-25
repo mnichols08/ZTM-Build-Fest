@@ -19,6 +19,10 @@
 // #749), which starts this launcher with --stop-on-stdin-close and asks it to
 // stop by closing its stdin: a Windows service has no console to send Ctrl+C
 // to, and ending a process gives it no chance to close its database.
+//
+// In home mode it also runs the updater (server/home/updater.mjs, #722),
+// which may stop the service, try a new release as the service, and keep it
+// or go back, through the controller runService hands it.
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -188,7 +192,7 @@ function openLog(path) {
  * (1 second, doubling to 1 minute, reset after a minute up). With
  * `stopOnStdinClose`, the end of `stdin` stops the service as SIGTERM does.
  */
-export function runService({ serviceProcess, env = process.env, supervise = false, stopOnStdinClose = false, logFile = null, spawnImpl = spawn, signals = process, stdin = process.stdin, platform = process.platform, stdout = process.stdout, stderr = process.stderr, interactive = Boolean(process.stdout.isTTY), open = openBrowser }) {
+export function runService({ serviceProcess, env = process.env, supervise = false, stopOnStdinClose = false, logFile = null, spawnImpl = spawn, signals = process, stdin = process.stdin, platform = process.platform, stdout = process.stdout, stderr = process.stderr, interactive = Boolean(process.stdout.isTTY), open = openBrowser, updater = null }) {
   let log = null;
   const write = (stream, line) => {
     if (log !== null) writeSync(log, `${line}\n`);
@@ -236,14 +240,58 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
   // launcher outright) and --stop-on-stdin-close (the service host).
   const stopByPipe = supervise || stopOnStdinClose;
   const serviceEnv = { ...env, KIN_DATABASE_PATH: databasePath, ...(stopByPipe ? { KIN_STOP_WITH_LAUNCHER: "1" } : {}) };
-  const spec = serviceProcess({ flags, env: serviceEnv });
+  let spec = serviceProcess({ flags, env: serviceEnv });
 
   return new Promise((resolveExit) => {
     let child = null;
     let stopping = false;
     let delay = RESTART_MIN_MS;
     let restartTimer = null;
+    // The updater's hold on the service (#722): while `paused`, an exit is
+    // expected and nothing restarts; while `onTrialExit` is set, the running
+    // service is a release on trial and its exit goes to the updater.
+    let paused = false;
+    let onTrialExit = null;
+    let update = null;
+    const exited = [];
+    const running = () => child !== null && child.exitCode === null && child.signalCode === null;
+    // A clean stop, as a service manager's would be: SIGTERM, or on Windows
+    // the closed stdin pipe; after 45 seconds, an end.
+    const stopChild = () => {
+      if (platform === "win32") child.stdin?.end();
+      else child.kill("SIGTERM");
+      const force = setTimeout(() => { if (running()) child.kill(); }, 45_000);
+      force.unref?.();
+    };
+    const controller = {
+      canStop: platform !== "win32" || stopByPipe,
+      serviceEnv,
+      get spec() { return spec; },
+      flagsFor: (appRoot) => permissionFlags(databasePath, appRoot),
+      /** Stops the service and keeps it stopped; resolves once it exited. */
+      pause() {
+        paused = true;
+        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+        if (!running()) return Promise.resolve();
+        return new Promise((resolvePause) => { exited.push(resolvePause); stopChild(); });
+      },
+      /** Starts the service again, from `next` if given. With `onExit`, its
+       * exit is reported there instead of restarting it (a trial). */
+      resume(next = null, { onExit = null } = {}) {
+        if (stopping) return false;
+        if (next) spec = next;
+        onTrialExit = onExit;
+        paused = false;
+        start();
+        return true;
+      },
+      /** The trial passed: its exits restart it as usual from now on. */
+      endTrial() { onTrialExit = null; },
+      /** How the service is started from now on (the release that passed). */
+      adopt(next) { spec = next; },
+    };
     const finish = (code) => {
+      update?.stop();
       if (stopOnStdinClose) {
         stdin.removeListener("end", onStdinClosed);
         stdin.removeListener("error", onStdinClosed);
@@ -266,12 +314,12 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
     };
     const onTerm = () => {
       stopping = true;
-      if (restartTimer) { clearTimeout(restartTimer); finish(0); return; }
+      if (restartTimer || (paused && !running())) { if (restartTimer) clearTimeout(restartTimer); finish(0); return; }
       forward("SIGTERM");
     };
     const onInt = () => {
       stopping = true;
-      if (restartTimer) { clearTimeout(restartTimer); finish(130); return; }
+      if (restartTimer || (paused && !running())) { if (restartTimer) clearTimeout(restartTimer); finish(130); return; }
       setTimeout(() => { if (child && child.exitCode === null && child.signalCode === null) forward("SIGTERM"); }, 250).unref();
     };
     // The service host closed this launcher's stdin (or ended): close the
@@ -279,7 +327,7 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
     const onStdinClosed = () => {
       if (stopping) return;
       stopping = true;
-      if (restartTimer) { clearTimeout(restartTimer); finish(0); return; }
+      if (restartTimer || (paused && !running())) { if (restartTimer) clearTimeout(restartTimer); finish(0); return; }
       if (child && child.exitCode === null && child.signalCode === null) child.stdin?.end();
     };
     signals.on("SIGTERM", onTerm);
@@ -314,6 +362,16 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
       // pipes drained) so no output arrives after the log is closed.
       child.on(piped || watchCodes ? "close" : "exit", (code, signal) => {
         const exitCode = code ?? 128 + (constants.signals[signal] ?? 0);
+        for (const waiter of exited.splice(0)) waiter(exitCode);
+        if (paused && !stopping) return;
+        if (onTrialExit && !stopping) {
+          const report = onTrialExit;
+          onTrialExit = null;
+          paused = true;
+          write(stderr, JSON.stringify({ event: "service_trial_exited", code: exitCode }));
+          report(exitCode);
+          return;
+        }
         // The service asked to be started again (setup wrote its name):
         // at once, supervised or not, unless a stop is under way.
         if (exitCode === RESTART_EXIT_CODE && !stopping) {
@@ -334,6 +392,15 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
       });
     };
     start();
+    if (updater) {
+      Promise.resolve(updater({ controller, databasePath, env, log: (event) => write(stderr, JSON.stringify(event)) }))
+        .then((created) => {
+          update = created;
+          if (stopping) created?.stop();
+          else created?.start();
+        })
+        .catch((error) => write(stderr, JSON.stringify({ event: "home_update_unavailable", message: error?.message ?? String(error) })));
+    }
   });
 }
 
@@ -386,7 +453,15 @@ export async function runLauncher(argv, { serviceProcess, program, version, env 
         return 1;
       }
     }
-    default:
-      return runService({ serviceProcess, env, supervise: options.supervise, stopOnStdinClose: options.stopOnStdinClose, logFile: options.logFile, platform });
+    default: {
+      // Home mode: the updater (#722). It reads the built-in release key and
+      // does nothing without one.
+      const home = String(env.KIN_MODE ?? "").trim().toLowerCase() === "home";
+      const updater = home && program ? async ({ controller, databasePath, env: serviceEnv, log }) => {
+        const { homeUpdater } = await import("./home/updater.mjs");
+        return homeUpdater({ controller, program, version, databasePath, env: serviceEnv, log, health: () => checkHealth(env) });
+      } : null;
+      return runService({ serviceProcess, env, supervise: options.supervise, stopOnStdinClose: options.stopOnStdinClose, logFile: options.logFile, platform, updater });
+    }
   }
 }

@@ -15,8 +15,10 @@
 // Two fields have no variable of their own: `maxHouseholds` (1 to 10, or
 // absent for home mode's default of 1), the new-household limit the control
 // panel raises (ADR 0025 §9, #720), which KIN_MAX_HOUSEHOLDS, when set, wins
-// over; and `backupHour` (0 to 23, or absent for 3), the local hour of the
-// daily backup (§10, #721).
+// over; `backupHour` (0 to 23, or absent for 3), the local hour of the
+// daily backup (§10, #721); and `autoUpdate` (true or absent, or false), whether
+// patch and minor releases install themselves at night (§10, #722; the
+// launcher reads it from the file).
 //
 // `writeHomeSettings` is the only writer: the setup page and the control
 // panel (#718). It merges a change into what the file holds, checks the
@@ -142,6 +144,7 @@ export function resolveHomeSettings(file, env = process.env) {
     acmeTermsAgreed: raw.acmeTermsAgreed === undefined || raw.acmeTermsAgreed === null || raw.acmeTermsAgreed === "" ? false : parseBoolean(raw.acmeTermsAgreed, "acmeTermsAgreed"),
     maxHouseholds: parseMaxHouseholds(file?.maxHouseholds),
     backupHour: parseBackupHour(file?.backupHour),
+    autoUpdate: file?.autoUpdate === undefined || file?.autoUpdate === null ? true : parseBoolean(file.autoUpdate, "autoUpdate"),
     configured: name !== null,
   });
 }

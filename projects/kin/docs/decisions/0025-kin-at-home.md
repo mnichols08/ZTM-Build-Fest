@@ -33,8 +33,9 @@ households. Direct LAN access stays deferred (§4). Built by #719 and #720
 [HOME-SERVER](../HOME-SERVER.md#setting-it-up-the-control-panel)): the
 first-run setup page and the status page of the control panel (§10, §11),
 with the additions and choices recorded at the end of §11. Scheduled
-backups and restore are built by #721 (`server/home/backups.mjs`; choices
-recorded at the end of §10); updates (#722) follow.
+backups and restore are built by #721 (`server/home/backups.mjs`), and
+signed updates by #722 (`server/home/release.mjs`, `updater.mjs`); the
+choices are recorded at the end of §10.
 
 **A word on names.** Kin's documents already call the sync service "the
 relay" (it relays encrypted events; THREAT-MODEL S4, S5). This ADR adds a
@@ -766,6 +767,36 @@ it again.
   put back only on a computer with no home key yet (moving to a new
   computer, offered on the setup page before a name is chosen); on a server
   that has one, its own keys stay.
+
+*As built (#722).* With the owner's answers of 2026-10-25:
+
+- **Releases come from GitHub Releases** of the project's repository: the
+  manifest and its signature from `releases/latest/download/`, each file
+  from its `kin-v<version>` tag. `KIN_HOME_RELEASES` names another base for
+  a fork.
+- **No release key is built in yet.** `scripts/release-key.mjs` makes the
+  key pair offline, `scripts/sign-release.mjs` signs a build; until the
+  public key is in `server/home/release-key.mjs`, updates are off and Kin
+  makes no requests for them. Rotating the key needs no format: a release
+  signed with the old key carries the new public key.
+- **The account Kin runs as may write its install folder**, so the launcher
+  can replace the executable; the service stays sandboxed to its data
+  folder. A separate privileged updater was the alternative, at the cost of
+  three platform-specific mechanisms.
+- **The old launcher tries the new release before replacing anything**,
+  instead of steps 4–6 above in that order: it unpacks the new release into
+  its own cache folder, stops the service, backs up, and runs the new
+  release as the service; only after the health check and 5 minutes up does
+  it swap the files and keep the new service running. A release that fails
+  is stopped, the backup's database is put back by replacing the file (a
+  restore would have to open the newer schema), and the old service starts
+  again. So a release that can't start never leaves a service manager
+  restarting it, and nothing depends on how each one restarts a program.
+- **"At night" is 02:00 to 05:00** local time; `autoUpdate: false` in the
+  home settings (a control-panel setting) makes every release wait for an
+  admin. A release that failed isn't installed by itself again.
+- **Only Kin installed as a service updates itself.** Other copies (run by
+  hand, a checkout, the container image) show the update and its page.
 
 ### 11. The control panel
 

@@ -256,7 +256,8 @@ test("status: relay, certificate, storage, version and counts, never household c
   assert.equal(status.backups.state, "none", "backups (#721): none made yet");
   assert.equal(status.backups.due, true, "the first check makes one");
   assert.equal(status.backups.kept, 14);
-  assert.equal(status.updates.state, "not-built", "the seam #722 fills");
+  assert.equal(status.updates.state, "off", "updates (#722): this build has no release key");
+  assert.match(status.updates.current, /^\d+\.\d+\.\d+$/);
   assert.match(status.version, /^\d+\.\d+\.\d+$/);
   const text = JSON.stringify(status);
   for (const secret of [admin.householdId, admin.memberId, adult.memberId, admin.sessionToken, "Synthetic", "panel-admin", "acme.test/account"])
@@ -415,4 +416,34 @@ test("backups (#721): back up now, the hour and restore are changes confirmed li
   assert.equal(restore.body.restoring.id, made.body.backup.id);
   assert.deepEqual(context.restarts, ["restore"]);
   assert.equal(context.panel.status().backups.state, "restoring");
+});
+
+test("updates (#722): the launcher's status is shown, and installing or automatic updates are confirmed changes", TIMEOUT, async (t) => {
+  const context = await startPanel(t, { configured: true, home: setUpHome() });
+  const { mkdirSync: mkdir, writeFileSync: write, readFileSync: read } = await import("node:fs");
+  mkdir(join(context.dataDirectory, "updates"), { recursive: true });
+  write(join(context.dataDirectory, "updates", "status.json"), JSON.stringify({
+    format: 1, state: "available", stage: null, current: "1.6.0", checkedAt: "2026-11-02T12:00:00.000Z", autoUpdate: true, cannotInstall: null,
+    available: { version: "2.0.0", kind: "major", releasedAt: "2026-11-02T10:00:00.000Z", page: "https://github.com/mnichols08/ZTM-Build-Fest/releases/tag/kin-v2.0.0", blocked: null, install: "admin" },
+    lastError: null, lastUpdate: null, failedVersion: null,
+  }));
+  const updates = context.panel.status().updates;
+  assert.equal(updates.state, "available");
+  assert.equal(updates.available.version, "2.0.0");
+  assert.equal(updates.current, context.panel.version, "this server's own version");
+  assert.equal(updates.failedVersion, undefined);
+  context.panel.issueCode("access", { force: true });
+  const cookie = await signIn(context);
+  const confirmed = async (change) => {
+    assert.equal((await post(context, "confirm-code", {}, { cookie })).status, 200);
+    return post(context, "change", { change, code: context.printed.at(-1).code }, { cookie });
+  };
+  assert.equal((await post(context, "change", { change: { kind: "update-install", version: "2.0.1" }, code: "22222-22222" }, { cookie })).body.error, "control-update-unknown");
+  const install = await confirmed({ kind: "update-install", version: "2.0.0" });
+  assert.equal(install.status, 200, JSON.stringify(install.body));
+  const request = JSON.parse(read(join(context.dataDirectory, "updates", "request.json"), "utf8"));
+  assert.deepEqual({ action: request.action, version: request.version }, { action: "install", version: "2.0.0" }, "for the launcher to pick up");
+  assert.equal((await confirmed({ kind: "auto-update", enabled: false })).status, 200);
+  assert.equal((await loadHomeSettings(context.dataDirectory, {})).autoUpdate, false);
+  assert.equal(context.panel.status().updates.autoUpdate, false);
 });

@@ -61,7 +61,7 @@ export const BACKUP_START_DELAY_MS = 60_000;
  * among them: they belong to this computer. */
 export const HOME_FILES = Object.freeze([HOME_KEY_FILE, "acme-account-key.pem", "acme-account.json", "certificate-key.pem", "certificate.pem", "certificate-history.json", "settings.json"]);
 const SET_NAME = /^kin-(\d{8}T\d{6}Z)(?:-(\d{1,3}))?$/;
-const REASONS = Object.freeze(["scheduled", "manual"]);
+const REASONS = Object.freeze(["scheduled", "manual", "before-update"]);
 /** An unfinished set (no manifest) older than this is left over from a
  * failure or a crash, and is removed. */
 const UNFINISHED_MS = 60 * 60_000;
@@ -158,6 +158,61 @@ function readJson(path) {
   try { return JSON.parse(readFileSync(path, "utf8")); } catch { return null; }
 }
 
+/** Copies the home files that exist from `source` to `target`; returns
+ * their names. */
+function copyHome(source, target) {
+  const copied = [];
+  for (const name of HOME_FILES) {
+    if (!statSync(join(source, name), { throwIfNoEntry: false })?.isFile()) continue;
+    if (!copied.length) mkdirSync(target, { mode: 0o700 });
+    copyFileSync(join(source, name), join(target, name));
+    copied.push(name);
+  }
+  return copied;
+}
+
+/**
+ * Makes one set in `<dataDirectory>/backups/` and removes the oldest beyond
+ * 14. `copyDatabase(destination)` writes the verified database copy and
+ * resolves with its path: the running service's `store.backup`, or
+ * `DurableStore.createBackup` from the launcher before an update (#722),
+ * while the service is stopped. Resolves with { id, createdAt, reason,
+ * databaseBytes }; a failure removes the folder and throws BackupError.
+ */
+export async function makeBackupSet({ dataDirectory, copyDatabase, version, reason, now = Date.now }) {
+  const directory = backupsDirectory(dataDirectory);
+  const createdAt = new Date(now()).toISOString();
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  let id = setName(createdAt);
+  for (let n = 2; statSync(join(directory, id), { throwIfNoEntry: false }); n += 1) id = `${setName(createdAt)}-${n}`;
+  const folder = join(directory, id);
+  try {
+    mkdirSync(folder, { mode: 0o700 });
+    const database = await copyDatabase(join(folder, BACKUP_DATABASE));
+    const home = copyHome(homeDirectory(dataDirectory), join(folder, "home"));
+    const databaseBytes = statSync(database).size;
+    await writePrivateFile(join(folder, BACKUP_MANIFEST), `${JSON.stringify({ format: BACKUP_FORMAT, createdAt, reason, version, databaseBytes, home }, null, 2)}\n`);
+  } catch (error) {
+    rmSync(folder, { recursive: true, force: true });
+    throw new BackupError(failureCode(error) ?? "backup-failed", "Kin couldn't make a backup.");
+  }
+  pruneBackups(directory, now());
+  return { id, createdAt, reason, databaseBytes: statSync(join(folder, BACKUP_DATABASE)).size };
+}
+
+/** Removes finished sets beyond the 14 newest, and unfinished ones left by
+ * a failure. Only folders named like Kin's sets are touched. */
+export function pruneBackups(directory, now = Date.now()) {
+  const sets = listBackups(directory);
+  for (const set of sets.slice(BACKUPS_KEPT)) rmSync(join(directory, set.id), { recursive: true, force: true });
+  const finished = new Set(sets.map((set) => set.id));
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !SET_NAME.test(entry.name) || finished.has(entry.name)) continue;
+    const path = join(directory, entry.name);
+    if (now - statSync(path).mtimeMs > UNFINISHED_MS) rmSync(path, { recursive: true, force: true });
+  }
+}
+
 /**
  * Makes, keeps and lists backups for one running home server, and asks for
  * a restore. Status is sync (the control panel's sections are).
@@ -229,55 +284,21 @@ export class HomeBackups {
 
   async #create(reason) {
     if (this.restoreRequested) throw new BackupError("backup-restore-pending", "Kin is about to restore a backup.");
-    const createdAt = new Date(this.now()).toISOString();
-    mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-    let id = setName(createdAt);
-    for (let n = 2; statSync(join(this.directory, id), { throwIfNoEntry: false }); n += 1) id = `${setName(createdAt)}-${n}`;
-    const folder = join(this.directory, id);
     try {
-      mkdirSync(folder, { mode: 0o700 });
-      const database = await this.store.backup(join(folder, BACKUP_DATABASE));
-      const home = this.#copyHome(join(folder, "home"));
-      const databaseBytes = statSync(database).size;
-      await writePrivateFile(join(folder, BACKUP_MANIFEST), `${JSON.stringify({ format: BACKUP_FORMAT, createdAt, reason, version: this.version, databaseBytes, home }, null, 2)}\n`);
+      const set = await makeBackupSet({ dataDirectory: this.dataDirectory, copyDatabase: (destination) => this.store.backup(destination), version: this.version, reason, now: this.now });
       this.lastError = null;
-      this.log({ event: "home_backup_created", reason, databaseBytes });
-      this.prune();
-      return { id, createdAt, reason, databaseBytes };
+      this.log({ event: "home_backup_created", reason, databaseBytes: set.databaseBytes });
+      return set;
     } catch (error) {
-      rmSync(folder, { recursive: true, force: true });
-      const code = failureCode(error) ?? "backup-failed";
+      const code = error instanceof BackupError ? error.code : "backup-failed";
       this.lastError = { code, at: new Date(this.now()).toISOString() };
       this.log({ event: "home_backup_failed", reason, code });
-      throw new BackupError(code, "Kin couldn't make a backup.");
+      throw error instanceof BackupError ? error : new BackupError(code, "Kin couldn't make a backup.");
     }
   }
 
-  /** Copies the home files that exist; returns their names. */
-  #copyHome(target) {
-    const source = homeDirectory(this.dataDirectory);
-    const copied = [];
-    for (const name of HOME_FILES) {
-      if (!statSync(join(source, name), { throwIfNoEntry: false })?.isFile()) continue;
-      if (!copied.length) mkdirSync(target, { mode: 0o700 });
-      copyFileSync(join(source, name), join(target, name));
-      copied.push(name);
-    }
-    return copied;
-  }
-
-  /** Removes finished sets beyond the 14 newest, and unfinished ones left
-   * by a failure. Only folders named like Kin's sets are touched. */
-  prune() {
-    const sets = this.list();
-    for (const set of sets.slice(BACKUPS_KEPT)) rmSync(join(this.directory, set.id), { recursive: true, force: true });
-    const finished = new Set(sets.map((set) => set.id));
-    for (const entry of readdirSync(this.directory, { withFileTypes: true })) {
-      if (!entry.isDirectory() || !SET_NAME.test(entry.name) || finished.has(entry.name)) continue;
-      const path = join(this.directory, entry.name);
-      if (this.now() - statSync(path).mtimeMs > UNFINISHED_MS) rmSync(path, { recursive: true, force: true });
-    }
-  }
+  /** Removes the oldest sets beyond 14 and unfinished ones (pruneBackups). */
+  prune() { pruneBackups(this.directory, this.now()); }
 
   /** The set `id`, checked: it exists, and its database opens and passes
    * the same checks the service makes at startup. */

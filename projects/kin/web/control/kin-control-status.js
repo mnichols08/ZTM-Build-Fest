@@ -4,8 +4,8 @@
 // server sends no household content (server/home/control-panel.mjs).
 //
 // Each section is a <section data-section="…">. "backups" (#721) and
-// "updates" (#722) come from the server's sections (`SECTIONS` below says
-// how each renders); "updates" shows "not built yet" until #722.
+// "updates" (#722) come from the server's sections; `SECTIONS` below says
+// how each renders.
 import { el, details } from "./dom.js";
 import { explain, explainBackupState, explainCertificateState, explainTransparency, explainTunnelState } from "./explain.js";
 import { countOf, formatBytes, formatDate, formatDateTime, formatHour } from "./format.js";
@@ -98,6 +98,34 @@ function backupNext(value) {
   return value.nextBackupAt ? formatDateTime(value.nextBackupAt) : null;
 }
 
+const UPDATE_STAGES = {
+  downloading: "downloading it",
+  preparing: "unpacking it",
+  "backing-up": "backing up first",
+  trying: "trying it for five minutes",
+};
+
+function updateState(value) {
+  const available = value.available;
+  if (value.state === "off") return "This build of Kin doesn't check for updates. New versions are on the releases page.";
+  if (value.state === "not-checked") return "Kin checks for updates once a day. It hasn't checked yet.";
+  if (value.state === "installing") return `Installing Kin ${available?.version ?? "the update"}: ${UPDATE_STAGES[value.stage] ?? "working on it"}…`;
+  if (value.state === "failed") return "Kin couldn't check for updates. It tries again later.";
+  if (!available) return "This is the newest version.";
+  if (available.blocked === "too-old") return `Kin ${available.version} is available, but this version is too old to update to it by itself. Download it from the releases page.`;
+  if (available.install === "manual") return `Kin ${available.version} is available. This copy of Kin can't update itself (only Kin installed as a service does): download it from the releases page.`;
+  if (available.install === "automatic") return `Kin ${available.version} is available. Kin installs it by itself tonight, between 02:00 and 05:00, after a backup.`;
+  return `Kin ${available.version} is available. ${available.kind === "major" ? "It's a bigger update, so it waits for you" : "It waits for you"}: install it in the settings below.`;
+}
+
+function lastUpdate(update) {
+  if (!update) return null;
+  if (update.outcome === "updated") return el("p", { className: "control-state", "data-update": "updated", text: `Updated from Kin ${update.from} to ${update.to} on ${formatDateTime(update.at)}.` });
+  if (update.outcome === "rolled-back")
+    return el("p", { className: "control-problem", "data-update": "rolled-back", "data-code": update.code, text: `Kin ${update.to} didn't work here, so Kin went back to ${update.from} and to its data from just before the update. ${explain(update.code)}` });
+  return el("p", { className: "control-problem", "data-update": "failed", "data-code": update.code, text: `Kin ${update.to} wasn't installed. ${explain(update.code)}` });
+}
+
 function lastRestore(restore) {
   if (!restore) return null;
   if (restore.outcome === "restored")
@@ -129,7 +157,18 @@ export const SECTIONS = {
     title: "Version and updates",
     notBuilt: "Kin doesn't check for updates by itself yet.",
     error: "Kin couldn't read the update status.",
-    render: (value) => [details([["Available", value.available ?? "Up to date"]])],
+    tone: (value) => (value.state === "failed" || ["rolled-back", "failed"].includes(value.lastUpdate?.outcome) ? "attention" : null),
+    render: (value) => [
+      el("p", { className: "control-state", "data-state": value.state, text: updateState(value) }),
+      details([
+        ["Last checked", value.checkedAt ? formatDateTime(value.checkedAt) : null],
+        ["Available", value.available ? `Kin ${value.available.version}, released ${formatDate(value.available.releasedAt)}` : null],
+        ["Release notes", value.available?.page ? el("a", { href: value.available.page, rel: "noopener", text: "On the releases page" }) : null],
+        ["Automatic updates", value.state === "off" ? null : value.autoUpdate === false ? "Off: updates wait for you" : "On: smaller updates install at night"],
+      ]),
+      ...(value.state === "failed" && value.lastError ? [el("p", { className: "control-problem", "data-code": value.lastError.code, text: explain(value.lastError.code) })] : []),
+      ...[lastUpdate(value.lastUpdate)].filter(Boolean),
+    ],
   },
 };
 

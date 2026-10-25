@@ -1,7 +1,7 @@
 // Plain words for every state and error code the control panel shows (ADR
-// 0025 §11, #719, #720, #721). The codes come from the home server: the
-// tunnel (server/home/tunnel-client.mjs), the certificate manager and ACME
-// client (server/acme/), the setup flow, the panel and the backups
+// 0025 §11, #719–#722). The codes come from the home server: the tunnel
+// (server/home/tunnel-client.mjs), the certificate manager and ACME client
+// (server/acme/), the setup flow, the panel, the backups and the updater
 // (server/home/). Each answer
 // says what happened and, where there is one, what to do. A code this file
 // doesn't know still gets a sentence by its family, never a raw code alone.
@@ -117,6 +117,25 @@ const BACKUP_ERRORS = {
   "restore-newer-household": "The backup is older than a household that's on this server now, and restoring it would remove that household. Choose a newer backup.",
 };
 
+const UPDATE_ERRORS = {
+  "update-network": "Kin couldn't reach the releases. Check that this computer is online; Kin tries again later.",
+  "update-signature": "The release wasn't signed by the Kin project, so Kin ignored it. If it goes on, report it.",
+  "update-manifest": "Kin didn't understand the release's details. A newer Kin may be needed: download it from the releases page.",
+  "update-no-file": "This release has no file for this kind of computer.",
+  "update-too-old": "This version is too old to update straight to that one. Download the new version from the releases page.",
+  "update-download": "The download didn't finish. Kin tries again later.",
+  "update-checksum": "The download didn't match the signed release, so Kin threw it away.",
+  "update-prepare": "The new version couldn't unpack itself, so Kin kept the version it has.",
+  "update-backup": "Kin couldn't back up before updating, so it didn't update.",
+  "update-unhealthy": "The new version didn't answer as it should.",
+  "update-exited": "The new version stopped by itself.",
+  "update-swap": "Kin couldn't put the new version in place of the old one.",
+  "update-failed": "Something went wrong with the update. Look at Kin's log on this computer.",
+  "control-update-unknown": "That update isn't available any more. Reload the page.",
+  "control-update-manual": "This copy of Kin can't update itself. Download the new version from the releases page.",
+  "control-update-busy": "Kin is installing an update now.",
+};
+
 const SETUP_ERRORS = {
   "setup-name-empty": "Type a name.",
   "setup-name-invalid": "Use only letters a–z, digits and hyphens, with dots only between parts of your own domain.",
@@ -184,6 +203,7 @@ const FAMILY = [
   [/^dns-/, "A DNS record isn't right yet."],
   [/^setup-/, "Setup couldn't do that. Reload the page and try again."],
   [/^(?:backup|restore)-/, "Something went wrong with a backup. Look at Kin's log on this computer."],
+  [/^update-/, "Something went wrong with the update. Look at Kin's log on this computer."],
   [/^control-/, "The control panel couldn't do that. Reload the page and try again."],
 ];
 
@@ -195,12 +215,12 @@ function family(code) {
 /** Plain words for any code the panel shows; `known` says whether this
  * file has a sentence of its own for it. */
 export function explain(code) {
-  const text = TUNNEL_ERRORS[code] ?? CERTIFICATE_ERRORS[code] ?? SETUP_ERRORS[code] ?? PANEL_ERRORS[code] ?? DNS_PROBLEMS[code] ?? BACKUP_ERRORS[code];
+  const text = TUNNEL_ERRORS[code] ?? CERTIFICATE_ERRORS[code] ?? SETUP_ERRORS[code] ?? PANEL_ERRORS[code] ?? DNS_PROBLEMS[code] ?? BACKUP_ERRORS[code] ?? UPDATE_ERRORS[code];
   return text ?? family(String(code ?? ""));
 }
 
 export function isExplained(code) {
-  return Boolean(TUNNEL_ERRORS[code] ?? CERTIFICATE_ERRORS[code] ?? SETUP_ERRORS[code] ?? PANEL_ERRORS[code] ?? DNS_PROBLEMS[code] ?? BACKUP_ERRORS[code]);
+  return Boolean(TUNNEL_ERRORS[code] ?? CERTIFICATE_ERRORS[code] ?? SETUP_ERRORS[code] ?? PANEL_ERRORS[code] ?? DNS_PROBLEMS[code] ?? BACKUP_ERRORS[code] ?? UPDATE_ERRORS[code]);
 }
 
 export const explainTunnelState = (state) => TUNNEL_STATES[state] ?? "The connection's state isn't known.";

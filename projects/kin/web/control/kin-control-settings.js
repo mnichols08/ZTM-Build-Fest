@@ -2,8 +2,8 @@
 // needs a fresh confirmation: on this computer a code Kin prints in its
 // window and log, through the household's address the admin's passkey or
 // password (control-api.js). Each entry in SETTINGS is one change: the
-// new-household limit, and backups (#721): back up now, the daily time
-// and restore. Updates (#722) add theirs the same way. An entry without a
+// new-household limit; backups (#721): back up now, the daily time and
+// restore; and updates (#722): install now, and automatic updates. An entry without a
 // `field` is a button alone; `action` names the button and `done(result)`
 // says what happened.
 //
@@ -71,10 +71,40 @@ export const SETTINGS = [
     change: (control) => ({ kind: "restore", id: control.value }),
     done: () => "Kin is starting again to restore the backup. This page comes back by itself in a minute.",
   },
+  {
+    kind: "update-install",
+    title: "Install the update",
+    describe: (status) => `Installs Kin ${status.updates.available.version} now. Kin backs up, stops for a moment, and tries the new version for five minutes; it keeps it only if it works, and otherwise goes back to this version and its data.`,
+    available: (status) => Boolean(status.updates?.available) && status.updates.available.install !== "manual" && status.updates.state !== "installing",
+    unavailable: (status) => (status.updates?.state === "installing" ? "Kin is installing an update now." : "Download the new version from the releases page: this copy of Kin can't update itself."),
+    hidden: (status) => !status.updates?.available,
+    action: "Install now",
+    change: (control, status) => ({ kind: "update-install", version: status.updates.available.version }),
+    done: () => "Kin starts installing within a minute. The status above shows how it goes.",
+  },
+  {
+    kind: "auto-update",
+    title: "Automatic updates",
+    describe: () => "Smaller updates (fixes and new features) can install by themselves at night, after a backup. Bigger ones always wait for you.",
+    available: (status) => Boolean(status.updates) && status.updates.state !== "off",
+    unavailable: () => "This build of Kin doesn't check for updates.",
+    hidden: (status) => !status.updates || status.updates.state === "off",
+    field: (status) => {
+      const select = el("select", { id: "control-setting-auto-update", name: "enabled" });
+      select.append(
+        el("option", { value: "on", selected: status.updates.autoUpdate !== false, text: "On: install at night" }),
+        el("option", { value: "off", selected: status.updates.autoUpdate === false, text: "Off: wait for me" }));
+      return { label: "Smaller updates", control: select };
+    },
+    change: (control) => ({ kind: "auto-update", enabled: control.value === "on" }),
+  },
 ];
 
 /** What, in the status, the settings show: they redraw only when it changes. */
-const shown = (status) => JSON.stringify([status?.limits, status?.backups?.state === "restoring", status?.backups?.hour, status?.backups?.backups?.map((backup) => backup.id)]);
+const shown = (status) => JSON.stringify([
+  status?.limits, status?.backups?.state === "restoring", status?.backups?.hour, status?.backups?.backups?.map((backup) => backup.id),
+  status?.updates?.state === "installing", status?.updates?.state === "off", status?.updates?.autoUpdate, status?.updates?.available?.version, status?.updates?.available?.install,
+]);
 
 export class KinControlSettings extends HTMLElement {
   #status = null;
@@ -104,7 +134,7 @@ export class KinControlSettings extends HTMLElement {
     // what was just said, and where focus was, stay.
     this.message ??= el("p", { className: "control-message", role: "status" });
     const focused = this.contains?.(document.activeElement) ? document.activeElement.closest?.("[data-setting]")?.dataset.setting : null;
-    const settings = SETTINGS.filter((setting) => !this.kinds || this.kinds.includes(setting.kind));
+    const settings = SETTINGS.filter((setting) => (!this.kinds || this.kinds.includes(setting.kind)) && !setting.hidden?.(status));
     this.replaceChildren(
       el("h2", { id: this.kinds ? `control-settings-title-${this.kinds.join("-")}` : "control-settings-title", text: this.heading }),
       el("p", { className: "control-muted", text: this.api?.loopback
@@ -126,7 +156,7 @@ export class KinControlSettings extends HTMLElement {
     }
     const { label, control } = setting.field?.(status) ?? {};
     const save = el("button", { type: "submit", className: "primary-action", text: setting.action ?? "Save" });
-    const form = el("form", { className: "control-form", onsubmit: (event) => { event.preventDefault(); this.save(setting.change(control), save, form, setting.done); } },
+    const form = el("form", { className: "control-form", onsubmit: (event) => { event.preventDefault(); this.save(setting.change(control, this.#status), save, form, setting.done); } },
       ...(control ? [el("label", { for: control.id, text: label }), control] : []),
       el("div", { className: "control-actions" }, save));
     section.append(form);
