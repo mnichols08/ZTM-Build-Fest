@@ -1,12 +1,12 @@
 # ADR 0026 — Moving a household to a home server, server to server
 
-Status: **Proposed** (#737, tasks #738 and #739, epic #708). The owner chose
-the shape on 2026-10-25: the hosted service sends the household's records
-straight to the home server, which the admin authorizes on both ends. The
-open questions at the end need the owner's answers before it is built. It
-replaces the plan in [ADR 0025](0025-kin-at-home.md) §12, which assumed the
-existing household export could carry a household to a new server; it can't
-(Context).
+Status: **Accepted** (#737, tasks #738 and #739, epic #708). The owner chose
+the shape on 2026-10-25, the hosted service sending the household's records
+straight to the home server, which the admin authorizes on both ends, and
+answered the open questions the same day (recorded at the end). It replaces
+the plan in [ADR 0025](0025-kin-at-home.md) §12, which assumed the existing
+household export could carry a household to a new server; it can't
+(Context). Not built yet.
 
 ## Context
 
@@ -40,7 +40,7 @@ signs in at the new address with their username and password (or backup
 code) and their new device downloads the whole history, as any new device
 does today.
 
-## Decision (proposed)
+## Decision
 
 ### 1. The move, step by step
 
@@ -140,7 +140,10 @@ origin. In it:
 - changes a device made offline and never sent stay on that device; the
   banner says how many and offers the existing household export so nothing
   is silently lost;
-- admins can still close it (deletion, §1.6) or, within the first day,
+- admins can still close it (deletion, §1.6). The hosted service can't see
+  sign-ins at the new address, so a week after the move the old app reminds
+  its admins to close it once everyone is there;
+- within the first day, admins can
   **undo the move** if the home server is gone (state back to `active`);
   after that, undoing would split the household's history.
 
@@ -183,18 +186,20 @@ origin. In it:
 | Two copies of the household diverge | Frozen during the send, then `moved` refuses uploads; undo only within a day | Changes made offline before the move stay on the device that made them |
 | A large package fills the home server's disk | Size limit, streamed to the data directory, refused before import if too large | — |
 
-## Open questions for the owner
+## Owner answers (2026-10-25)
 
-1. **Frozen at once.** Should the hosted household refuse uploads from the
-   moment the move succeeds (proposed), or stay usable until the admin
-   closes it (the two copies would then drift apart)?
-2. **Members with only a passkey.** Should the move wait until every member
-   is ready (stricter), or go ahead with at least one ready admin and let the
-   rest re-join by invitation (proposed)?
-3. **Closing the old household.** Manual by an admin (proposed), or
-   automatic once every member has signed in at the new address?
-4. **Undo window.** One day (proposed), or none?
-5. **Size limit.** 4 GB proposed for the package.
+1. **Frozen at once:** the hosted household refuses uploads from the moment
+   the move succeeds (§5).
+2. **One ready admin is enough:** members who only have a passkey are asked
+   for a backup code first, or re-join by recovery invitation (§4, §6).
+3. **Closing is manual:** an admin starts the existing deletion (§1.6). The
+   answer as asked also had the old app remind admins once everyone has
+   signed in at the new address; the hosted service can't know that without
+   a channel back from the home server, so it reminds them a week after the
+   move instead (§5).
+4. **Undo within one day** (§5).
+5. **Size limit:** 4 GB, as proposed (not asked separately; change it here if
+   needed).
 
 ## Alternatives considered
 
