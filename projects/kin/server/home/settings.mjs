@@ -12,9 +12,11 @@
 //   acmeDirectory    KIN_HOME_ACME_DIRECTORY      Let's Encrypt production
 //   acmeTermsAgreed  KIN_HOME_ACME_TERMS_AGREED   false ("true" agrees)
 //
-// One field has no variable of its own: `maxHouseholds` (1 to 10, or absent
-// for home mode's default of 1), the new-household limit the control panel
-// raises (ADR 0025 §9, #720). KIN_MAX_HOUSEHOLDS, when set, wins over it.
+// Two fields have no variable of their own: `maxHouseholds` (1 to 10, or
+// absent for home mode's default of 1), the new-household limit the control
+// panel raises (ADR 0025 §9, #720), which KIN_MAX_HOUSEHOLDS, when set, wins
+// over; and `backupHour` (0 to 23, or absent for 3), the local hour of the
+// daily backup (§10, #721).
 //
 // `writeHomeSettings` is the only writer: the setup page and the control
 // panel (#718). It merges a change into what the file holds, checks the
@@ -111,6 +113,12 @@ function parseMaxHouseholds(value) {
   return value;
 }
 
+function parseBackupHour(value) {
+  if (value === undefined || value === null) return null;
+  if (!Number.isSafeInteger(value) || value < 0 || value > 23) fail("backupHour must be a whole number from 0 to 23.");
+  return value;
+}
+
 /**
  * The effective home settings from `file` (the parsed settings.json, or
  * null) and `env`. `configured` is true when a name is set: only then does
@@ -133,6 +141,7 @@ export function resolveHomeSettings(file, env = process.env) {
     acmeDirectory: isSet(raw.acmeDirectory) ? parseDirectory(raw.acmeDirectory) : LETS_ENCRYPT_DIRECTORY,
     acmeTermsAgreed: raw.acmeTermsAgreed === undefined || raw.acmeTermsAgreed === null || raw.acmeTermsAgreed === "" ? false : parseBoolean(raw.acmeTermsAgreed, "acmeTermsAgreed"),
     maxHouseholds: parseMaxHouseholds(file?.maxHouseholds),
+    backupHour: parseBackupHour(file?.backupHour),
     configured: name !== null,
   });
 }

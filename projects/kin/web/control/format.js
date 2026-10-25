@@ -26,6 +26,12 @@ export function formatDate(iso, locale) {
   return new Intl.DateTimeFormat(locale, { dateStyle: "long" }).format(new Date(time));
 }
 
+/** An hour of the day as a time: 3 → "03:00" (or "3:00 AM"), in the
+ * reader's own clock style. */
+export function formatHour(hour, locale) {
+  return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(2026, 0, 1, hour, 0));
+}
+
 /** "3 households", "1 device". */
 export function countOf(count, one, many) {
   return `${new Intl.NumberFormat().format(count)} ${count === 1 ? one : many}`;

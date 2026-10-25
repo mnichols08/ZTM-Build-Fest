@@ -490,9 +490,13 @@ built version can be checked against it.
   one-time codes are printed to the home server's own window and log; the
   browser on that computer keeps a control-panel session whose token is
   stored on the server only as a hash.
-- **Backups on the home server** hold the database (as encrypted as the
-  service's) and the home server's keys; they stay on the household's
-  computer, or a drive it chooses.
+- **Backups on the home server** (#721, built) hold the database (as
+  encrypted as the service's) and the home server's keys and settings, but
+  not the control panel's sessions. They stay in the `backups` folder of
+  the home server's own data folder (the 14 newest), and are never sent
+  anywhere; a copy to a drive the household chooses is planned. The control
+  panel shows their dates and sizes only. Whoever has a copy can act as the
+  home server, so they are as private as the computer.
 - **Moving from the hosted service** uses the household export; nothing is
   deleted from the hosted service until the household closes it there.
 

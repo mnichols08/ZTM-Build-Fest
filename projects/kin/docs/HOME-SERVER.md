@@ -16,10 +16,11 @@ server**. A plain guide for households comes with #740.
 | Container image for NAS and server users | Built (#715): `deploy/home/Dockerfile`. |
 | Running as a service: systemd, launchd, Windows | Built (#716). On Windows a real service run by Kin's Rust service host, `kin-service-host.exe` (#749); a scheduled task when the host is missing. |
 | Device checks on each platform | #717. |
-| Control panel: first-run setup page and status page (§10, §11) | Built (#719, #720): [below](#setting-it-up-the-control-panel). Scheduled backups (#721) and updates (#722) come next. |
+| Control panel: first-run setup page and status page (§10, §11) | Built (#719, #720): [below](#setting-it-up-the-control-panel). Updates (#722) come next. |
 | Certificates (ACME, §5) | Built (#723), started by home mode (#733): [HOME-CERTIFICATES](HOME-CERTIFICATES.md). |
 | The tunnel to the connection relay (§2) | Built (#733): [below](#reaching-it-from-anywhere-the-tunnel). |
-| Signed updates and scheduled backups (§10) | Later. |
+| Scheduled backups and restore (§10) | Built (#721): [below](#backups-and-restore). The copy to a second folder (a USB drive) is later. |
+| Signed updates (§10) | Later (#722). |
 
 With a name set (below), phones reach the home server through the
 connection relay. The setup page on the computer itself chooses the name and
@@ -291,18 +292,79 @@ It shows, in plain words, with every state and error code explained:
 - **Certificate:** valid until, next renewal, the issuer, the last error
   (`acme-*`, or `tunnel-caa-*` when the relay didn't set the CAA record) and
   the daily certificate-log (CT) check.
-- **Backups:** "not part of this version yet" until #721.
+- **Backups:** the last and next backup, the daily time, how many are kept
+  and their size, the last failure (`backup-*`) and the last restore
+  ([below](#backups-and-restore)).
 - **Storage:** the database's size and the disk's free space.
 - **Households and devices:** counts only. The status holds no household
   content, no identifier of a household, member or device, no device label,
   no key and no address.
 - **Version and updates:** the version; updates come with #722.
-- **Settings:** new households allowed (1–10).
+- **Settings:** new households allowed (1–10); back up now, the daily
+  backup time and restore a backup.
 
-For #721 and #722: `panel.provide("backups" | "updates", () => object)`
-fills a status section, `panel.registerChange(kind, { check, apply })` adds a
-change that both ways in confirm the same way, and `SECTIONS` and
-`SETTINGS` in `web/control/` render them.
+For #722: `panel.provide("updates", () => object)` fills a status section,
+`panel.registerChange(kind, { check, apply })` adds a change that both ways
+in confirm the same way, and `SECTIONS` and `SETTINGS` in `web/control/`
+render them. Backups (#721) use the same seams.
+
+### Backups and restore
+
+Kin backs the home server up by itself, every day at 03:00 on the
+computer's clock (the control panel changes the hour; it is `backupHour` in
+`home/settings.json`). A computer that was off or asleep then backs up
+within a few minutes of starting. The first backup is made a few minutes
+after setup. Kin keeps the **14** newest in the `backups` folder of its data
+folder, and never touches other files there.
+
+Each backup is a folder, `backups/kin-<date>T<time>Z/`, holding:
+
+- `kin.sqlite`: the database, copied with SQLite's `VACUUM INTO` while Kin
+  runs, then opened and checked as Kin checks its database at startup
+  (the same verified copy as `kin admin backup`);
+- `home/`: the home key, the ACME account key, the certificate and the home
+  settings, so the backup is the whole home server and its name. The control
+  panel's sessions stay behind;
+- `backup.json`: when, why (daily or by hand), Kin's version and the size,
+  written last, so a folder without it is unfinished and Kin removes it.
+
+**A backup is as sensitive as the computer.** With the home key in it,
+whoever has a copy can connect to the relay as this home server and get a
+certificate for its name (ADR 0025 §7). The database in it is encrypted
+household content and metadata, as on the server itself (SELF-HOSTING,
+"Back up and restore").
+
+**Restoring** is a change in the control panel, confirmed like any other
+(the printed code here, the admin's passkey or password through the
+household's address). Kin first checks that the backup opens, then stops and
+starts again (the launcher restarts it), and restores before it opens its
+database, with the same restore as `kin admin restore`:
+
+- it keeps the database it replaces as `kin.sqlite.pre-restore-…`;
+- households deleted since the backup stay deleted, and current members,
+  devices and keys are kept, so a restore never brings back revoked access;
+- it refuses a backup older than a household that is on the server now, and
+  one taken while a household is being deleted;
+- anything added since the backup is still on the phones and computers that
+  added it, which send it again when they next connect.
+
+If the restore is refused or fails, Kin starts with the data it had and the
+status page says why.
+
+**Moving to a new computer.** Copy a backup folder into the new computer's
+`backups` folder (for example `/var/lib/kin/backups/` or
+`C:\ProgramData\Kin\backups\`), start Kin there, and open the setup page:
+before you choose a name it offers *Moving from another computer?* Restoring
+there brings the home folder too, so the new computer is the same home
+server, with the same name, and setup is already done. Stop Kin on the old
+computer first: only one copy of a home server can be connected at a time
+(`replaced` on the status page). On a computer that is already set up, a
+restore puts back the database only and keeps this computer's home folder.
+
+The schedule runs inside the service, and the backups stay inside its data
+folder, which is all the service may write (the permission model). Copying
+each backup to a second folder, such as a USB drive, is planned and needs
+the launcher, which runs outside that sandbox.
 
 ## Building the executables
 
@@ -441,7 +503,8 @@ server's usual ones (README): `KIN_PORT`, `KIN_ORIGIN`,
 kin --help                 every command
 kin --version
 kin --health               0 if the running service answers /health (as KIN_HOST/KIN_PORT)
-kin admin backup PATH      the verified backup, as node server/admin.mjs backup
+kin admin backup PATH      a verified backup of the database alone, as node server/admin.mjs backup
+                           (the control panel's backups also hold home/; see above)
 kin admin restore PATH --acknowledge-deletion-history
                            restore (stop Kin first; as node server/admin.mjs restore)
 kin --print-service        print this computer's service definition

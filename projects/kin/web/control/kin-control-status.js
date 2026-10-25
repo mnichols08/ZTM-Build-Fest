@@ -4,12 +4,11 @@
 // server sends no household content (server/home/control-panel.mjs).
 //
 // Each section is a <section data-section="…">. "backups" (#721) and
-// "updates" (#722) show "not built yet" until those tasks provide them;
-// they render whatever the server's section holds through
-// `KinControlStatus.sections`, so adding one needs no change here.
+// "updates" (#722) come from the server's sections (`SECTIONS` below says
+// how each renders); "updates" shows "not built yet" until #722.
 import { el, details } from "./dom.js";
-import { explain, explainCertificateState, explainTransparency, explainTunnelState } from "./explain.js";
-import { countOf, formatBytes, formatDate, formatDateTime } from "./format.js";
+import { explain, explainBackupState, explainCertificateState, explainTransparency, explainTunnelState } from "./explain.js";
+import { countOf, formatBytes, formatDate, formatDateTime, formatHour } from "./format.js";
 
 const tone = (good) => (good ? "good" : "attention");
 
@@ -84,18 +83,47 @@ function seamSection(id, title, value, describe, lead = []) {
   const section = el("section", { className: "control-card", "data-section": id, "aria-labelledby": `status-${id}` }, el("h2", { id: `status-${id}`, text: title }), ...lead);
   if (!value || value.state === "not-built") section.append(el("p", { className: "control-muted", text: describe.notBuilt }));
   else if (value.state === "error") section.append(el("p", { className: "control-problem", text: describe.error }));
-  else section.append(...describe.render(value));
+  else {
+    section.append(...describe.render(value));
+    const sectionTone = describe.tone?.(value);
+    if (sectionTone) section.dataset.tone = sectionTone;
+  }
   return section;
 }
 
-/** How each later section renders once it is provided. Replaceable by
- * #721 and #722 without touching the rest of the page. */
+function backupNext(value) {
+  if (value.state === "off" || value.state === "restoring") return null;
+  if (value.state === "running") return "Now";
+  if (value.due) return "Within a few minutes";
+  return value.nextBackupAt ? formatDateTime(value.nextBackupAt) : null;
+}
+
+function lastRestore(restore) {
+  if (!restore) return null;
+  if (restore.outcome === "restored")
+    return el("p", { className: "control-state", "data-restore": "restored", text: `The backup from ${formatDateTime(restore.backupCreatedAt)} was restored on ${formatDateTime(restore.at)}.${restore.homeRestored ? " Its home folder came with it: this is the same home server, with the same name." : ""}` });
+  return el("p", { className: "control-problem", "data-restore": "failed", "data-code": restore.code, text: `The restore on ${formatDateTime(restore.at)} didn't happen, and Kin kept the data it had. ${explain(restore.code)}` });
+}
+
+/** How each section a later task provides renders. */
 export const SECTIONS = {
   backups: {
     title: "Backups",
     notBuilt: "Scheduled backups aren't part of this version yet. Until then, back up with “kin admin backup”, as the home server guide shows.",
     error: "Kin couldn't read the backup status.",
-    render: (value) => [details([["Last backup", value.lastBackupAt ? formatDateTime(value.lastBackupAt) : "None yet"]])],
+    tone: (value) => (value.state === "failed" || value.lastRestore?.outcome === "failed" ? "attention" : value.state === "ok" || value.state === "running" ? "good" : null),
+    render: (value) => [
+      el("p", { className: "control-state", text: explainBackupState(value.state) }),
+      details([
+        ["Last backup", value.lastBackupAt ? formatDateTime(value.lastBackupAt) : "None yet"],
+        ["Next backup", backupNext(value)],
+        ["Every day at", Number.isInteger(value.hour) ? formatHour(value.hour) : null],
+        ["Kept", Array.isArray(value.backups) ? `${countOf(value.backups.length, "backup", "backups")} of the newest ${value.kept ?? 14}, ${formatBytes(value.totalBytes)} in all` : null],
+      ]),
+      ...(value.lastError ? [el("p", { className: "control-problem", "data-code": value.lastError.code, text: explain(value.lastError.code) })] : []),
+      ...[lastRestore(value.lastRestore)].filter(Boolean),
+      el("p", { className: "control-muted", text: "A backup holds this home server's keys as well as Kin's data: whoever has a copy could pretend to be your home server. Keep backups as private as this computer." }),
+    ],
   },
   updates: {
     title: "Version and updates",

@@ -52,7 +52,15 @@ test("one-time codes: an unambiguous alphabet, single use, expiry, limited tries
   assert.equal(code.attemptsLeft, MAX_ATTEMPTS);
   assert.equal(code.verify(issued.code), "ok");
   assert.equal(code.verify(issued.code), "none", "used once");
+  assert.equal(code.issue(), null, "an access code waits even after it was used");
 
+  // A confirmation code, used correctly, lets the next change have its
+  // code at once.
+  const confirm = new OneTimeCode({ purpose: "confirm", ttlMs: 10 * 60_000, reissueAfterUse: true, now });
+  assert.equal(confirm.verify(confirm.issue().code), "ok");
+  const next = confirm.issue();
+  assert.ok(next, "no wait after a confirmation code was used");
+  assert.equal(confirm.issue(), null, "but not while that one waits");
   now.advance(ISSUE_INTERVAL_MS);
   const second = code.issue();
   now.advance(60 * 60_000);
@@ -64,6 +72,10 @@ test("one-time codes: an unambiguous alphabet, single use, expiry, limited tries
   assert.equal(code.attemptsLeft, 1);
   assert.equal(code.verify(wrong), "locked", "the last wrong try destroys the code");
   assert.equal(code.verify(third.code), "none", "even the right code is gone after that");
+  const lockedConfirm = confirm.issue({ force: true });
+  const wrongConfirm = lockedConfirm.code.startsWith("2") ? `3${lockedConfirm.code.slice(1)}` : `2${lockedConfirm.code.slice(1)}`;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) confirm.verify(wrongConfirm);
+  assert.equal(confirm.issue(), null, "a locked code keeps the wait: guessing gets no faster");
 });
 
 // ------------------------------------------------------- the settings file

@@ -1,11 +1,13 @@
-// The home server's setup page in a real browser (#719, #720): a Kin
+// The home server's setup page in a real browser (#719, #720, #721): a Kin
 // server in home mode with its control panel, the real connection relay in
 // test mode and the in-process ACME server (server/home/home-test-utils.mjs).
 // The browser opens the address the launcher prints, enters the printed
 // code, checks and chooses a name, agrees to the terms and connects; the
 // runner restarts Kin on the same port as the launcher would; the page
-// follows the certificate to "Kin is ready" and the status page. Along the
-// way it checks labels, focus, live regions and 320 px reflow.
+// follows the certificate to "Kin is ready" and the status page. Then it
+// backs up now and restores that backup, each confirmed with the printed
+// code, through a second restart. Along the way it checks labels, focus,
+// live regions and 320 px reflow.
 //
 //   node scripts/control-panel-regression.mjs <browser executable>
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
@@ -120,7 +122,29 @@ export async function controlPanelRegressions(client, harness, first) {
   assert.equal(await client.evaluate(`document.querySelector(".control-headline").textContent`), "Everything is working.");
   await check("the status page");
   checks += 4;
-  return { checks, second };
+
+  // Backups (#721): each change asks for the code Kin prints.
+  const confirmWith = async (instance) => {
+    await waitInPage(client, `Boolean(document.querySelector("kin-control-settings .control-confirm input"))`, "the confirmation form");
+    const code = instance.printed.findLast((event) => event.purpose === "confirm");
+    assert.ok(code, "a confirmation code was printed");
+    await client.evaluate(`(() => { const input = document.querySelector("kin-control-settings .control-confirm input"); input.value = ${JSON.stringify(code.code)}; input.form.requestSubmit(); })()`);
+  };
+  await client.evaluate(`document.querySelector('[data-setting="backup-now"] form').requestSubmit()`);
+  await confirmWith(second);
+  await waitInPage(client, `document.querySelector("kin-control-settings .control-message")?.textContent.startsWith("Backup made")`, "the backup");
+  await waitInPage(client, `document.querySelectorAll("#control-setting-restore option").length === 1`, "the backup offered for restore");
+  await check("the backups");
+  checks += 2;
+  await client.evaluate(`document.querySelector('[data-setting="restore"] form').requestSubmit()`);
+  await confirmWith(second);
+  assert.equal(await second.restarted, "restore");
+  await second.stop();
+  const third = await harness.boot(port);
+  await waitInPage(client, `document.querySelector('[data-section="backups"] [data-restore="restored"]')?.textContent.includes("was restored")`, "the restored backup", 60_000);
+  await check("after the restore");
+  checks += 2;
+  return { checks, second: third };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -164,7 +188,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     };
     await applyRegressionDefaults(send);
     const { checks } = await controlPanelRegressions(client, harness, first);
-    console.log(`PASS ${checks} control panel checks: code, live name check, terms, connect, restart, certificate, status`);
+    console.log(`PASS ${checks} control panel checks: code, live name check, terms, connect, restart, certificate, status, backup, restore`);
   } catch (error) {
     await captureFailure("control panel regression");
     throw error;

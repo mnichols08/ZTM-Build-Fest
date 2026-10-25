@@ -253,7 +253,9 @@ test("status: relay, certificate, storage, version and counts, never household c
   assert.equal(status.certificate.notAfter, "2027-01-20T00:00:00.000Z");
   assert.equal(status.certificate.renewAt, "2026-12-21T00:00:00.000Z");
   assert.equal(status.certificate.transparency.unexpected, 0);
-  assert.deepEqual(status.backups, { state: "not-built" }, "the seam #721 fills");
+  assert.equal(status.backups.state, "none", "backups (#721): none made yet");
+  assert.equal(status.backups.due, true, "the first check makes one");
+  assert.equal(status.backups.kept, 14);
   assert.equal(status.updates.state, "not-built", "the seam #722 fills");
   assert.match(status.version, /^\d+\.\d+\.\d+$/);
   const text = JSON.stringify(status);
@@ -380,4 +382,37 @@ test("home mode's modules import nothing from the relay but its shared codec (th
     for (const [, path] of source.matchAll(/(?:from|import\()\s*"(\.\.\/\.\.\/relay\/[^"]+)"/g))
       assert.equal(path, "../../relay/ktun.mjs", `${name} imports ${path}`);
   }
+});
+
+test("backups (#721): back up now, the hour and restore are changes confirmed like any other", TIMEOUT, async (t) => {
+  const context = await startPanel(t, { configured: true, home: setUpHome() });
+  context.panel.issueCode("access", { force: true });
+  const cookie = await signIn(context);
+  const confirmed = async (change) => {
+    // One change after another: a used code doesn't make the next wait.
+    assert.equal((await post(context, "confirm-code", {}, { cookie })).status, 200);
+    return post(context, "change", { change, code: context.printed.at(-1).code }, { cookie });
+  };
+  const made = await confirmed({ kind: "backup-now" });
+  assert.equal(made.status, 200, JSON.stringify(made.body));
+  assert.equal(made.body.kind, "backup-now");
+  assert.match(made.body.backup.id, /^kin-\d{8}T\d{6}Z$/);
+  const status = context.panel.status().backups;
+  assert.equal(status.state, "ok");
+  assert.equal(status.backups.length, 1);
+  assert.equal(status.backups[0].reason, "manual");
+  assert.ok(!JSON.stringify(status).includes(context.dataDirectory), "no paths in the status");
+  // The hour: checked before the code is spent, kept in home/settings.json.
+  assert.equal((await post(context, "change", { change: { kind: "backup-hour", hour: 24 }, code: "22222-22222" }, { cookie })).body.error, "control-backup-hour-invalid");
+  assert.equal((await confirmed({ kind: "backup-hour", hour: 1 })).status, 200);
+  assert.equal((await loadHomeSettings(context.dataDirectory, {})).backupHour, 1);
+  assert.equal(context.panel.status().backups.hour, 1);
+  // Restore: an unknown backup is refused before the code is spent; a
+  // real one asks the launcher to start Kin again.
+  assert.equal((await post(context, "change", { change: { kind: "restore", id: "kin-20200101T000000Z" }, code: "22222-22222" }, { cookie })).body.error, "backup-unknown");
+  const restore = await confirmed({ kind: "restore", id: made.body.backup.id });
+  assert.equal(restore.status, 200, JSON.stringify(restore.body));
+  assert.equal(restore.body.restoring.id, made.body.backup.id);
+  assert.deepEqual(context.restarts, ["restore"]);
+  assert.equal(context.panel.status().backups.state, "restoring");
 });

@@ -1,4 +1,4 @@
-// The control panel's page (web/control/, #718–#720) without a browser:
+// The control panel's page (web/control/, #718–#721) without a browser:
 // plain words for every code the home server can send, the API client's
 // two ways in, and each component's rendering and actions on a small DOM
 // stand-in (test-dom.mjs). scripts/control-panel-regression.mjs drives
@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ACME_ERROR_CODES } from "../../server/acme/client.mjs";
+import { BACKUP_ERROR_CODES, BACKUP_STATES } from "../../server/home/backups.mjs";
 import { DOMAIN_PROBLEMS } from "../../server/home/domain-records.mjs";
 import { TUNNEL_ERRORS } from "../../server/home/tunnel-client.mjs";
 import { installDom, settle } from "./test-dom.mjs";
@@ -20,7 +21,7 @@ const TIMEOUT = { timeout: 30_000 };
 
 test("every code the home server sends has plain words of its own", TIMEOUT, () => {
   const codes = [
-    ...TUNNEL_ERRORS, ...ACME_ERROR_CODES, ...DOMAIN_PROBLEMS,
+    ...TUNNEL_ERRORS, ...ACME_ERROR_CODES, ...DOMAIN_PROBLEMS, ...BACKUP_ERROR_CODES, "control-backup-hour-invalid",
     "tunnel-caa-name-taken", "tunnel-caa-name-not-allowed", "tunnel-caa-name-limit", "tunnel-caa-name-unknown", "tunnel-caa-suspended", "tunnel-caa-refused",
     "tunnel-not-ready", "tunnel-timeout", "tunnel-lost", "tunnel-stopped",
     "setup-name-empty", "setup-name-invalid", "setup-name-length", "setup-name-taken", "setup-name-not-allowed",
@@ -36,6 +37,7 @@ test("every code the home server sends has plain words of its own", TIMEOUT, () 
   for (const code of codes) assert.doesNotMatch(explain(code), /^[a-z-]+$/, `${code} reads as words`);
   for (const state of ["connected", "connecting", "waiting", "stopped"]) assert.ok(KNOWN.tunnelStates.includes(state), state);
   for (const state of ["none", "valid", "renewing", "valid-retrying", "failed", "expired"]) assert.ok(KNOWN.certificateStates.includes(state), state);
+  assert.deepEqual([...KNOWN.backupStates].sort(), [...BACKUP_STATES].sort(), "every backups state has words");
   assert.match(explain("acme-something-new"), /Let's Encrypt/, "an unknown code still gets its family's sentence");
   assert.match(explain("replaced"), /Only one copy of a home server can run at a time/);
   assert.match(explainTunnelState("connected"), /Phones can reach/);
@@ -105,10 +107,18 @@ const STATUS = Object.freeze({
   storage: { databaseBytes: 2_400_000, freeBytes: 52_000_000_000 },
   counts: { households: 1, devices: 3 },
   limits: { maxHouseholds: 1, allowNew: true, fromEnvironment: false, highest: 10 },
-  backups: { state: "not-built" }, updates: { state: "not-built", current: "1.6.0" },
+  backups: {
+    state: "ok", hour: 3, kept: 14, lastBackupAt: "2026-10-22T03:00:00.000Z", due: false, nextBackupAt: "2026-10-23T03:00:00.000Z",
+    lastError: null, totalBytes: 4_800_000, lastRestore: null,
+    backups: [
+      { id: "kin-20261022T030000Z", createdAt: "2026-10-22T03:00:00.000Z", reason: "scheduled", databaseBytes: 2_400_000, home: true },
+      { id: "kin-20261021T090000Z", createdAt: "2026-10-21T09:00:00.000Z", reason: "manual", databaseBytes: 2_400_000, home: true },
+    ],
+  },
+  updates: { state: "not-built", current: "1.6.0" },
 });
 
-test("the status page: every section, plain-words states, and the seams for backups and updates", TIMEOUT, () => {
+test("the status page: every section, plain-words states, backups, and the seam for updates", TIMEOUT, () => {
   const element = document.createElement("kin-control-status");
   element.status = STATUS;
   const sections = element.querySelectorAll("section").map((section) => section.dataset.section);
@@ -117,7 +127,10 @@ test("the status page: every section, plain-words states, and the seams for back
   const text = element.textContent;
   for (const expected of ["Connected to the relay", "relay.kin.journeytocode.io", "89 days left", "2.4 MB", "52 GB", "1 household", "3 devices", "1.6.0", "Counts only"])
     assert.ok(text.includes(expected), expected);
-  assert.match(element.querySelector('[data-section="backups"]').textContent, /aren't part of this version yet/);
+  const backups = element.querySelector('[data-section="backups"]');
+  assert.equal(backups.dataset.tone, "good");
+  for (const expected of ["every day by itself", "Last backup", "Next backup", "2 backups of the newest 14, 4.8 MB in all", "as private as this computer"])
+    assert.ok(backups.textContent.includes(expected), expected);
   assert.match(element.querySelector('[data-section="updates"]').textContent, /doesn't check for updates/);
   for (const section of element.querySelectorAll("section")) assert.ok(section.getAttribute("aria-labelledby"), "each section is named by its heading");
 
@@ -130,7 +143,18 @@ test("the status page: every section, plain-words states, and the seams for back
   assert.equal(element.querySelector(".control-headline").dataset.tone, "attention");
   assert.match(element.querySelector('[data-code="replaced"]').textContent, /Only one copy/);
   assert.match(element.querySelector('[data-code="acme-rate-limited"]').textContent, /limit/);
-  assert.match(element.querySelector('[data-section="backups"]').textContent, /Last backup/, "a provided section renders its value");
+  assert.match(element.querySelector('[data-section="backups"]').textContent, /Last backup/, "a section with fewer fields still renders");
+  element.status = {
+    ...STATUS,
+    backups: { ...STATUS.backups, state: "failed", lastError: { code: "backup-disk-full", at: "2026-10-23T03:00:00.000Z" }, nextBackupAt: "2026-10-23T04:00:00.000Z",
+      lastRestore: { outcome: "failed", at: "2026-10-22T12:00:00.000Z", backupCreatedAt: "2026-10-21T09:00:00.000Z", code: "restore-newer-household", homeRestored: false } },
+  };
+  const failed = element.querySelector('[data-section="backups"]');
+  assert.equal(failed.dataset.tone, "attention");
+  assert.match(failed.querySelector('[data-code="backup-disk-full"]').textContent, /disk is full/);
+  assert.match(failed.querySelector('[data-restore="failed"]').textContent, /didn't happen, and Kin kept the data it had\. The backup is older than a household/);
+  element.status = { ...STATUS, backups: { ...STATUS.backups, lastRestore: { outcome: "restored", at: "2026-10-22T12:00:00.000Z", backupCreatedAt: "2026-10-21T09:00:00.000Z", code: null, homeRestored: true } } };
+  assert.match(element.querySelector('[data-restore="restored"]').textContent, /was restored.*same home server/);
   element.status = { ...STATUS, certificate: { ...STATUS.certificate, transparency: { state: "alert", unexpected: 1 } } };
   assert.equal(element.querySelector(".control-headline").dataset.tone, "alert");
   assert.equal(element.querySelector('[data-section="certificate"]').dataset.tone, "alert");
@@ -313,6 +337,74 @@ test("settings: on this computer a change asks for a printed confirmation code",
   assert.equal(settings.querySelector("#control-setting-households-limit"), null);
   assert.match(settings.textContent, /KIN_MAX_HOUSEHOLDS/);
   settings.remove();
+});
+
+test("settings, backups: back up now is a button, the time a choice, restore names each backup; each is confirmed", TIMEOUT, async () => {
+  const answers = { "confirm-code": { expiresAt: "2026-10-22T13:00:00.000Z" }, change: { kind: "backup-now", backup: { id: "kin-20261022T120000Z", createdAt: "2026-10-22T12:00:00.000Z" } } };
+  const api = fakeApi(answers);
+  const settings = document.createElement("kin-control-settings");
+  settings.api = api;
+  document.body.append(settings);
+  try {
+    settings.status = STATUS;
+    const now = settings.querySelector('[data-setting="backup-now"] form');
+    assert.equal(now.querySelector("select"), null, "a button alone");
+    assert.equal(now.querySelector("button").textContent, "Back up now");
+    now.submit();
+    await settle();
+    const confirm = settings.querySelector(".control-confirm");
+    confirm.querySelector("input").value = "ABCDE-23456";
+    confirm.submit();
+    await settle();
+    assert.deepEqual(api.calls.at(-1), ["change", { kind: "backup-now" }, { code: "ABCDE-23456" }]);
+    assert.match(settings.querySelector(".control-message").textContent, /^Backup made: /);
+    const hour = settings.querySelector("#control-setting-backup-hour");
+    assert.equal(hour.children.length, 24);
+    assert.equal(hour.children.find((option) => option.selected).value, "3");
+    assert.ok(settings.querySelector('label[for="control-setting-backup-hour"]'));
+    const restore = settings.querySelector("#control-setting-restore");
+    assert.deepEqual(restore.children.map((option) => option.value), ["kin-20261022T030000Z", "kin-20261021T090000Z"]);
+    assert.match(restore.children[1].textContent, /made by hand/);
+    assert.match(settings.querySelector('[data-setting="restore"]').textContent, /households deleted since then stay deleted/);
+    answers.change = { kind: "restore", restoring: { id: "kin-20261021T090000Z" } };
+    restore.value = "kin-20261021T090000Z";
+    settings.querySelector('[data-setting="restore"] form').submit();
+    await settle();
+    const again = settings.querySelector(".control-confirm");
+    again.querySelector("input").value = "ABCDE-23456";
+    again.submit();
+    await settle();
+    assert.deepEqual(api.calls.at(-1), ["change", { kind: "restore", id: "kin-20261021T090000Z" }, { code: "ABCDE-23456" }]);
+    assert.match(settings.querySelector(".control-message").textContent, /starting again to restore/);
+    // While Kin restores, nothing is offered.
+    settings.status = { ...STATUS, backups: { ...STATUS.backups, state: "restoring" } };
+    assert.equal(settings.querySelector("#control-setting-restore"), null);
+    assert.match(settings.querySelector('[data-setting="restore"]').textContent, /restoring a backup now/);
+  } finally {
+    settings.remove();
+  }
+});
+
+test("setting up a new computer: a backup in Kin's folder can be restored before choosing a name", TIMEOUT, async () => {
+  const panel = document.createElement("kin-control-panel");
+  let state = { remote: false, signedIn: true, configured: false, setup: VIEW, status: { ...STATUS, setupComplete: false, name: null, origin: null, relay: null, certificate: null, backups: { ...STATUS.backups, state: "off" } } };
+  panel.api = { loopback: true, state: async () => state, post: async () => ({}) };
+  try {
+    document.body.append(panel);
+    await settle();
+    assert.equal(panel.screen(), "setup");
+    const moving = panel.querySelector("kin-control-settings");
+    assert.ok(moving, "offered on the name step");
+    assert.equal(moving.querySelector("h2").textContent, "Moving from another computer?");
+    assert.deepEqual(moving.querySelectorAll("[data-setting]").map((section) => section.dataset.setting), ["restore"]);
+    // Without a backup, setup alone.
+    state = { ...state, status: { ...state.status, backups: { ...state.status.backups, backups: [] } } };
+    await panel.refresh();
+    assert.equal(panel.querySelector("kin-control-settings"), null);
+  } finally {
+    panel.disconnectedCallback();
+    panel.remove();
+  }
 });
 
 test("the panel picks the screen from the state", TIMEOUT, () => {

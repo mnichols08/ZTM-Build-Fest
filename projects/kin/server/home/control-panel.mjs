@@ -33,9 +33,11 @@
 // - the session cookie is HttpOnly, SameSite=Strict and Path=/control.
 //
 // Seams for later tasks: `provide(section, fn)` fills a status section
-// (backups #721, updates #722 show "not built yet" until then), and
+// (updates #722 shows "not built yet" until then), and
 // `registerChange(kind, handler)` adds a change, which both ways of
-// reaching the panel then confirm and apply the same way.
+// reaching the panel then confirm and apply the same way. Backups (#721,
+// backups.mjs) use both: the "backups" section, and the changes
+// "backup-now", "backup-hour" and "restore".
 import { readFileSync, statSync, statfsSync } from "node:fs";
 import { dirname } from "node:path";
 import { isIP } from "node:net";
@@ -44,6 +46,7 @@ import { tunnelPeer } from "../client-key.mjs";
 import { readJsonBody } from "../http-body.mjs";
 import { CONFIRM_CODE_TTL_MS, OneTimeCode, SETUP_CODE_TTL_MS, displayCode } from "./access-codes.mjs";
 import { SESSION_COOKIE, SESSION_TTL_MS } from "./control-sessions.mjs";
+import { BackupError, isBackupHour } from "./backups.mjs";
 import { MAX_HOUSEHOLDS_LIMIT, writeHomeSettings } from "./settings.mjs";
 import { SetupError } from "./setup.mjs";
 
@@ -131,21 +134,21 @@ export class ControlPanel {
    * @param {(settings: object) => void} options.setSettings
    * @param {import("./setup.mjs").HomeSetup} options.setup
    * @param {import("./control-sessions.mjs").ControlSessions} options.sessions
+   * @param {import("./backups.mjs").HomeBackups|null} [options.backups]
    * @param {Set<string>} [options.trustedProxies]
    * @param {object} [options.env]
    * @param {(event: object) => void} [options.log]  where codes are printed
    * @param {() => number} [options.now]
    */
-  constructor({ application, dataDirectory, databasePath = null, getSettings, setSettings, setup, sessions, trustedProxies = new Set(), env = process.env, log = () => {}, now = Date.now, version }) {
-    Object.assign(this, { application, dataDirectory, databasePath, getSettings, setSettings, setup, sessions, trustedProxies, env, log, now });
+  constructor({ application, dataDirectory, databasePath = null, getSettings, setSettings, setup, sessions, backups = null, trustedProxies = new Set(), env = process.env, log = () => {}, now = Date.now, version }) {
+    Object.assign(this, { application, dataDirectory, databasePath, getSettings, setSettings, setup, sessions, backups, trustedProxies, env, log, now });
     this.version = version ?? JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
     this.codes = {
       access: new OneTimeCode({ purpose: "access", ttlMs: SETUP_CODE_TTL_MS, now }),
-      confirm: new OneTimeCode({ purpose: "confirm", ttlMs: CONFIRM_CODE_TTL_MS, now }),
+      confirm: new OneTimeCode({ purpose: "confirm", ttlMs: CONFIRM_CODE_TTL_MS, reissueAfterUse: true, now }),
     };
     this.sections = new Map([
-      // #721 provides these: last backup, schedule, kept copies.
-      ["backups", () => ({ state: "not-built" })],
+      ["backups", () => (this.backups ? this.backups.status() : { state: "not-built" })],
       // #722 provides these: the update policy and what is available.
       ["updates", () => ({ state: "not-built", current: this.version })],
     ]);
@@ -165,6 +168,40 @@ export class ControlPanel {
         return { maxHouseholds };
       },
     });
+    if (this.backups) this.#registerBackupChanges();
+  }
+
+  /** Back up now, the hour of the daily backup, and restore (#721). A
+   * restore is checked (the set exists and opens) before the confirmation
+   * is spent, then asks the launcher to start Kin again to put it back. */
+  #registerBackupChanges() {
+    const backups = this.backups;
+    const asControlError = (error) => (error instanceof BackupError ? new ControlError(error.code, error.message, 409) : error);
+    this.registerChange("backup-now", {
+      check: () => ({ kind: "backup-now" }),
+      apply: async () => {
+        try { return { backup: await backups.create("manual") }; } catch (error) { throw asControlError(error); }
+      },
+    });
+    this.registerChange("backup-hour", {
+      check: (change) => {
+        if (!isBackupHour(change?.hour)) throw new ControlError("control-backup-hour-invalid", "Choose an hour from 0 to 23.");
+        return { kind: "backup-hour", hour: change.hour };
+      },
+      apply: async ({ hour }) => {
+        this.setSettings(await writeHomeSettings(this.dataDirectory, { backupHour: hour }, this.env));
+        return { hour };
+      },
+    });
+    this.registerChange("restore", {
+      check: (change) => {
+        try { backups.checkRestore(change?.id); } catch (error) { throw asControlError(error); }
+        return { kind: "restore", id: change.id };
+      },
+      apply: async ({ id }) => {
+        try { return { restoring: await backups.requestRestore(id) }; } catch (error) { throw asControlError(error); }
+      },
+    });
   }
 
   get settings() { return this.getSettings(); }
@@ -179,6 +216,7 @@ export class ControlPanel {
    * this prints the setup code. */
   started() {
     if (!this.settings.configured) this.issueCode("access", { force: true });
+    this.backups?.start();
   }
 
   /** Issues and prints a code. Resolves with { expiresAt } or throws when
@@ -414,6 +452,8 @@ export class ControlPanel {
   }
 
   async close() {
+    this.backups?.stop();
+    await this.backups?.running?.catch(() => {});
     await this.setup.close();
   }
 }
@@ -442,20 +482,26 @@ export function certificateAlerts(pushService, { now = Date.now, log = () => {} 
 
 /**
  * Builds home mode's control panel for a running Kin server: the settings
- * it reads and writes, its stored sessions and the setup flow, and
- * attaches it. `restart(reason)` asks the launcher to start the service
- * again (setup's last step). Test seams: `setup` (HomeSetup options such as
- * `tunnel`, `acmeTransport`, `checkDomain`, `resolver`) and `now`.
+ * it reads and writes, its stored sessions, the setup flow and the
+ * backups, and attaches it. `restart(reason)` asks the launcher to start
+ * the service again (setup's last step, and a restore). Test seams: `setup`
+ * (HomeSetup options such as `tunnel`, `acmeTransport`, `checkDomain`,
+ * `resolver`), `backups` (HomeBackups options such as `checkMs`) and `now`.
  */
-export async function createControlPanel({ application, dataDirectory, databasePath = null, settings, env = process.env, restart, log = () => {}, trustedProxies = new Set(), setup: setupOptions = {}, now = Date.now, version }) {
+export async function createControlPanel({ application, dataDirectory, databasePath = null, settings, env = process.env, restart, log = () => {}, trustedProxies = new Set(), setup: setupOptions = {}, backups: backupOptions = {}, now = Date.now, version }) {
   const { ControlSessions } = await import("./control-sessions.mjs");
   const { HomeSetup } = await import("./setup.mjs");
+  const { HomeBackups } = await import("./backups.mjs");
   let current = settings;
   const getSettings = () => current;
   const setSettings = (next) => { current = next; };
   const sessions = await new ControlSessions({ dataDirectory, now }).load();
   const setup = new HomeSetup({ dataDirectory, getSettings, setSettings, getHome: () => application.home ?? null, restart, env, log, ...setupOptions });
-  const panel = new ControlPanel({ application, dataDirectory, databasePath, getSettings, setSettings, setup, sessions, trustedProxies, env, log, now, version });
+  const resolvedVersion = version ?? JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
+  const backups = application.store
+    ? new HomeBackups({ store: application.store, dataDirectory, getSettings, version: resolvedVersion, restart, log, now, ...backupOptions })
+    : null;
+  const panel = new ControlPanel({ application, dataDirectory, databasePath, getSettings, setSettings, setup, sessions, backups, trustedProxies, env, log, now, version: resolvedVersion });
   application.attachControlPanel(panel);
   application.controlPanel = panel;
   return panel;

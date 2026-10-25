@@ -32,8 +32,9 @@ households. Direct LAN access stays deferred (§4). Built by #719 and #720
 (`server/home/control-panel.mjs`, `setup.mjs`, `web/control/`;
 [HOME-SERVER](../HOME-SERVER.md#setting-it-up-the-control-panel)): the
 first-run setup page and the status page of the control panel (§10, §11),
-with the additions and choices recorded at the end of §11; backups (#721)
-and updates (#722) follow.
+with the additions and choices recorded at the end of §11. Scheduled
+backups and restore are built by #721 (`server/home/backups.mjs`; choices
+recorded at the end of §10); updates (#722) follow.
 
 **A word on names.** Kin's documents already call the sync service "the
 relay" (it relays encrypted events; THREAT-MODEL S4, S5). This ADR adds a
@@ -744,6 +745,27 @@ control panel says plainly that a backup can be used to impersonate the home
 server and must be kept as private as the computer. Restore stops the
 service, uses the existing restore (`server/admin.mjs restore`), and starts
 it again.
+
+*As built (#721).* Two choices this section didn't make:
+
+- **The service runs the schedule, not the launcher.** The sets live in
+  `backups/` inside the data directory, which the sandboxed service may
+  write, and the service already has the database, a clock and the control
+  panel the status and changes go through; a launcher-run backup would need
+  a second channel to the panel. Only the optional copy to a second folder
+  writes outside the data directory, so that copy, when built, is the
+  launcher's. A backup is due when the newest set is older than the latest
+  scheduled hour, so a computer that was off at 03:00 catches up when it
+  starts; a failure waits an hour before the next try.
+- **Restore runs at the next start, inside the service.** The panel checks
+  the set opens, writes `backups/restore.json` and exits with the restart
+  code (as setup does). On the next start, before the database is opened,
+  `DurableStore.restoreBackup` puts the set back (its paths are all in the
+  data directory) and the outcome is shown in the panel; a refused restore
+  leaves the current database and Kin starts normally. The set's `home/` is
+  put back only on a computer with no home key yet (moving to a new
+  computer, offered on the setup page before a name is chosen); on a server
+  that has one, its own keys stay.
 
 ### 11. The control panel
 
