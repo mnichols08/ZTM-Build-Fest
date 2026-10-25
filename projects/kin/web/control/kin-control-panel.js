@@ -14,6 +14,7 @@
 import { ControlApi } from "./control-api.js";
 import { el } from "./dom.js";
 import { explain } from "./explain.js";
+import "./kin-control-move.js";
 import "./kin-control-settings.js";
 import "./kin-control-setup.js";
 import "./kin-control-sign-in.js";
@@ -140,6 +141,7 @@ export class KinControlPanel extends HTMLElement {
       if (screen === "status") {
         this.#part("kin-control-status").status = state.status;
         this.#part("kin-control-settings").status = state.status;
+        if (!state.remote) this.#part("kin-control-move").status = state.status;
       }
       return;
     }
@@ -171,6 +173,10 @@ export class KinControlPanel extends HTMLElement {
       }
       children.push(el("h2", { id: "control-status-title", tabIndex: -1, text: "Status" }), status, settings);
       if (!state.remote) {
+        // A move code is printed on this computer, so only here (#739).
+        const move = this.#part("kin-control-move");
+        move.status = state.status;
+        children.push(move);
         if (state.status.counts?.households > 0 && state.status.origin)
           children.push(el("p", { className: "control-hint" }, "Kin is at ", el("a", { href: state.status.origin, text: state.status.origin }), "."));
         children.push(el("p", { className: "control-actions" }, el("button", { type: "button", className: "secondary", text: "Sign out of the control panel", onclick: () => this.signOut() })));

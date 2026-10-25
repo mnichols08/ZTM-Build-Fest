@@ -246,7 +246,7 @@ test("status: relay, certificate, storage, version and counts, never household c
   service.householdPolicy = { allowNew: true, maxHouseholds: null };
   service.bootstrap({ credential: credential("panel-other"), deviceLabel: "Synthetic other laptop" });
   const status = context.panel.status();
-  assert.deepEqual(Object.keys(status).sort(), ["backups", "certificate", "checkedAt", "counts", "freeName", "limits", "name", "origin", "relay", "setupComplete", "storage", "updates", "version"]);
+  assert.deepEqual(Object.keys(status).sort(), ["backups", "certificate", "checkedAt", "counts", "freeName", "lastMove", "limits", "name", "origin", "relay", "setupComplete", "storage", "updates", "version"]);
   assert.deepEqual(status.counts, { households: 2, devices: 3 });
   assert.equal(status.setupComplete, true);
   assert.equal(status.relay.connected, true);
@@ -446,4 +446,112 @@ test("updates (#722): the launcher's status is shown, and installing or automati
   assert.equal((await confirmed({ kind: "auto-update", enabled: false })).status, 200);
   assert.equal((await loadHomeSettings(context.dataDirectory, {})).autoUpdate, false);
   assert.equal(context.panel.status().updates.autoUpdate, false);
+});
+
+/** A household on another Kin server, as a move package (ADR 0026 §2). */
+async function movePackage(t, label = "moved") {
+  const { buildMovePackage } = await import("../move-package.mjs");
+  const { PairingService } = await import("../pairing-service.mjs");
+  const directory = mkdtempSync(join(tmpdir(), "kin-move-from-"));
+  const store = new DurableStore(join(directory, "hosted.sqlite"), { acquireProcessLock: false });
+  t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); });
+  const admin = new PairingService({ store }).bootstrap({ credential: credential(`${label}-admin`), deviceLabel: "Synthetic old laptop" });
+  const path = join(directory, "move.sqlite");
+  buildMovePackage(store, admin.householdId, path);
+  const { readFileSync: read } = await import("node:fs");
+  const { createHash } = await import("node:crypto");
+  const bytes = read(path);
+  return { admin, bytes, sha256: createHash("sha256").update(bytes).digest("hex") };
+}
+
+/** A request to the home server's own address, as the old server sends it
+ * (no Origin, raw bytes or JSON). */
+function toHome(context, path, { method = "POST", headers = {}, body } = {}) {
+  const payload = body === undefined ? undefined : Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body));
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({ host: "127.0.0.1", port: context.port, path, method, agent: false, headers: {
+      host: NAME, ...(payload ? { "content-type": Buffer.isBuffer(body) ? "application/octet-stream" : "application/json", "content-length": payload.length } : {}), ...headers,
+    } }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        let parsed = Buffer.concat(chunks).toString("utf8");
+        try { parsed = JSON.parse(parsed); } catch { /* not JSON */ }
+        resolve({ status: response.statusCode, body: parsed });
+      });
+    });
+    request.on("error", reject);
+    request.end(payload);
+  });
+}
+
+test("moving a household here (#739): a printed move code, the package in pieces, checked and added, then a restart", TIMEOUT, async (t) => {
+  const context = await startPanel(t, { configured: true, home: setUpHome() });
+  context.panel.moveReceiver.chunkBytes = 4096;
+  const moved = await movePackage(t);
+  context.panel.issueCode("access", { force: true });
+  const cookie = await signIn(context);
+  const asked = await post(context, "move-code", {}, { cookie });
+  assert.equal(asked.status, 200, JSON.stringify(asked.body));
+  assert.equal(asked.body.address, `https://${NAME}`);
+  const code = context.printed.at(-1);
+  assert.equal(code.purpose, "move");
+  // The code is what lets another server in: a wrong one costs a try.
+  const wrong = await toHome(context, "/api/move/start", { headers: { "kin-move-code": code.code.startsWith("2") ? `3${code.code.slice(1)}` : `2${code.code.slice(1)}` }, body: { format: 1, size: moved.bytes.length, sha256: moved.sha256 } });
+  assert.equal(wrong.status, 401);
+  assert.equal(wrong.body.error, "move-code-wrong");
+  assert.equal(wrong.body.attemptsLeft, 4);
+  const started = await toHome(context, "/api/move/start", { headers: { "kin-move-code": code.code }, body: { format: 1, size: moved.bytes.length, sha256: moved.sha256 } });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  assert.equal(started.body.chunkBytes, 4096);
+  const bearer = { authorization: `Bearer ${started.body.token}` };
+  assert.equal((await toHome(context, "/api/move/start", { headers: { "kin-move-code": code.code }, body: { format: 1, size: 1, sha256: moved.sha256 } })).body.error, "move-code-none", "the code works once");
+  // Pieces, in order; a repeated or skipped piece is answered with where to go on.
+  let offset = 0;
+  while (offset < moved.bytes.length) {
+    const piece = moved.bytes.subarray(offset, offset + 4096);
+    const answer = await toHome(context, `/api/move/chunk?offset=${offset}`, { method: "PUT", headers: bearer, body: piece });
+    assert.equal(answer.status, 200, JSON.stringify(answer.body));
+    offset = answer.body.received;
+    if (offset === 4096) {
+      const again = await toHome(context, "/api/move/chunk?offset=0", { method: "PUT", headers: bearer, body: piece });
+      assert.equal(again.status, 409);
+      assert.deepEqual({ error: again.body.error, received: again.body.received }, { error: "move-offset", received: 4096 });
+      assert.equal((await toHome(context, "/api/move/finish", { headers: bearer })).body.error, "move-incomplete");
+    }
+  }
+  assert.deepEqual((await toHome(context, "/api/move/status", { method: "GET", headers: bearer })).body, { received: moved.bytes.length, size: moved.bytes.length });
+  assert.equal((await toHome(context, "/api/move/status", { method: "GET", headers: { authorization: `Bearer ${"x".repeat(43)}` } })).status, 401);
+  const finished = await toHome(context, "/api/move/finish", { headers: bearer });
+  assert.equal(finished.status, 200, JSON.stringify(finished.body));
+  assert.deepEqual({ householdId: finished.body.householdId, members: finished.body.members }, { householdId: moved.admin.householdId, members: 1 });
+  assert.deepEqual(context.restarts, ["move"], "every part of Kin loads it at the restart");
+  assert.equal(context.application.store.db.prepare("SELECT COUNT(*) AS n FROM households WHERE id = ?").get(moved.admin.householdId).n, 1);
+  assert.equal(context.panel.status().lastMove.members, 1);
+  const { readdirSync: list } = await import("node:fs");
+  assert.deepEqual(list(join(context.dataDirectory, "move")), ["last-move.json"], "the package is gone");
+});
+
+test("a move is refused without room, with a damaged package, or before setup is finished", TIMEOUT, async (t) => {
+  // The household limit (1 in home mode) is reached.
+  const full = await startPanel(t, { configured: true, home: setUpHome() });
+  full.application.service.bootstrap({ credential: credential("full-admin"), deviceLabel: "Synthetic phone" });
+  full.panel.issueCode("access", { force: true });
+  const fullCookie = await signIn(full);
+  assert.equal((await post(full, "move-code", {}, { cookie: fullCookie })).body.error, "control-move-limit");
+  // Not set up: no certificate yet.
+  const early = await startPanel(t, { configured: true });
+  early.panel.issueCode("access", { force: true });
+  assert.equal((await post(early, "move-code", {}, { cookie: await signIn(early) })).body.error, "control-move-not-ready");
+  // What arrives doesn't match what was announced.
+  const context = await startPanel(t, { configured: true, home: setUpHome() });
+  const moved = await movePackage(t, "damaged");
+  context.panel.issueCode("access", { force: true });
+  await post(context, "move-code", {}, { cookie: await signIn(context) });
+  const started = await toHome(context, "/api/move/start", { headers: { "kin-move-code": context.printed.at(-1).code }, body: { format: 1, size: moved.bytes.length, sha256: "0".repeat(64) } });
+  const bearer = { authorization: `Bearer ${started.body.token}` };
+  assert.equal((await toHome(context, "/api/move/chunk?offset=0", { method: "PUT", headers: bearer, body: moved.bytes })).status, 200);
+  assert.equal((await toHome(context, "/api/move/finish", { headers: bearer })).body.error, "move-checksum");
+  assert.equal(context.application.store.db.prepare("SELECT COUNT(*) AS n FROM households").get().n, 0, "nothing was added");
+  assert.deepEqual(context.restarts, []);
 });

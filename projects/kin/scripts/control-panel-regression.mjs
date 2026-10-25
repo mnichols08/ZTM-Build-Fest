@@ -123,6 +123,12 @@ export async function controlPanelRegressions(client, harness, first) {
   await check("the status page");
   checks += 4;
 
+  // Moving a household here (#739): a move code, printed on this computer.
+  await client.evaluate(`[...document.querySelectorAll("kin-control-move button")].find((button) => button.textContent === "Get a move code").click()`);
+  await waitInPage(client, `document.querySelector("kin-control-move .control-message")?.textContent.includes("printed a move code")`, "the move code");
+  assert.equal(second.printed.at(-1)?.purpose, "move");
+  checks += 1;
+
   // Backups (#721): each change asks for the code Kin prints.
   const confirmWith = async (instance) => {
     await waitInPage(client, `Boolean(document.querySelector("kin-control-settings .control-confirm input"))`, "the confirmation form");
@@ -188,7 +194,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     };
     await applyRegressionDefaults(send);
     const { checks } = await controlPanelRegressions(client, harness, first);
-    console.log(`PASS ${checks} control panel checks: code, live name check, terms, connect, restart, certificate, status, backup, restore`);
+    console.log(`PASS ${checks} control panel checks: code, live name check, terms, connect, restart, certificate, status, move code, backup, restore`);
   } catch (error) {
     await captureFailure("control panel regression");
     throw error;
