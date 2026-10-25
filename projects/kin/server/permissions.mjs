@@ -34,9 +34,10 @@ export function serviceDataDirectory(databasePath) {
   return canonicalPath(dirname(resolve(databasePath)));
 }
 
-/** Node flags for the service's sandbox. */
-export function permissionFlags(databasePath) {
-  const appRoot = canonicalPath(APP_ROOT);
+/** Node flags for the service's sandbox. `appRoot` is the service's app
+ * directory: this one, or a new release's while the launcher tries it before
+ * updating (#722). */
+export function permissionFlags(databasePath, appRoot = canonicalPath(APP_ROOT)) {
   const data = serviceDataDirectory(databasePath);
   return ["--permission", `--allow-fs-read=${appRoot}`, `--allow-fs-read=${data}`, `--allow-fs-write=${data}`];
 }

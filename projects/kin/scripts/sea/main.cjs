@@ -179,26 +179,31 @@ async function launcher() {
   // written. So the service must load its files by that path too, not
   // through a symlink: macOS's temporary folders (/var/folders, /tmp) are
   // symlinks into /private.
-  const appDirectory = fs.realpathSync(unpack(path.resolve(cacheRoot || defaultCacheRoot(env)), manifest));
+  const appCache = path.resolve(cacheRoot || defaultCacheRoot(env));
+  const appDirectory = fs.realpathSync(unpack(appCache, manifest));
   if (prepareOnly) {
     process.stdout.write(`${appDirectory}\n`);
     return;
   }
   const { runLauncher } = await importFile(path.join(appDirectory, "server", "launcher.mjs"));
+  // How to start the service from an executable and its unpacked app: this
+  // one, or a new release's while the launcher tries it before updating
+  // (server/home/updater.mjs, #722).
+  const serviceProcessFor = ({ executable, appDirectory: directory }) => ({ flags, env: serviceEnv }) => ({
+    command: executable,
+    args: [],
+    env: {
+      ...serviceEnv,
+      KIN_SEA_ROLE: "service",
+      KIN_SEA_APP_DIR: directory,
+      NODE_OPTIONS: [...flags.map(nodeOption), serviceEnv.NODE_OPTIONS].filter(Boolean).join(" "),
+    },
+  });
   const code = await runLauncher(rest, {
     version: manifest.version,
     env,
-    serviceProcess: ({ flags, env: serviceEnv }) => ({
-      command: process.execPath,
-      args: [],
-      env: {
-        ...serviceEnv,
-        KIN_SEA_ROLE: "service",
-        KIN_SEA_APP_DIR: appDirectory,
-        NODE_OPTIONS: [...flags.map(nodeOption), serviceEnv.NODE_OPTIONS].filter(Boolean).join(" "),
-      },
-    }),
-    program: { kind: "sea", executable: process.execPath },
+    serviceProcess: serviceProcessFor({ executable: process.execPath, appDirectory }),
+    program: { kind: "sea", executable: process.execPath, appCache, appDirectory, serviceProcessFor },
   });
   process.exit(code);
 }

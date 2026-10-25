@@ -481,7 +481,10 @@ built version can be checked against it.
   services, outside-calendar downloads and, if its admins turn it on, report
   forwarding; and in addition, requests to Let's Encrypt for its
   certificate, a daily check of a Certificate Transparency search service
-  (crt.sh by default) for its own name, and a daily check for updates. None
+  (crt.sh by default) for its own name, and a daily check for updates (#722:
+  GitHub, where releases are published, sees the home server's address and
+  when it checks; nothing is sent but the request, and with no release key
+  built in there is no check). None
   of these carries household content.
 - **The home server's control panel** (#719, #720, built) shows its
   operator and the household admins the connection, the certificate, the

@@ -32,12 +32,13 @@
 //   Sec-Fetch-Site same-origin when the browser sends it;
 // - the session cookie is HttpOnly, SameSite=Strict and Path=/control.
 //
-// Seams for later tasks: `provide(section, fn)` fills a status section
-// (updates #722 shows "not built yet" until then), and
+// Seams: `provide(section, fn)` fills a status section, and
 // `registerChange(kind, handler)` adds a change, which both ways of
 // reaching the panel then confirm and apply the same way. Backups (#721,
-// backups.mjs) use both: the "backups" section, and the changes
-// "backup-now", "backup-hour" and "restore".
+// backups.mjs) add the "backups" section and the changes "backup-now",
+// "backup-hour" and "restore"; updates (#722, updater.mjs) the "updates"
+// section, read from the file the launcher writes, and the changes
+// "update-install" and "auto-update".
 import { readFileSync, statSync, statfsSync } from "node:fs";
 import { dirname } from "node:path";
 import { isIP } from "node:net";
@@ -47,6 +48,8 @@ import { readJsonBody } from "../http-body.mjs";
 import { CONFIRM_CODE_TTL_MS, OneTimeCode, SETUP_CODE_TTL_MS, displayCode } from "./access-codes.mjs";
 import { SESSION_COOKIE, SESSION_TTL_MS } from "./control-sessions.mjs";
 import { BackupError, isBackupHour } from "./backups.mjs";
+import { releasePublicKey } from "./release.mjs";
+import { readUpdateStatus, writeUpdateRequest } from "./updater.mjs";
 import { MAX_HOUSEHOLDS_LIMIT, writeHomeSettings } from "./settings.mjs";
 import { SetupError } from "./setup.mjs";
 
@@ -150,7 +153,7 @@ export class ControlPanel {
     this.sections = new Map([
       ["backups", () => (this.backups ? this.backups.status() : { state: "not-built" })],
       // #722 provides these: the update policy and what is available.
-      ["updates", () => ({ state: "not-built", current: this.version })],
+      ["updates", () => this.#updates()],
     ]);
     this.changes = new Map();
     this.registerChange("households-limit", {
@@ -169,6 +172,47 @@ export class ControlPanel {
       },
     });
     if (this.backups) this.#registerBackupChanges();
+    this.#registerUpdateChanges();
+  }
+
+  /** What the launcher last wrote about updates (#722), with this
+   * version. Before the launcher's first look (or without its updater, as
+   * when Kin is started by hand without the launcher) it is "not-checked",
+   * or "off" in a build without a release key. */
+  #updates() {
+    const status = readUpdateStatus(this.dataDirectory);
+    if (!status) return { state: releasePublicKey() === null ? "off" : "not-checked", current: this.version, autoUpdate: this.settings.autoUpdate !== false };
+    const { format, failedVersion, ...shown } = status;
+    return { ...shown, current: this.version, autoUpdate: this.settings.autoUpdate !== false };
+  }
+
+  /** Install an offered release now, and automatic updates on or off. */
+  #registerUpdateChanges() {
+    this.registerChange("update-install", {
+      check: (change) => {
+        const status = this.#updates();
+        const available = status.available;
+        if (!available || available.version !== change?.version) throw new ControlError("control-update-unknown", "That update isn't available any more.", 409);
+        if (available.install === "manual") throw new ControlError("control-update-manual", "This copy of Kin can't update itself.", 409);
+        if (status.state === "installing") throw new ControlError("control-update-busy", "Kin is installing an update now.", 409);
+        return { kind: "update-install", version: available.version };
+      },
+      apply: async ({ version }) => {
+        await writeUpdateRequest(this.dataDirectory, { version, now: this.now });
+        this.log({ event: "home_update_requested" });
+        return { requested: version };
+      },
+    });
+    this.registerChange("auto-update", {
+      check: (change) => {
+        if (typeof change?.enabled !== "boolean") throw new ControlError("control-bad-request", "Kin couldn't read that request.");
+        return { kind: "auto-update", enabled: change.enabled };
+      },
+      apply: async ({ enabled }) => {
+        this.setSettings(await writeHomeSettings(this.dataDirectory, { autoUpdate: enabled }, this.env));
+        return { enabled };
+      },
+    });
   }
 
   /** Back up now, the hour of the daily backup, and restore (#721). A

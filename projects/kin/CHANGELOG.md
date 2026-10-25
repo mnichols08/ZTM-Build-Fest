@@ -149,6 +149,24 @@ documentation only.
   data as it was and says why. Before a name is chosen, the setup page
   offers a backup copied into the folder, which also brings its `home/`:
   moving a home server to a new computer.
+- **Kin at home: signed, safe updates** (#722; story #718, epic #708,
+  [ADR 0025](docs/decisions/0025-kin-at-home.md) §10,
+  [HOME-SERVER](docs/HOME-SERVER.md#updates)). Releases carry
+  `kin-home-manifest.json` and a detached Ed25519 signature, checked against
+  a release key built into Kin; `scripts/release-key.mjs` makes that key
+  offline and `scripts/sign-release.mjs` signs a build. No key is built in
+  yet, so updates stay off (and make no requests) until the owner adds one.
+  With a key, the launcher checks GitHub Releases daily; patch and minor
+  releases install at night (02:00 to 05:00) unless automatic updates are
+  turned off, and major releases wait for an admin's *Install now*. The
+  old launcher downloads and checks the file, unpacks it into its own cache,
+  stops the service, backs up, and tries the new release as the sandboxed
+  service (`/health` within 60 seconds, then 5 minutes up) before swapping
+  the executable (`kin.previous` is kept); a failed trial puts the
+  database back and starts the old version again, and that release isn't
+  retried by itself. `--install-service` now lets Kin's account write its
+  install folder (the unit gains `ReadWritePaths`). The control panel shows
+  the version, what's available and how the last update went.
 
 - **Kitchen display mode** (#669: #670, #671, #672; epic #651,
   [ADR 0022](docs/decisions/0022-family-hub.md) §4). An Adult turns a tablet

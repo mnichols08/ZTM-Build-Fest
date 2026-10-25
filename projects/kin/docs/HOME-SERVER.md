@@ -16,11 +16,11 @@ server**. A plain guide for households comes with #740.
 | Container image for NAS and server users | Built (#715): `deploy/home/Dockerfile`. |
 | Running as a service: systemd, launchd, Windows | Built (#716). On Windows a real service run by Kin's Rust service host, `kin-service-host.exe` (#749); a scheduled task when the host is missing. |
 | Device checks on each platform | #717. |
-| Control panel: first-run setup page and status page (§10, §11) | Built (#719, #720): [below](#setting-it-up-the-control-panel). Updates (#722) come next. |
+| Control panel: first-run setup page and status page (§10, §11) | Built (#719, #720): [below](#setting-it-up-the-control-panel). |
 | Certificates (ACME, §5) | Built (#723), started by home mode (#733): [HOME-CERTIFICATES](HOME-CERTIFICATES.md). |
 | The tunnel to the connection relay (§2) | Built (#733): [below](#reaching-it-from-anywhere-the-tunnel). |
 | Scheduled backups and restore (§10) | Built (#721): [below](#backups-and-restore). The copy to a second folder (a USB drive) is later. |
-| Signed updates (§10) | Later (#722). |
+| Signed updates (§10) | Built (#722): [below](#updates). Off until the project's release key is made and built in. |
 
 With a name set (below), phones reach the home server through the
 connection relay. The setup page on the computer itself chooses the name and
@@ -299,14 +299,17 @@ It shows, in plain words, with every state and error code explained:
 - **Households and devices:** counts only. The status holds no household
   content, no identifier of a household, member or device, no device label,
   no key and no address.
-- **Version and updates:** the version; updates come with #722.
+- **Version and updates:** the version, when Kin last checked, an update
+  that is available and how it installs, and how the last update went
+  ([below](#updates)).
 - **Settings:** new households allowed (1–10); back up now, the daily
-  backup time and restore a backup.
+  backup time and restore a backup; install an update now, and automatic
+  updates on or off.
 
-For #722: `panel.provide("updates", () => object)` fills a status section,
+`panel.provide(section, () => object)` fills a status section,
 `panel.registerChange(kind, { check, apply })` adds a change that both ways
 in confirm the same way, and `SECTIONS` and `SETTINGS` in `web/control/`
-render them. Backups (#721) use the same seams.
+render them. Backups (#721) and updates (#722) use these seams.
 
 ### Backups and restore
 
@@ -703,10 +706,66 @@ or the container image for now.
 
 ## Updates
 
-Decided (ADR 0025 §10; the owner's answer of 2026-10-22): patch and minor
-releases install automatically at night after a backup, and major releases
-wait for an admin. The signed updater isn't built yet; until it is, replace
-the executable and restart the service (`sudo systemctl restart kin`).
+Kin installed as a service (`kin --install-service`) keeps itself up to date
+(ADR 0025 §10, #722). **Until the project's release key is made and built
+in, updates are off:** the control panel says so, and Kin makes no requests
+for them. Until then, replace the executable and restart the service
+(`sudo systemctl restart kin`).
+
+**Checking.** Once a day the launcher fetches
+`kin-home-manifest.json` and its signature `kin-home-manifest.json.sig` from
+the newest release on GitHub
+(`https://github.com/mnichols08/ZTM-Build-Fest/releases/latest/download/…`;
+pre-releases are skipped), and checks the Ed25519 signature against the
+release key built into Kin before reading anything else. The manifest names
+the version, the oldest version that may update to it, and each platform's
+file with its size and SHA-256. A release is offered only when it is newer
+than this one. `KIN_HOME_RELEASES` points a fork at its own releases.
+
+**Installing.** Patch and minor releases install by themselves at night,
+between 02:00 and 05:00 on the computer's clock; turn that off in the
+control panel (it is `autoUpdate` in `home/settings.json`) and they wait for
+an admin, like major releases always do. An admin installs one with
+*Install now*, confirmed like any other change; the launcher picks the
+request up within a minute. Installing:
+
+1. downloads this computer's file into the install folder and checks its
+   size and SHA-256 against the signed manifest;
+2. unpacks its app into its own cache folder, `update-<version>`, leaving
+   the running version's files alone;
+3. stops the service and makes a backup (reason "before-update",
+   [above](#backups-and-restore)) with the database closed;
+4. tries the new release as the service, in the sandbox: it must answer
+   `/health` within 60 seconds and stay up for 5 minutes;
+5. keeps it: the installed executable becomes `kin.previous`, the new one
+   takes its place, and Kin goes on running it.
+
+If the trial fails, Kin stops it, puts the backup's database back (the
+trial's is kept as `kin.sqlite.failed-update-<time>`), starts the version it
+was running and says so in the control panel. That release isn't installed
+by itself again; an admin can still try it. Changes that reached the server
+during the trial are still on the phones that made them, which send them
+again.
+
+Because the old, working launcher tries the new release before anything is
+replaced, a release that can't even start leaves Kin running as it was, not
+a service manager restarting a broken program.
+
+**What it needs.** The install folder is writable by the account Kin runs
+as (the owner's choice for #722): `--install-service` makes the `kin` account
+its owner on Linux (and lists it in the unit's `ReadWritePaths`), the
+LaunchDaemon's account on macOS, and gives LOCAL SERVICE modify rights on
+Windows. The service itself still runs in the sandbox and can write only its
+data folder; only the launcher writes the install folder. An executable run
+by hand, a checkout and the container image don't replace themselves: the
+control panel shows the update with a link to the release (for the
+container, pull the new image). Reinstalling with `--install-service` from an
+older install grants the rights.
+
+The Windows service host (`kin-service-host.exe`) isn't updated this way;
+install again to update it.
+
+**Publishing a release** is in [RELEASES](RELEASES.md#home-server-releases).
 
 ## What still needs checking
 

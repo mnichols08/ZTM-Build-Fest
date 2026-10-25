@@ -302,3 +302,50 @@ test("server/start.mjs prints the service definition for this checkout", { timeo
   assert.equal(usage.status, 2);
   assert.match(usage.stderr, /Usage: kin/);
 });
+
+test("the updater's hold on the service: pause, a trial whose exit is reported, going back, and adopting a release", { timeout: 20_000 }, async (t) => {
+  const root = temporary(t);
+  const { spawnImpl, calls } = fakeSpawn([]);
+  const signals = new EventEmitter();
+  let controller;
+  let stopped = 0;
+  let ready;
+  const given = new Promise((resolve) => { ready = resolve; });
+  const updater = ({ controller: handed }) => { controller = handed; ready(); return { start() {}, stop() { stopped += 1; } }; };
+  const running = runService({ serviceProcess: ({ flags, env }) => ({ command: "kin-1.6.0", args: flags, env }), env: { KIN_DATA_DIR: join(root, "data") }, supervise: true, spawnImpl, signals, platform: "linux", updater });
+  await given;
+  assert.equal(controller.canStop, true);
+  assert.equal(controller.spec.command, "kin-1.6.0");
+  assert.match(controller.flagsFor("/cache/update-1.6.1/app-1").join(" "), /--allow-fs-read=\/cache\/update-1\.6\.1\/app-1/);
+  // Paused: stopped, and not started again.
+  await controller.pause();
+  assert.equal(calls[0].child.killedWith, "SIGTERM");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(calls.length, 1);
+  // A trial: its exit is reported, and nothing restarts it.
+  const exits = [];
+  controller.resume({ command: "kin-1.6.1.new", args: [], env: {} }, { onExit: (code) => exits.push(code) });
+  assert.equal(calls[1].command, "kin-1.6.1.new");
+  calls[1].child.exitCode = 1;
+  calls[1].child.emit("exit", 1, null);
+  assert.deepEqual(exits, [1]);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(calls.length, 2, "a failed trial isn't restarted");
+  // Back to the version that was running.
+  controller.resume({ command: "kin-1.6.0", args: [], env: {} });
+  assert.equal(calls[2].command, "kin-1.6.0");
+  // A trial that passes is adopted: a later failure restarts the new release.
+  await controller.pause();
+  controller.resume({ command: "kin-1.6.1.new", args: [], env: {} }, { onExit: () => assert.fail("the trial passed") });
+  controller.endTrial();
+  controller.adopt({ command: "kin", args: [], env: {} });
+  calls[3].child.exitCode = 1;
+  calls[3].child.emit("exit", 1, null);
+  await new Promise((resolve) => setTimeout(resolve, 1_300));
+  assert.equal(calls[4]?.command, "kin", "supervision restarts the adopted release");
+  // Stopped while paused: the launcher ends at once.
+  await controller.pause();
+  signals.emit("SIGTERM");
+  assert.equal(await running, 0);
+  assert.equal(stopped, 1, "the updater is stopped with the launcher");
+});

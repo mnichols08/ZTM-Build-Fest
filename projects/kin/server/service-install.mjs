@@ -23,6 +23,15 @@
 // Uninstalling removes the service and Kin's installed copy and never touches
 // the data directory.
 //
+// The account Kin runs as may write its install folder (#722, the owner's
+// choice): the launcher replaces the executable there when it updates
+// itself (server/home/updater.mjs). The service it starts still runs in the
+// sandbox and may write only its data directory. On Linux the folder is
+// owned by the "kin" account and named in the unit's ReadWritePaths
+// (ProtectSystem=strict makes /usr read-only otherwise); on macOS it is
+// owned by the account the LaunchDaemon runs as; on Windows LOCAL SERVICE
+// gets modify rights on it.
+//
 // Each command is first built as a plan (a list of steps), which is what the
 // tests check, then carried out step by step.
 import { spawnSync } from "node:child_process";
@@ -90,7 +99,7 @@ Environment=KIN_MODE=home
 Environment=KIN_DATA_DIR=/var/lib/kin
 StateDirectory=kin
 StateDirectoryMode=0700
-${sea ? "# The executable unpacks its app files here (KIN_APP_CACHE).\nCacheDirectory=kin\nCacheDirectoryMode=0700\n" : ""}UMask=0077
+${sea ? `# The executable unpacks its app files here (KIN_APP_CACHE).\nCacheDirectory=kin\nCacheDirectoryMode=0700\n# Kin updates its own executable here (#722).\nReadWritePaths=${LINUX_INSTALL_DIRECTORY}\n` : ""}UMask=0077
 Restart=on-failure
 RestartSec=5
 # The service gives itself 30 seconds to close its database.
@@ -396,6 +405,8 @@ export function servicePlan(action, { platform, program, env = process.env, user
       if (sea) {
         steps.push({ kind: "mkdir", path: layout.installDirectory, mode: 0o755 });
         steps.push({ kind: "copy", from: run.copyFrom, to: layout.executable, mode: 0o755 });
+        // Kin updates itself here (#722).
+        steps.push({ kind: "run", command: "chown", args: ["-R", `${LINUX_ACCOUNT}:${LINUX_ACCOUNT}`, layout.installDirectory] });
       }
       steps.push({ kind: "write", path: layout.definition, content: serviceDefinition({ platform, program, env }).content, mode: 0o644 });
       steps.push({ kind: "run", command: "systemctl", args: ["daemon-reload"] });
@@ -424,6 +435,8 @@ export function servicePlan(action, { platform, program, env = process.env, user
         // launchd from starting an unsigned program. The person already chose
         // to open this one (docs/HOME-SERVER.md, unsigned builds).
         steps.push({ kind: "run", command: "xattr", args: ["-d", "com.apple.quarantine", layout.executable], allowFailure: true });
+        // Kin updates itself here (#722).
+        steps.push({ kind: "run", command: "chown", args: ["-R", account, layout.installDirectory] });
       }
       for (const path of [layout.dataDirectory, layout.appCache, layout.logDirectory]) {
         steps.push({ kind: "mkdir", path, mode: 0o700 });
@@ -467,6 +480,9 @@ export function servicePlan(action, { platform, program, env = process.env, user
       // Reinstalling from the installed copy leaves it where it is.
       if (!sameWindowsPath(run.copyFrom, layout.executable)) steps.push({ kind: "copy", from: run.copyFrom, to: layout.executable });
       if (host && !sameWindowsPath(host, layout.serviceHost)) steps.push({ kind: "copy", from: host, to: layout.serviceHost });
+      // Kin updates itself here (#722). The service host runs as LOCAL
+      // SERVICE too, so this gives that account nothing it didn't have.
+      steps.push({ kind: "run", command: "icacls", args: [layout.installDirectory, "/grant", `${LOCAL_SERVICE}:(OI)(CI)M`] });
     }
     if (host) {
       const commands = windowsServiceCommands(serviceHostCommandLine({

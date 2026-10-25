@@ -42,6 +42,7 @@ test("the systemd unit runs Kin as the kin account, hardened, restarting on fail
     "User=kin", "Group=kin", "ExecStart=/usr/local/lib/kin/kin", "Environment=KIN_MODE=home", "Environment=KIN_DATA_DIR=/var/lib/kin",
     "StateDirectory=kin", "StateDirectoryMode=0700", "CacheDirectory=kin", "UMask=0077", "Restart=on-failure", "NoNewPrivileges=yes",
     "ProtectSystem=strict", "ProtectHome=yes", "WantedBy=multi-user.target", "After=network-online.target",
+    "ReadWritePaths=/usr/local/lib/kin",
   ])
     assert.ok(unit.split("\n").includes(line), line);
   assert.ok(!/^MemoryDenyWriteExecute=/m.test(unit), "V8's JIT needs writable code");
@@ -149,16 +150,18 @@ test("Linux: install creates the account, copies the executable, writes the unit
     ["run", "useradd"],
     ["mkdir", "/usr/local/lib/kin"],
     ["copy", "/usr/local/lib/kin/kin"],
+    ["run", "chown"],
     ["write", SYSTEMD_UNIT_PATH],
     ["run", "systemctl"],
     ["run", "systemctl"],
     ["run", "systemctl"],
   ]);
+  assert.deepEqual(plan.steps[5].args, ["-R", "kin:kin", "/usr/local/lib/kin"], "the kin account updates its own executable (#722)");
   const user = plan.steps[2];
   assert.deepEqual(user.unless, { command: "id", args: ["-u", "kin"] });
   assert.ok(user.args.includes("--system") && user.args.at(-1) === "kin");
   assert.equal(plan.steps[4].from, SEA.executable);
-  assert.deepEqual(plan.steps.slice(6).map(({ args }) => args.join(" ")), ["daemon-reload", "enable kin.service", "restart kin.service"]);
+  assert.deepEqual(plan.steps.slice(7).map(({ args }) => args.join(" ")), ["daemon-reload", "enable kin.service", "restart kin.service"]);
   // From a checkout, node runs Kin in place: nothing is copied.
   assert.ok(!servicePlan("install", { platform: "linux", program: NODE }).steps.some(({ kind }) => kind === "copy" || kind === "mkdir"));
 });
@@ -176,21 +179,24 @@ test("macOS: install runs Kin as the sudo user, never root, and uninstall keeps 
   assert.throws(() => servicePlan("install", { platform: "darwin", program: SEA, env: { SUDO_USER: "root" } }), /doesn't run as root/);
   const plan = servicePlan("install", { platform: "darwin", program: SEA, env: { SUDO_USER: "mikey" } });
   const chowned = plan.steps.filter(({ command }) => command === "chown").map(({ args }) => args.join(" "));
-  assert.deepEqual(chowned, ["mikey /Library/Application Support/Kin", "mikey /Library/Caches/Kin", "mikey /Library/Logs/Kin"]);
+  assert.deepEqual(chowned, ["-R mikey /usr/local/libexec/kin", "mikey /Library/Application Support/Kin", "mikey /Library/Caches/Kin", "mikey /Library/Logs/Kin"]);
   assert.ok(plan.steps.some(({ kind, path, mode }) => kind === "mkdir" && path === "/Library/Application Support/Kin" && mode === 0o700));
   const written = plan.steps.find(({ kind }) => kind === "write");
   assert.equal(written.path, LAUNCHD_PLIST_PATH);
   assert.ok(written.content.includes("<string>mikey</string>"));
   assert.deepEqual(plan.steps.at(-1), { kind: "run", command: "launchctl", args: ["bootstrap", "system", LAUNCHD_PLIST_PATH] });
-  assert.equal(servicePlan("install", { platform: "darwin", program: SEA, env: { SUDO_USER: "mikey" }, user: "kin" }).steps.find(({ command }) => command === "chown").args[0], "kin");
+  assert.equal(servicePlan("install", { platform: "darwin", program: SEA, env: { SUDO_USER: "mikey" }, user: "kin" }).steps.find(({ command }) => command === "chown").args[1], "kin");
   assertKeepsData(servicePlan("uninstall", { platform: "darwin", program: SEA, env: {} }));
 });
 
 test("Windows without the service host: install limits the folders to LOCAL SERVICE and admins and registers the task; uninstall keeps the data", { timeout: 60_000 }, () => {
   const plan = servicePlan("install", { platform: "win32", program: { kind: "sea", executable: "C:\\Downloads\\kin.exe" }, env: WINDOWS_ENV, exists: NOTHING });
   const acls = plan.steps.filter(({ command }) => command === "icacls");
-  assert.deepEqual(acls.map(({ args }) => args[0]), ["C:\\ProgramData\\Kin", "C:\\ProgramData\\Kin-app"]);
-  for (const { args } of acls)
+  assert.deepEqual(acls.map(({ args }) => args[0]), ["C:\\ProgramData\\Kin", "C:\\ProgramData\\Kin-app", "C:\\Program Files\\Kin"]);
+  // The install folder keeps its inherited rights; LOCAL SERVICE may also
+  // change it, to update Kin (#722).
+  assert.deepEqual(acls[2].args.slice(1), ["/grant", "*S-1-5-19:(OI)(CI)M"]);
+  for (const { args } of acls.slice(0, 2))
     assert.deepEqual(args.slice(1), ["/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "*S-1-5-19:(OI)(CI)M"]);
   assert.ok(plan.steps.some(({ kind, to }) => kind === "copy" && to === "C:\\Program Files\\Kin\\kin.exe"));
   assert.ok(plan.steps.find(({ kind }) => kind === "task").content.includes("<UserId>S-1-5-19</UserId>"));
@@ -333,6 +339,7 @@ test("Windows with the service host: install registers a LOCAL SERVICE service t
     ["mkdir", "C:\\Program Files\\Kin"],
     ["copy", "C:\\Program Files\\Kin\\kin.exe"],
     ["copy", "C:\\Program Files\\Kin\\kin-service-host.exe"],
+    ["run", "icacls C:\\Program Files\\Kin"],
     ["run", "sc.exe create"],
     ["run", "sc.exe config"],
     ["run", "sc.exe description"],

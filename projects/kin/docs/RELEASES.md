@@ -169,6 +169,41 @@ Release. Whether to add Releases for them is item G8 in
 [V1.0_REVIEW_GATES](audits/V1.0_REVIEW_GATES.md); the recommendation is not
 to.
 
+## Home-server releases
+
+Home servers update themselves from the GitHub Release of each
+`kin-vX.Y.Z` tag ([HOME-SERVER](HOME-SERVER.md#updates), ADR 0025 §10,
+#722). Only full releases count: a pre-release is never offered.
+
+**Once: the release key.** On an offline computer that will keep it:
+
+```sh
+node scripts/release-key.mjs /secure/kin-release-key.pem
+```
+
+It writes the Ed25519 private key (mode 0600, never overwriting one) and
+prints the public key. Put that in `server/home/release-key.mjs` and release
+as usual; home servers check for updates from that release on. Keep a second
+copy of the private key somewhere as safe. It never goes online, into the
+repository or into CI: whoever holds it can publish an update every home
+server installs. To change keys, put the new public key in a release and
+sign that release with the old key; later releases are signed with the new
+one.
+
+**Each release.** Build the executables (`node scripts/build-sea.mjs`), copy
+the build folder to the offline computer, and sign it there:
+
+```sh
+node scripts/sign-release.mjs target/sea/dist --key /secure/kin-release-key.pem
+```
+
+It checks every executable against `SHA256SUMS`, writes
+`kin-home-manifest.json` (by default only the same major version's
+`x.0.0` and later may update to it; `--minimum` changes that) and its
+signature `kin-home-manifest.json.sig`, and checks the signature. Attach
+both files, the executables, `SHA256SUMS` and the Windows service host to
+the GitHub Release.
+
 ## Google Play
 
 Kin's Play app (epic #527) is a thin wrapper that opens the production site,

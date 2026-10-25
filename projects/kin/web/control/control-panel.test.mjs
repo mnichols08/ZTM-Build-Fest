@@ -1,4 +1,4 @@
-// The control panel's page (web/control/, #718–#721) without a browser:
+// The control panel's page (web/control/, #718–#722) without a browser:
 // plain words for every code the home server can send, the API client's
 // two ways in, and each component's rendering and actions on a small DOM
 // stand-in (test-dom.mjs). scripts/control-panel-regression.mjs drives
@@ -9,6 +9,7 @@ import { ACME_ERROR_CODES } from "../../server/acme/client.mjs";
 import { BACKUP_ERROR_CODES, BACKUP_STATES } from "../../server/home/backups.mjs";
 import { DOMAIN_PROBLEMS } from "../../server/home/domain-records.mjs";
 import { TUNNEL_ERRORS } from "../../server/home/tunnel-client.mjs";
+import { UPDATE_ERROR_CODES } from "../../server/home/updater.mjs";
 import { installDom, settle } from "./test-dom.mjs";
 
 const document = installDom();
@@ -21,7 +22,7 @@ const TIMEOUT = { timeout: 30_000 };
 
 test("every code the home server sends has plain words of its own", TIMEOUT, () => {
   const codes = [
-    ...TUNNEL_ERRORS, ...ACME_ERROR_CODES, ...DOMAIN_PROBLEMS, ...BACKUP_ERROR_CODES, "control-backup-hour-invalid",
+    ...TUNNEL_ERRORS, ...ACME_ERROR_CODES, ...DOMAIN_PROBLEMS, ...BACKUP_ERROR_CODES, "control-backup-hour-invalid", ...UPDATE_ERROR_CODES, "control-update-unknown", "control-update-manual", "control-update-busy",
     "tunnel-caa-name-taken", "tunnel-caa-name-not-allowed", "tunnel-caa-name-limit", "tunnel-caa-name-unknown", "tunnel-caa-suspended", "tunnel-caa-refused",
     "tunnel-not-ready", "tunnel-timeout", "tunnel-lost", "tunnel-stopped",
     "setup-name-empty", "setup-name-invalid", "setup-name-length", "setup-name-taken", "setup-name-not-allowed",
@@ -115,8 +116,9 @@ const STATUS = Object.freeze({
       { id: "kin-20261021T090000Z", createdAt: "2026-10-21T09:00:00.000Z", reason: "manual", databaseBytes: 2_400_000, home: true },
     ],
   },
-  updates: { state: "not-built", current: "1.6.0" },
+  updates: { state: "up-to-date", stage: null, current: "1.6.0", checkedAt: "2026-10-22T11:00:00.000Z", available: null, autoUpdate: true, cannotInstall: null, lastError: null, lastUpdate: null },
 });
+const AVAILABLE = Object.freeze({ version: "1.6.1", kind: "patch", releasedAt: "2026-11-02T10:00:00.000Z", page: "https://github.com/mnichols08/ZTM-Build-Fest/releases/tag/kin-v1.6.1", blocked: null, install: "automatic" });
 
 test("the status page: every section, plain-words states, backups, and the seam for updates", TIMEOUT, () => {
   const element = document.createElement("kin-control-status");
@@ -131,7 +133,7 @@ test("the status page: every section, plain-words states, backups, and the seam 
   assert.equal(backups.dataset.tone, "good");
   for (const expected of ["every day by itself", "Last backup", "Next backup", "2 backups of the newest 14, 4.8 MB in all", "as private as this computer"])
     assert.ok(backups.textContent.includes(expected), expected);
-  assert.match(element.querySelector('[data-section="updates"]').textContent, /doesn't check for updates/);
+  assert.match(element.querySelector('[data-section="updates"]').textContent, /This is the newest version/);
   for (const section of element.querySelectorAll("section")) assert.ok(section.getAttribute("aria-labelledby"), "each section is named by its heading");
 
   element.status = {
@@ -404,6 +406,52 @@ test("setting up a new computer: a backup in Kin's folder can be restored before
   } finally {
     panel.disconnectedCallback();
     panel.remove();
+  }
+});
+
+test("the status page: updates in plain words, from off to a release that was undone", TIMEOUT, () => {
+  const element = document.createElement("kin-control-status");
+  const updates = (value) => { element.status = { ...STATUS, updates: { ...STATUS.updates, ...value } }; return element.querySelector('[data-section="updates"]'); };
+  assert.match(updates({ state: "off" }).textContent, /doesn't check for updates/);
+  assert.match(updates({ state: "available", available: AVAILABLE }).textContent, /Kin 1\.6\.1 is available\. Kin installs it by itself tonight, between 02:00 and 05:00/);
+  assert.equal(element.querySelector('[data-section="updates"] a').href, AVAILABLE.page);
+  assert.match(updates({ state: "available", available: { ...AVAILABLE, version: "2.0.0", kind: "major", install: "admin" } }).textContent, /bigger update, so it waits for you/);
+  assert.match(updates({ state: "available", available: { ...AVAILABLE, install: "manual" }, cannotInstall: "not-installed" }).textContent, /can't update itself.*releases page/);
+  assert.match(updates({ state: "installing", stage: "trying", available: AVAILABLE }).textContent, /Installing Kin 1\.6\.1: trying it for five minutes/);
+  const undone = updates({ lastUpdate: { from: "1.6.0", to: "1.6.1", outcome: "rolled-back", at: "2026-11-03T02:40:00.000Z", code: "update-unhealthy" } });
+  assert.equal(undone.dataset.tone, "attention");
+  assert.match(undone.querySelector('[data-update="rolled-back"]').textContent, /Kin 1\.6\.1 didn't work here, so Kin went back to 1\.6\.0 .*didn't answer/);
+  assert.match(updates({ lastUpdate: { from: "1.6.0", to: "1.6.1", outcome: "updated", at: "2026-11-03T02:40:00.000Z", code: null } }).querySelector('[data-update="updated"]').textContent, /Updated from Kin 1\.6\.0 to 1\.6\.1/);
+});
+
+test("settings, updates: install now names the release; automatic updates on or off; neither when updates are off", TIMEOUT, async () => {
+  const api = fakeApi({ "confirm-code": { expiresAt: "2026-10-22T13:00:00.000Z" }, change: { kind: "update-install", requested: "2.0.0" } });
+  const settings = document.createElement("kin-control-settings");
+  settings.api = api;
+  document.body.append(settings);
+  try {
+    settings.status = STATUS;
+    assert.equal(settings.querySelector('[data-setting="update-install"]'), null, "nothing to install");
+    assert.ok(settings.querySelector("#control-setting-auto-update"));
+    settings.status = { ...STATUS, updates: { ...STATUS.updates, state: "available", available: { ...AVAILABLE, version: "2.0.0", kind: "major", install: "admin" } } };
+    const install = settings.querySelector('[data-setting="update-install"]');
+    assert.match(install.textContent, /Installs Kin 2\.0\.0 now/);
+    assert.equal(install.querySelector("button").textContent, "Install now");
+    install.querySelector("form").submit();
+    await settle();
+    const confirm = settings.querySelector(".control-confirm");
+    confirm.querySelector("input").value = "ABCDE-23456";
+    confirm.submit();
+    await settle();
+    assert.deepEqual(api.calls.at(-1), ["change", { kind: "update-install", version: "2.0.0" }, { code: "ABCDE-23456" }]);
+    assert.match(settings.querySelector(".control-message").textContent, /within a minute/);
+    settings.status = { ...STATUS, updates: { ...STATUS.updates, state: "available", available: { ...AVAILABLE, install: "manual" } } };
+    assert.equal(settings.querySelector('[data-setting="update-install"] form'), null, "a copy that can't update itself isn't offered the button");
+    settings.status = { ...STATUS, updates: { state: "off", current: "1.6.0", autoUpdate: true } };
+    assert.equal(settings.querySelector("#control-setting-auto-update"), null);
+    assert.equal(settings.querySelector('[data-setting="update-install"]'), null);
+  } finally {
+    settings.remove();
   }
 });
 
