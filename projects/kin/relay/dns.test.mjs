@@ -111,26 +111,30 @@ test("port 0 picks again when the number UDP got is taken for TCP (#469)", async
     // socket holds the number the system just gave UDP. A later pick can
     // land on a taken number for real (#469), so there may be more than two.
     const realListen = Server.prototype.listen;
+    const realBind = Socket.prototype.bind;
     const realClose = Socket.prototype.close;
     const failures = [];
     let listens = 0;
+    let udpBinds = 0;
     let udpCloses = 0;
     Server.prototype.listen = function (port, ...rest) {
       const listen = (listens += 1);
       this.once("error", (error) => failures.push({ listen, code: error.code }));
       return realListen.call(this, listens === 1 ? taken : port, ...rest);
     };
+    Socket.prototype.bind = function (...rest) { udpBinds += 1; return realBind.apply(this, rest); };
     Socket.prototype.close = function (...rest) { udpCloses += 1; return realClose.apply(this, rest); };
     let server;
     try { server = await createDnsServer({ host: "127.0.0.1", port: 0, config, lookup }); } finally {
       Server.prototype.listen = realListen;
+      Socket.prototype.bind = realBind;
       Socket.prototype.close = realClose;
     }
     try {
       assert.ok(listens >= 2, "another pair was opened");
       assert.deepEqual(failures[0], { listen: 1, code: "EADDRINUSE" }, "the first listen was the one sent to the taken port");
       assert.equal(failures.length, listens - 1, "only the last listen worked");
-      assert.equal(udpCloses, listens - 1, "each UDP socket from a failed pick was closed");
+      assert.equal(udpCloses, udpBinds - 1, "each UDP socket from a failed pick was closed");
       assert.equal(server.tcpPort, server.udpPort);
       assert.notEqual(server.tcpPort, taken);
     } finally { await server.close(); }
@@ -156,6 +160,36 @@ test("port 0 picks again when Windows keeps the number UDP got back from TCP (#4
   try {
     assert.ok(listens >= 2, "another pair was opened");
     assert.equal(forced, 1, "the first listen was the one refused");
+    assert.equal(server.tcpPort, server.udpPort);
+  } finally { await server.close(); }
+});
+
+test("port 0 leaves the system's run of numbers when its picks keep being refused (#469)", async () => {
+  // Windows gives out port numbers in order, and keeps back whole blocks of
+  // a hundred or more from TCP, so asking the system again only steps one
+  // number further into the same block. Every number UDP gets from the
+  // system is refused here, as if each one fell inside such a block.
+  const realBind = Socket.prototype.bind;
+  const realListen = Server.prototype.listen;
+  let fromSystem = false;
+  let refused = 0;
+  Socket.prototype.bind = function (port, ...rest) {
+    fromSystem = port === 0;
+    return realBind.call(this, port, ...rest);
+  };
+  Server.prototype.listen = function (...rest) {
+    if (!fromSystem) return realListen.apply(this, rest);
+    refused += 1;
+    process.nextTick(() => this.emit("error", Object.assign(new Error("listen EACCES: permission denied"), { code: "EACCES", syscall: "listen" })));
+    return this;
+  };
+  let server;
+  try { server = await createDnsServer({ host: "127.0.0.1", port: 0, config, lookup }); } finally {
+    Socket.prototype.bind = realBind;
+    Server.prototype.listen = realListen;
+  }
+  try {
+    assert.equal(refused, 1, "only the system's own pick was refused");
     assert.equal(server.tcpPort, server.udpPort);
   } finally { await server.close(); }
 });

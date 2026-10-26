@@ -177,10 +177,18 @@ export async function createDnsServer(options) {
   // Windows a loopback client socket holds its port, and that fails as
   // EADDRINUSE; a number in a range Windows keeps back from TCP fails as
   // EACCES, and such ranges run to hundreds of numbers): pick again (#469).
+  // The system gives out numbers in order, so asking it again only steps
+  // one number further into the same range; later picks are random.
   for (let attempt = 1; ; attempt += 1) {
-    try { return await openDnsServer(options); }
+    const port = options.port === 0 && attempt > 1 ? randomDynamicPort() : options.port;
+    try { return await openDnsServer({ ...options, port }); }
     catch (error) { if (options.port !== 0 || !["EADDRINUSE", "EACCES"].includes(error.code) || attempt === 20) throw error; }
   }
+}
+
+// A number in the dynamic range (RFC 6335 §6).
+export function randomDynamicPort() {
+  return 49152 + Math.floor(Math.random() * 16384);
 }
 
 async function openDnsServer({ host, port, config, lookup, maxTcpConnections = 512, onError = () => {} }) {
@@ -191,7 +199,12 @@ async function openDnsServer({ host, port, config, lookup, maxTcpConnections = 5
     if (response) udp.send(response, peer.port, peer.address);
   });
   udp.on("error", () => onError("dns-udp"));
-  await new Promise((resolve, reject) => { udp.once("error", reject); udp.bind(port, host, () => { udp.off("error", reject); resolve(); }); });
+  // A random pick may be taken for UDP too; a failed bind leaves no socket open.
+  await new Promise((resolve, reject) => {
+    const failed = (error) => { udp.close(); reject(error); };
+    udp.once("error", failed);
+    udp.bind(port, host, () => { udp.off("error", failed); resolve(); });
+  });
 
   const open = new Set();
   const tcp = createServer((socket) => {
