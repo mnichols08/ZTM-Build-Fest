@@ -161,6 +161,8 @@ export const sessionMethods = {
     const value = token();
     if (device.tokenHash) this.deviceTokens.delete(device.tokenHash);
     device.tokenHash = hash(value);
+    // A device signed in here isn't one left over from the old address.
+    delete device.carriedOver;
     this.deviceTokens.set(device.tokenHash, device.id);
     return value;
   },

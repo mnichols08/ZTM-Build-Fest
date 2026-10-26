@@ -26,7 +26,7 @@ async function measurePage({ key, offIds, offRoutes }) {
   const { jargonIn } = await import("/help/glossary.js");
   app.ctx.navigation.navigate(`#${key}`);
   for (let i = 0; i < 4; i++) await frame();
-  for (let i = 0; i < 200 && (app.busy || app.refreshing); i++) await frame();
+  for (let i = 0; i < 200 && (app.busy || app.refreshing || app.pendingRefresh || app.wakePending); i++) await frame();
   if (app.route.canonical !== key) return { key, redirected: app.route.canonical };
   const section = app.pages.get(app.route.page);
   const shown = (node) => node.isConnected && !node.closest("[hidden]") && node.getClientRects().length > 0 &&

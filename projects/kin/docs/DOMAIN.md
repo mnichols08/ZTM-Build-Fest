@@ -82,6 +82,8 @@ A device is one browser/application installation with an opaque, stable `device_
 
 Conceptual authorization states are unregistered, trusted, and revoked. Only an authorized device may participate in future sync. Revocation blocks future authorization/sync but cannot erase plaintext or keys already copied to a device. v0.1.0 has only a local installation placeholder; trusted-device enrollment and revocation are not implemented.
 
+A device carried over from the old address is a trusted device record that arrived with a household move ([ADR 0026](decisions/0026-moving-a-household.md) §6). It keeps its keys and certificate, so the history it signed still verifies, but it has no token and can't sign in at the new address. A household admin revokes such devices together once everyone has re-joined; they are revoked, never deleted.
+
 ## Credential
 
 A credential is an authenticator associated with a member, such as a future passkey. It proves control of an authentication credential; it is not the member, household, device, or household encryption key. A credential may be used on or to authorize a device according to the identity protocol planned for v0.0.5.

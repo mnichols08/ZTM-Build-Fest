@@ -46,6 +46,8 @@ export class RefreshController {
       return;
     }
     const session = this.ctx.session.captureSession();
+    // Before the first await: a wake (wake.js) stops counting as pending as
+    // soon as this call returns, so busy has to start here.
     this.app.refreshing = true;
     // Captured before busy disables the focused control.
     const focus = this.captureRefreshFocus();

@@ -66,7 +66,7 @@ async function fillHousehold() {
   const app = document.querySelector("kin-app");
   const settle = async (label) => {
     for (let i = 0; i < 2400; i++) {
-      if (!app.busy && !app.refreshing && !app.pendingRefresh) return;
+      if (!app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending) return;
       await new Promise((r) => setTimeout(r, 25));
     }
     throw new Error(`Kin stayed busy: ${label}`);
@@ -160,7 +160,7 @@ async function showScreen({ hash }, isReady, anchorOf) {
   // Settled, and the header says "Up to date" rather than "Syncing…".
   const synced = () => !document.querySelector("kin-sync-status") || document.querySelector("kin-sync-status").state === "ready";
   for (let i = 0; i < 2400; i++) {
-    if (!app.busy && !app.refreshing && !app.pendingRefresh && isReady(app) && synced()) break;
+    if (!app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending && isReady(app) && synced()) break;
     if (i === 2399) throw new Error(`${hash} didn't settle; sync=${document.querySelector("kin-sync-status")?.state}`);
     if (i % 320 === 160) void app.syncCoordinator?.syncNow();
     await new Promise((r) => setTimeout(r, 25));
@@ -174,7 +174,7 @@ async function showScreen({ hash }, isReady, anchorOf) {
   const caughtUp = app.catchUp?.button;
   if (caughtUp && !caughtUp.hidden && !caughtUp.disabled && caughtUp.getClientRects().length) {
     caughtUp.click();
-    for (let i = 0; i < 400 && (app.busy || app.refreshing || app.pendingRefresh); i++) await new Promise((r) => setTimeout(r, 25));
+    for (let i = 0; i < 400 && (app.busy || app.refreshing || app.pendingRefresh || app.wakePending); i++) await new Promise((r) => setTimeout(r, 25));
   }
   app.ctx.undo?.clear?.();
   if (app.status) app.status.textContent = "";

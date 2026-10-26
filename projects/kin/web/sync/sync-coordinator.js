@@ -402,7 +402,7 @@ export class SyncCoordinator {
         if (this.stopped) return;
         this.lastSyncOk = false;
         // Codes and an HTTP status only (#631).
-        recordDiagnostic("sync_failed", { reason: error.code ?? (error.name === "TimeoutError" ? "timeout" : undefined), status: error.status });
+        recordDiagnostic("sync_failed", { reason: error.code ?? (error.name === "TimeoutError" ? "timeout" : undefined), status: error.status, epoch: error.keyEpoch });
         // Chat syncs after a full household pass, so a failed pass pauses
         // chat too: tell the chat room why (offline, say).
         if (!["sync_rate_limited", "sync_client_rate_budget"].includes(error.code)) this.chat?.reportSync(error);
@@ -579,11 +579,7 @@ export class SyncCoordinator {
         "An existing trusted device needs to finish setting up household sync first.",
       );
     }
-    if (!currentKey) {
-      throw new Error(
-        "This device needs an authorized household key before sync can continue.",
-      );
-    }
+    if (!currentKey) throw householdKeyMissing("household_key_missing", status.currentEpoch);
     // Set up this device's sync state before any key rotation: a pending
     // rotation is saved inside that state, and a device whose first sync
     // finds one (someone was removed or a device revoked before it finished
@@ -603,9 +599,7 @@ export class SyncCoordinator {
       devices = await this.loadDeviceDirectory();
       // Another device may have committed a newer epoch meanwhile.
       if (!(await this.keyStore.getEpoch(this.identity.householdId, status.currentEpoch)))
-        throw new Error(
-          "This device needs an authorized household key before sync can continue.",
-        );
+        throw householdKeyMissing("household_key_missing_after_rotation", status.currentEpoch);
     }
 
     if (trustAuthority) await this.provisionMemberHistory(status.currentEpoch, devices);
@@ -1436,8 +1430,7 @@ export class SyncCoordinator {
       if (status && envelope.deviceId === this.identity.deviceId &&
           envelope.keyEpoch < status.currentEpoch) {
         const currentKey = await this.keyStore.getEpoch(this.identity.householdId, status.currentEpoch);
-        if (!currentKey)
-          throw new Error("This device needs an authorized household key before sync can continue.");
+        if (!currentKey) throw householdKeyMissing("household_key_missing_for_binding", status.currentEpoch);
         const resealed = await encryptIdentityBinding({
           binding: {
             legacyHouseholdId: record.legacyHouseholdId,
@@ -1783,6 +1776,15 @@ function provisioningRefused() {
     "Kin refused a household key transfer because it did not match its signed contents. Sync is paused on this device. Ask a household Adult to check this device's key transfer.",
   );
   error.code = "provisioning_grant_refused";
+  return error;
+}
+
+// The same words for each place a pass finds no key for the relay's current
+// epoch; the code says which place and keyEpoch which epoch (#791).
+function householdKeyMissing(code, keyEpoch) {
+  const error = new Error("This device needs an authorized household key before sync can continue.");
+  error.code = code;
+  error.keyEpoch = keyEpoch;
   return error;
 }
 

@@ -190,7 +190,7 @@ class KinApp extends HTMLElement {
     clearInterval(this.authorizationTimer);
     this.authorizationTimer = null;
     clearTimeout(this.pulseTimer);
-    clearTimeout(this.focusTimer);
+    this.cancelFocusWake();
     this.ctx.peers.closePeerChannel();
     this.syncCoordinator?.stop();
     this.syncCoordinator = null;

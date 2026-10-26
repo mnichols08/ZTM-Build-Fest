@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { PassThrough } from "node:stream";
-import { checkHealth, describeCodeLine, healthUrl, LauncherUsageError, openBrowser, parseLauncherArguments, runLauncher, runService } from "./launcher.mjs";
+import { checkHealth, describeBackupLine, describeCodeLine, healthUrl, LauncherUsageError, openBrowser, parseLauncherArguments, runLauncher, runService } from "./launcher.mjs";
 import { RESTART_EXIT_CODE } from "./mode.mjs";
 import { APP_ROOT } from "./permissions.mjs";
 import { canonicalPath } from "./path-safety.mjs";
@@ -202,6 +202,59 @@ test("the browser is not opened for a service manager or when asked not to; odd 
     ["rundll32.exe", "url.dll,FileProtocolHandler", "http://localhost:8000/control/"],
     ["xdg-open", "http://localhost:8000/control/"],
   ]);
+});
+
+const backupLine = JSON.stringify({ event: "home_backup_created", reason: "scheduled", databaseBytes: 4096 });
+
+test("describeBackupLine matches only the service's own backup event", () => {
+  assert.equal(describeBackupLine(backupLine), true);
+  assert.equal(describeBackupLine(JSON.stringify({ event: "home_update_checked", note: '"event":"home_backup_created"' })), false, "the words inside another event's value");
+  assert.equal(describeBackupLine(backupLine.slice(0, -2)), false, "a cut line");
+  assert.equal(describeBackupLine(JSON.stringify({ event: "home_backup_failed", code: "backup-failed" })), false);
+  assert.equal(describeBackupLine('{"event":"service_ready"}'), false);
+});
+
+test("home mode: a backup line nudges the copier, which starts and stops with the launcher", { timeout: 20_000 }, async (t) => {
+  const root = temporary(t);
+  const calls = [];
+  let made;
+  const ready = new Promise((resolve) => { made = resolve; });
+  const backupCopy = ({ databasePath }) => {
+    calls.push(["made", databasePath]);
+    made();
+    return { start: () => calls.push(["start"]), stop: () => calls.push(["stop"]), backupMade: () => calls.push(["backupMade"]) };
+  };
+  // The service prints its backup line once the copier is there.
+  let release;
+  const printed = new Promise((resolve) => { release = resolve; });
+  const spawnImpl = (command, args, options) => {
+    const child = new EventEmitter();
+    child.exitCode = null;
+    child.signalCode = null;
+    child.stdout = new PassThrough();
+    child.kill = () => {};
+    printed.then(() => {
+      child.stdout.write(`${codeLine("access")}\n${backupLine}\n`);
+      child.stdout.end();
+      child.exitCode = 0;
+      setImmediate(() => { child.emit("exit", 0, null); child.emit("close", 0, null); });
+    });
+    return child;
+  };
+  const running = runService({
+    serviceProcess: ({ env }) => ({ command: "kin-service", args: [], env }), env: { KIN_DATA_DIR: join(root, "data"), KIN_MODE: "home" },
+    spawnImpl, signals: new EventEmitter(), stdout: new PassThrough(), stderr: new PassThrough(), interactive: false, platform: "linux", backupCopy,
+  });
+  await ready;
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  assert.equal(await running, 0);
+  assert.deepEqual(calls, [["made", join(root, "data", "kin.sqlite")], ["start"], ["backupMade"], ["stop"]]);
+  // Outside home mode the service's output isn't read, and no copier is made.
+  const { spawnImpl: plain } = fakeSpawn([0]);
+  let asked = false;
+  await runService({ serviceProcess: ({ env }) => ({ command: "kin-service", args: [], env }), env: { KIN_DATA_DIR: join(root, "data") }, spawnImpl: plain, signals: new EventEmitter(), backupCopy: () => { asked = true; } });
+  assert.equal(asked, false);
 });
 
 // A stdin the test closes, as the service host closes the launcher's.

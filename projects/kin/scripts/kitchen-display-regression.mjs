@@ -32,7 +32,7 @@ async function enterDisplay() {
     for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
     check(false, `Timed out: ${message}`, typeof detail === "function" ? detail() : detail);
   };
-  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the work settles");
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "the work settles");
   const me = app.ctx.detail.responsibilityContext().memberId;
   // Not the chore chart suite's child: this one starts the week at 0 points.
   const child = "ce".repeat(16);
@@ -152,7 +152,7 @@ async function rewardOnDisplay(recovery) {
     for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
     check(false, `Timed out: ${message}`, typeof detail === "function" ? detail() : detail);
   };
-  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the work settles");
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "the work settles");
   const visible = (node) => Boolean(node) && node.isConnected && node.getClientRects().length > 0 && !node.closest("[hidden]");
   const display = app.kitchenDisplay;
   const { child, tag } = window.__kitchen;
@@ -324,7 +324,7 @@ async function useDisplay() {
     for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
     check(false, `Timed out: ${message}`, typeof detail === "function" ? detail() : detail);
   };
-  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the work settles");
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "the work settles");
   const display = app.kitchenDisplay;
   const panel = (id) => display.querySelector(`.display-panel[data-panel="${id}"]`);
   const { child, routineId, milk, tag } = window.__kitchen;

@@ -978,7 +978,9 @@ welcome screen; two screens, then Today, with no other device needed:
 2. **Which device is this?** "Signed in as <username>." A radio group (a
    fieldset with the question as its legend): **Add this as a new device**
    (chosen), then one **This replaces <device name>** per trusted device of
-   theirs, with the date it was added. Choosing a replacement shows, and ties
+   theirs, with the date it was added; one carried over by a move adds
+   "· From the old address", as People & devices does, and can still be
+   chosen (#780). Choosing a replacement shows, and ties
    to that choice with `aria-describedby`, the warning "The device you choose
    is signed out for good: it can't open your household again, even if it
    turns up. Choose this only for a device that's lost, broken or wiped."

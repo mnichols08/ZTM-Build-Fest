@@ -312,6 +312,127 @@ test("device revocation refreshes the trusted-device list after the passkey oper
   assert.equal(component.busy, false);
 });
 
+// After a move (ADR 0026 §6, #769): your old laptop and Sam's phone came
+// from the old address. Only this device is pinned here, so a fall-through
+// to Trusted or Untrusted would show.
+function movedDevicesComponent({ canManageMembers = true, carriedOver = true, others = [] } = {}) {
+  const component = new KinHousehold();
+  component.identity = { memberId: "adult", deviceId: "self" };
+  component.localFingerprint = "SELF";
+  component.assertConnection = () => {};
+  let removed = false;
+  const calls = [];
+  component.ctx.api.openSyncKeyStore = async () => component.syncKeyStore;
+  component.syncKeyStore = { getPinnedDevice: async (_householdId, deviceId) => deviceId === "self" };
+  component.api = async (path) => {
+    calls.push(path);
+    if (path === "/api/devices")
+      return { canManageMembers, devices: [
+        { id: "self", memberId: "adult", label: "Adult phone", revokedAt: null, carriedOver: false },
+        { id: "old-laptop", memberId: "adult", label: "Adult laptop", revokedAt: removed ? 1 : null, ...(carriedOver ? { carriedOver: !removed } : {}) },
+        { id: "sam-phone", memberId: "sam", label: "Sam phone", revokedAt: removed ? 1 : null, ...(carriedOver ? { carriedOver: !removed } : {}) },
+        ...others,
+      ] };
+    if (path === "/api/sync/devices")
+      return { devices: [
+        { deviceId: "self", memberId: "adult", fingerprint: "SELF", publicKeys: {} },
+        { deviceId: "old-laptop", memberId: "adult", fingerprint: "AAAA1111", publicKeys: {} },
+        { deviceId: "sam-phone", memberId: "sam", fingerprint: "BBBB2222", publicKeys: {} },
+      ] };
+    if (path === "/api/pairings/prepared") return { pairings: [] };
+    if (path === "/api/devices/carried-over/revocation/options")
+      return { flow: "flow", devices: 2, publicKey: { challenge: "YQ", allowCredentials: [{ id: "Yg" }] } };
+    if (path === "/api/devices/carried-over/revocation/finish") { removed = true; return { revoked: ["old-laptop", "sam-phone"], revokedAt: 1 }; }
+    throw new Error("unexpected call " + path);
+  };
+  return { component, calls };
+}
+
+test("devices from the old address are marked and removed together by an admin", async () => {
+  const { component, calls } = movedDevicesComponent();
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { credentials: { get: async () => ({
+      id: "credential-adult", type: "public-key",
+      response: { clientDataJSON: new Uint8Array([1]), getTransports: () => [] },
+    }) } },
+  });
+  await component.showDevices();
+  const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
+  const line = (id) => descendants(component.children).find((child) => child.dataset?.deviceId === id)
+    .children.find((child) => child.className === "device-name-line").children.map((part) => part.textContent ?? part).join("");
+  assert.equal(line("old-laptop"), "Adult laptop — From the old address · can't sign in here");
+  assert.equal(line("sam-phone"), "Sam phone — From the old address · can't sign in here");
+  const labels = () => descendants(component.children).filter((child) => child.tagName === "button").map((button) => button.textContent);
+  assert.equal(labels().includes("Verify device"), false, "nothing to compare codes with");
+  assert.equal(labels().includes("Replace this device"), false);
+  assert.ok(labels().includes("Revoke Adult laptop"), "one at a time still works");
+
+  // Cancelling asks nothing of the server.
+  const asked = [];
+  globalThis.confirm = (text) => { asked.push(text); return false; };
+  const button = () => descendants(component.children).find((child) => child.textContent === "Remove the 2 devices from the old address");
+  await button().listeners.click();
+  assert.equal(calls.includes("/api/devices/carried-over/revocation/options"), false);
+  assert.match(asked[0], /^Remove the 2 devices from the old address\? None of them can sign in here\. Household member 1 hasn't signed in here yet\./);
+
+  globalThis.confirm = () => true;
+  calls.length = 0;
+  await button().listeners.click();
+  assert.deepEqual(calls.slice(0, 3), [
+    "/api/devices/carried-over/revocation/options",
+    "/api/devices/carried-over/revocation/finish",
+    "/api/devices",
+  ]);
+  assert.equal(line("sam-phone"), "Sam phone — Revoked");
+  assert.equal(button(), undefined, "nothing left to remove");
+  assert.equal(component.busy, false);
+});
+
+test("the confirmation names only members with no device here", async () => {
+  // Robin signed in here on a new device; Kit's new device was revoked, so
+  // Kit, like Sam, hasn't signed in here yet.
+  const { component } = movedDevicesComponent({ others: [
+    { id: "robin-old", memberId: "robin", label: "Robin old phone", revokedAt: null, carriedOver: true },
+    { id: "robin-new", memberId: "robin", label: "Robin new phone", revokedAt: null, carriedOver: false },
+    { id: "kit-old", memberId: "kit", label: "Kit old tablet", revokedAt: null, carriedOver: true },
+    { id: "kit-new", memberId: "kit", label: "Kit new tablet", revokedAt: 1, carriedOver: false },
+  ] });
+  await component.showDevices();
+  const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
+  const titles = descendants(component.children).filter((child) => child.tagName === "h3").map((title) => title.textContent);
+  assert.deepEqual(titles.slice(0, 4), ["You", "Household member 1", "Household member 2", "Household member 3"]);
+  const asked = [];
+  globalThis.confirm = (text) => { asked.push(text); return false; };
+  await descendants(component.children).find((child) => child.textContent === "Remove the 4 devices from the old address").listeners.click();
+  assert.match(asked[0], /None of them can sign in here\. Household member 1 and Household member 3 haven't signed in here yet\./);
+});
+
+test("the remove-together section has a heading of its own", async () => {
+  const { component } = movedDevicesComponent();
+  await component.showDevices();
+  const section = component.children.find((child) => child.className === "carried-over-devices");
+  const heading = section.children[0];
+  assert.equal(heading.tagName, "h3");
+  assert.equal(heading.textContent, "Devices from the old address");
+  assert.equal(section.attributes["aria-labelledby"], heading.id);
+});
+
+test("the remove-together button fails closed", async () => {
+  const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
+  const offers = async (component) => {
+    await component.showDevices();
+    return descendants(component.children).some((child) => child.textContent?.startsWith?.("Remove the 2 devices"));
+  };
+  assert.equal(await offers(movedDevicesComponent({ canManageMembers: false }).component), false, "without management authority");
+  assert.equal(await offers(movedDevicesComponent({ canManageMembers: "true" }).component), false, "a truthy non-boolean");
+  assert.equal(await offers(movedDevicesComponent({ carriedOver: false }).component), false, "an older server marks nothing");
+  const offline = movedDevicesComponent();
+  assert.equal(await offers(offline.component), true);
+  offline.component.api = async () => { throw Object.assign(new Error("offline"), { code: "connection_unavailable" }); };
+  assert.equal(await offers(offline.component), false, "the copy saved on this device");
+});
+
 test("household admins see admin, invitation, and removal controls; other Adults do not", async () => {
   const members = (currentAdmin) => [
     { id: "founder", current: currentAdmin, active: true, kind: "adult", admin: true },

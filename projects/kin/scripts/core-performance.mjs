@@ -216,7 +216,7 @@ async function appStages() {
   const app = document.querySelector("kin-app");
   const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
   const idle = async () => {
-    for (let i = 0; (app.busy || app.refreshing) && i < 2000; i += 1) await new Promise((r) => setTimeout(r, 5));
+    for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && i < 2000; i += 1) await new Promise((r) => setTimeout(r, 5));
   };
   const copyArrays = (state) => Object.fromEntries(Object.entries(state).map(([key, value]) => [key, Array.isArray(value) ? [...value] : value]));
   await idle();
