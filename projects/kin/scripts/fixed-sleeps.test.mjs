@@ -28,7 +28,7 @@ const ALLOWED = {
   "quick-add-regression.mjs": 1,
   "recurring-tasks-regression.mjs": 1,
   "root-rotation-ui-regression.mjs": 1,
-  "routine-regression.mjs": 3,
+  "routine-regression.mjs": 2,
   "security-household-regression.mjs": 1,
   "security-key-regression.mjs": 1,
   "security-storage-regression.mjs": 4,
