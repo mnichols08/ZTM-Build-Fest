@@ -212,6 +212,34 @@ bothStores("downloads are rate-limited per member and per address; writes per me
   assert.ok(rejects("vault_rate_limited", 429)(refused));
 });
 
+bothStores("a key rotation's vault change (#791) is checked as a sealed vault, needs a vault, counts as a write and is compare-and-set", (h) => {
+  const auth = h.auth(h.adult);
+  const change = { expectedVersion: 1, ciphertext: sealedVault(150, 8) };
+  const parsed = h.vaults.parseVaultChange(change);
+  assert.equal(parsed.expectedVersion, 1);
+  assert.ok(parsed.ciphertext instanceof Uint8Array);
+  for (const body of [null, [], "x", {}, { ...change, wrappers: [] }, { ...change, extra: 1 }, { expectedVersion: 1 }, { ciphertext: change.ciphertext },
+    { ...change, expectedVersion: 0 }, { ...change, expectedVersion: -1 }, { ...change, expectedVersion: 2 ** 53 }, { ...change, ciphertext: `${change.ciphertext}=` },
+    { ...change, ciphertext: b64(Buffer.alloc(150, 8)) }, { ...change, ciphertext: sealedVault(64 * 1024 + 1) }])
+    assert.throws(() => h.vaults.parseVaultChange(body), rejects("vault_invalid", 400), JSON.stringify(body)?.slice(0, 80));
+  // No vault yet: there is nothing to add the key to.
+  assert.throws(() => h.vaults.applyVaultChange(auth, parsed), rejects("vault_not_found", 404));
+  h.vaults.upload(auth, { expectedVersion: 0, ciphertext: sealedVault(), wrappers: [wrapper()] });
+  assert.equal(h.vaults.applyVaultChange(auth, parsed), 2);
+  assert.throws(() => h.vaults.applyVaultChange(auth, parsed), rejects("vault_version_conflict", 409));
+  const stored = h.vaults.download(auth, "client");
+  assert.equal(stored.vault.version, 2);
+  assert.equal(stored.vault.ciphertext, change.ciphertext);
+  assert.equal(stored.wrappers.length, 1, "the wrappers don't change");
+  // Each change spends one vault write, as an upload does.
+  let refused = null;
+  for (let version = 2; version < 100 && !refused; version += 1) {
+    try { h.vaults.applyVaultChange(auth, { expectedVersion: version, ciphertext: parsed.ciphertext }); }
+    catch (error) { refused = error; }
+  }
+  assert.ok(rejects("vault_rate_limited", 429)(refused));
+});
+
 test("a no-cookie download (#568) needs a checked capability and releases only the wrapper its sign-in opens", () => {
   const vaults = new AccountVaultService();
   assert.throws(() => vaults.downloadWithCapability("anything", "client"), rejects("new_device_expired", 401));

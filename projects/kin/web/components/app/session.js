@@ -2,6 +2,7 @@
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { clearAttachmentProgress } from "../../attachments/attachment-progress.js";
 import { recordDiagnostic } from "../../diagnostics/ring-buffer.js";
+import { errorName } from "../../diagnostics/global.js";
 import { AttachmentPreviewCache } from "../../attachments/attachment-preview.js";
 import { loadKinEngine } from "../../wasm/kin-engine.js";
 import { releaseQrCodec } from "../../wasm/kin-qr.js";
@@ -108,6 +109,9 @@ export class SessionController {
       void this.ctx.sync.configureSyncCoordinator();
     } catch (error) {
       if (this.isCurrentSession(session)) {
+        // The person sees START_ERROR; the error's name stays in the ring
+        // (#770), next to the engine's or storage's own entry if they made one.
+        recordDiagnostic("unlock_failed", { name: errorName(error) });
         this.ctx.session.lockHousehold();
         this.app.security.error(error.userMessage ? error : new Error(START_ERROR));
       }
@@ -274,7 +278,7 @@ export class SessionController {
     this.app.starting = null;
     this.app.startingGeneration = null;
     clearTimeout(this.app.pulseTimer);
-    clearTimeout(this.app.focusTimer);
+    this.app.cancelFocusWake();
     this.ctx.status.clearAlert();
     clearLegacyDrafts();
     this.ctx.simple?.reset();

@@ -143,6 +143,8 @@ export function createKinServer(options = {}) {
   };
   // Members' encrypted key vaults (ADR 0018, #564).
   const accountVaultService = options.accountVaultService ?? new AccountVaultService({ store, now: options.now ?? (() => Date.now()) });
+  // A key rotation stores the committer's re-sealed vault with it (#791).
+  syncService.accountVaultService = accountVaultService;
   // A removed member's account vault and password verifier go with them.
   service.onAccountRemoved = (householdId, memberId) => accountVaultService.removeMember(householdId, memberId);
   const webauthn =
@@ -636,6 +638,8 @@ async function api(request, response, url, context) {
     ? await readJsonBody(request, response, MAX_CHAT_RECEIPT_BYTES + 1024)
     : request.method === "PUT" && url.pathname.startsWith("/api/account/vault")
     ? await readJsonBody(request, response, MAX_ACCOUNT_VAULT_BODY_BYTES)
+    : request.method === "POST" && url.pathname === "/api/sync/epochs"
+    ? await readJsonBody(request, response, MAX_EPOCH_COMMIT_BODY_BYTES)
     : feedbackPost
     ? await readJsonBody(request, response, MAX_FEEDBACK_REQUEST_BYTES)
     : ["POST", "PUT", "DELETE"].includes(request.method)
@@ -1421,6 +1425,43 @@ async function api(request, response, url, context) {
     json(response, 200, result);
     return;
   }
+  // The devices carried over from the old address (ADR 0026 §6), removed
+  // together after one fresh confirmation: one revocation, one new epoch.
+  if (request.method === "POST" && url.pathname === "/api/devices/carried-over/revocation/options") {
+    const revocation = service.carriedOverRevocationContext(session);
+    const issued = issueAuthenticationFlow(
+      {
+        purpose: "revoke-carried-over",
+        deviceIds: revocation.deviceIds,
+        memberId: revocation.memberId,
+        deviceId: revocation.deviceId,
+      },
+      revocation.credentialIds,
+      context,
+    );
+    json(response, 200, { ...issued, devices: revocation.deviceIds.length });
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/devices/carried-over/revocation/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "revoke-carried-over") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id)
+      throw badRequest();
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError("passkey_member_mismatch", "Use this Adult's passkey to continue.", 401);
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
+    const result = withTransaction(context, () => {
+      const revoked = service.revokeCarriedOverDevices(session, flow.deviceIds, auth.member.id);
+      if (revoked.length) syncService.onAccessChange(auth.household.id, revoked);
+      return { revoked, revokedAt: revoked.length ? service.devices.get(revoked[0]).revokedAt : null };
+    });
+    json(response, 200, result);
+    return;
+  }
   const deviceMatch = url.pathname.match(/^\/api\/devices\/([a-f0-9]{32})$/);
   if (request.method === "DELETE" && deviceMatch) {
     throw new PairingError("fresh_auth_required", "Authenticate with your passkey before revoking a device.", 401);
@@ -1894,7 +1935,9 @@ async function api(request, response, url, context) {
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/sync/epochs") {
-    json(response, 200, syncService.rotateEpoch(session, body));
+    // One transaction: the epoch, its grants and the committer's vault
+    // change (#791) are stored together or not at all.
+    json(response, 200, withTransaction(context, () => syncService.rotateEpoch(session, body)));
     return;
   }
   // Moving a household to a home server (ADR 0026, #738). Starting it:
@@ -2368,6 +2411,7 @@ async function api(request, response, url, context) {
       // The verified signature counter is kept, as for any passkey use.
       withTransaction(context, () => service.persistHousehold(auth.household.id));
       let result;
+      // No `loopback` here, so loopback-only changes (#763) are refused.
       try { result = await panel.applyChange(flow.change); } catch (error) { throw controlPairingError(error); }
       json(response, 200, result);
       return;
@@ -2447,7 +2491,8 @@ async function api(request, response, url, context) {
   throw new PairingError("not_found", "That endpoint is unavailable.", 404);
 }
 
-/** A control-panel change, checked by the panel; its refusal as a PairingError. */
+/** A control-panel change, checked by the panel; its refusal as a
+ * PairingError. No `loopback`, so loopback-only changes (#763) are refused. */
 function controlChange(panel, change) {
   try { return panel.checkChange(change); } catch (error) { throw controlPairingError(error); }
 }
@@ -2666,6 +2711,8 @@ function cookies(request) {
 const MAX_JSON_BODY_BYTES = 256_000;
 // A sealed vault in base64url plus its first wrappers and JSON framing.
 const MAX_ACCOUNT_VAULT_BODY_BYTES = Math.ceil(MAX_ACCOUNT_VAULT_BYTES * 4 / 3) + 16_384;
+/** A rotation's packages plus the committer's sealed vault (#791). */
+const MAX_EPOCH_COMMIT_BODY_BYTES = MAX_JSON_BODY_BYTES + Math.ceil(MAX_ACCOUNT_VAULT_BYTES * 4 / 3) + 1_024;
 // Four base64url PNGs of at most 512 KB each, plus the names.
 const MAX_INSTALL_IDENTITY_BODY_BYTES = 2_850_000;
 

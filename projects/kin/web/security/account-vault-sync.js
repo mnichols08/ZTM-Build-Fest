@@ -64,6 +64,26 @@ export function vaultApi(request = fetchJson) {
 }
 
 /**
+ * The next version of a known vault with `local` merged in, sealed but not
+ * stored: `known` is `{ version, ciphertext }`. Resolves to `{ changed,
+ * sealed }`, where `sealed` (for `known.version + 1`) is null when `local`
+ * adds nothing. Throws AccountVaultError when the vault doesn't open with
+ * `vaultKey` or holds a different key for one of `local`'s epochs
+ * (`vault_epoch_conflict`). The opened contents are wiped either way.
+ */
+export async function sealVaultUpdate({ vaultKey, householdId, memberId, known, local }) {
+  const context = { householdId, memberId };
+  const stored = await openVault(vaultKey, known.ciphertext, { ...context, version: known.version });
+  try {
+    const { contents, changed } = mergeVaultContents(stored, local);
+    if (!changed) return { changed: false, sealed: null };
+    return { changed: true, sealed: await sealVault(vaultKey, contents, { ...context, version: known.version + 1 }) };
+  } finally {
+    wipeVaultContents(stored);
+  }
+}
+
+/**
  * Merges `local` (vault contents: `{ epochs, certificationKey?,
  * memberKeys? }`) into the member's vault and uploads a new version
  * when that adds anything. `current` is a known `{ version, ciphertext }`
@@ -75,16 +95,8 @@ export async function refreshVault({ api, vaultKey, householdId, memberId, local
   let known = current ?? (await api.download()).vault;
   for (let attempt = 0; ; attempt += 1) {
     if (!known) return { status: "no_vault", version: 0, ciphertext: null };
-    const context = { householdId, memberId };
-    const stored = await openVault(vaultKey, known.ciphertext, { ...context, version: known.version });
-    let sealed;
-    try {
-      const { contents, changed } = mergeVaultContents(stored, local);
-      if (!changed) return { status: "current", version: known.version, ciphertext: known.ciphertext };
-      sealed = await sealVault(vaultKey, contents, { ...context, version: known.version + 1 });
-    } finally {
-      wipeVaultContents(stored);
-    }
+    const { changed, sealed } = await sealVaultUpdate({ vaultKey, householdId, memberId, known, local });
+    if (!changed) return { status: "current", version: known.version, ciphertext: known.ciphertext };
     try {
       const { version } = await api.upload({ expectedVersion: known.version, ciphertext: sealed });
       return { status: "updated", version, ciphertext: sealed };

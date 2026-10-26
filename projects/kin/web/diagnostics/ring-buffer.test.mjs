@@ -71,6 +71,19 @@ test("entries are frozen and normalize the same way on the service", () => {
   assert.equal(normalizeFields("nope"), null);
 });
 
+test("a missing household key is recorded with which place and epoch (#791)", () => {
+  const ring = new DiagnosticRing({ now: () => 1_800_000_000_000 });
+  for (const reason of ["household_key_missing", "household_key_missing_after_rotation", "household_key_missing_for_binding"])
+    ring.append("sync_failed", { reason, epoch: 4 });
+  ring.append("sync_failed", { reason: "connection_unavailable" });
+  assert.deepEqual(ring.snapshot().map(entryLine), [
+    "2027-01-15T08:00:00Z sync_failed reason=household_key_missing epoch=4",
+    "2027-01-15T08:00:00Z sync_failed reason=household_key_missing_after_rotation epoch=4",
+    "2027-01-15T08:00:00Z sync_failed reason=household_key_missing_for_binding epoch=4",
+    "2027-01-15T08:00:00Z sync_failed reason=connection_unavailable",
+  ]);
+});
+
 test("the page's buffer never throws, and global hooks record only kinds and error names", () => {
   diagnostics.clear();
   assert.equal(recordDiagnostic("went_online"), true);

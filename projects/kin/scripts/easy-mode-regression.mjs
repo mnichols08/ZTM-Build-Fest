@@ -27,7 +27,7 @@ export async function easyModeRegressions(client, { until }) {
     await page(`document.querySelector("kin-app").ctx.navigation.navigate(${JSON.stringify(hash)})`);
     await frames();
   };
-  const idle = () => until(() => page(`(() => { const app = document.querySelector("kin-app"); return !app.busy && !app.refreshing; })()`), { attempts: 300 });
+  const idle = () => until(() => page(`(() => { const app = document.querySelector("kin-app"); return !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending; })()`), { attempts: 300 });
   await setViewport(client, { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
 
   // --- The first week's tips (#617, #622) --------------------------------

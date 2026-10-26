@@ -124,6 +124,54 @@ test("a home server imports the package whole: the same IDs, account and history
   home.validate();
 });
 
+/** The moving household with a second device, revoked before the move. */
+function withRevokedDevice(pairing, moving) {
+  const request = pairing.createDevicePairing(moving.sessionToken);
+  const claim = pairing.claimPairing({ code: request.code, credential: credential("old-tablet"), deviceLabel: "Old tablet", rateKey: "old-tablet" });
+  pairing.approvePairing(moving.sessionToken, request.pairingId, claim.version);
+  const tablet = pairing.activateClaim(claim.claimToken);
+  pairing.revokeDevice(moving.sessionToken, tablet.deviceId, moving.memberId);
+  return tablet.deviceId;
+}
+
+test("imported devices are marked as carried over from the old address", (t) => {
+  const { directory, open, store, pairing, moving } = hosted(t);
+  const revokedId = withRevokedDevice(pairing, moving);
+  const path = join(directory, "move.sqlite");
+  buildMovePackage(store, moving.householdId, path);
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM devices WHERE json_extract(device_json, '$.carriedOver') IS NOT NULL").get().n, 0,
+      "the package itself carries no mark");
+  } finally {
+    db.close();
+  }
+  const home = open("home.sqlite");
+  importMovePackage(home, path);
+  home.validate();
+  const service = new PairingService({ store: home });
+  assert.equal(service.devices.get(moving.deviceId).carriedOver, true);
+  assert.equal("carriedOver" in service.devices.get(revokedId), false, "a revoked device isn't marked");
+  // The hosted household itself is untouched.
+  assert.equal("carriedOver" in pairing.devices.get(moving.deviceId), false);
+});
+
+test("a household that moves again is marked afresh", (t) => {
+  const { directory, open, store, pairing, moving } = hosted(t);
+  const revokedId = withRevokedDevice(pairing, moving);
+  const path = join(directory, "move.sqlite");
+  buildMovePackage(store, moving.householdId, path);
+  // As a package from a home server that received the household before.
+  const edit = new DatabaseSync(path);
+  edit.prepare("UPDATE devices SET device_json = json_set(device_json, '$.carriedOver', json('true')) WHERE id = ?").run(revokedId);
+  edit.close();
+  const home = open("home.sqlite");
+  importMovePackage(home, path);
+  const service = new PairingService({ store: home });
+  assert.equal(service.devices.get(moving.deviceId).carriedOver, true);
+  assert.equal("carriedOver" in service.devices.get(revokedId), false);
+});
+
 test("a package from a newer Kin, or one carrying a token, is refused before anything changes", (t) => {
   const { directory, open, store, moving } = hosted(t);
   const newer = join(directory, "newer.sqlite");

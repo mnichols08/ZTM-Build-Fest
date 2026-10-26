@@ -33,7 +33,8 @@ export const SYNC_REASONS = freeze([
   "rotation_required", "epoch_key_missing", "event_signature_invalid", "provisioning_signature_invalid",
   "chat_rate_limited", "chat_unavailable", "chat_read_only", "chat_key_stale", "private_rate_limited",
   "private_storage_full", "private_unavailable", "board_unavailable", "origin_rejected", "not_found",
-  "bad_request", "invalid_request", "timeout",
+  "bad_request", "invalid_request", "timeout", "provisioning_grant_refused", "household_key_missing",
+  "household_key_missing_after_rotation", "household_key_missing_for_binding",
 ]);
 
 /** The streams a pass syncs. */
@@ -54,6 +55,12 @@ export const PAGES = freeze(["today", "lists", "routines", "updates", "household
 /** Engine stages. */
 export const ENGINE_STAGES = freeze(["load", "instantiate", "call"]);
 
+/** Why a key rotation was committed without the account vault (#791). */
+export const ROTATION_VAULT_REASONS = freeze([
+  "vault_version_conflict", "vault_not_found", "vault_rate_limited", "vault_invalid", "request_too_large",
+  "vault_epoch_conflict", "vault_unreadable", "not_applied",
+]);
+
 /** What an unexpected error was. */
 export const UNEXPECTED_KINDS = freeze(["error", "rejection"]);
 
@@ -67,7 +74,8 @@ const NUMBER = "number";
  */
 export const DIAGNOSTIC_CODES = Object.freeze({
   // Sync (web/sync/sync-coordinator.js).
-  sync_failed: Object.freeze({ reason: SYNC_REASONS, status: NUMBER }),
+  // `epoch`: the household key epoch a household_key_missing* pass lacked.
+  sync_failed: Object.freeze({ reason: SYNC_REASONS, status: NUMBER, epoch: NUMBER }),
   sync_room_failed: Object.freeze({ room: SYNC_ROOMS, reason: SYNC_REASONS, status: NUMBER }),
   sync_slow: Object.freeze({ ms: NUMBER }),
   // The household engine (web/wasm/).
@@ -91,6 +99,11 @@ export const DIAGNOSTIC_CODES = Object.freeze({
   went_online: Object.freeze({}),
   // The report channel itself (web/feedback/).
   feedback_send_failed: Object.freeze({ status: NUMBER }),
+  // A key rotation committed without the account vault change (#791,
+  // web/sync/rotation-vault.js), recorded only after the commit: the vault
+  // keeper adds the key afterwards. "vault_epoch_conflict" stays in the list
+  // (the table only grows) though its rotation is always refused as stale.
+  rotation_vault_skipped: Object.freeze({ reason: ROTATION_VAULT_REASONS }),
 });
 
 /** Largest number a field keeps; beyond it the value is clamped. */

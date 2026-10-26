@@ -15,7 +15,7 @@ export async function choreChartRegressions() {
     for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
     check(false, message, typeof detail === "function" ? detail() : detail);
   };
-  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the chore chart work settles");
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "the chore chart work settles");
   const me = app.ctx.detail.responsibilityContext().memberId;
   check(me, "this device knows its member");
   const child = "cd".repeat(16);

@@ -1,6 +1,6 @@
 // Real browser IndexedDB + Web Crypto regressions; no third-party harness.
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
-import { applyRegressionDefaults, captureFailure, waitForOrigin } from "./cdp-page.mjs";
+import { applyRegressionDefaults, captureFailure, createLoadTrace, printAbortedModules, printLoadTrace, waitForKinStart } from "./cdp-page.mjs";
 import assert from "node:assert/strict";
 import { householdLifecycleChecks } from "./security-household-regression.mjs";
 import { householdLeaveChecks } from "./household-leave-regression.mjs";
@@ -15,7 +15,9 @@ import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
-export async function securityUiRegressions(client) {
+// A passing run ends the process here, so the caller's `finally` never runs:
+// `beforeExit` prints what it must print on a pass too.
+export async function securityUiRegressions(client, { beforeExit = () => {} } = {}) {
   // Names the step (and any navigation) when one fails, without printing its
   // arguments: the synthetic recovery secret stays in this process only.
   const step = async (name, expression) => {
@@ -76,6 +78,7 @@ export async function securityUiRegressions(client) {
       uploadThroughput: -1,
     });
   }
+  beforeExit();
   process.exit(0);
 }
 
@@ -985,10 +988,13 @@ if (
     BROWSER_STDIO,
   );
   let socket;
+  const loadTrace = createLoadTrace();
   try {
     const port = await waitForDevTools(browser, profile);
+    // The tab opens on about:blank and loads Kin only once the load trace
+    // (#594) is listening, so a first start that stalls can show why.
     const target = await fetch(
-      `http://127.0.0.1:${port}/json/new?${encodeURIComponent(origin)}`,
+      `http://127.0.0.1:${port}/json/new?about:blank`,
       { method: "PUT" },
     ).then((response) => response.json());
     socket = new WebSocket(target.webSocketDebuggerUrl);
@@ -1003,6 +1009,7 @@ if (
     const navigations = [];
     socket.onmessage = ({ data }) => {
       const message = JSON.parse(data);
+      if (message.method) loadTrace.observe(message);
       if (message.method === "Page.frameNavigated" && !message.params.frame.parentId)
         navigations.push(`${new Date().toISOString()} ${message.params.frame.url}`);
       if (message.id) {
@@ -1037,15 +1044,25 @@ if (
         return result.result.value;
       },
     };
+    for (const domain of ["Runtime", "Network"]) await send(`${domain}.enable`);
+    // Worker starts, stops and version changes go into the load trace.
+    await send("ServiceWorker.enable").catch(() => {});
     await applyRegressionDefaults(send);
-    await waitForOrigin(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
+    await send("Page.navigate", { url: origin });
+    // Kin must have started before browserUiChecks waits inside the page: a
+    // start-up guard reload during that one call would end it (#469).
+    await waitForKinStart(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
     await send("Page.enable");
-    await securityUiRegressions(client);
+    // A guard reload that recovered a lost module still gets its note (#594).
+    await securityUiRegressions(client, { beforeExit: () => printAbortedModules(loadTrace) });
   } catch (error) {
-    // Before the browser closes: what each page showed (#328).
+    // Before the browser closes: what each page showed (#328), and how the
+    // tab loaded Kin (#594).
+    printLoadTrace(loadTrace);
     await captureFailure("security UI regression");
     throw error;
   } finally {
+    printAbortedModules(loadTrace);
     if (socket) {
       const closed = new Promise((resolve) => socket.addEventListener("close", resolve, { once: true }));
       socket.close();

@@ -171,15 +171,41 @@ export function answerQuery(message, config, lookup, { udp = true } = {}) {
  * length-prefixed (RFC 1035 §4.2.2), idle-closed after 10 seconds, and
  * limited in number. Nothing about a query is logged or kept.
  */
-export async function createDnsServer({ host, port, config, lookup, maxTcpConnections = 512, onError = () => {} }) {
+export async function createDnsServer(options) {
+  // Port 0 (tests) lets the system pick a free UDP port, and TCP must then
+  // listen on the same number, which may already be taken for TCP (on
+  // Windows a loopback client socket holds its port, and that fails as
+  // EADDRINUSE; a number in a range Windows keeps back from TCP fails as
+  // EACCES, and such ranges run to hundreds of numbers): pick again (#469).
+  // The system gives out numbers in order, so asking it again only steps
+  // one number further into the same range; later picks are random.
+  for (let attempt = 1; ; attempt += 1) {
+    const port = options.port === 0 && attempt > 1 ? randomDynamicPort() : options.port;
+    try { return await openDnsServer({ ...options, port }); }
+    catch (error) { if (options.port !== 0 || !["EADDRINUSE", "EACCES"].includes(error.code) || attempt === 20) throw error; }
+  }
+}
+
+// A number in the dynamic range (RFC 6335 §6).
+export function randomDynamicPort() {
+  return 49152 + Math.floor(Math.random() * 16384);
+}
+
+async function openDnsServer({ host, port, config, lookup, maxTcpConnections = 512, onError = () => {} }) {
   const udp = createSocket({ type: host?.includes(":") ? "udp6" : "udp4", reuseAddr: false });
   udp.on("message", (message, peer) => {
     let response = null;
     try { response = answerQuery(message, config, lookup, { udp: true }); } catch { onError("dns-failure"); }
     if (response) udp.send(response, peer.port, peer.address);
   });
+  // A random pick may be taken for UDP too; a failed bind leaves no socket
+  // open and is not a DNS error, since the caller picks again.
+  await new Promise((resolve, reject) => {
+    const failed = (error) => { udp.close(); reject(error); };
+    udp.once("error", failed);
+    udp.bind(port, host, () => { udp.off("error", failed); resolve(); });
+  });
   udp.on("error", () => onError("dns-udp"));
-  await new Promise((resolve, reject) => { udp.once("error", reject); udp.bind(port, host, () => { udp.off("error", reject); resolve(); }); });
 
   const open = new Set();
   const tcp = createServer((socket) => {
@@ -206,7 +232,14 @@ export async function createDnsServer({ host, port, config, lookup, maxTcpConnec
       }
     });
   });
-  await new Promise((resolve, reject) => { tcp.once("error", reject); tcp.listen(port === 0 ? udp.address().port : port, host, () => { tcp.off("error", reject); resolve(); }); });
+  await new Promise((resolve, reject) => {
+    // A failed start leaves no UDP socket open to keep the process alive.
+    const failed = (error) => { udp.close(); reject(error); };
+    tcp.once("error", failed);
+    // A port net can't take at all (above 65535, which dgram cuts to 16
+    // bits) throws here instead of emitting an error.
+    try { tcp.listen(port === 0 ? udp.address().port : port, host, () => { tcp.off("error", failed); resolve(); }); } catch (error) { failed(error); }
+  });
   return {
     udpPort: udp.address().port,
     tcpPort: tcp.address().port,

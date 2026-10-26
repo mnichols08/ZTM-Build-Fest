@@ -3,7 +3,7 @@
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { setViewport } from "./cdp-viewport.mjs";
 import { setMedia } from "./cdp-media.mjs";
-import { applyRegressionDefaults, captureFailure } from "./cdp-page.mjs";
+import { applyRegressionDefaults, captureFailure, createLoadTrace, printAbortedModules, printLoadTrace as printTrace, KIN_START_TIMEOUT_MS, waitForOrigin } from "./cdp-page.mjs";
 import {
   pulseRegressions,
   pulsePeerRegressions,
@@ -189,65 +189,12 @@ async function connect(url) {
   // say what it waits for (#469).
   const inFlight = new Map();
   const failedRequests = [];
-  // The tab's recent navigations, document loads, service worker states and
-  // failed requests, in order, so a page whose modules stopped loading shows
-  // what started or stopped around it (#594).
-  const timeline = [];
-  const loaders = new Map();
-  const short = (value) => String(value ?? "").replace(/^https?:\/\/[^/]+/, "").slice(0, 70);
-  const tag = (loaderId) => (loaderId ? String(loaderId).slice(-5) : "-");
-  const mark = (text) => {
-    timeline.push({ at: Date.now(), text });
-    if (timeline.length > 60) timeline.shift();
-  };
-  const loader = (loaderId) => {
-    if (!loaders.has(loaderId)) loaders.set(loaderId, { scripts: 0, done: 0, fromWorker: 0, failed: 0, at: Date.now() });
-    if (loaders.size > 6) loaders.delete(loaders.keys().next().value);
-    return loaders.get(loaderId);
-  };
-  let workerStates = "";
-  const trace = (message) => {
-    const params = message.params ?? {};
-    switch (message.method) {
-      case "Page.frameRequestedNavigation": mark(`requested ${params.reason}/${params.disposition} ${short(params.url)}`); break;
-      case "Page.frameStartedNavigating": mark(`starting ${params.navigationType} L${tag(params.loaderId)} ${short(params.url)}`); break;
-      case "Page.frameNavigated": if (!params.frame?.parentId) mark(`committed ${params.type ?? ""} L${tag(params.frame?.loaderId)} ${short(params.frame?.url)}`); break;
-      case "Page.frameStartedLoading": mark("loading"); break;
-      case "Page.frameStoppedLoading": mark("stopped loading"); break;
-      case "Page.domContentEventFired": mark("DOMContentLoaded"); break;
-      case "Page.loadEventFired": mark("load"); break;
-      case "Inspector.targetCrashed": mark("renderer crashed"); break;
-      case "ServiceWorker.workerVersionUpdated": {
-        const states = (params.versions ?? []).map((version) => `v${version.versionId}:${version.runningStatus}/${version.status}${version.controlledClients?.length ? `(${version.controlledClients.length})` : ""}`).join(" ");
-        if (states !== workerStates) mark(`worker ${(workerStates = states)}`);
-        break;
-      }
-      case "Network.requestWillBeSent":
-        if (params.type === "Document") mark(`document request L${tag(params.loaderId)} ${short(params.request?.url)}`);
-        if (params.type === "Script") loader(params.loaderId).scripts += 1;
-        break;
-      case "Network.loadingFailed": {
-        const request = inFlight.get(params.requestId);
-        if (request?.type === "Script") {
-          loader(request.loaderId).failed += 1;
-          if (params.canceled) abortedModuleLoads.set(request.loaderId, short(request.url));
-        }
-        mark(`failed ${params.type ?? request?.type} L${tag(request?.loaderId)} ${params.errorText}${params.canceled ? " canceled" : ""}${params.blockedReason ? ` blocked:${params.blockedReason}` : ""} ${short(request?.url)} by ${request?.initiator ?? "?"} after ${request ? Date.now() - request.at : "?"} ms, response ${request?.status ?? "none"}${request?.sw ? " from worker" : ""}`);
-        break;
-      }
-      case "Network.loadingFinished": {
-        const request = inFlight.get(params.requestId);
-        if (request?.type === "Script") {
-          loader(request.loaderId).done += 1;
-          if (request.sw) loader(request.loaderId).fromWorker += 1;
-        }
-        break;
-      }
-    }
-  };
+  // The tab's load trace (#594), shared with the other suites through
+  // cdp-page.mjs; every tab adds its lost module requests to one map.
+  const loadTrace = createLoadTrace({ aborted: abortedModuleLoads });
   socket.onmessage = ({ data }) => {
     const message = JSON.parse(data);
-    if (message.method) trace(message);
+    if (message.method) loadTrace.observe(message);
     if (message.method)
       for (const listener of [...(eventListeners.get(message.method) ?? [])]) listener(message.params);
     if (message.id) {
@@ -263,9 +210,7 @@ async function connect(url) {
         problems.push(entry);
     } else if (message.method === "Network.requestWillBeSent") {
       requests.push(message.params.request.url);
-      const initiator = message.params.initiator;
-      inFlight.set(message.params.requestId, { url: message.params.request.url, type: message.params.type ?? null, at: Date.now(),
-        loaderId: message.params.loaderId, initiator: `${initiator?.type ?? "?"}${initiator?.url ? ` ${short(initiator.url)}` : ""}` });
+      inFlight.set(message.params.requestId, { url: message.params.request.url, type: message.params.type ?? null, at: Date.now() });
     }
     if (message.method === "Network.responseReceived") {
       const request = inFlight.get(message.params.requestId);
@@ -280,13 +225,29 @@ async function connect(url) {
     }
   };
   const client = {
-    send(method, params = {}) {
+    send(method, params = {}, { timeoutMs = 30000, describeTargets = true } = {}) {
       return new Promise((resolve, reject) => {
         const number = ++id;
-        const timeout = setTimeout(
-          () => reject(new Error(`CDP timeout: ${method}${params.expression ? ` (${params.expression.slice(0, 160)})` : ""}`)),
-          30000,
-        );
+        const timeout = setTimeout(async () => {
+          // Timed out is final: a reply arriving while the browser is asked
+          // below is dropped, as it was before the asking.
+          pending.set(number, { resolve() {}, reject() {} });
+          const error = new Error(`CDP timeout: ${method}${params.expression ? ` (${params.expression.slice(0, 160)})` : ""}`);
+          // Once (#469) Target.createBrowserContext got no reply right after a
+          // suite disposed its context: say what browser contexts and targets
+          // the browser still held, asked briefly so the failure isn't held up.
+          if (method.startsWith("Target.") && describeTargets) {
+            const brief = { timeoutMs: 2000, describeTargets: false };
+            const [contexts, targets] = await Promise.all([
+              client.send("Target.getBrowserContexts", {}, brief)
+                .then((result) => JSON.stringify(result.browserContextIds), (reason) => reason.message),
+              client.send("Target.getTargets", {}, brief)
+                .then((result) => JSON.stringify(result.targetInfos.map(({ type, browserContextId, attached, url }) => ({ type, context: browserContextId, attached, url: url.slice(0, 80) }))), (reason) => reason.message),
+            ]);
+            error.message += ` — browser contexts ${contexts}; targets ${targets}`.slice(0, 1500);
+          }
+          reject(error);
+        }, timeoutMs);
         pending.set(number, {
           resolve: (value) => {
             clearTimeout(timeout);
@@ -339,20 +300,7 @@ async function connect(url) {
       const now = Date.now();
       return failedRequests.slice(-limit).map(({ at, ...rest }) => ({ ...rest, ageMs: now - at }));
     },
-    // The timeline as short lines (ms before now), each fit for one CI
-    // annotation line, with script counts per document load (#594).
-    loadTrace() {
-      const now = Date.now();
-      const lines = [`scripts per load: ${[...loaders].map(([id, counts]) => `L${tag(id)} ${counts.scripts} sent/${counts.done} done (${counts.fromWorker} by the worker)/${counts.failed} failed, ${now - counts.at} ms ago`).join("; ")}`];
-      let line = "";
-      for (const { at, text } of timeline) {
-        const entry = `-${now - at}ms ${text}`;
-        if (line.length + entry.length > 1300) { lines.push(line); line = ""; }
-        line += (line ? " | " : "") + entry;
-      }
-      if (line) lines.push(line);
-      return lines;
-    },
+    loadTrace,
     close: () => socket.close(),
   };
   clients.push(client);
@@ -1331,13 +1279,22 @@ try {
     await applyRegressionDefaults((method, params) => client.send(method, params));
     await client.send("Page.navigate", { url: origin });
     // A new tab on the Windows runner sometimes never runs Kin's modules
-    // (kin-app stays undefined, no error; #327). Load it once more then.
-    const defined = () => client.evaluate('Boolean(customElements.get("kin-app"))').catch(() => false);
-    for (let attempt = 0; attempt < 150 && !(await defined()); attempt += 1) await delay(100);
-    if (!(await defined())) {
-      console.log(`NOTE new tab had not defined kin-app after 15 s (${JSON.stringify(await tabFacts(client))}); loading it again (#327)`);
+    // (kin-app stays undefined, no error; #327). The start-up guard
+    // (web/boot-guard.js) loads such a start again itself, so the tab waits
+    // for it: a reload from here would cancel the guard's own (#469). Only
+    // when the guard has given up and says Kin didn't finish loading does the
+    // tab press its Try again, once.
+    const evaluate = (expression) => client.evaluate(expression);
+    await waitForOrigin(evaluate, origin, {
+      timeoutMs: KIN_START_TIMEOUT_MS,
+      navigate: () => client.send("Page.navigate", { url: origin }),
+      ready: 'Boolean(customElements.get("kin-app") || document.querySelector("[data-kin-boot-failed] button"))',
+      readyText: " or start Kin (or give up)",
+    });
+    if (!(await evaluate('Boolean(customElements.get("kin-app"))').catch(() => false))) {
+      console.log(`NOTE new tab had not defined kin-app after the start-up guard's reloads (${JSON.stringify(await tabFacts(client))}); trying again (#327)`);
       printLoadTrace(client);
-      await client.send("Page.reload", { ignoreCache: true });
+      await evaluate('document.querySelector("[data-kin-boot-failed] button").click()').catch(() => {});
     }
     await ready(client);
     return client;
@@ -1345,10 +1302,7 @@ try {
   // The tab's load trace (#594). In GitHub Actions each line is a warning
   // annotation, so it is readable even when the retry passes.
   function printLoadTrace(client) {
-    for (const line of client.loadTrace()) {
-      if (process.env.GITHUB_ACTIONS) console.log(`::warning title=Kin load trace (#594)::${line.replace(/%/g, "%25")}`);
-      else console.error(`load trace: ${line}`);
-    }
+    printTrace(client.loadTrace);
   }
   // What a tab was doing, so a slow start can be told from a stuck one (#327).
   function tabFacts(client) {
@@ -1386,9 +1340,9 @@ try {
     try {
       // Up to 30 s: a household round trip between two tabs can take longer
       // than until()'s default 10 s on the Windows runner (#164).
-      await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&(${predicate})})()`), { attempts: 600 });
+      await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending&&(${predicate})})()`), { attempts: 600 });
     } catch (error) {
-      const state = await client.evaluate(`(()=>{const app=document.querySelector('kin-app');return {busy:app?.busy,refreshing:app?.refreshing,pendingRefresh:app?.pendingRefresh,status:app?.status?.textContent,alert:app?.alert?.textContent,focus:document.activeElement?.outerHTML?.slice(0,160),handoffs:app?.state?.handoffs?.map(row=>({text:row.text,status:row.status}))}})()`);
+      const state = await client.evaluate(`(()=>{const app=document.querySelector('kin-app');return {busy:app?.busy,refreshing:app?.refreshing,pendingRefresh:app?.pendingRefresh,wakePending:app?.wakePending,status:app?.status?.textContent,alert:app?.alert?.textContent,focus:document.activeElement?.outerHTML?.slice(0,160),handoffs:app?.state?.handoffs?.map(row=>({text:row.text,status:row.status}))}})()`);
       throw new Error(`${error.message} for ${predicate.slice(0, 200)}; household state: ${JSON.stringify(state)}`);
     }
   }
@@ -1405,7 +1359,7 @@ try {
           ...(type === "keyDown" ? { text: "\r" } : {}),
         });
       try {
-        await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&(${done})})()`), { attempts: 100 });
+        await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending&&(${done})})()`), { attempts: 100 });
         return;
       } catch (error) {
         const dropped = press < 3 && await client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&(${pending})})()`);
@@ -1727,10 +1681,10 @@ try {
       app.ctx.peers.flushPeerRefresh = flush;
     }
     await new Promise(resolve => setTimeout(resolve, 0));
-    for (let index = 0; index < 300 && (app.busy || app.refreshing || app.pendingRefresh); index++) await new Promise(resolve => setTimeout(resolve, 10));
+    for (let index = 0; index < 300 && (app.busy || app.refreshing || app.pendingRefresh || app.wakePending); index++) await new Promise(resolve => setTimeout(resolve, 10));
     const owner = app.state.responsibilities.find(value => value.targetKind === "item" && value.targetId === item.itemId)?.memberId;
     const renderedOwner = app.needs.ownerContext?.responsibilities?.find(value => value.targetKind === "item" && value.targetId === item.itemId)?.memberId;
-    return owner === memberId && renderedOwner === memberId && renders >= 1 && flushes === 1 && !app.busy && !app.refreshing && !app.pendingRefresh;
+    return owner === memberId && renderedOwner === memberId && renders >= 1 && flushes === 1 && !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending;
   });
   assert.equal(responsibilityLifecycle, true, "Responsibility changes render committed ownership and flush refreshes deferred while busy");
   await visit(first, "today");
@@ -1926,25 +1880,28 @@ try {
     await first.evaluate('document.querySelector("#handoff-text").value'),
     "",
   );
-  await until(() => first.evaluate(`(()=>{
+  // Check idle and focus in one evaluate (#469): a background refresh that
+  // starts between two evaluates disables the workspace fieldset, so focus()
+  // on Got it does nothing. :disabled also sees a disabled ancestor fieldset.
+  const focusGotIt = `(()=>{
     const app=document.querySelector('kin-app');
     const target=app.querySelector('kin-handoff-list [aria-label="Acknowledge Newer handoff draft"]');
-    return !app.busy && !app.refreshing && !app.pendingRefresh && target && !target.disabled;
-  })()`));
-  const handoffFocus = await first.evaluate(`(()=>{
-    const target=document.querySelector('kin-handoff-list [aria-label="Acknowledge Newer handoff draft"]');
-    target.focus();return {focused:document.activeElement===target,target:target.outerHTML,active:document.activeElement?.outerHTML};
-  })()`);
+    const idle=!app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending&&!!target&&!target.matches(':disabled');
+    if(idle&&document.activeElement!==target)target.focus();
+    return {idle,focused:!!target&&document.activeElement===target,target:target?.outerHTML,active:document.activeElement?.outerHTML?.slice(0,200)};
+  })()`;
+  const handoffFocus = await until(async () => { const state = await first.evaluate(focusGotIt); return state.idle && state.focused && state; })
+    .catch(() => first.evaluate(focusGotIt));
   assert.equal(handoffFocus.focused,true,JSON.stringify(handoffFocus));
   await pressEnterUntil(first,
     `app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status==='acknowledged'`,
     `!app.busy&&app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status!=='acknowledged'&&document.activeElement?.getAttribute('aria-label')==='Acknowledge Newer handoff draft'&&!document.activeElement.disabled`);
-  assert.equal(
-    await first.evaluate(
-      'document.activeElement === document.querySelector("#handoff-text")',
-    ),
-    true,
-  );
+  // Read focus only while idle (#469): a background refresh that starts after
+  // pressEnterUntil's idle check moves focus to the body until it ends.
+  const composerFocus = `(()=>{const app=document.querySelector('kin-app');return {idle:!app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending,focused:document.activeElement===document.querySelector('#handoff-text'),active:document.activeElement?.outerHTML?.slice(0,120)};})()`;
+  const restoredFocus = await until(async () => { const state = await first.evaluate(composerFocus); return state.idle && state; })
+    .catch(() => first.evaluate(composerFocus));
+  assert.equal(restoredFocus.focused, true, JSON.stringify(restoredFocus));
   const keyboardHandoffState = await first.evaluate(`(()=>{const app=document.querySelector('kin-app');return {status:app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status,alert:app.alert.textContent,notice:app.status.textContent,button:!!app.querySelector('[aria-label="Acknowledge Newer handoff draft"]'),focus:document.activeElement?.outerHTML?.slice(0,120)}})()`);
   assert.equal(keyboardHandoffState.status, "acknowledged", JSON.stringify(keyboardHandoffState));
   console.log(
@@ -2682,7 +2639,7 @@ try {
     await visit(first, "household/areas");
     const areasResult = await first.evaluate(`(async()=>{
       const app=document.querySelector('kin-app');
-      const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Area action did not settle');};
+      const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh||app.wakePending);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Area action did not settle');};
       const form=app.areas.querySelector('.area-create-form');
       const input=form.querySelector('input');
       input.value='Kitchen';input.focus();form.requestSubmit();await idle();
@@ -2726,7 +2683,7 @@ try {
     const notesResult = await first.evaluate(`(async()=>{
       const app=document.querySelector('kin-app');
       app.ctx.navigation.navigate('#household/notes');
-      const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Note action did not settle');};
+      const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh||app.wakePending);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Note action did not settle');};
       const form=app.notes.querySelector('form');
       const [title,body]=form.querySelectorAll('input,textarea');const area=app.state.areas.find(row=>row.name==='Kitchen');const areaSelect=form.querySelector('select');areaSelect.value=area.areaId;
       const beforeInvalid=app.state.notes.length;title.value='A'.repeat(81);body.value='';form.requestSubmit();const invalidNoAppend=app.state.notes.length===beforeInvalid&&title.getAttribute('aria-invalid')==='true'&&!form.querySelector('[id$="title-error"]').hidden;
@@ -2749,7 +2706,7 @@ try {
     await visit(first, "household/notes");
     const referenceResult = await first.evaluate(async () => {
       const app = document.querySelector("kin-app"), ui = app.notes;
-      const idle = async () => { for (let i = 0; i < 300 && (app.busy || app.refreshing || app.pendingRefresh); i++) await new Promise(resolve => setTimeout(resolve, 10)); };
+      const idle = async () => { for (let i = 0; i < 300 && (app.busy || app.refreshing || app.pendingRefresh || app.wakePending); i++) await new Promise(resolve => setTimeout(resolve, 10)); };
       const setValue = (control, value) => { control.value = value; control.dispatchEvent(new Event("input", { bubbles: true })); };
       let form = ui.querySelector(".reference-records form");
       const title = form.querySelector("input");
@@ -2868,29 +2825,29 @@ try {
       const bodyOnly=!title.hasAttribute('aria-invalid')&&body.getAttribute('aria-invalid')==='true'&&!form.querySelector('[id$="body-error"]').hidden;
       return {labels,uniqueIds,descriptionsResolve,titleOnly,bodyOnly};
     })()`);
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),form=app.notes.querySelector('form');if(app.busy||app.refreshing||app.pendingRefresh||form.querySelector('button').disabled)return false;form.querySelector('input').value='Resilience note';form.querySelector('textarea').value='offline body';form.requestSubmit();return app.busy})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),form=app.notes.querySelector('form');if(app.busy||app.refreshing||app.pendingRefresh||app.wakePending||form.querySelector('button').disabled)return false;form.querySelector('input').value='Resilience note';form.querySelector('textarea').value='offline body';form.requestSubmit();return app.busy})()`));
     const resilienceId = await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state?.notes?.find(item=>item.title==='Resilience note');return note&&!note.archived?note.noteId:false})()`));
     const localCreate = await first.evaluate(`(()=>{const app=document.querySelector('kin-app');return app.notes.querySelector('[data-focus-id="title"]')===document.activeElement&&app.status.textContent.includes('saved on this device')})()`);
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${resilienceId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Resilience note updated';form.querySelector('textarea').value='edited offline';form.requestSubmit();return app.busy})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh||app.wakePending)return false;const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${resilienceId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Resilience note updated';form.querySelector('textarea').value='edited offline';form.requestSubmit();return app.busy})()`));
     await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state?.notes?.find(item=>item.noteId==='${resilienceId}');return note?.title==='Resilience note updated'&&!app.busy})()`));
     const localUpdate = await first.evaluate(`(()=>document.querySelector('kin-app').state.notes.find(item=>item.noteId==='${resilienceId}')?.body==='edited offline')()`);
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return !app.busy&&!app.refreshing&&!app.pendingRefresh})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return !app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending})()`));
     await first.evaluate(`(async()=>{const app=document.querySelector('kin-app'),result=await app.store.append({type:'archive-note',noteId:'${resilienceId}'},app.engine);app.state=result.state})()`);
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return !app.busy&&!app.refreshing&&!app.pendingRefresh})()`));
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;app.notes.notes=[{...app.state.notes.find(item=>item.noteId==='${resilienceId}'),archived:false}];const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${resilienceId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Must not revive';form.querySelector('textarea').value='stale';form.requestSubmit();return app.busy})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return !app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh||app.wakePending)return false;app.notes.notes=[{...app.state.notes.find(item=>item.noteId==='${resilienceId}'),archived:false}];const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${resilienceId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Must not revive';form.querySelector('textarea').value='stale';form.requestSubmit();return app.busy})()`));
     try {
-      await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return app.alert.textContent.length>0&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&app.state.notes.find(item=>item.noteId==='${resilienceId}')?.archived===true})()`));
+      await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return app.alert.textContent.length>0&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending&&app.state.notes.find(item=>item.noteId==='${resilienceId}')?.archived===true})()`));
     } catch (error) {
-      const detail = await first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state.notes.find(item=>item.noteId==='${resilienceId}'),form=app.notes.querySelector('form');return {busy:app.busy,refreshing:app.refreshing,pendingRefresh:app.pendingRefresh,alert:app.alert.textContent,note:note&&{title:note.title,archived:note.archived},formNoteId:form.dataset.noteId,saveDisabled:form.querySelector('button').disabled,componentDisabled:app.notes.disabledState,retry:app.retryButton.hidden}})()`);
+      const detail = await first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state.notes.find(item=>item.noteId==='${resilienceId}'),form=app.notes.querySelector('form');return {busy:app.busy,refreshing:app.refreshing,pendingRefresh:app.pendingRefresh,wakePending:app.wakePending,alert:app.alert.textContent,note:note&&{title:note.title,archived:note.archived},formNoteId:form.dataset.noteId,saveDisabled:form.querySelector('button').disabled,componentDisabled:app.notes.disabledState,retry:app.retryButton.hidden}})()`);
       throw new Error(`${error.message}; stale Note result: ${JSON.stringify(detail)}`);
     }
     const staleRejected = true;
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;app.notes.clearEditor();app.notes.render();const form=app.notes.querySelector('form');form.querySelector('input').value='Offline archive';form.querySelector('textarea').value='saved offline';form.requestSubmit();return app.busy})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh||app.wakePending)return false;app.notes.clearEditor();app.notes.render();const form=app.notes.querySelector('form');form.querySelector('input').value='Offline archive';form.querySelector('textarea').value='saved offline';form.requestSubmit();return app.busy})()`));
     const offlineId = await until(() => first.evaluate(`(()=>{const note=document.querySelector('kin-app').state?.notes?.find(item=>item.title==='Offline archive');return note&&!note.archived?note.noteId:false})()`));
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${offlineId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Offline archive updated';form.querySelector('textarea').value='updated offline';form.requestSubmit();return app.busy})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh||app.wakePending)return false;const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${offlineId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Offline archive updated';form.querySelector('textarea').value='updated offline';form.requestSubmit();return app.busy})()`));
     await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state?.notes?.find(item=>item.noteId==='${offlineId}');return note?.title==='Offline archive updated'&&!app.busy})()`));
     const offlineUpdate = await first.evaluate(`(()=>document.querySelector('kin-app').state.notes.find(item=>item.noteId==='${offlineId}')?.body==='updated offline')()`);
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;const button=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='archive-${offlineId}');if(!button||button.disabled)return false;button.click();return app.busy})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh||app.wakePending)return false;const button=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='archive-${offlineId}');if(!button||button.disabled)return false;button.click();return app.busy})()`));
     await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return app.state?.notes?.find(item=>item.noteId==='${offlineId}')?.archived===true&&!app.busy})()`));
     const offlineNote = {noteId:offlineId,created:true,updated:offlineUpdate,archived:true};
     await first.send("Network.emulateNetworkConditions",{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});
@@ -2991,7 +2948,7 @@ try {
     };
     const areaIdle = async () => first.evaluate(`(async()=>{
       const app=document.querySelector('kin-app');
-      for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));
+      for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh||app.wakePending);i++)await new Promise(r=>setTimeout(r,10));
       if(app.busy||app.refreshing)throw Error('Area action did not settle');
     })()`);
     await first.evaluate(`document.querySelector('kin-app').areas.querySelector('[aria-label="Rename Kitchen"]').focus()`);
@@ -3209,10 +3166,7 @@ try {
   await captureFailure("browser regression");
   throw error;
 } finally {
-  if (abortedModuleLoads.size) {
-    const summary = `${abortedModuleLoads.size} page load(s) lost a module request (${[...abortedModuleLoads.values()].join(", ")}); the start-up guard loads such a page again`;
-    console.log(process.env.GITHUB_ACTIONS ? `::warning title=Kin aborted module loads (#594)::${summary}` : `NOTE ${summary}`);
-  }
+  printAbortedModules(createLoadTrace({ aborted: abortedModuleLoads }));
   if (browserClient) await browserClient.send("Browser.close").catch(() => {});
   for (const client of clients) client.close();
   browser.kill();

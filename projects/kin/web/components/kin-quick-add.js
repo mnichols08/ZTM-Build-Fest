@@ -112,6 +112,7 @@ class KinQuickAdd extends HTMLElement {
       if (this.pending) return;
       this.clearDraft();
       this.dialog.close();
+      this.restoreFocus();
     });
     this.form.addEventListener("submit", (event) => this.submit(event));
     this.input.addEventListener("input", () => {
@@ -132,13 +133,9 @@ class KinQuickAdd extends HTMLElement {
         this.clearDraft();
       }
     });
-    this.dialog.addEventListener("close", () => {
-      // An opener inside a list can be replaced by the save's re-render.
-      const target = this.opener?.isConnected ? this.opener : this.fallback?.() ?? this.trigger;
-      if (target?.isConnected) target.focus();
-      this.opener = null;
-      this.fallback = null;
-    });
+    // Escape and other native closes restore focus here. Our own close calls
+    // restore it at once instead (see restoreFocus).
+    this.dialog.addEventListener("close", () => this.restoreFocus());
     this.disabled = this.isDisabled;
   }
 
@@ -164,6 +161,21 @@ class KinQuickAdd extends HTMLElement {
     this.fallback = typeof fallback === "function" ? fallback : null;
     this.dialog.showModal();
     this.input.focus();
+  }
+
+  // Focus goes back once per dialog session. The close event is queued, so
+  // when the dialog was reopened and closed before it ran, a late event
+  // used to take the newer session's opener and fallback, and the next
+  // close then fell back to the trigger. Every close we make calls this
+  // straight away; a late event then finds the dialog open again or the
+  // opener already cleared, and does nothing.
+  restoreFocus() {
+    if (this.dialog.open || !this.opener) return;
+    // An opener inside a list can be replaced by the save's re-render.
+    const target = this.opener.isConnected ? this.opener : this.fallback?.() ?? this.trigger;
+    if (target?.isConnected) target.focus();
+    this.opener = null;
+    this.fallback = null;
   }
 
   submit(event) {
@@ -207,6 +219,7 @@ class KinQuickAdd extends HTMLElement {
     this.addButton.textContent = "Add";
     this.clearDraft();
     this.dialog.close("saved");
+    this.restoreFocus();
   }
 
   showResult(text, { kind = "saved" } = {}) {
@@ -293,7 +306,10 @@ class KinQuickAdd extends HTMLElement {
   reset() {
     this.pending = false;
     this.draftRevision++;
-    if (this.dialog?.open) this.dialog.close();
+    if (this.dialog?.open) {
+      this.dialog.close();
+      this.restoreFocus();
+    }
     if (this.input) this.clearDraft();
     if (this.addButton) this.addButton.textContent = "Add";
   }

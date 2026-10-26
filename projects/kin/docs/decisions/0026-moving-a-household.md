@@ -20,9 +20,8 @@ new-device sign-in, and the existing Today card offers the new passkey
 (a new address has no passkey and fresh storage).
 
 *As built (#737, screens).* Marking devices carried over from the old
-address, and removing them together (§6), is left for a follow-up: they
-show as trusted devices in People & devices, and an admin removes each with
-the existing revoke.
+address, and removing them together (§6), came later: see the #769 note
+below.
 
 *As built (#738, server).* Three choices this record didn't make:
 
@@ -50,8 +49,33 @@ which checks the size and SHA-256 before the package is opened. Node's
 request time limit (5 minutes) and slow home uplinks make one 4 GB request
 impractical. After the import Kin restarts, as after setup, so every part of
 the service loads the household. A device's stored record carries its token
-hash too; the package clears both. Marking carried-over devices (§6) comes
-with the re-joining guide.
+hash too; the package clears both. Marking carried-over devices (§6) is in
+the #769 note below.
+
+*As built (#769).* The mark is `carriedOver: true` in the device record. The
+home server's import sets it on every device that arrives unrevoked (it isn't
+in the package, and it isn't guessed from a missing token: a new device has
+none for a moment too), and removes it from a revoked one, so a second move
+marks afresh. Giving a device a token here removes it. `/api/devices`
+reports it, and People & devices shows "From the old address · can't sign in
+here", without Verify or Replace. An admin removes the ones left over with
+`POST /api/devices/carried-over/revocation/options` and `/finish` after one
+fresh passkey or password confirmation (409 `nothing_carried_over` when none
+are left). The server revokes the devices it listed at options that are
+still marked and still have no token, all at one time and in one access
+change, so there is one new household epoch; each gets a `device_revoked`
+audit entry with reason `carried_over`. Rows are revoked, never deleted, so
+history still verifies and certificates still endorse a new sign-in. Removal
+isn't held back until everyone has re-joined: the confirmation names who
+hasn't signed in here yet and how they still can (password or backup code,
+or a recovery invitation). A household moved before this has no marks; its
+old devices are removed one at a time. The last-admin and last-Adult checks
+count a marked device only once it has a token, since until then it can't
+sign in here (#778). Nothing backfills the mark for a household moved
+before it (#779): the move and the mark ship in the same release, so only a
+household moved on a development build has none, and a missing token alone
+can't tell a carried-over device from one that lost its token for another
+reason.
 
 ## Context
 

@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,10 +32,28 @@ const TIMEOUT = { timeout: 60_000 };
 const fixture = (name) => readFileSync(new URL(`../../relay/test-fixtures/${name}`, import.meta.url));
 const RELAY_TLS = { key: fixture("relay-test.key"), cert: fixture("relay-test.crt") };
 
+// What each test has to stop before its temporary folders are removed.
+const stopFirst = new WeakMap();
+
 function temporary(t) {
   const directory = canonicalPath(mkdtempSync(join(tmpdir(), "kin-home-")));
-  t.after(() => rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
+  t.after(async () => {
+    // node:test runs t.after hooks in the order they were added, and this one
+    // is added before the test starts its service. So it stops the service
+    // itself; otherwise a failing test would remove the folder under it.
+    for (const stop of stopFirst.get(t)?.splice(0) ?? []) await stop();
+    // A killed service on Windows lets go of its files a moment after it is
+    // reported as exited. The promise rm retries through that; rmSync in
+    // Node 24.18 and earlier (and 25.1) gives up on the first EPERM there.
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
   return directory;
+}
+
+// Stops a test's service when the test ends, before its folders are removed.
+function stopBeforeCleanup(t, stop) {
+  if (!stopFirst.has(t)) stopFirst.set(t, []);
+  stopFirst.get(t).push(stop);
 }
 
 async function waitFor(check, what, timeout = 15_000) {
@@ -358,7 +377,7 @@ test("home mode under the permission model: makes its key, dials the relay, and 
     },
   });
   const output = collect(child);
-  t.after(() => stop(child));
+  stopBeforeCleanup(t, () => stop(child));
   await waitFor(() => /home_tunnel_lost/.test(output()) || child.exitCode !== null, "the first dial", 30_000);
   const lines = output().split("\n").filter((line) => line.startsWith("{")).map((line) => JSON.parse(line));
   assert.deepEqual(lines.find((line) => line.event === "service_ready"), { event: "service_ready", origin: "https://fern.home.test", mode: "home" });
@@ -380,9 +399,23 @@ test("home mode without a name runs on loopback as before and says the tunnel is
   for (const name of ["KIN_HOME_NAME", "KIN_ORIGIN"]) delete env[name];
   const child = spawn(process.execPath, [join(APP_ROOT, "server", "start.mjs")], { env });
   const output = collect(child);
-  t.after(() => stop(child));
+  stopBeforeCleanup(t, () => stop(child));
   await waitFor(() => /home_not_configured/.test(output()) || child.exitCode !== null, "startup", 30_000);
   assert.match(output(), /"origin":"http:\/\/localhost:\d+","mode":"home"/);
   assert.doesNotMatch(output(), /home_tunnel/);
   await stop(child);
+});
+
+test("a test's service is stopped before its temporary folder is removed, even if the test ends first", TIMEOUT, async (t) => {
+  let directory, child, folderWhenStopped;
+  await t.test("a test that ends without stopping its service", async (inner) => {
+    directory = temporary(inner);
+    // Stands in for the service: it holds a file open in the folder until stopped.
+    child = spawn(process.execPath, ["-e", "require('fs').openSync(process.argv[1], 'w'); console.log('open'); setInterval(() => {}, 1000)", join(directory, "held")]);
+    stopBeforeCleanup(inner, async () => { folderWhenStopped = existsSync(directory); await stop(child); });
+    await once(child.stdout, "data");
+  });
+  assert.equal(folderWhenStopped, true, "the service was stopped while its folder was still there");
+  assert.ok(child.exitCode !== null || child.signalCode !== null, "the service has exited");
+  assert.equal(existsSync(directory), false, "the folder is removed");
 });

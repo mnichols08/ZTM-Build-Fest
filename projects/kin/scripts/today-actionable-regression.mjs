@@ -14,9 +14,9 @@ export async function todayActionableRegressions(recovery) {
   const passed = [];
   const check = (condition, message) => { if (!condition) throw new Error(message); passed.push(message); };
   const idle = async () => {
-    for (let index = 0; (app.busy || app.refreshing || app.pendingRefresh) && index < 400; index++)
+    for (let index = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && index < 400; index++)
       await new Promise((resolve) => setTimeout(resolve, 10));
-    check(!app.busy && !app.refreshing, "Today work returns idle");
+    check(!app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "Today work returns idle");
   };
   const wait = async (condition, label) => {
     for (let index = 0; index < 400; index++) {
@@ -185,7 +185,7 @@ export async function todayActionableRegressions(recovery) {
   // heading that is no longer the one focused.
   const focusFacts = () => JSON.stringify({ open: quick.dialog.open, active: document.activeElement?.outerHTML?.slice(0, 120) ?? null,
     headings: fallbackHeadings().map((node) => node.textContent.slice(0, 40)), busy: app.busy, refreshing: app.refreshing,
-    pendingRefresh: app.pendingRefresh, route: location.hash });
+    pendingRefresh: app.pendingRefresh, wakePending: app.wakePending, route: location.hash });
   check(!quick.dialog.open && fallbackHeadings().includes(document.activeElement),
     `A. when the empty-state action disappears, focus returns to a visible Today or page heading, not the body (${focusFacts()})`);
 
@@ -375,7 +375,7 @@ export async function todayLifecycleRegressions(client, { visit, ready }) {
     }
     throw new Error(`Today lifecycle timed out: ${label}`);
   };
-  const idle = () => until(() => { const app = document.querySelector("kin-app"); return Boolean(app?.state) && !app.busy && !app.refreshing && !app.pendingRefresh; }, "idle");
+  const idle = () => until(() => { const app = document.querySelector("kin-app"); return Boolean(app?.state) && !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending; }, "idle");
   const outDir = join(dirname(fileURLToPath(import.meta.url)), "../target/ux-screenshots");
   await mkdir(outDir, { recursive: true });
   const shot = async (name) => {
@@ -527,7 +527,7 @@ export async function todayLifecycleRegressions(client, { visit, ready }) {
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       app.detail.stepInput.value = "unsent step draft";
       row(otherId).querySelector(".complete-button").click();
-      for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+      for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && i < 400; i++) await new Promise((resolve) => setTimeout(resolve, 10));
       const result = {
         selection: app.selection?.itemId === draftId,
         draft: app.detail.stepInput.value,

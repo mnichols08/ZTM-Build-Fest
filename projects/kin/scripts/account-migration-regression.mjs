@@ -238,6 +238,10 @@ async function savePrivateThings(member, h) {
   const saved = await app.ctx.journal.save({ date: todayCivilDate(), body: member.journal });
   check(saved.ok, `a journal entry saved: ${saved.message}`);
   await h.wait(() => app.syncCoordinator?.privateLog?.active, "private storage active");
+  // The save only starts a sync; wait until the entry has really reached the
+  // relay, so the service has it when the next step makes it lose the stream.
+  await h.wait(async () => { await app.syncCoordinator.syncNow(); return !(await app.syncCoordinator.privateLog.store.outbox()).length; },
+    "the private changes sent to the relay", 60_000);
   app.ctx.navigation.navigate("#household/privacy");
   h.security().render();
   await h.wait(() => h.button("Save my private things"), "Backup and move offers your private things");
@@ -446,11 +450,12 @@ export async function accountMigrationRegressions({ endpoint, browserClient }) {
       await client.send("Page.navigate", { url: origin });
       await waitForOrigin(client.evaluate, origin, { navigate: () => client.send("Page.navigate", { url: origin }) });
     };
-    const fresh = async () => {
+    const fresh = async (whileAway = () => {}) => {
       kin.accountVaultService.memberDownloads.spends.clear();
       kin.accountVaultService.addressDownloads.spends.clear();
       await client.send("Page.navigate", { url: "about:blank" });
       await eventually(async () => (await client.evaluate("location.href")) === "about:blank", "about:blank");
+      await whileAway();
       await client.send("Storage.clearDataForOrigin", { origin, storageTypes: "all" });
       await client.send("Network.clearBrowserCookies");
       await open();
@@ -494,8 +499,9 @@ export async function accountMigrationRegressions({ endpoint, browserClient }) {
     checks += saved.checks;
 
     // 6. The service loses the private stream; a fresh browser restores.
-    kin.privateRelayService.forgetMember(identity.memberId);
-    await fresh();
+    // Purged only once the old page has left the origin: a push from it
+    // after the purge would start the "lost" stream again at sequence 1.
+    await fresh(() => kin.privateRelayService.forgetMember(identity.memberId));
     checks += await run(passkeySignInAndRestore, MEMBER, saved.file);
 
     // 7. Start over on this (passkey-only) browser.

@@ -20,7 +20,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     throw new Error(`Daily UX hardening timed out: ${label}`);
   };
   const settle = () => page(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)))));
-  const idle = () => until(() => { const app = document.querySelector("kin-app"); return Boolean(app?.state) && !app.busy && !app.bulkRunning && !app.refreshing && !app.pendingRefresh; }, "idle");
+  const idle = () => until(() => { const app = document.querySelector("kin-app"); return Boolean(app?.state) && !app.busy && !app.bulkRunning && !app.refreshing && !app.pendingRefresh && !app.wakePending; }, "idle");
   const KEYS = {
     escape: { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
     n: { key: "n", code: "KeyN", windowsVirtualKeyCode: 78, text: "n" },
@@ -262,7 +262,25 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     check(true, "control: an unlocked routine reminder notifies once");
 
     // A future reminder survives lock and unlock and fires at its time.
+    // The reminder's timers are held until the re-arm check has read it
+    // (#469): lock, unlock and two visits can outlast its 3 s on a slow
+    // runner, and a timer that fires first deletes the entry the check reads.
+    // Held timers run on release, and tick() re-arms any that are not yet
+    // due, so the reminder still fires no earlier than its time.
+    const holdReminderTimers = (hold) => page((hold) => {
+      const local = document.querySelector("kin-app").localReminders;
+      if (hold) {
+        window.__heldReminders = { setTimer: local.setTimer, queued: [] };
+        local.setTimer = (fn) => { window.__heldReminders.queued.push(fn); return null; };
+        return;
+      }
+      const { setTimer, queued } = window.__heldReminders;
+      local.setTimer = setTimer;
+      delete window.__heldReminders;
+      for (const fn of queued) setTimer(fn, 0);
+    }, hold);
     const vaultBefore = await page(() => document.querySelector("kin-app").vault.vaultId);
+    await holdReminderTimers(true);
     let due = await remind(routineReminder, routineTitle, 3000);
     await visit("routines");
     const beforeLock = await reminders(routineReminder, routineTitle);
@@ -276,6 +294,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     state = await reminders(routineReminder, routineTitle);
     check(state.live === due && state.listed === due && state.shown === beforeLock.shown && state.rowText && state.suspended.length === 0,
       "unlocking the same vault re-arms the reminder and its Routines row shows it again at its original time", state);
+    await holdReminderTimers(false);
     await until(() => window.__notifications.length === 2, "resumed reminder fires");
     const resumedFire = await page(() => window.__notifications.at(-1));
     check(resumedFire.title === routineTitle && resumedFire.at >= due, "the resumed reminder fires at its time with the current title", { resumedFire, due });

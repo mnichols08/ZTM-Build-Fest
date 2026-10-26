@@ -13,7 +13,7 @@ export async function sitterRegressions() {
     for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
     check(false, message);
   };
-  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the sitter work settles");
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "the sitter work settles");
   const hex = () => crypto.randomUUID().replaceAll("-", "");
   const tag = crypto.randomUUID().slice(0, 6);
   const noteId = hex();

@@ -4,6 +4,7 @@
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
 import { MAX_MEMBER_NAME_CHARS, MEMBER_KIND_LABELS, friendlyDeviceLabel, memberLabels, misleadingMemberName } from "./member-labels.js";
 import { confirmWith, freshConfirmation } from "./fresh-confirmation.js";
+import { CARRIED_OVER_STATUS, carriedOverButtonLabel, carriedOverConfirmation } from "./carried-over.js";
 
 const MAX_ACTIVE_ADULTS = 4;
 const MAX_ACTIVE_LIMITED = 8;
@@ -147,6 +148,7 @@ export class HouseholdMembership {
       // Yours first, then each other member's, in the order the server lists them.
       const members = [...new Set([this.host.identity.memberId, ...devices.map((device) => device.memberId)])];
       const lists = new Map();
+      const groupLabels = new Map();
       let otherMemberIndex = 0;
       for (const [index, memberId] of members.entries()) {
         if (!devices.some((device) => device.memberId === memberId)) continue;
@@ -161,6 +163,7 @@ export class HouseholdMembership {
         title.textContent = preferredName
           ? `${preferredName}${isYou ? " (You)" : ""}`
           : isYou ? "You" : `Household member ${otherMemberIndex}`;
+        groupLabels.set(memberId, title.textContent);
         const list = document.createElement("ul");
         list.className = "device-list";
         list.setAttribute("aria-labelledby", title.id);
@@ -190,6 +193,9 @@ export class HouseholdMembership {
           preferredName: preferredNameByMember.get(device.memberId),
         }) ?? (fingerprint ? `New device · ${fingerprint.slice(0, 4).toUpperCase()}` : "New device");
         const isThisDevice = device.id === this.host.identity.deviceId;
+        // Carried over from the old address by a move (ADR 0026 §6): it
+        // can't sign in here, so there is nothing to verify or replace.
+        const carriedOver = device.carriedOver === true && !device.revokedAt && !device.statusUnavailable;
         const pinned = !syncDevice?.publicKeys || isThisDevice ||
           (await this.host.syncKeyStore.getPinnedDevice(
             this.host.identity.householdId,
@@ -205,7 +211,7 @@ export class HouseholdMembership {
           ...(name?.nickname && automatic ? [automatic] : []),
           ...(isThisDevice ? ["This device"] : []),
           device.statusUnavailable ? "Status unavailable offline" :
-            device.revokedAt ? "Revoked" : pinned ? "Trusted" : "Untrusted",
+            device.revokedAt ? "Revoked" : carriedOver ? CARRIED_OVER_STATUS : pinned ? "Trusted" : "Untrusted",
         ];
         text.append(` — ${details.join(" · ")}`);
         item.append(text);
@@ -235,7 +241,7 @@ export class HouseholdMembership {
             `Device sync code ${keyCode.textContent}`,
           );
           item.append(keyCode);
-          if (!pinned && syncDevice.publicKeys) {
+          if (!pinned && syncDevice.publicKeys && !carriedOver) {
             const verify = this.host.makeButton("Verify device", () => {
               verify.hidden = true;
               const prompt = document.createElement("p");
@@ -287,7 +293,7 @@ export class HouseholdMembership {
           }
         }
         if (!device.statusUnavailable && !device.revokedAt && device.id !== this.host.identity.deviceId) {
-          if (device.memberId === this.host.identity.memberId)
+          if (device.memberId === this.host.identity.memberId && !carriedOver)
             item.append(
               this.host.makeButton(
                 "Replace this device",
@@ -326,6 +332,32 @@ export class HouseholdMembership {
         list.append(item);
       }
       if (superseded()) return;
+      // Fail closed: only with management authority and a live list; an
+      // older server never marks a device, so the button never shows there.
+      const carried = devices.filter((device) => device.carriedOver === true && !device.revokedAt);
+      if (canManageMembers === true && !showingCachedDevices && carried.length) {
+        const section = document.createElement("section");
+        section.className = "carried-over-devices";
+        // Its own heading, so the button doesn't read as part of the last
+        // member's devices: it removes them for the whole household.
+        const heading = document.createElement("h3");
+        heading.id = "carried-over-devices-heading";
+        heading.textContent = "Devices from the old address";
+        section.setAttribute("aria-labelledby", heading.id);
+        const copy = document.createElement("p");
+        copy.textContent = "Devices from the old address can't sign in here. Once everyone has signed in here, remove them together.";
+        // Members whose only devices are from the old address haven't signed in here yet.
+        const waiting = [...groupLabels].filter(([memberId]) => memberId !== this.host.identity.memberId &&
+          carried.some((device) => device.memberId === memberId) &&
+          !devices.some((device) => device.memberId === memberId && !device.revokedAt && device.carriedOver !== true))
+          .map(([, label]) => label);
+        section.append(heading, copy, this.host.makeButton(
+          carriedOverButtonLabel(carried.length),
+          () => this.removeCarriedOver(carried.length, waiting),
+          "danger",
+        ));
+        this.host.append(section);
+      }
       const actions = document.createElement("section");
       actions.className = "people-device-actions";
       const actionsHeading = document.createElement("h3");
@@ -634,6 +666,28 @@ export class HouseholdMembership {
       this.host.createPairing("temporary", timestamp);
     });
     return form;
+  }
+
+  // Removes every device carried over from the old address in one step,
+  // after one fresh confirmation. The wording comes first, so the dialog
+  // can stay open without the server's confirmation running out.
+  async removeCarriedOver(count, waiting) {
+    if (!confirm(carriedOverConfirmation({ count, waiting }))) return;
+    let removed = false;
+    await this.host.run(async () => {
+      const started = await this.host.api("/api/devices/carried-over/revocation/options", {
+        method: "POST", body: "{}",
+      });
+      this.host.message(`Confirm removing the devices from the old address with ${confirmWith(started)}.`);
+      const proof = await freshConfirmation(started, { signal: this.host.connectionAbort.signal });
+      await this.host.api("/api/devices/carried-over/revocation/finish", {
+        method: "POST",
+        body: JSON.stringify({ flow: started.flow, ...proof }),
+      });
+      removed = true;
+    });
+    // showDevices() runs its own busy guard, so refresh only once released.
+    if (removed) await this.host.showDevices();
   }
 
   async createReplacement(deviceId) {

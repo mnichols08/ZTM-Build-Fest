@@ -52,6 +52,14 @@ test("the systemd unit runs Kin as the kin account, hardened, restarting on fail
   assert.ok(!node.includes("CacheDirectory="));
 });
 
+test("the systemd unit lets the launcher write removable drives for the second backup folder (#763)", { timeout: 60_000 }, () => {
+  for (const sea of [true, false]) {
+    const lines = systemdUnit({ execStart: ["/usr/local/lib/kin/kin"], sea }).split("\n");
+    assert.ok(lines.includes("ReadWritePaths=-/media -/mnt -/run/media"), String(sea));
+    assert.ok(lines.includes("ProtectSystem=strict"), "the rest of the system stays read-only");
+  }
+});
+
 test("systemd accepts the unit", { timeout: 60_000 }, (t) => {
   if (process.platform !== "linux") { t.skip("systemd is Linux only"); return; }
   const analyze = spawnSync("systemd-analyze", ["--version"], { encoding: "utf8", timeout: 10_000 });
