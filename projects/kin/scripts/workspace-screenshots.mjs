@@ -90,6 +90,8 @@ try {
   client = await connect(target.webSocketDebuggerUrl);
   for (const domain of ["Runtime", "Page", "Log", "Network"]) await client.send(`${domain}.enable`);
   await viewport(1440, 960, false);
+  // Start light, so the first shots do not follow the computer's theme (#795).
+  await setMedia(client);
   await client.send("Page.navigate", { url: origin });
   await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.security?.heading)'), "shell");
   await shot("1440-locked-welcome");

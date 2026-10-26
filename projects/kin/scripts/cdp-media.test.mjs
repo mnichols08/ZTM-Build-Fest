@@ -1,6 +1,7 @@
 // Issue #795: browser checks set the colour scheme they measure instead of
 // reading the machine's.
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { mediaFeatures, setMedia } from "./cdp-media.mjs";
 
@@ -35,4 +36,11 @@ test("setMedia passes a media type with the baseline features", async () => {
   await setMedia(client, [], { media: "print" });
   assert.equal(client.sent[0][1].media, "print");
   assert.equal(client.sent[0][1].features.length, 2);
+});
+
+test("the workspace screenshots start light before the first page loads", async () => {
+  const source = await readFile(new URL("./workspace-screenshots.mjs", import.meta.url), "utf8");
+  const firstNavigate = source.indexOf('"Page.navigate"');
+  assert.ok(firstNavigate > 0);
+  assert.match(source.slice(0, firstNavigate), /await setMedia\(client\);/);
 });
