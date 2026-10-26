@@ -10,7 +10,7 @@ export async function shoppingModeRegressions() {
   };
   const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
   const idle = async () => {
-    for (let index = 0; (app.busy || app.refreshing || app.pendingRefresh) && index < 600; index++) await frame();
+    for (let index = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && index < 600; index++) await frame();
     check(!app.busy, "shopping work returns idle");
   };
   const tag = crypto.randomUUID().slice(0, 6);

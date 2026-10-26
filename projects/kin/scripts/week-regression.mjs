@@ -13,7 +13,7 @@ export async function weekRegressions() {
     for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
     check(false, message);
   };
-  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the week work settles");
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "the week work settles");
   const today = app.ctx.navigation.currentCivilDate();
   const days = await app.store.week(today);
   const tomorrow = days[1].date;

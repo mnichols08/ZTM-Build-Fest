@@ -707,7 +707,7 @@ async function pageSync() {
   } finally {
     coordinator.onState = original;
   }
-  for (let i = 0; i < 200 && (app.busy || app.refreshing || app.pendingRefresh); i++) await new Promise((r) => setTimeout(r, 25));
+  for (let i = 0; i < 200 && (app.busy || app.refreshing || app.pendingRefresh || app.wakePending); i++) await new Promise((r) => setTimeout(r, 25));
   return {
     started: true,
     states,

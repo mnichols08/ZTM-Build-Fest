@@ -4,7 +4,7 @@
 
 /** Runs with both tabs unlocked on Today. */
 export async function incrementalRenderPeerRegressions(first, second, until) {
-  const idle = "(() => { const app = document.querySelector('kin-app'); return !app.busy && !app.refreshing && !app.pendingRefresh; })()";
+  const idle = "(() => { const app = document.querySelector('kin-app'); return !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending; })()";
   await until(() => second.evaluate(idle));
   await second.evaluate(`(() => {
     const app = document.querySelector('kin-app');
@@ -17,7 +17,7 @@ export async function incrementalRenderPeerRegressions(first, second, until) {
   await first.evaluate("document.querySelector('kin-app').ctx.conversations.handleAddHandoff({ detail: { text: 'Incremental render Handoff' } })");
   await until(() => second.evaluate(`(() => {
     const app = document.querySelector('kin-app');
-    return !app.busy && !app.refreshing && app.state.handoffs.some((row) => row.text === 'Incremental render Handoff');
+    return !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending && app.state.handoffs.some((row) => row.text === 'Incremental render Handoff');
   })()`));
   const handoff = await second.evaluate(`(() => {
     const app = document.querySelector('kin-app');
@@ -32,7 +32,7 @@ export async function incrementalRenderPeerRegressions(first, second, until) {
   await first.evaluate("document.querySelector('kin-app').ctx.items.handleAddItem({ detail: { text: 'Incremental render Item', classification: 'need' } })");
   await until(() => second.evaluate(`(() => {
     const app = document.querySelector('kin-app');
-    return !app.busy && !app.refreshing && app.state.items.some((item) => item.text === 'Incremental render Item');
+    return !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending && app.state.items.some((item) => item.text === 'Incremental render Item');
   })()`));
   const item = await second.evaluate(`(async () => {
     const app = document.querySelector('kin-app');

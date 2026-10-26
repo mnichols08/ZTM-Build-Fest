@@ -15,7 +15,7 @@ export async function calendarRegressions(client, { until }) {
   const page = (expression) => client.evaluate(expression);
   const settle = () => page(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`);
   const idle = async () => {
-    await until(() => page(`(() => { const app = document.querySelector("kin-app"); return !app.busy && !app.refreshing && !app.ctx.calendar.loading && !app.ctx.week.reading; })()`));
+    await until(() => page(`(() => { const app = document.querySelector("kin-app"); return !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending && !app.ctx.calendar.loading && !app.ctx.week.reading; })()`));
     await settle();
   };
   const tag = await page(`crypto.randomUUID().slice(0, 6)`);

@@ -1385,9 +1385,9 @@ try {
     try {
       // Up to 30 s: a household round trip between two tabs can take longer
       // than until()'s default 10 s on the Windows runner (#164).
-      await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&(${predicate})})()`), { attempts: 600 });
+      await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending&&(${predicate})})()`), { attempts: 600 });
     } catch (error) {
-      const state = await client.evaluate(`(()=>{const app=document.querySelector('kin-app');return {busy:app?.busy,refreshing:app?.refreshing,pendingRefresh:app?.pendingRefresh,status:app?.status?.textContent,alert:app?.alert?.textContent,focus:document.activeElement?.outerHTML?.slice(0,160),handoffs:app?.state?.handoffs?.map(row=>({text:row.text,status:row.status}))}})()`);
+      const state = await client.evaluate(`(()=>{const app=document.querySelector('kin-app');return {busy:app?.busy,refreshing:app?.refreshing,pendingRefresh:app?.pendingRefresh,wakePending:app?.wakePending,status:app?.status?.textContent,alert:app?.alert?.textContent,focus:document.activeElement?.outerHTML?.slice(0,160),handoffs:app?.state?.handoffs?.map(row=>({text:row.text,status:row.status}))}})()`);
       throw new Error(`${error.message} for ${predicate.slice(0, 200)}; household state: ${JSON.stringify(state)}`);
     }
   }
@@ -1404,7 +1404,7 @@ try {
           ...(type === "keyDown" ? { text: "\r" } : {}),
         });
       try {
-        await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&(${done})})()`), { attempts: 100 });
+        await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending&&(${done})})()`), { attempts: 100 });
         return;
       } catch (error) {
         const dropped = press < 3 && await client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&(${pending})})()`);
@@ -1726,10 +1726,10 @@ try {
       app.ctx.peers.flushPeerRefresh = flush;
     }
     await new Promise(resolve => setTimeout(resolve, 0));
-    for (let index = 0; index < 300 && (app.busy || app.refreshing || app.pendingRefresh); index++) await new Promise(resolve => setTimeout(resolve, 10));
+    for (let index = 0; index < 300 && (app.busy || app.refreshing || app.pendingRefresh || app.wakePending); index++) await new Promise(resolve => setTimeout(resolve, 10));
     const owner = app.state.responsibilities.find(value => value.targetKind === "item" && value.targetId === item.itemId)?.memberId;
     const renderedOwner = app.needs.ownerContext?.responsibilities?.find(value => value.targetKind === "item" && value.targetId === item.itemId)?.memberId;
-    return owner === memberId && renderedOwner === memberId && renders >= 1 && flushes === 1 && !app.busy && !app.refreshing && !app.pendingRefresh;
+    return owner === memberId && renderedOwner === memberId && renders >= 1 && flushes === 1 && !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending;
   });
   assert.equal(responsibilityLifecycle, true, "Responsibility changes render committed ownership and flush refreshes deferred while busy");
   await visit(first, "today");
@@ -1931,7 +1931,7 @@ try {
   const focusGotIt = `(()=>{
     const app=document.querySelector('kin-app');
     const target=app.querySelector('kin-handoff-list [aria-label="Acknowledge Newer handoff draft"]');
-    const idle=!app.busy&&!app.refreshing&&!app.pendingRefresh&&!!target&&!target.matches(':disabled');
+    const idle=!app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending&&!!target&&!target.matches(':disabled');
     if(idle&&document.activeElement!==target)target.focus();
     return {idle,focused:!!target&&document.activeElement===target,target:target?.outerHTML,active:document.activeElement?.outerHTML?.slice(0,200)};
   })()`;
@@ -1943,7 +1943,7 @@ try {
     `!app.busy&&app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status!=='acknowledged'&&document.activeElement?.getAttribute('aria-label')==='Acknowledge Newer handoff draft'&&!document.activeElement.disabled`);
   // Read focus only while idle (#469): a background refresh that starts after
   // pressEnterUntil's idle check moves focus to the body until it ends.
-  const composerFocus = `(()=>{const app=document.querySelector('kin-app');return {idle:!app.busy&&!app.refreshing&&!app.pendingRefresh,focused:document.activeElement===document.querySelector('#handoff-text'),active:document.activeElement?.outerHTML?.slice(0,120)};})()`;
+  const composerFocus = `(()=>{const app=document.querySelector('kin-app');return {idle:!app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending,focused:document.activeElement===document.querySelector('#handoff-text'),active:document.activeElement?.outerHTML?.slice(0,120)};})()`;
   const restoredFocus = await until(async () => { const state = await first.evaluate(composerFocus); return state.idle && state; })
     .catch(() => first.evaluate(composerFocus));
   assert.equal(restoredFocus.focused, true, JSON.stringify(restoredFocus));
@@ -2690,7 +2690,7 @@ try {
     await visit(first, "household/areas");
     const areasResult = await first.evaluate(`(async()=>{
       const app=document.querySelector('kin-app');
-      const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Area action did not settle');};
+      const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh||app.wakePending);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Area action did not settle');};
       const form=app.areas.querySelector('.area-create-form');
       const input=form.querySelector('input');
       input.value='Kitchen';input.focus();form.requestSubmit();await idle();
@@ -2734,7 +2734,7 @@ try {
     const notesResult = await first.evaluate(`(async()=>{
       const app=document.querySelector('kin-app');
       app.ctx.navigation.navigate('#household/notes');
-      const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Note action did not settle');};
+      const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh||app.wakePending);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Note action did not settle');};
       const form=app.notes.querySelector('form');
       const [title,body]=form.querySelectorAll('input,textarea');const area=app.state.areas.find(row=>row.name==='Kitchen');const areaSelect=form.querySelector('select');areaSelect.value=area.areaId;
       const beforeInvalid=app.state.notes.length;title.value='A'.repeat(81);body.value='';form.requestSubmit();const invalidNoAppend=app.state.notes.length===beforeInvalid&&title.getAttribute('aria-invalid')==='true'&&!form.querySelector('[id$="title-error"]').hidden;
@@ -2757,7 +2757,7 @@ try {
     await visit(first, "household/notes");
     const referenceResult = await first.evaluate(async () => {
       const app = document.querySelector("kin-app"), ui = app.notes;
-      const idle = async () => { for (let i = 0; i < 300 && (app.busy || app.refreshing || app.pendingRefresh); i++) await new Promise(resolve => setTimeout(resolve, 10)); };
+      const idle = async () => { for (let i = 0; i < 300 && (app.busy || app.refreshing || app.pendingRefresh || app.wakePending); i++) await new Promise(resolve => setTimeout(resolve, 10)); };
       const setValue = (control, value) => { control.value = value; control.dispatchEvent(new Event("input", { bubbles: true })); };
       let form = ui.querySelector(".reference-records form");
       const title = form.querySelector("input");
@@ -2876,29 +2876,29 @@ try {
       const bodyOnly=!title.hasAttribute('aria-invalid')&&body.getAttribute('aria-invalid')==='true'&&!form.querySelector('[id$="body-error"]').hidden;
       return {labels,uniqueIds,descriptionsResolve,titleOnly,bodyOnly};
     })()`);
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),form=app.notes.querySelector('form');if(app.busy||app.refreshing||app.pendingRefresh||form.querySelector('button').disabled)return false;form.querySelector('input').value='Resilience note';form.querySelector('textarea').value='offline body';form.requestSubmit();return app.busy})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),form=app.notes.querySelector('form');if(app.busy||app.refreshing||app.pendingRefresh||app.wakePending||form.querySelector('button').disabled)return false;form.querySelector('input').value='Resilience note';form.querySelector('textarea').value='offline body';form.requestSubmit();return app.busy})()`));
     const resilienceId = await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state?.notes?.find(item=>item.title==='Resilience note');return note&&!note.archived?note.noteId:false})()`));
     const localCreate = await first.evaluate(`(()=>{const app=document.querySelector('kin-app');return app.notes.querySelector('[data-focus-id="title"]')===document.activeElement&&app.status.textContent.includes('saved on this device')})()`);
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${resilienceId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Resilience note updated';form.querySelector('textarea').value='edited offline';form.requestSubmit();return app.busy})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh||app.wakePending)return false;const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${resilienceId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Resilience note updated';form.querySelector('textarea').value='edited offline';form.requestSubmit();return app.busy})()`));
     await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state?.notes?.find(item=>item.noteId==='${resilienceId}');return note?.title==='Resilience note updated'&&!app.busy})()`));
     const localUpdate = await first.evaluate(`(()=>document.querySelector('kin-app').state.notes.find(item=>item.noteId==='${resilienceId}')?.body==='edited offline')()`);
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return !app.busy&&!app.refreshing&&!app.pendingRefresh})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return !app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending})()`));
     await first.evaluate(`(async()=>{const app=document.querySelector('kin-app'),result=await app.store.append({type:'archive-note',noteId:'${resilienceId}'},app.engine);app.state=result.state})()`);
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return !app.busy&&!app.refreshing&&!app.pendingRefresh})()`));
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;app.notes.notes=[{...app.state.notes.find(item=>item.noteId==='${resilienceId}'),archived:false}];const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${resilienceId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Must not revive';form.querySelector('textarea').value='stale';form.requestSubmit();return app.busy})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return !app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh||app.wakePending)return false;app.notes.notes=[{...app.state.notes.find(item=>item.noteId==='${resilienceId}'),archived:false}];const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${resilienceId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Must not revive';form.querySelector('textarea').value='stale';form.requestSubmit();return app.busy})()`));
     try {
-      await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return app.alert.textContent.length>0&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&app.state.notes.find(item=>item.noteId==='${resilienceId}')?.archived===true})()`));
+      await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return app.alert.textContent.length>0&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&!app.wakePending&&app.state.notes.find(item=>item.noteId==='${resilienceId}')?.archived===true})()`));
     } catch (error) {
-      const detail = await first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state.notes.find(item=>item.noteId==='${resilienceId}'),form=app.notes.querySelector('form');return {busy:app.busy,refreshing:app.refreshing,pendingRefresh:app.pendingRefresh,alert:app.alert.textContent,note:note&&{title:note.title,archived:note.archived},formNoteId:form.dataset.noteId,saveDisabled:form.querySelector('button').disabled,componentDisabled:app.notes.disabledState,retry:app.retryButton.hidden}})()`);
+      const detail = await first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state.notes.find(item=>item.noteId==='${resilienceId}'),form=app.notes.querySelector('form');return {busy:app.busy,refreshing:app.refreshing,pendingRefresh:app.pendingRefresh,wakePending:app.wakePending,alert:app.alert.textContent,note:note&&{title:note.title,archived:note.archived},formNoteId:form.dataset.noteId,saveDisabled:form.querySelector('button').disabled,componentDisabled:app.notes.disabledState,retry:app.retryButton.hidden}})()`);
       throw new Error(`${error.message}; stale Note result: ${JSON.stringify(detail)}`);
     }
     const staleRejected = true;
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;app.notes.clearEditor();app.notes.render();const form=app.notes.querySelector('form');form.querySelector('input').value='Offline archive';form.querySelector('textarea').value='saved offline';form.requestSubmit();return app.busy})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh||app.wakePending)return false;app.notes.clearEditor();app.notes.render();const form=app.notes.querySelector('form');form.querySelector('input').value='Offline archive';form.querySelector('textarea').value='saved offline';form.requestSubmit();return app.busy})()`));
     const offlineId = await until(() => first.evaluate(`(()=>{const note=document.querySelector('kin-app').state?.notes?.find(item=>item.title==='Offline archive');return note&&!note.archived?note.noteId:false})()`));
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${offlineId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Offline archive updated';form.querySelector('textarea').value='updated offline';form.requestSubmit();return app.busy})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh||app.wakePending)return false;const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${offlineId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Offline archive updated';form.querySelector('textarea').value='updated offline';form.requestSubmit();return app.busy})()`));
     await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state?.notes?.find(item=>item.noteId==='${offlineId}');return note?.title==='Offline archive updated'&&!app.busy})()`));
     const offlineUpdate = await first.evaluate(`(()=>document.querySelector('kin-app').state.notes.find(item=>item.noteId==='${offlineId}')?.body==='updated offline')()`);
-    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;const button=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='archive-${offlineId}');if(!button||button.disabled)return false;button.click();return app.busy})()`));
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh||app.wakePending)return false;const button=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='archive-${offlineId}');if(!button||button.disabled)return false;button.click();return app.busy})()`));
     await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return app.state?.notes?.find(item=>item.noteId==='${offlineId}')?.archived===true&&!app.busy})()`));
     const offlineNote = {noteId:offlineId,created:true,updated:offlineUpdate,archived:true};
     await first.send("Network.emulateNetworkConditions",{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});
@@ -2999,7 +2999,7 @@ try {
     };
     const areaIdle = async () => first.evaluate(`(async()=>{
       const app=document.querySelector('kin-app');
-      for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));
+      for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh||app.wakePending);i++)await new Promise(r=>setTimeout(r,10));
       if(app.busy||app.refreshing)throw Error('Area action did not settle');
     })()`);
     await first.evaluate(`document.querySelector('kin-app').areas.querySelector('[aria-label="Rename Kitchen"]').focus()`);

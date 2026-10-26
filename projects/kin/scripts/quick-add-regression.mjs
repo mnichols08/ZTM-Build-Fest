@@ -3,9 +3,9 @@ export async function quickAddRegressions() {
   const quick = app.quickAdd;
   const check = (condition, message) => { if (!condition) throw new Error(message); };
   const idle = async () => {
-    for (let index = 0; (app.busy || app.refreshing || app.pendingRefresh) && index < 400; index++)
+    for (let index = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && index < 400; index++)
       await new Promise((resolve) => setTimeout(resolve, 10));
-    check(!app.busy && !app.refreshing, "quick-add returns idle");
+    check(!app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "quick-add returns idle");
   };
   const count = (text) => app.state.items.filter((item) => item.text === text).length;
   const add = async (text) => {

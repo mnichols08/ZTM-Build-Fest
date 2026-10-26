@@ -121,7 +121,7 @@ async function justForMeFlow() {
     for (let index = 0; index < 1200; index++) { if (test()) return; await new Promise((resolve) => setTimeout(resolve, step)); }
     check(false, message, detail?.());
   };
-  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the work settles");
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "the work settles");
   // Asks for sync passes until nothing private waits to send (or 15 s).
   const sent = async (step = 250) => {
     for (let tries = 0; tries < 60 && app.ctx.privateItems.log?.waiting; tries++) {
