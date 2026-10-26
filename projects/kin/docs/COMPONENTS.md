@@ -63,12 +63,13 @@ lives in part classes in a folder named after the element:
 | `<kin-item-detail>` | `item-detail/`: `sections.js` (checklist, files, planning, responsibility, Area, reminder, pin, archive) |
 | `<kin-notes>` | `notes/`: `notes.js` (the Note form and list), `references.js` (reference records and their maintenance log) |
 
+`household/carried-over.js` is a plain module, not a part: the wording `membership.js` shows for devices carried over from the old address after a move, and for removing them together (#769).
+
 The element builds its parts once, in its constructor, from a `PARTS` table,
 with one shared context `{ host, ...parts }`. A part reaches the element as
 `this.host` and the other parts as `this.ctx.<part>`. A part never holds state
 of its own: fields stay on the element, so the lifecycle callbacks and the
 lock path see all of it in one place.
-`household/carried-over.js` is a plain module, not a part: the wording `membership.js` shows for devices carried over from the old address after a move, and for removing them together (#769).
 
 `<kin-playbook-editor>` (the reusable-checklist form with its validation) and
 `<kin-routine-schedule>` (one Routine's schedule disclosure) are small
