@@ -185,8 +185,9 @@ export function checkMovePackage(path) {
 /**
  * Copies a checked package's household into the running service's `store`,
  * in one transaction, and validates the result before it commits. Refuses a
- * household, member, device or username this server already has. Returns
- * the package's summary.
+ * household, member, device or username this server already has. Every
+ * device that arrives unrevoked is marked `carriedOver` (ADR 0026 §6).
+ * Returns the package's summary.
  */
 export function importMovePackage(store, path) {
   const summary = checkMovePackage(path);
@@ -203,6 +204,13 @@ export function importMovePackage(store, path) {
     try {
       store.transaction(() => {
         for (const table of MOVED_TABLES) copyRows(store.db, ALIAS, "main", table, "1 = 1", []);
+        // The old address's devices can't sign in here; an admin removes them
+        // together once everyone has re-joined (ADR 0026 §6). A revoked one
+        // loses any mark left from an earlier move.
+        store.db.prepare(`UPDATE main.devices SET device_json = CASE WHEN revoked_at IS NULL
+          THEN json_set(device_json, '$.carriedOver', json('true'))
+          ELSE json_remove(device_json, '$.carriedOver') END
+          WHERE id IN (SELECT id FROM ${ALIAS}.devices)`).run();
         store.validateSnapshot();
       });
     } catch (error) {

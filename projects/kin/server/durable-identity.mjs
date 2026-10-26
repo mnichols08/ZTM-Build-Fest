@@ -51,7 +51,8 @@ export function validStoredDevice(device) {
     device.label.length > 48 ||
     !isTimestamp(device.trustedAt) ||
     (device.revokedAt !== null && !isTimestamp(device.revokedAt)) ||
-    (device.tokenHash !== null && !isFingerprint(device.tokenHash))
+    (device.tokenHash !== null && !isFingerprint(device.tokenHash)) ||
+    (device.carriedOver !== undefined && device.carriedOver !== true)
   )
     return false;
 

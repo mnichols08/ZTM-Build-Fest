@@ -1421,6 +1421,43 @@ async function api(request, response, url, context) {
     json(response, 200, result);
     return;
   }
+  // The devices carried over from the old address (ADR 0026 §6), removed
+  // together after one fresh confirmation: one revocation, one new epoch.
+  if (request.method === "POST" && url.pathname === "/api/devices/carried-over/revocation/options") {
+    const revocation = service.carriedOverRevocationContext(session);
+    const issued = issueAuthenticationFlow(
+      {
+        purpose: "revoke-carried-over",
+        deviceIds: revocation.deviceIds,
+        memberId: revocation.memberId,
+        deviceId: revocation.deviceId,
+      },
+      revocation.credentialIds,
+      context,
+    );
+    json(response, 200, { ...issued, devices: revocation.deviceIds.length });
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/devices/carried-over/revocation/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "revoke-carried-over") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id)
+      throw badRequest();
+    await confirmFresh(context, request, auth.member, body, () => {
+      const credential = service.credentials.get(body.credential?.id);
+      if (!credential || credential.memberId !== auth.member.id)
+        throw new PairingError("passkey_member_mismatch", "Use this Adult's passkey to continue.", 401);
+      webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    });
+    const result = withTransaction(context, () => {
+      const revoked = service.revokeCarriedOverDevices(session, flow.deviceIds, auth.member.id);
+      if (revoked.length) syncService.onAccessChange(auth.household.id, revoked);
+      return { revoked, revokedAt: revoked.length ? service.devices.get(revoked[0]).revokedAt : null };
+    });
+    json(response, 200, result);
+    return;
+  }
   const deviceMatch = url.pathname.match(/^\/api\/devices\/([a-f0-9]{32})$/);
   if (request.method === "DELETE" && deviceMatch) {
     throw new PairingError("fresh_auth_required", "Authenticate with your passkey before revoking a device.", 401);
