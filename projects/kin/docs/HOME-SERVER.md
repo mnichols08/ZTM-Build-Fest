@@ -21,7 +21,7 @@ server**. A plain guide for households comes with #740.
 | The tunnel to the connection relay (§2) | Built (#733): [below](#reaching-it-from-anywhere-the-tunnel). |
 | Scheduled backups and restore (§10) | Built (#721): [below](#backups-and-restore). The copy to a second folder (a USB drive) is later. |
 | Signed updates (§10) | Built (#722): [below](#updates). Off until the project's release key is made and built in. |
-| Moving a household here from another Kin server ([ADR 0026](decisions/0026-moving-a-household.md)) | Built (#737, #738, #739): [below](#moving-a-household-here). |
+| Moving a household here from another Kin server ([ADR 0026](decisions/0026-moving-a-household.md)) | Built (#737, #738, #739, #769): [below](#moving-a-household-here). |
 
 With a name set (below), phones reach the home server through the
 connection relay. The setup page on the computer itself chooses the name and
@@ -400,6 +400,13 @@ them is ever handed to anyone.
    password, or their backup code. Their device downloads the whole
    history, then Kin offers a new passkey: passkeys belong to the old
    address.
+5. The household's old devices arrive too, so its history still checks
+   out, but they can't sign in here: *People & devices* shows them as
+   *From the old address*. Once everyone has signed in here, a household
+   admin removes them together with **Remove the devices from the old
+   address** and a fresh passkey or password. Anyone who hasn't signed in
+   yet still can, with their password or backup code, or with a recovery
+   invitation from an admin if they have neither.
 
 What arrives has no device tokens and no passkeys, so nothing is signed in
 here until people sign in. The control panel shows when a household last
