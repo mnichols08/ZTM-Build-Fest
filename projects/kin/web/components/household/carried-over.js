@@ -4,8 +4,11 @@
 // together. This is the wording for that, built before anything is asked of
 // the server, so the confirmation can stay open as long as the admin needs.
 
+/** Where a carried-over device came from; the sign-in list says this too. */
+export const CARRIED_OVER_ORIGIN = "From the old address";
+
 /** The status beside a device carried over from the old address. */
-export const CARRIED_OVER_STATUS = "From the old address · can't sign in here";
+export const CARRIED_OVER_STATUS = `${CARRIED_OVER_ORIGIN} · can't sign in here`;
 
 /** The bulk-removal button: "Remove the 2 devices from the old address". */
 export function carriedOverButtonLabel(count) {

@@ -311,6 +311,9 @@ test("after a move, an old device replaced on sign-in is left out of the removal
     server.service.persistHousehold(household.householdId);
 
     const phone = await signInLater();
+    // "Which device is this?" says which ones came from the old address (#780).
+    assert.deepEqual(phone.view.devices.map((device) => [device.deviceId, device.carriedOver]),
+      [[household.deviceId, false], [laptop.view.deviceId, true], [tablet.view.deviceId, true]]);
     const options = await household.founder.call("/api/devices/carried-over/revocation/options");
     assert.equal(options.status, 200, JSON.stringify(options.body));
     assert.equal(options.body.devices, 2);

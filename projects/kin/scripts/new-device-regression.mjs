@@ -111,8 +111,9 @@ async function createHousehold(founder) {
 }
 
 /** Signs in on this fresh browser and answers "Which device is this?" with
- * `choice` ("new", or a device ID this one replaces). */
-export async function signInHere(founder, choice) {
+ * `choice` ("new", or a device ID this one replaces). `fromOldAddress`
+ * lists the devices the list should mark as carried over by a move (#780). */
+export async function signInHere(founder, choice, fromOldAddress = []) {
   const checks = [];
   const check = (value, message) => { if (!value) throw new Error(message); checks.push(message); };
   const wait = async (condition, label, ms = 60_000) => {
@@ -150,6 +151,8 @@ export async function signInHere(founder, choice) {
   check(options[0]?.value === "new" && options[0].checked && options[0].parentElement.textContent.includes("Add this as a new device"),
     "Add this as a new device is offered first, and chosen");
   check(options.slice(1).every((input) => input.parentElement.textContent.includes("This replaces")), "each of the member's devices can be replaced");
+  check(options.slice(1).every((input) => input.parentElement.textContent.includes("From the old address") ===
+    fromOldAddress.includes(input.value.slice("replace:".length))), "the devices from the old address, and only those, say so");
   const warning = security.querySelector("#device-choice-warning");
   check(warning.hidden, "no warning while adding a new device");
   if (choice !== "new") {
@@ -207,8 +210,18 @@ export async function newDeviceRegressions({ endpoint, browserClient }) {
     assert.equal(laptopDevice.revokedAt, null);
     checks += 3;
 
+    // What a move leaves of the founder's device (ADR 0026 §6, #769): its
+    // record, marked, with no token. The list says it's from the old address
+    // (#780); the phone still replaces the laptop.
+    const founderDevice = kin.service.devices.get(identity.deviceId);
+    kin.service.deviceTokens.delete(founderDevice.tokenHash);
+    founderDevice.tokenHash = null;
+    founderDevice.carriedOver = true;
+    for (const [sessionHash, session] of kin.service.sessions)
+      if (session.deviceId === founderDevice.id) kin.service.sessions.delete(sessionHash);
+    kin.service.persistHousehold(founderDevice.householdId);
     const phone = await open();
-    const replaced = await phone.evaluate(`(${signInHere.toString()})(${JSON.stringify(FOUNDER)}, ${JSON.stringify(added.identity.deviceId)})`);
+    const replaced = await phone.evaluate(`(${signInHere.toString()})(${JSON.stringify(FOUNDER)}, ${JSON.stringify(added.identity.deviceId)}, ${JSON.stringify([identity.deviceId])})`);
     checks += replaced.checks;
     assert.ok(kin.service.devices.get(added.identity.deviceId).revokedAt, "the replaced device is revoked");
     assert.equal(kin.service.devices.get(replaced.identity.deviceId).revokedAt, null);

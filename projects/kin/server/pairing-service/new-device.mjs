@@ -302,14 +302,16 @@ export const newDeviceMethods = {
   },
 
   /** What the browser shows after signing in: who, how, until when, and
-   * the member's trusted devices to choose from ("Which device is this?"). */
+   * the member's trusted devices to choose from ("Which device is this?"),
+   * each saying whether it was carried over from the old address (#780), as
+   * People & devices already shows the member. */
   newDeviceView(record) {
     const member = this.members.get(record.memberId);
     const household = this.households.get(record.householdId);
     const devices = [...this.devices.values()]
       .filter((device) => device.memberId === record.memberId && device.householdId === record.householdId && !device.revokedAt)
       .sort((left, right) => left.trustedAt - right.trustedAt)
-      .map((device) => ({ deviceId: device.id, label: device.label, trustedAt: device.trustedAt }));
+      .map((device) => ({ deviceId: device.id, label: device.label, trustedAt: device.trustedAt, carriedOver: device.carriedOver === true }));
     return {
       method: record.method,
       needsPasskey: record.needsPasskey,
