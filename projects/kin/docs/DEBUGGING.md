@@ -71,7 +71,8 @@ become analytics.
   takes a code from the fixed registry in `web/diagnostics/registry.js` and
   fields that are numbers or values from a fixed list; anything else becomes
   `other` or is dropped. It records: `sync_failed` and `sync_room_failed`
-  (an error code from a fixed list and an HTTP status), `sync_slow`,
+  (an error code from a fixed list and an HTTP status; for a missing
+  household key, `sync_failed` also has the key epoch it lacked), `sync_slow`,
   `engine_load_failed`, `engine_error` (the engine's numeric category),
   `storage_failed`, `render_failed`, `render_slow`, `route_failed`,
   `unexpected_error` (error or rejection, and the error's constructor name,

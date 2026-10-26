@@ -16,7 +16,8 @@
 //
 // "Fresh storage" clears this page's cookies and site data rather than
 // opening another browser context, so the same virtual authenticator (and
-// its passkey) stays attached.
+// its passkey) stays attached. Storage is cleared only once the account vault
+// holds the household's current key, as a device left running would see to.
 //
 // browser-regression.mjs runs this (part 2) with its browser; it can also
 // run alone: node scripts/account-security-regression.mjs <browser executable>
@@ -289,6 +290,25 @@ async function backupCodeSignInHere(founder, code, h) {
   return checks.length;
 }
 
+/** Whether the member's vault as the service stores it (`version`, and
+ * `ciphertext` in base64url) holds household epoch `epoch`, opened with
+ * this device's vault key. */
+async function vaultHoldsEpoch({ version, ciphertext, epoch }, h) {
+  const { openVault, wipeVaultContents } = await import("/security/account-vault.js");
+  const { fromBase64Url } = await import("/security/local-vault.js");
+  const { householdId, memberId } = h.app().household.identity;
+  const vaultKey = await h.app().household.syncKeyStore.accountVaultKey(householdId);
+  if (!vaultKey) return false;
+  let contents = null;
+  try {
+    contents = await openVault(vaultKey, fromBase64Url(ciphertext), { householdId, memberId, version });
+    return contents.epochs.some((entry) => entry.family === "household" && entry.epoch === epoch);
+  } finally {
+    vaultKey.fill(0);
+    wipeVaultContents(contents);
+  }
+}
+
 // ---- The suite -------------------------------------------------------------------
 
 export async function accountSecurityRegressions({ endpoint, browserClient }) {
@@ -321,6 +341,19 @@ export async function accountSecurityRegressions({ endpoint, browserClient }) {
     };
     // Another device: the same page with no cookies and no site data.
     const fresh = async () => {
+      // A device that just signed in commits the key rotation its own
+      // sign-in started, and is then the only device holding the new key
+      // until its vault keeper adds it to the account vault a moment later.
+      // Wiping it before then leaves the next device's vault a key behind,
+      // and that device's sync pauses for a household key (#791). Losing
+      // every device in that moment is the test's doing, not a person's:
+      // wait for the rotation and the vault first.
+      await eventually(async () => {
+        const sync = kin.syncService.state(identity.householdId);
+        const vault = store.accountVault(identity.householdId, identity.memberId);
+        return !sync.rotationPending && vault && run(vaultHoldsEpoch, { version: vault.version,
+          ciphertext: Buffer.from(vault.ciphertext).toString("base64url"), epoch: sync.currentEpoch });
+      }, "the account vault holds the household's current key");
       // Four devices of one member in a few minutes spend the vault
       // download limits (per member and per address in 15 minutes);
       // in real use they'd be hours apart, so each new device starts a
