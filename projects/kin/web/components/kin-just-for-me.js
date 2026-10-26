@@ -14,6 +14,8 @@
 // Fast capture first (tired-parent test): type, Enter, done. A date, a note,
 // editing and sharing live under each item's "More". Deleting offers Undo,
 // which stays until the next change (WCAG 2.2.1); nothing here times out.
+// Changes save one at a time: a tap made while one saves waits its turn and
+// runs after it (#792), so nothing tapped is lost and no control changes.
 import { button } from "./shared/dom.js";
 import { privateMarker } from "./shared/private-marker.js";
 import { formatCivilDate } from "../today-view.js";
@@ -38,7 +40,9 @@ class KinJustForMe extends HTMLElement {
     this.items = [];
     this.onToday = true;
     this.today = null;
-    this.running = false;
+    // The changes tapped so far, run in order, and how many haven't finished.
+    this.queue = Promise.resolve();
+    this.waiting = 0;
     this.openIds = new Set();
     this.completedOpen = false;
     this.undo = null;
@@ -330,47 +334,78 @@ class KinJustForMe extends HTMLElement {
   async add() {
     const text = this.input.value.trim();
     if (!text) { this.input.focus(); return; }
-    const date = civilFromInput(this.dateInput.value);
-    const done = await this.perform({ type: "add-private-item", itemId: newId(), text, date }, `Added ${quoted(text)}. Only you can see it.`);
-    if (done) {
-      this.input.value = "";
-      this.dateInput.value = "";
-      this.input.focus();
+    const dateValue = this.dateInput.value;
+    const date = civilFromInput(dateValue);
+    // The words leave the field now, so a second Enter can't add them twice.
+    this.input.value = "";
+    this.dateInput.value = "";
+    const done = await this.perform({ type: "add-private-item", itemId: newId(), text, date }, `Added ${quoted(text)}. Only you can see it.`, {
+      onSaved: () => { if (this.lastInLine) this.input.focus(); },
+    });
+    if (!done && !this.input.value) {
+      this.input.value = text;
+      this.dateInput.value = dateValue;
     }
   }
 
   async remove(item) {
-    const done = await this.perform({ type: "delete-private-item", itemId: item.id }, `Deleted ${quoted(item.text)}.`, { keepUndo: true });
-    if (!done) return;
-    this.undo = item;
-    this.undoButton.hidden = false;
-    this.undoButton.setAttribute("aria-label", `Undo deleting ${item.text}`);
-    this.undoButton.focus();
+    await this.perform({ type: "delete-private-item", itemId: item.id }, `Deleted ${quoted(item.text)}.`, {
+      keepUndo: true,
+      // Before the next change starts, which ends this Undo.
+      onSaved: () => {
+        this.undo = item;
+        this.undoButton.hidden = false;
+        this.undoButton.setAttribute("aria-label", `Undo deleting ${item.text}`);
+        if (this.lastInLine) this.undoButton.focus();
+      },
+    });
   }
 
   async runUndo() {
     const item = this.undo;
     if (!item) return;
-    const done = await this.perform({ type: "restore-private-item", itemId: item.id }, `Restored ${quoted(item.text)}.`);
-    if (done) this.findByKey(`${item.id}:done`)?.focus();
+    await this.perform({ type: "restore-private-item", itemId: item.id }, `Restored ${quoted(item.text)}.`, {
+      onSaved: () => { if (this.lastInLine) this.findByKey(`${item.id}:done`)?.focus(); },
+    });
   }
 
-  /** Runs one private command. Resolves true when it was saved. */
-  async perform(command, message, { keepUndo = false } = {}) {
-    if (this.running || !this.controller) return false;
-    this.running = true;
-    if (!keepUndo) this.clearUndo();
-    try {
-      await this.controller.run(command);
+  /** True inside a change's turn when nothing was tapped after it, so moving
+   * focus can't pull it away from a control used since. */
+  get lastInLine() {
+    return this.waiting <= 1;
+  }
+
+  /** Runs `task` after every change tapped before it; resolves with its result. */
+  enqueue(task) {
+    this.waiting += 1;
+    const turn = this.queue.then(async () => {
+      try {
+        return await task();
+      } finally {
+        this.waiting -= 1;
+      }
+    });
+    this.queue = turn.catch(() => {});
+    return turn;
+  }
+
+  /** Runs one private command in its turn. Resolves true when it was saved;
+   * `onSaved` runs then, before the next change starts. */
+  perform(command, message, { keepUndo = false, onSaved = null } = {}) {
+    if (!this.controller) return Promise.resolve(false);
+    return this.enqueue(async () => {
+      if (!keepUndo) this.clearUndo();
+      try {
+        await this.controller.run(command);
+      } catch (error) {
+        this.say(error?.userMessage ?? "Kin couldn't save that private change. Try again.");
+        this.render();
+        return false;
+      }
       this.say(message);
+      onSaved?.();
       return true;
-    } catch (error) {
-      this.say(error?.userMessage ?? "Kin couldn't save that private change. Try again.");
-      this.render();
-      return false;
-    } finally {
-      this.running = false;
-    }
+    });
   }
 
   clearUndo() {
@@ -411,7 +446,7 @@ class KinJustForMe extends HTMLElement {
   }
 
   openShare(item, opener) {
-    if (this.running || !this.controller || this.shareDialog.open) return;
+    if (!this.controller || this.shareDialog.open) return;
     this.sharing = { item, opener };
     const audience = this.controller.shareAudience?.() ?? null;
     this.shareWho.textContent = audience
@@ -429,19 +464,18 @@ class KinJustForMe extends HTMLElement {
       sharing.opener?.focus();
       return;
     }
-    if (this.running) return;
-    this.running = true;
-    this.clearUndo();
-    try {
-      const outcome = await this.controller.share(sharing.item);
-      this.say(outcome.message);
-    } catch (error) {
-      this.say(error?.userMessage ?? "Kin couldn't share that. Nothing was lost; try again.");
-    } finally {
-      this.running = false;
-    }
-    if (sharing.opener?.isConnected) sharing.opener.focus();
-    else this.heading.focus();
+    await this.enqueue(async () => {
+      this.clearUndo();
+      try {
+        const outcome = await this.controller.share(sharing.item);
+        this.say(outcome.message);
+      } catch (error) {
+        this.say(error?.userMessage ?? "Kin couldn't share that. Nothing was lost; try again.");
+      }
+      if (!this.lastInLine) return;
+      if (sharing.opener?.isConnected) sharing.opener.focus();
+      else this.heading.focus();
+    });
   }
 
   // ---- Focus across re-renders --------------------------------------------
