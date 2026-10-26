@@ -878,7 +878,12 @@ async function pageInstallIdentityAsMember() {
 
 async function pageWithdrawInstallIdentity() {
   const app = document.querySelector("kin-app");
+  // After A's offline reload the section is gone (no authority offline) and
+  // returns only on a later sync poll; load authority now rather than race it.
+  await app.ctx.appearance.refreshHouseholdDefaults();
+  await app.ctx.appearance.refreshInstallIdentity();
   const panel = app.householdDefaults.install;
+  if (!panel) return { section: false };
   const originalConfirm = globalThis.confirm;
   globalThis.confirm = () => true;
   try {
@@ -886,7 +891,7 @@ async function pageWithdrawInstallIdentity() {
     for (let i = 0; i < 400 && panel.state.published; i++) await new Promise((resolve) => setTimeout(resolve, 25));
   } finally { globalThis.confirm = originalConfirm; }
   const manifest = await (await fetch("/manifest.webmanifest", { credentials: "same-origin", cache: "no-store" })).json();
-  return { published: Boolean(panel.state.published), shortName: manifest.short_name, privateBrand: app.householdSettings?.brand?.iconSource,
+  return { section: true, published: Boolean(panel.state.published), shortName: manifest.short_name, privateBrand: app.householdSettings?.brand?.iconSource,
     header: { name: app.brandTitle.textContent, genericHidden: app.brandGenericMark.hidden,
       letterHidden: app.brandLetterMark.hidden, uploadHidden: app.brandUploadedMark.hidden } };
 }
@@ -1495,7 +1500,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(reopenedBrand.privateBrand === "upload" && reopenedBrand.genericHidden && reopenedBrand.letterHidden && !reopenedBrand.uploadHidden,
       "reopening the household restores its private identity without retaining the locked fallback: " + JSON.stringify(reopenedBrand));
     const withdrawn = await a.call(pageWithdrawInstallIdentity);
-    check(!withdrawn.published && withdrawn.shortName === "Kin" && withdrawn.privateBrand === "upload" &&
+    check(withdrawn.section && !withdrawn.published && withdrawn.shortName === "Kin" && withdrawn.privateBrand === "upload" &&
       withdrawn.header.genericHidden && withdrawn.header.letterHidden && !withdrawn.header.uploadHidden,
       "withdrawing plaintext home-screen identity leaves A's encrypted in-app icon intact: " + JSON.stringify(withdrawn));
     const memberAfterWithdrawal = await b.call(pageInstallIdentityAsMember);

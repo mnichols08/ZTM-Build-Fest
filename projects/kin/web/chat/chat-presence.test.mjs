@@ -687,6 +687,9 @@ test("turning the setting off stops my heartbeats and hides everyone's status, o
   laptop.setActive(true);
   await settleTasks();
   await h.deliver();
+  // The phone answers Sam's hello in the background; let that reply go out
+  // before clearing, or it lands after the splice and counts as a second frame.
+  await settleTasks();
   assert.deepEqual(phone.online(), [SAM]);
   h.frames.splice(0);
   await phone.setSettings({ online: false });

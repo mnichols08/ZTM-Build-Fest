@@ -47,7 +47,14 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
       signalSource,
       spawnImpl: (command, args, options) => {
         const child = spawn(command, args, options);
-        child.once("spawn", () => setTimeout(() => signalSource.emit(signal), 150));
+        // Interrupt once the child reports its descendant, not after a fixed
+        // delay: a slow Node start could otherwise be killed before it spawns one.
+        let seen = "";
+        let sent = false;
+        child.stdout.on("data", (chunk) => {
+          seen += chunk;
+          if (!sent && /descendant:\d+/.test(seen)) { sent = true; signalSource.emit(signal); }
+        });
         return child;
       },
     });
