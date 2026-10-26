@@ -482,6 +482,16 @@ documentation only.
   tapped, and a second tap that would change nothing more (Delete, Undo or
   Save twice) is ignored instead of showing "That changed meanwhile". Focus
   moves after a change only when nothing was tapped after it.
+- **Kin at home's clean-ups retry on Windows whatever the Node version**
+  (#785). On Windows a file can stay held for a moment after the program
+  using it stops (a stopped service's `kin.sqlite-wal`, an antivirus scan).
+  Removing a tried update's folder, an older build's unpacked app or a
+  damaged copy now waits for it to be let go, as it was meant to: Node
+  24.16 to 24.18 and 25.1 stopped at the first refusal instead of retrying,
+  so an update could fail and a damaged copy couldn't be replaced. The
+  executable and the updater remove these folders with `fs.promises.rm`,
+  whose retries work in every supported Node.
+
 - **The connection relay frees a tunnel handshake its client aborts**
   (#733). A home server that refused the relay's certificate left the
   connection open on the relay until Node's 120-second default, and the

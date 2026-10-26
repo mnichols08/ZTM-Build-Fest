@@ -41,6 +41,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { basename, dirname, join, relative, isAbsolute } from "node:path";
 import { writePrivateFile } from "../acme/keys.mjs";
 import { DurableStore, acquireDatabaseProcessLock } from "../durable-store.mjs";
@@ -205,6 +206,12 @@ export function replaceDatabase(backupDatabase, databasePath, { now = Date.now }
  * resume(spec, { onExit }), adopt(spec), flagsFor(appRoot), serviceEnv,
  * canStop and spec.
  */
+// Removes a trial app folder. The service that just ran from it, or an
+// antivirus scan, can hold its files on Windows for a moment, so this
+// retries. rmSync's retries can't be relied on: some Node 24 releases stop
+// at the first EPERM (#785).
+const removeFolder = (folder) => rm(folder, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+
 export class HomeUpdater {
   constructor({
     dataDirectory, databasePath, version, program, controller,
@@ -226,6 +233,8 @@ export class HomeUpdater {
     };
     this.manifest = null;
     this.installing = null;
+    // Settles once start()'s clean-up of an earlier update is done.
+    this.cleaned = Promise.resolve();
     this.timers = [];
     // Settles once the last status written is on disk (see #write).
     this.written = Promise.resolve();
@@ -233,7 +242,7 @@ export class HomeUpdater {
 
   /** Starts the daily check and the minute's look at requests. */
   start() {
-    this.#cleanUp();
+    this.cleaned = this.#cleanUp();
     this.#write(this.key ? "not-checked" : "off");
     if (!this.key || this.timers.length) return;
     const first = setTimeout(() => this.tick().catch(() => {}), FIRST_CHECK_MS);
@@ -323,6 +332,9 @@ export class HomeUpdater {
     const available = this.state.available;
     const from = this.version;
     if (!available || this.cannotInstall) return "failed";
+    // An earlier update's trial folder may still be going (#cleanUp); this
+    // one may have the same name.
+    await this.cleaned;
     const to = available.version;
     const fail = (code) => {
       this.state.lastUpdate = { from, to, outcome: "failed", at: new Date(this.now()).toISOString(), code };
@@ -387,7 +399,7 @@ export class HomeUpdater {
     } catch (error) {
       const code = error instanceof UpdateError ? error.code : "update-failed";
       rmSync(staged, { force: true });
-      rmSync(trialCache, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      await removeFolder(trialCache);
       if (paused) this.controller.resume(original);
       return fail(code);
     }
@@ -440,13 +452,13 @@ export class HomeUpdater {
       this.log({ event: "home_update_rollback_database_failed", code });
     }
     rmSync(staged, { force: true });
-    rmSync(trialCache, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    await removeFolder(trialCache);
     this.controller.resume(original);
   }
 
   /** Leftovers of an update that stopped half-way: downloads, unused
    * staged executables and trial app folders. `kin.previous` stays. */
-  #cleanUp() {
+  async #cleanUp() {
     if (this.cannotInstall) return;
     const installDirectory = dirname(this.program.executable);
     try {
@@ -456,7 +468,7 @@ export class HomeUpdater {
     try {
       const inUse = this.program.appDirectory ? basename(dirname(this.program.appDirectory)) : null;
       for (const name of readdirSync(this.program.appCache))
-        if (/^update-\d+\.\d+\.\d+$/.test(name) && name !== inUse) rmSync(join(this.program.appCache, name), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+        if (/^update-\d+\.\d+\.\d+$/.test(name) && name !== inUse) await removeFolder(join(this.program.appCache, name));
     } catch { /* nothing to clean */ }
   }
 
