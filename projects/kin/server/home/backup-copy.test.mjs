@@ -46,6 +46,9 @@ function fixture(t, { folder, name = NAME } = {}) {
   return { root, dataDirectory, chosen, copies: join(chosen, COPIES_FOLDER, name ?? "none"), clock, makeSet, settings };
 }
 
+/** A `realpath` for stand-in paths with no links. */
+const same = async (path) => path;
+
 /** A `stat` that puts everything under `root` on another disk. */
 const otherDisk = (root) => async (path) => {
   const info = await stat(path);
@@ -387,7 +390,7 @@ test("outside Windows, an empty mount point under /mnt is reported as missing, e
   // on the same partition as /.
   const stats = async (path) => (["/mnt/kinusb", "/mnt", "/"].includes(path) ? { dev: 7, isDirectory: () => true } : { ...(await stat(path)), dev: 8 });
   const made = [];
-  const instance = copier(context, { platform: "linux", files: { stat: stats, mkdir: async (path) => { made.push(path); } } });
+  const instance = copier(context, { platform: "linux", files: { stat: stats, realpath: same, mkdir: async (path) => { made.push(path); } } });
   assert.deepEqual(await instance.sync(), { state: "failed", code: "backup-copy-missing" });
   assert.deepEqual(made, [], "nothing made on the empty mount point");
 });
@@ -403,7 +406,7 @@ test("outside Windows, a drive mounted at /mnt itself is used, and a drive mount
     const made = [];
     // The copies folder is never really made under /mnt: a stand-in that
     // refuses, which shows the folder itself was accepted.
-    const instance = copier(context, { platform: "linux", files: { stat: stats, mkdir: async (path) => { made.push(path); throw systemError("EROFS"); } } });
+    const instance = copier(context, { platform: "linux", files: { stat: stats, realpath: same, mkdir: async (path) => { made.push(path); throw systemError("EROFS"); } } });
     assert.deepEqual(await instance.sync(), { state: "failed", code: "backup-copy-denied" }, folder);
     assert.deepEqual(made, [`${folder}/${COPIES_FOLDER}/${NAME}`], folder);
   }
@@ -434,9 +437,38 @@ test("outside Windows, the folder directly under the mount area decides: empty o
     const made = [];
     // A stand-in that refuses to make the copies folder: denied shows the
     // folder itself was accepted.
-    const instance = copier(context, { platform, files: { stat: stats, mkdir: async (path) => { made.push(path); throw systemError("EROFS"); } } });
+    const instance = copier(context, { platform, files: { stat: stats, realpath: same, mkdir: async (path) => { made.push(path); throw systemError("EROFS"); } } });
     const label = `${platform} ${folder} ${JSON.stringify(devs)}`;
     assert.deepEqual(await instance.sync(), { state: "failed", code }, label);
+    assert.deepEqual(made, code === "backup-copy-missing" ? [] : [`${folder}/${COPIES_FOLDER}/${NAME}`], label);
+  }
+});
+
+test("outside Windows, the mount area is found on the folder's real path: a link to an empty mount point, a linked /media, or /volumes typed in lower case on a Mac", async (t) => {
+  const context = fixture(t);
+  await context.makeSet();
+  // `real` stands in for realpath (links followed, the case the disk
+  // holds); `stat` follows links, so the folder as typed has its target's
+  // partition.
+  const cases = [
+    // /srv/kin-backups links to /mnt/usb, an fstab mount point with the drive unplugged.
+    ["linux", "/srv/kin-backups", "/mnt/usb", { "/srv/kin-backups": 7, "/mnt/usb": 7, "/mnt": 7, "/": 7 }, "backup-copy-missing"],
+    ["linux", "/srv/kin-backups", "/mnt/usb", { "/srv/kin-backups": 9, "/mnt/usb": 9, "/mnt": 7, "/": 7 }, "backup-copy-denied"],
+    // Fedora Silverblue: /media links to /run/media, on tmpfs (5), while / is 7.
+    ["linux", "/media/usb", "/run/media/usb", { "/media/usb": 5, "/run/media/usb": 5, "/media": 5, "/run/media": 5, "/run": 5, "/": 7 }, "backup-copy-missing"],
+    ["linux", "/media/usb", "/run/media/usb", { "/media/usb": 9, "/run/media/usb": 9, "/media": 5, "/run/media": 5, "/run": 5, "/": 7 }, "backup-copy-denied"],
+    // A Mac's disk ignores case: /volumes/USB is /Volumes/USB.
+    ["darwin", "/volumes/USB", "/Volumes/USB", { "/volumes/USB": 7, "/Volumes/USB": 7, "/Volumes": 7, "/": 6 }, "backup-copy-missing"],
+    ["darwin", "/volumes/USB", "/Volumes/USB", { "/volumes/USB": 9, "/Volumes/USB": 9, "/Volumes": 7, "/": 6 }, "backup-copy-denied"],
+  ];
+  for (const [platform, folder, real, devs, code] of cases) {
+    context.settings(folder);
+    const stats = async (path) => (path in devs ? { dev: devs[path], isDirectory: () => true } : { ...(await stat(path)), dev: 8 });
+    const made = [];
+    const instance = copier(context, { platform, files: { stat: stats, realpath: async (path) => (path === folder ? real : path), mkdir: async (path) => { made.push(path); throw systemError("EROFS"); } } });
+    const label = `${platform} ${folder} -> ${real} ${JSON.stringify(devs)}`;
+    assert.deepEqual(await instance.sync(), { state: "failed", code }, label);
+    // A folder accepted is still used by the path the person gave.
     assert.deepEqual(made, code === "backup-copy-missing" ? [] : [`${folder}/${COPIES_FOLDER}/${NAME}`], label);
   }
 });

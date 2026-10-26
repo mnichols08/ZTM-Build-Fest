@@ -45,14 +45,15 @@
 // partition as its data directory: a drive that isn't plugged in is then
 // reported, instead of filling this computer's own disk with copies that
 // wouldn't survive it failing. Another partition of the same disk can't be
-// told apart (the guide says so). Outside Windows, a folder under /media,
-// /mnt, /run/media or /Volumes is looked at from itself up to the folder
-// directly under that area: when none of them is on another partition than
-// the folder above it, nothing is mounted there and it is reported as
-// missing. A drive mounted at /mnt (or /media, /run/media) itself is used;
-// /Volumes never counts as one, since on a Mac it can be on another
-// partition than / with no drive mounted at it. A full drive is reported,
-// never cleared to make room.
+// told apart (the guide says so). Outside Windows, the folder's real path
+// (its links followed and, on a Mac, its name in the case the disk holds)
+// is looked at when it is under /media, /mnt, /run/media or /Volumes: from
+// the folder up to the one directly under that area, when none of them is
+// on another partition than the folder above it, nothing is mounted there
+// and it is reported as missing. A drive mounted at /mnt (or /media,
+// /run/media) itself is used; /Volumes never counts as one, since on a Mac
+// it can be on another partition than / with no drive mounted at it. A full
+// drive is reported, never cleared to make room.
 //
 // How it went goes to `backups/copy-status.json`, which only the launcher
 // writes and the control panel reads (backups.mjs). Kin's log gets codes
@@ -61,7 +62,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createReadStream, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
-import { mkdir, open, readdir, rm, stat, statfs } from "node:fs/promises";
+import { mkdir, open, readdir, realpath, rm, stat, statfs } from "node:fs/promises";
 import { dirname, join, posix, win32 } from "node:path";
 import { writePrivateFile } from "../acme/keys.mjs";
 import {
@@ -203,13 +204,13 @@ const blank = (folder) => ({ folder, checkedAt: null, lastCopyAt: null, lastCopi
 
 /**
  * The launcher's copier for one home server. Test seams: `files` replaces
- * `stat`, `statfs` (free space), `mkdir` (for the copies folder),
+ * `stat`, `realpath`, `statfs` (free space), `mkdir` (for the copies folder),
  * `copyFile` (copyFileFlushed) and `protect` (protectFolder, on Windows).
  */
 export class BackupCopier {
   constructor({ dataDirectory, env = process.env, platform = process.platform, now = Date.now, log = () => {}, files = {}, pollMs = COPY_POLL_MS }) {
     Object.assign(this, { dataDirectory, env, platform, now, log, pollMs });
-    this.files = { stat, statfs, mkdir, copyFile: copyFileFlushed, protect: protectFolder, ...files };
+    this.files = { stat, realpath, statfs, mkdir, copyFile: copyFileFlushed, protect: protectFolder, ...files };
     this.source = backupsDirectory(dataDirectory);
     const previous = readBackupCopyStatus(dataDirectory);
     this.state = previous
@@ -384,15 +385,19 @@ export class BackupCopier {
    * one directly under the mount area (`/Volumes/USB`, or
    * `/media/<you>/<label>` and the folder between), it is refused when none
    * of them is on another partition than the folder above it, unless a
-   * drive is mounted at the area itself (see the top of this file). */
+   * drive is mounted at the area itself (see the top of this file). The
+   * walk is on the folder's real path: a link to an empty /mnt/usb, or
+   * /media where /media links to /run/media, is looked at where it really
+   * is, and /volumes/USB on a Mac as /Volumes/USB. */
   async #check(folder) {
     const info = await this.files.stat(folder);
     if (!info.isDirectory()) throw new BackupCopyError("backup-copy-not-folder");
     if ((await this.files.stat(this.dataDirectory)).dev === info.dev) throw new BackupCopyError("backup-copy-same-disk");
     if (this.platform === "win32") return;
-    const area = MOUNT_AREAS.find((root) => folder.startsWith(`${root}/`));
+    const real = await this.files.realpath(folder);
+    const area = MOUNT_AREAS.find((root) => real.startsWith(`${root}/`));
     if (!area) return;
-    for (let path = folder; path.length > area.length; path = posix.dirname(path)) {
+    for (let path = real; path.length > area.length; path = posix.dirname(path)) {
       if ((await this.files.stat(posix.dirname(path))).dev !== info.dev) return;
     }
     if (area !== "/Volumes" && (await this.files.stat(posix.dirname(area))).dev !== info.dev) return;
