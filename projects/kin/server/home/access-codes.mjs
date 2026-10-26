@@ -67,18 +67,20 @@ export class OneTimeCode {
   }
 
   /** Whether a new code may be issued now; else when (ms since epoch). */
-  nextIssueAt() {
-    return this.#issuedAt === null || (this.reissueAfterUse && this.#used) ? this.now() : this.#issuedAt + this.issueIntervalMs;
+  nextIssueAt(now = this.now()) {
+    return this.#issuedAt === null || (this.reissueAfterUse && this.#used) ? now : this.#issuedAt + this.issueIntervalMs;
   }
 
   /** Issues a new code (replacing any), or returns null inside the issue
-   * interval unless `force`. Resolves to { code, expiresAt }. */
+   * interval unless `force`. Resolves to { code, expiresAt }. The clock is
+   * read once: two looks a millisecond apart would refuse a first code. */
   issue({ force = false, code = null } = {}) {
-    if (!force && this.now() < this.nextIssueAt()) return null;
+    const now = this.now();
+    if (!force && now < this.nextIssueAt(now)) return null;
     const value = code === null ? generateCode(this.random) : normalizeCode(code);
     if (value === null) throw new TypeError("not a valid code");
     this.#hash = digest(value);
-    this.#issuedAt = this.now();
+    this.#issuedAt = now;
     this.#expiresAt = this.#issuedAt + this.ttlMs;
     this.#attempts = 0;
     this.#used = false;

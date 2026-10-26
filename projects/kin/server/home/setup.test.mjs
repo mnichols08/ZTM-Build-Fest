@@ -78,6 +78,16 @@ test("one-time codes: an unambiguous alphabet, single use, expiry, limited tries
   assert.equal(confirm.issue(), null, "a locked code keeps the wait: guessing gets no faster");
 });
 
+test("one-time codes: the first code is never refused as too soon, however the clock ticks", TIMEOUT, () => {
+  // A clock a millisecond on at every look, as a busy machine's can be.
+  let ms = Date.UTC(2026, 9, 22, 12);
+  const now = () => ms++;
+  assert.ok(new OneTimeCode({ purpose: "access", ttlMs: 60 * 60_000, now }).issue(), "nothing issued yet");
+  const confirm = new OneTimeCode({ purpose: "confirm", ttlMs: 10 * 60_000, reissueAfterUse: true, now });
+  assert.equal(confirm.verify(confirm.issue().code), "ok");
+  assert.ok(confirm.issue(), "straight after a confirmation code was used");
+});
+
 // ------------------------------------------------------- the settings file
 
 test("writeHomeSettings merges, checks before writing, and writes 0600 in a 0700 home/", TIMEOUT, async (t) => {
