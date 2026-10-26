@@ -9,11 +9,11 @@ export async function routineRegressions() {
   const idle = async () => {
     for (
       let i = 0;
-      (app.busy || app.refreshing || app.pendingRefresh) && i < 300;
+      (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && i < 300;
       i++
     )
       await new Promise((resolve) => setTimeout(resolve, 10));
-    check(!app.busy && !app.refreshing, "Routine work returns idle");
+    check(!app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "Routine work returns idle");
   };
   const rows = () => app.store.loadEvents();
   const originalNow = Date.now;
@@ -140,6 +140,13 @@ export async function routineRegressions() {
       cadence: "weekly",
     });
     const weeklyId = app.state.routines.at(-1).routineId;
+    // A wake refresh first awaits the security-epoch read, which idle()
+    // cannot see, so wait for the projected week itself.
+    const weeklyOccurrence = async (key) => {
+      for (let i = 0; app.state.routines.find(r => r.routineId === weeklyId).occurrenceKey !== key && i < 300; i++)
+        await new Promise(resolve => setTimeout(resolve, 10));
+      await idle();
+    };
     await app.ctx.routines.saveRoutine({
       type: "complete-routine-occurrence",
       routineId: weeklyId,
@@ -154,9 +161,7 @@ export async function routineRegressions() {
     );
     now = new Date(2026, 9, 19, 12).getTime();
     document.dispatchEvent(new Event("visibilitychange"));
-    for (let i = 0; app.state.routines.find(r => r.routineId === weeklyId).occurrenceKey !== 20261019 && i < 300; i++)
-      await new Promise(resolve => setTimeout(resolve, 10));
-    await idle();
+    await weeklyOccurrence(20261019);
     check(
       app.state.routines.find((r) => r.routineId === weeklyId).occurrenceKey ===
         20261019,
@@ -169,8 +174,9 @@ export async function routineRegressions() {
     );
     now = new Date(2026, 9, 3, 12).getTime();
     app.onWindowFocus();
-    await new Promise((resolve) => setTimeout(resolve, 180));
-    await idle();
+    // Wait for the replay, not a fixed 180 ms (#469): the 150 ms focus timer
+    // plus the epoch read can outlast it, and idle() then returns early.
+    await weeklyOccurrence(20260928);
     check(
       app.state.routines.find((r) => r.routineId === weeklyId)
         .occurrenceStatus === "completed",
@@ -371,7 +377,7 @@ export async function routineRegressions() {
 
 export async function routinePeerRegressions(first, second, until) {
   const idle = (client) =>
-    until(() => client.evaluate("(()=>{const a=document.querySelector('kin-app');return !a.busy&&!a.refreshing&&!a.pendingRefresh;})()"));
+    until(() => client.evaluate("(()=>{const a=document.querySelector('kin-app');return !a.busy&&!a.refreshing&&!a.pendingRefresh&&!a.wakePending;})()"));
   const append = (client, command) =>
     client.evaluate(
       `(async()=>{try{await document.querySelector('kin-app').store.append(${JSON.stringify(command)},document.querySelector('kin-app').engine);return {ok:true}}catch(error){return {ok:false,code:error.code}}})()`,
@@ -476,7 +482,7 @@ export async function routineKeyboardRegressions(client, until) {
       });
   };
   const idle = () =>
-    until(() => client.evaluate("(()=>{const a=document.querySelector('kin-app');return !a.busy&&!a.refreshing&&!a.pendingRefresh;})()"));
+    until(() => client.evaluate("(()=>{const a=document.querySelector('kin-app');return !a.busy&&!a.refreshing&&!a.pendingRefresh&&!a.wakePending;})()"));
   await client.evaluate(
     `(()=>{const ui=document.querySelector('kin-app').routines;ui.openCreate();ui.input.value='Keyboard routine';ui.input.focus();})()`,
   );

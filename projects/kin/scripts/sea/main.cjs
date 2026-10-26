@@ -98,7 +98,11 @@ function intact(directory, manifest) {
 // intact copy first is fine.
 const RENAME_RACE = new Set(["ENOTEMPTY", "EEXIST", "EPERM", "EBUSY", "EACCES"]);
 
-function unpack(root, manifest) {
+// fs.promises.rm, not rmSync: some Node 24 releases' rmSync stops at the
+// first EPERM on Windows instead of retrying (#785).
+const removeFolder = (folder, maxRetries) => fs.promises.rm(folder, { recursive: true, force: true, maxRetries, retryDelay: 100 });
+
+async function unpack(root, manifest) {
   const name = `app-${manifest.bundle.slice(0, 16)}`;
   const target = path.join(root, name);
   if (intact(target, manifest)) return target;
@@ -119,14 +123,14 @@ function unpack(root, manifest) {
       } catch (error) {
         if (!RENAME_RACE.has(error.code) || attempt >= 5) throw error;
         if (intact(target, manifest)) {
-          fs.rmSync(staging, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+          await removeFolder(staging, 10);
           break;
         }
-        fs.rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+        await removeFolder(target, 10);
       }
     }
   } catch (error) {
-    fs.rmSync(staging, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await removeFolder(staging, 10);
     fail(`Kin couldn't unpack its app files into ${root} (${error.code ?? error.message}). Set KIN_APP_CACHE to a folder this account can write.`);
   }
   // Other builds' copies go; another process's unpacking of this build
@@ -134,7 +138,7 @@ function unpack(root, manifest) {
   // keeps a folder a running older version still uses.
   for (const entry of fs.readdirSync(root)) {
     if (entry === name || entry.startsWith(`.${name}-`) || !/^\.?app-[0-9a-f]{16}/.test(entry)) continue;
-    try { fs.rmSync(path.join(root, entry), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch {}
+    try { await removeFolder(path.join(root, entry), 3); } catch {}
   }
   return target;
 }
@@ -180,7 +184,7 @@ async function launcher() {
   // through a symlink: macOS's temporary folders (/var/folders, /tmp) are
   // symlinks into /private.
   const appCache = path.resolve(cacheRoot || defaultCacheRoot(env));
-  const appDirectory = fs.realpathSync(unpack(appCache, manifest));
+  const appDirectory = fs.realpathSync(await unpack(appCache, manifest));
   if (prepareOnly) {
     process.stdout.write(`${appDirectory}\n`);
     return;

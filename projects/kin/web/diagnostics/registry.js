@@ -33,7 +33,8 @@ export const SYNC_REASONS = freeze([
   "rotation_required", "epoch_key_missing", "event_signature_invalid", "provisioning_signature_invalid",
   "chat_rate_limited", "chat_unavailable", "chat_read_only", "chat_key_stale", "private_rate_limited",
   "private_storage_full", "private_unavailable", "board_unavailable", "origin_rejected", "not_found",
-  "bad_request", "invalid_request", "timeout",
+  "bad_request", "invalid_request", "timeout", "provisioning_grant_refused", "household_key_missing",
+  "household_key_missing_after_rotation", "household_key_missing_for_binding",
 ]);
 
 /** The streams a pass syncs. */
@@ -73,7 +74,8 @@ const NUMBER = "number";
  */
 export const DIAGNOSTIC_CODES = Object.freeze({
   // Sync (web/sync/sync-coordinator.js).
-  sync_failed: Object.freeze({ reason: SYNC_REASONS, status: NUMBER }),
+  // `epoch`: the household key epoch a household_key_missing* pass lacked.
+  sync_failed: Object.freeze({ reason: SYNC_REASONS, status: NUMBER, epoch: NUMBER }),
   sync_room_failed: Object.freeze({ room: SYNC_ROOMS, reason: SYNC_REASONS, status: NUMBER }),
   sync_slow: Object.freeze({ ms: NUMBER }),
   // The household engine (web/wasm/).

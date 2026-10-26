@@ -106,6 +106,7 @@ export const deviceMethods = {
           trustedAt,
           revokedAt,
           syncKeyFingerprint,
+          carriedOver,
         }) => ({
           id,
           memberId,
@@ -113,6 +114,7 @@ export const deviceMethods = {
           trustedAt,
           revokedAt,
           syncKeyFingerprint,
+          carriedOver: carriedOver === true && !revokedAt,
         }),
       );
   },
@@ -180,6 +182,55 @@ export const deviceMethods = {
       this.requireManagementAuthority(member, household, "revoke another member's device");
     if (!target.revokedAt) this.requireAdminAccessAfterRevocation(household, target.id);
     return { memberId: member.id, deviceId: actingDevice.id, credentialIds: [...member.credentials] };
+  },
+
+  // Devices carried over from the old address (ADR 0026 §6) that still
+  // can't sign in here: marked at import, unrevoked and without a token.
+  carriedOverDeviceIds(household, actingDeviceId) {
+    return [...this.devices.values()]
+      .filter((device) => device.householdId === household.id && device.id !== actingDeviceId &&
+        device.carriedOver === true && !device.revokedAt && device.tokenHash === null)
+      .map((device) => device.id);
+  },
+
+  carriedOverRevocationContext(sessionToken) {
+    const { member, household, device: actingDevice } = this.authorize(sessionToken);
+    this.requireManagementAuthority(member, household, "remove the devices from the old address");
+    const deviceIds = this.carriedOverDeviceIds(household, actingDevice.id);
+    if (!deviceIds.length)
+      throw new PairingError("nothing_carried_over", "No devices from the old address are left to remove.", 409);
+    this.requireAdminAccessAfterRevocation(household, deviceIds);
+    return { memberId: member.id, deviceId: actingDevice.id, credentialIds: [...member.credentials], deviceIds };
+  },
+
+  // Revokes the devices confirmed at the options step that are still carried
+  // over, all at one time. A device that re-joined meanwhile is left alone.
+  // Returns the IDs it revoked.
+  revokeCarriedOverDevices(sessionToken, deviceIds, reauthenticatedMemberId) {
+    const { member, household, device: actingDevice } = this.authorize(sessionToken);
+    this.requireManagementAuthority(member, household, "remove the devices from the old address");
+    if (reauthenticatedMemberId !== member.id)
+      throw new PairingError("fresh_auth_required", "Authenticate with your passkey again before revoking a device.", 401);
+    const eligible = new Set(this.carriedOverDeviceIds(household, actingDevice.id));
+    const ids = [...new Set(deviceIds)].filter((deviceId) => eligible.has(deviceId));
+    // Saved even with nothing to remove: the confirmation raised the
+    // passkey's verified signature counter, and that must outlast a restart.
+    if (!ids.length) {
+      this.persistHousehold(household.id);
+      return [];
+    }
+    // Recheck at mutation time; state may have changed since the options step.
+    this.requireAdminAccessAfterRevocation(household, ids);
+    const now = this.now();
+    for (const deviceId of ids) {
+      const device = this.devices.get(deviceId);
+      device.revokedAt = now;
+      this.audit("device_revoked", { householdId: household.id, memberId: device.memberId, deviceId, reason: "carried_over" });
+    }
+    for (const [sessionHash, activeSession] of this.sessions)
+      if (ids.includes(activeSession.deviceId)) this.sessions.delete(sessionHash);
+    this.persistHousehold(household.id);
+    return ids;
   },
 
   // An invitation is bound to its author. Once that member loses authority,

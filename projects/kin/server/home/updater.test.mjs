@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { holdFor } from "../../scripts/held-file.mjs";
 import { makeReleaseKey } from "../../scripts/release-key.mjs";
 import { signManifest } from "../../scripts/sign-release.mjs";
 import { DurableStore } from "../durable-store.mjs";
@@ -192,6 +193,68 @@ test("a release whose service exits during the trial is undone the same way", as
   assert.equal(await done, "rolled-back");
   assert.equal(context.updater.status().lastUpdate.code, "update-exited");
   assert.equal(context.calls.at(-1)[1], context.original);
+});
+
+// Windows can hold a file in a trial folder for a moment after its service
+// stops; the clean-ups retry until it lets go, whatever the Node version
+// (#785).
+test("a trial folder Windows still holds for a moment is removed once it lets go, after a failed trial", async (t) => {
+  const context = installed(t, { health: (calls) => (calls.at(-1)?.[0] === "resume" && calls.at(-1)[1].command.endsWith(".new") ? 1 : 0) });
+  await context.updater.check();
+  const trialCache = join(context.appCache, "update-1.6.1");
+  const held = join(trialCache, "app-1111111111111111", "kin.sqlite-wal");
+  let released = null;
+  const realResume = context.controller.resume;
+  context.controller.resume = (spec, options) => {
+    if (spec.command.endsWith(".new")) writeFileSync(held, "the trial's");
+    return realResume(spec, options);
+  };
+  // The trial has stopped; the file is still held as the rollback starts.
+  const realPause = context.controller.pause;
+  context.controller.pause = async () => {
+    if (existsSync(held) && !released) released = holdFor(held, 150);
+    return realPause();
+  };
+  assert.equal(await context.updater.install("admin"), "rolled-back");
+  assert.ok(released, "the file was held");
+  await released;
+  assert.ok(!existsSync(trialCache), "removed after the hold");
+  assert.equal(context.calls.at(-1)[1], context.original, "the version that was running starts again");
+});
+
+test("a trial folder Windows still holds for a moment is removed once it lets go, after an install fails", async (t) => {
+  const context = installed(t);
+  await context.updater.check();
+  let released = null;
+  context.updater.prepare = async (staged, cacheRoot) => {
+    const directory = join(cacheRoot, "app-1111111111111111");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "half-unpacked"), "");
+    released = holdFor(join(directory, "half-unpacked"), 150);
+    throw new Error("unpacking stopped");
+  };
+  assert.equal(await context.updater.install("admin"), "failed");
+  await released;
+  assert.ok(!existsSync(join(context.appCache, "update-1.6.1")));
+  assert.deepEqual(readdirSync(context.install), ["kin"], "no download left behind");
+});
+
+test("an earlier update's leftovers are removed on start, even held for a moment, before an install uses the name", async (t) => {
+  const context = installed(t);
+  const leftover = join(context.appCache, "update-1.6.1", "app-0123456789abcdef");
+  mkdirSync(leftover, { recursive: true });
+  writeFileSync(join(leftover, "server.mjs"), "an unfinished update's");
+  writeFileSync(join(context.install, "kin-1.6.1.new"), "an unfinished download");
+  const released = holdFor(join(leftover, "server.mjs"), 150);
+  await context.updater.check();
+  context.updater.start();
+  context.updater.stop();
+  // Straight away: the install waits for the clean-up of a folder it reuses.
+  assert.equal(await context.updater.install("admin"), "updated");
+  await released;
+  assert.ok(!existsSync(leftover), "the leftover folder is gone");
+  assert.ok(existsSync(join(context.appCache, "update-1.6.1", "app-1111111111111111")), "the new release's folder stays");
+  assert.deepEqual(readdirSync(context.install).sort(), ["kin", "kin.previous"]);
 });
 
 test("a major release waits for an admin, who asks from the control panel", async (t) => {

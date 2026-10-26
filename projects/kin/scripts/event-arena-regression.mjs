@@ -254,7 +254,7 @@ export async function eventArenaPeerRegressions(first, second, until) {
   })`);
   await until(() => second.evaluate(`(() => {
     const app = document.querySelector('kin-app');
-    return !app.busy && !app.refreshing && app.state.items.some((item) => item.text === 'Arena two-tab change');
+    return !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending && app.state.items.some((item) => item.text === 'Arena two-tab change');
   })()`));
   const decrypts = await second.evaluate("window.arenaRestore(); window.arenaDecrypts");
   const result = await second.evaluate(`(async () => {

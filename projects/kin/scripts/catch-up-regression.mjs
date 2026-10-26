@@ -553,7 +553,7 @@ export async function catchUpPeerRegressions(first, second, until) {
   );
   await until(() => first.evaluate(`(()=>{
     const app=document.querySelector('kin-app');
-    return !app.busy && !app.refreshing && document.activeElement===app.catchUp.heading;
+    return !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending && document.activeElement===app.catchUp.heading;
   })()`));
   assert.deepEqual(
     await second.evaluate("window.catchUpMessages"),

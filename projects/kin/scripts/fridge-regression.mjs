@@ -264,12 +264,25 @@ export async function fridgeRegressions(client, until) {
   try {
     await until(async () => (await strokes()) === 1);
   } catch (error) {
+    // Once (#469) the board came back empty, not with one stroke: say whether
+    // the room was swapped or reset, or the events it read hide the strokes.
+    // Asked first, as a closed room makes the board itself throw.
+    const room = await page(`(() => {
+      const app = document.querySelector("kin-app");
+      const room = window.__fridgeRoom;
+      const view = room.records.view();
+      let kinds = null;
+      try { kinds = room.engine.eventMetadataBatch(Array.from({ length: view.length }, (_, index) => view.record(index))).map((event) => event.kind); } catch (error) { kinds = String(error?.message ?? error); }
+      return { shown: app.fridge.room === room, synced: app.syncCoordinator?.board === room, closed: room.closed, records: view.length, epoch: view.epoch,
+        loadedOrder: room.loadedOrder, pending: room.pending.size, refused: room.refused.length, syncError: room.syncError?.code ?? null, kinds,
+        sync: { state: app.syncState?.state ?? null, code: app.syncState?.code ?? null, coordinator: Boolean(app.syncCoordinator) } };
+    })()`).catch((reason) => String(reason?.message ?? reason));
     const state = await page(`(() => {
       const fridge = document.querySelector("kin-fridge");
       return { tool: fridge.tool, stroke: fridge.stroke ? { pointerType: fridge.stroke.pointerType, erasing: Boolean(fridge.stroke.erasing) } : null, penDown: fridge.penDown,
         status: fridge.querySelector(".fridge-status").textContent, strokes: window.__fridgeRoom.board().strokes.map((s) => ({ id: s.id.slice(0, 6), points: [...s.points].slice(0, 8) })) };
-    })()`);
-    error.message += ` — eraser at ${JSON.stringify(target)}; fridge ${JSON.stringify(state)}`;
+    })()`).catch((reason) => String(reason?.message ?? reason));
+    error.message += ` — eraser at ${JSON.stringify(target)}; fridge ${JSON.stringify(state)}; room ${JSON.stringify(room)}`;
     throw error;
   }
   await page(`document.querySelector("kin-fridge .fridge-history button:first-child").click()`);

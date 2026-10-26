@@ -448,6 +448,13 @@ folder as the `kin-browser-diagnostics` artifact.
 A flake is a bug to fix, not noise: fix the cause rather than lengthening a
 wait, and never delete or weaken a test to make it pass.
 
+A suite that waits for Kin to settle waits the way the `idle()` helpers do:
+until none of `app.busy`, `app.refreshing`, `app.pendingRefresh` and
+`app.wakePending` is set. `wakePending` is a wake (window focus, the tab
+showing again, the Pulse timer) whose refresh has not started yet (#793).
+Without it a check can land just before that refresh clears an alert,
+disables the controls or moves focus.
+
 ### Triage a flake
 
 1. **Read it.** The job summary's "Flaky browser suites" table (or the

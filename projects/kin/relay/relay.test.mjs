@@ -5,6 +5,7 @@
 // registration and refusals.
 import assert from "node:assert/strict";
 import { X509Certificate, generateKeyPairSync } from "node:crypto";
+import { createSocket } from "node:dgram";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { request } from "node:http";
@@ -17,6 +18,7 @@ import { Registry } from "./registry.mjs";
 import { UNRECOGNIZED_NAME_ALERT } from "./sni.mjs";
 import { chromeLike, echOuter, records } from "./test-support/client-hello.mjs";
 import { FakeHome } from "./test-support/fake-home.mjs";
+import { holdTcpOnly } from "./test-support/ports.mjs";
 
 const fixture = (name) => readFileSync(new URL(`./test-fixtures/${name}`, import.meta.url));
 const RELAY_TLS = { key: fixture("relay-test.key"), cert: fixture("relay-test.crt") };
@@ -578,4 +580,28 @@ test("on shutdown every home server reads GOAWAY 8 before its tunnel closes", as
   const started = Date.now();
   await closing;
   assert.ok(Date.now() - started < 1500, "close() doesn't wait the full two seconds once the home servers have gone");
+});
+
+test("a start that fails closes what it had opened, so nothing keeps the process alive (#469)", async () => {
+  // DNS on a port TCP already has: TLS and HTTP listen first, then DNS fails.
+  const { taken, release } = await holdTcpOnly();
+  const relay = new ConnectionRelay({
+    zone: "home.test", relayName: "relay.home.test", tls: RELAY_TLS, addresses: ["127.0.0.1"],
+    resolveTxt: async () => [], certificateSeen: async () => null,
+  });
+  try {
+    // Should it start after all, it is closed, so the test fails instead of
+    // hanging on an open relay.
+    const started = relay.listen({ host: "127.0.0.1", tlsPort: 0, httpPort: 0, dnsPort: taken }).then(async (ports) => { await relay.close(); return ports; });
+    await assert.rejects(started, (error) => error.code === "EADDRINUSE" && error.syscall === "listen");
+    assert.equal(relay.edge.listening, false, "the TLS listener is closed");
+    assert.equal(relay.redirect.listening, false, "the HTTP listener is closed");
+    // The DNS UDP socket on that number is closed too: it can be bound again.
+    const udp = createSocket("udp4");
+    await new Promise((resolve, reject) => { udp.once("error", reject); udp.bind(taken, "127.0.0.1", resolve); });
+    await new Promise((resolve) => udp.close(resolve));
+  } finally {
+    relay.registry.close();
+    await release();
+  }
 });
