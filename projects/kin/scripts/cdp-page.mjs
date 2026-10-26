@@ -20,6 +20,15 @@ export const PAGE_TIMEOUT_MS = 30_000;
 
 export const RENAVIGATE_AFTER_MS = 5_000;
 
+// How long a start may take before the start-up guard gives up on it: its
+// three stall clocks (8 s, 20 s and 45 s with nothing finishing) and the
+// loads between them.
+export const KIN_START_TIMEOUT_MS = 120_000;
+
+// A call that lost its context ran while the page navigated: the tab is on its
+// way somewhere (the start-up guard's reload, say), not stuck.
+const LOST_CONTEXT = /Execution context was destroyed|Cannot find context/;
+
 export async function waitForOrigin(evaluate, origin, { timeoutMs = PAGE_TIMEOUT_MS, navigate, renavigateAfterMs = RENAVIGATE_AFTER_MS, ready, readyText = "" } = {}) {
   const expression = `location.origin === ${JSON.stringify(origin)} && document.readyState !== "loading"${ready ? ` && (${ready})` : ""}`;
   const started = Date.now();
@@ -27,14 +36,17 @@ export async function waitForOrigin(evaluate, origin, { timeoutMs = PAGE_TIMEOUT
   let nextNavigation = started + renavigateAfterMs;
   let last = "no answer";
   for (;;) {
+    let navigating = false;
     try {
       if (await evaluate(expression) === true) return;
       last = await evaluate("`${location.href} (${document.readyState})`").catch(() => last);
     } catch (error) {
       last = error?.message ?? String(error);
+      navigating = LOST_CONTEXT.test(last);
     }
-    // Still not on the origin (a page that is loading it doesn't need help).
-    if (navigate && Date.now() >= nextNavigation && !last.startsWith(origin)) {
+    // Still not on the origin (a page that is loading it, or navigating, doesn't
+    // need help: navigating again would cancel that load's requests).
+    if (navigate && !navigating && Date.now() >= nextNavigation && !last.startsWith(origin)) {
       nextNavigation = Date.now() + renavigateAfterMs * 2;
       await navigate().catch(() => {});
     }
@@ -51,7 +63,7 @@ export async function waitForOrigin(evaluate, origin, { timeoutMs = PAGE_TIMEOUT
 // even when the reloaded page starts; these short calls just ask again. Once
 // kin-app is defined the guard has stopped, so later calls are safe.
 export function waitForKinStart(evaluate, origin, options = {}) {
-  return waitForOrigin(evaluate, origin, { ...options, ready: 'Boolean(customElements.get("kin-app"))', readyText: " or start Kin" });
+  return waitForOrigin(evaluate, origin, { timeoutMs: KIN_START_TIMEOUT_MS, ...options, ready: 'Boolean(customElements.get("kin-app"))', readyText: " or start Kin" });
 }
 
 // Browser regressions reload pages and expect the lock screen, so every

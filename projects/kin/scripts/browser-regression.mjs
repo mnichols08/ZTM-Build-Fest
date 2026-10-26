@@ -2,7 +2,7 @@
 // Uses a fresh temporary profile and loopback server, never an existing Kin DB.
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { setViewport } from "./cdp-viewport.mjs";
-import { applyRegressionDefaults, captureFailure, createLoadTrace, printAbortedModules, printLoadTrace as printTrace } from "./cdp-page.mjs";
+import { applyRegressionDefaults, captureFailure, createLoadTrace, printAbortedModules, printLoadTrace as printTrace, KIN_START_TIMEOUT_MS, waitForOrigin } from "./cdp-page.mjs";
 import {
   pulseRegressions,
   pulsePeerRegressions,
@@ -1262,13 +1262,22 @@ try {
     await applyRegressionDefaults((method, params) => client.send(method, params));
     await client.send("Page.navigate", { url: origin });
     // A new tab on the Windows runner sometimes never runs Kin's modules
-    // (kin-app stays undefined, no error; #327). Load it once more then.
-    const defined = () => client.evaluate('Boolean(customElements.get("kin-app"))').catch(() => false);
-    for (let attempt = 0; attempt < 150 && !(await defined()); attempt += 1) await delay(100);
-    if (!(await defined())) {
-      console.log(`NOTE new tab had not defined kin-app after 15 s (${JSON.stringify(await tabFacts(client))}); loading it again (#327)`);
+    // (kin-app stays undefined, no error; #327). The start-up guard
+    // (web/boot-guard.js) loads such a start again itself, so the tab waits
+    // for it: a reload from here would cancel the guard's own (#469). Only
+    // when the guard has given up and says Kin didn't finish loading does the
+    // tab press its Try again, once.
+    const evaluate = (expression) => client.evaluate(expression);
+    await waitForOrigin(evaluate, origin, {
+      timeoutMs: KIN_START_TIMEOUT_MS,
+      navigate: () => client.send("Page.navigate", { url: origin }),
+      ready: 'Boolean(customElements.get("kin-app") || document.querySelector("[data-kin-boot-failed] button"))',
+      readyText: " or start Kin (or give up)",
+    });
+    if (!(await evaluate('Boolean(customElements.get("kin-app"))').catch(() => false))) {
+      console.log(`NOTE new tab had not defined kin-app after the start-up guard's reloads (${JSON.stringify(await tabFacts(client))}); trying again (#327)`);
       printLoadTrace(client);
-      await client.send("Page.reload", { ignoreCache: true });
+      await evaluate('document.querySelector("[data-kin-boot-failed] button").click()').catch(() => {});
     }
     await ready(client);
     return client;

@@ -15,7 +15,9 @@ import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
-export async function securityUiRegressions(client) {
+// A passing run ends the process here, so the caller's `finally` never runs:
+// `beforeExit` prints what it must print on a pass too.
+export async function securityUiRegressions(client, { beforeExit = () => {} } = {}) {
   // Names the step (and any navigation) when one fails, without printing its
   // arguments: the synthetic recovery secret stays in this process only.
   const step = async (name, expression) => {
@@ -76,6 +78,7 @@ export async function securityUiRegressions(client) {
       uploadThroughput: -1,
     });
   }
+  beforeExit();
   process.exit(0);
 }
 
@@ -1050,7 +1053,8 @@ if (
     // start-up guard reload during that one call would end it (#469).
     await waitForKinStart(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
     await send("Page.enable");
-    await securityUiRegressions(client);
+    // A guard reload that recovered a lost module still gets its note (#594).
+    await securityUiRegressions(client, { beforeExit: () => printAbortedModules(loadTrace) });
   } catch (error) {
     // Before the browser closes: what each page showed (#328), and how the
     // tab loaded Kin (#594).

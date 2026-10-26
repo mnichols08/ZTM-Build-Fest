@@ -46,6 +46,23 @@ test("waitForKinStart waits through a start-up guard reload until kin-app is def
   assert.match(asked[0], /document\.readyState !== "loading" && \(Boolean\(customElements\.get\("kin-app"\)\)\)$/);
 });
 
+// The guard reloads only after its stall clock (8 s or more), well past the
+// re-navigate window: a lost context then is that reload, not a stuck tab.
+test("waitForKinStart doesn't navigate again during the start-up guard's reload", async () => {
+  const started = Date.now();
+  let lost = 0;
+  let navigated = 0;
+  await waitForKinStart(async (expression) => {
+    const elapsed = Date.now() - started;
+    if (expression.startsWith("`")) return "http://127.0.0.1:1/ (interactive)";
+    if (elapsed < 150) return false;
+    if (lost < 3) { lost += 1; throw new Error(lost === 1 ? "Execution context was destroyed." : "Cannot find context with specified id"); }
+    return elapsed >= 250;
+  }, "http://127.0.0.1:1", { renavigateAfterMs: 60, navigate: async () => { navigated += 1; } });
+  assert.equal(lost, 3);
+  assert.equal(navigated, 0, "the reload is left to finish");
+});
+
 test("waitForKinStart says Kin didn't start when kin-app never appears", async () => {
   await assert.rejects(
     waitForKinStart(async (expression) => expression.startsWith("`") ? "http://127.0.0.1:1/ (interactive)" : false, "http://127.0.0.1:1", { timeoutMs: 120 }),
