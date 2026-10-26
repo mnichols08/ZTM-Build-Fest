@@ -435,6 +435,9 @@ test("passkeys: once added, the password alone no longer signs in; a passkey alo
     // The password first: the capability waits for the passkey.
     const { browser, view } = await signIn(strict);
     assert.equal(view.needsPasskey, true);
+    // The password alone doesn't show the member's devices, or which of them
+    // a move carried over (#780).
+    assert.deepEqual(view.devices, []);
     assert.equal((await browser.call("/api/account/sign-in/vault")).body.error, "passkey_required");
     const options = await browser.call("/api/account/sign-in/passkey/options", { body: {} });
     assert.deepEqual(options.body.publicKey.allowCredentials, [{ id: credentialId }]);
@@ -442,6 +445,7 @@ test("passkeys: once added, the password alone no longer signs in; a passkey alo
     assert.equal(finished.status, 200, JSON.stringify(finished.body));
     assert.equal(finished.body.method, "password-passkey");
     assert.equal(finished.body.needsPasskey, false);
+    assert.deepEqual(finished.body.devices.map((device) => [device.deviceId, device.carriedOver]), [[household.deviceId, false]]);
     const download = await browser.call("/api/account/sign-in/vault");
     assert.deepEqual(download.body.wrappers.map((wrapper) => wrapper.type), ["password-passkey"]);
   } finally {
