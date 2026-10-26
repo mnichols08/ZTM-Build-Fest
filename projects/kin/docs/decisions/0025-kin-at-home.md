@@ -754,8 +754,8 @@ it again.
   write, and the service already has the database, a clock and the control
   panel the status and changes go through; a launcher-run backup would need
   a second channel to the panel. Only the optional copy to a second folder
-  writes outside the data directory, so that copy, when built, is the
-  launcher's. A backup is due when the newest set is older than the latest
+  writes outside the data directory, so that copy is the launcher's (*As
+  built (#763)*, below). A backup is due when the newest set is older than the latest
   scheduled hour, so a computer that was off at 03:00 catches up when it
   starts; a failure waits an hour before the next try.
 - **Restore runs at the next start, inside the service.** The panel checks
@@ -767,6 +767,37 @@ it again.
   put back only on a computer with no home key yet (moving to a new
   computer, offered on the setup page before a name is chosen); on a server
   that has one, its own keys stay.
+
+*As built (#763).* The copy to a second folder:
+
+- **The launcher keeps the folder in step by looking again.** The
+  service's `home_backup_created` line, the launcher starting and a look
+  every minute each copy any finished set the folder lacks, newest first.
+  That covers the set the updater makes before an update (in the launcher,
+  so no line) and a drive plugged in later; a missed line does no harm.
+- **The folder is `backupCopyFolder` in `home/settings.json`, chosen only in
+  the panel on the home server's own computer**, because the copies hold
+  every household's data and the home key: a change can be marked
+  loopback-only, and any caller that doesn't say it is the loopback panel
+  is refused. The service checks only the value's form (it may not look
+  outside its data directory); the launcher checks the folder itself. A
+  stored path that doesn't suit this computer (after a move to another
+  kind of computer) turns the copy off rather than stopping Kin.
+- **Copies go to `<folder>/Kin backups/<name>/kin-<time>/`**, in the set
+  format, the database read back and checked, the manifest written last and
+  each file flushed. Kin never makes the chosen folder and refuses one on the
+  data directory's own disk, so a missing or unmounted drive is reported and
+  never fills the system disk. The 14-newest rule applies there, touching
+  only Kin's own folders (two servers can share a drive), and a full drive
+  is reported, not cleared.
+- **The outcome goes to `backups/copy-status.json`**, which only the
+  launcher writes, as with `updates/status.json`. The remote panel sees the
+  state, dates and codes, never the folder's path.
+- **The Linux unit allows writes to `/media`, `/mnt` and `/run/media`**
+  (`ReadWritePaths`), since `ProtectSystem=strict` would make them read-only
+  for the launcher too; the service stays confined to its data directory by
+  the permission model. An install from before this needs
+  `kin --install-service` again.
 
 *As built (#722).* With the owner's answers of 2026-10-25:
 
