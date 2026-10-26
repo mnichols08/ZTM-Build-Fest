@@ -25,6 +25,8 @@ function stubWebAuthn() {
     verifyAuthentication(response, flow, registered) {
       if (!registered || response?.id !== registered.id || response?.flow !== flow)
         throw new PairingError("passkey_verification_failed", "Invalid passkey.", 401);
+      // As a real authenticator does, each use raises the signature counter.
+      registered.signCount += 1;
       return true;
     },
     discardFlow() {},
@@ -201,6 +203,10 @@ test("when every device re-joined before confirming, nothing changes and there i
   assert.deepEqual(none.body, { revoked: [], revokedAt: null });
   assert.deepEqual(household.revoked(household.carriedIds), []);
   assert.equal(household.status().rotationPending, false);
+  // The confirmation's raised signature counter is still saved.
+  const counter = service.credentials.get("credential-admin").signCount;
+  assert.ok(counter > 0);
+  assert.equal(new PairingService({ store: household.store }).credentials.get("credential-admin").signCount, counter);
 });
 
 test("a device given a token here is no longer carried over", async (t) => {

@@ -213,7 +213,12 @@ export const deviceMethods = {
       throw new PairingError("fresh_auth_required", "Authenticate with your passkey again before revoking a device.", 401);
     const eligible = new Set(this.carriedOverDeviceIds(household, actingDevice.id));
     const ids = [...new Set(deviceIds)].filter((deviceId) => eligible.has(deviceId));
-    if (!ids.length) return [];
+    // Saved even with nothing to remove: the confirmation raised the
+    // passkey's verified signature counter, and that must outlast a restart.
+    if (!ids.length) {
+      this.persistHousehold(household.id);
+      return [];
+    }
     // Recheck at mutation time; state may have changed since the options step.
     this.requireAdminAccessAfterRevocation(household, ids);
     const now = this.now();
