@@ -11,7 +11,7 @@
 //
 // Usage: node scripts/household-authority-regression.mjs <browser executable>
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
-import { applyRegressionDefaults, captureFailure, waitForOrigin } from "./cdp-page.mjs";
+import { applyRegressionDefaults, captureFailure, createLoadTrace, printAbortedModules, printLoadTrace, waitForOrigin } from "./cdp-page.mjs";
 import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -1050,7 +1050,9 @@ async function launchProfile(executable, label, origin) {
     BROWSER_STDIO,
   );
   const port = await waitForDevTools(browser, profile, { label: `Browser ${label}` });
-  const target = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(origin)}`, { method: "PUT" })
+  // The tab opens on about:blank and loads Kin only once the load trace
+  // (#594) is listening, so a first start that stalls can show why.
+  const target = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" })
     .then((response) => response.json());
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolveOpen, reject) => {
@@ -1063,8 +1065,10 @@ async function launchProfile(executable, label, origin) {
   // shell fails to start (#164): it once stopped with only the skip link
   // rendered, which means the app's modules never finished loading.
   const diagnostics = { errors: [], failed: [], open: new Map() };
+  const loadTrace = createLoadTrace();
   socket.onmessage = ({ data }) => {
     const message = JSON.parse(data);
+    if (message.method) loadTrace.observe(message);
     if (message.method === "Runtime.exceptionThrown")
       diagnostics.errors.push(message.params.exceptionDetails?.exception?.description ?? message.params.exceptionDetails?.text);
     else if (message.method === "Log.entryAdded" && message.params.entry.level === "error")
@@ -1130,7 +1134,10 @@ async function launchProfile(executable, label, origin) {
   await send("Network.enable");
   await send("Runtime.enable");
   await send("Log.enable");
+  // Worker starts, stops and version changes go into the load trace.
+  await send("ServiceWorker.enable").catch(() => {});
   await applyRegressionDefaults(send);
+  await send("Page.navigate", { url: origin });
   await waitForOrigin(evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
   await send("WebAuthn.enable", { enableUI: false });
   const { authenticatorId } = await send("WebAuthn.addVirtualAuthenticator", {
@@ -1160,6 +1167,9 @@ async function launchProfile(executable, label, origin) {
       } catch (error) {
         const report = { errors: diagnostics.errors.slice(-10), failed: diagnostics.failed.slice(-10), open: [...diagnostics.open.values()].slice(-20) };
         error.message += ` | page diagnostics: ${JSON.stringify(report)}`;
+        // How the tab loaded Kin, and whether a load lost a module (#594).
+        printLoadTrace(loadTrace, label);
+        printAbortedModules(loadTrace, label);
         throw error;
       }
     },

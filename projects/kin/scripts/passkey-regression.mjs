@@ -1,7 +1,7 @@
 // Real WebAuthn through a virtual authenticator and the production Kin server.
 // https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/WebAuthn.pdl
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
-import { applyRegressionDefaults, captureFailure, waitForOrigin } from "./cdp-page.mjs";
+import { applyRegressionDefaults, captureFailure, createLoadTrace, printAbortedModules, printLoadTrace, waitForOrigin } from "./cdp-page.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -608,10 +608,13 @@ if (
     BROWSER_STDIO,
   );
   let socket;
+  const loadTrace = createLoadTrace();
   try {
     const port = await waitForDevTools(browser, profile);
+    // The tab opens on about:blank and loads Kin only once the load trace
+    // (#594) is listening, so a first start that stalls can show why.
     const target = await fetch(
-      `http://127.0.0.1:${port}/json/new?${encodeURIComponent(origin)}`,
+      `http://127.0.0.1:${port}/json/new?about:blank`,
       { method: "PUT" },
     ).then((response) => response.json());
     socket = new WebSocket(target.webSocketDebuggerUrl);
@@ -623,6 +626,7 @@ if (
     const pending = new Map();
     socket.onmessage = ({ data }) => {
       const message = JSON.parse(data);
+      if (message.method) loadTrace.observe(message);
       if (message.id) {
         const task = pending.get(message.id);
         pending.delete(message.id);
@@ -654,14 +658,21 @@ if (
         return result.result.value;
       },
     };
+    for (const domain of ["Runtime", "Network"]) await send(`${domain}.enable`);
+    // Worker starts, stops and version changes go into the load trace.
+    await send("ServiceWorker.enable").catch(() => {});
     await applyRegressionDefaults(send);
+    await send("Page.navigate", { url: origin });
     await waitForOrigin(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
     await passkeyRegressions(client, service, syncService);
   } catch (error) {
-    // Before the browser closes: what each page showed (#328).
+    // Before the browser closes: what each page showed (#328), and how the
+    // tab loaded Kin (#594).
+    printLoadTrace(loadTrace);
     await captureFailure("passkey regression");
     throw error;
   } finally {
+    printAbortedModules(loadTrace);
     if (socket) {
       const closed = new Promise((resolve) => socket.addEventListener("close", resolve, { once: true }));
       socket.close();
