@@ -3,7 +3,8 @@
 // processes, workers, addons or WASI.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +20,9 @@ function temporary(t) {
   // Windows can report a killed process tree as exited just before SQLite's
   // file handles are released. Keep cleanup bounded while allowing that brief
   // OS-level delay; other platforms normally succeed on the first attempt.
-  t.after(() => rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
+  // The promise rm, not rmSync: on Windows, Node 24's rmSync gives up on the
+  // first EPERM without retrying, while rm waits and tries again.
+  t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
   return directory;
 }
 

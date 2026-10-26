@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,7 +34,10 @@ const RELAY_TLS = { key: fixture("relay-test.key"), cert: fixture("relay-test.cr
 
 function temporary(t) {
   const directory = canonicalPath(mkdtempSync(join(tmpdir(), "kin-home-")));
-  t.after(() => rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
+  // A killed service on Windows lets go of its files a moment after it is
+  // reported as exited. The promise rm retries through that; Node 24's
+  // rmSync gives up on the first EPERM there.
+  t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
   return directory;
 }
 
