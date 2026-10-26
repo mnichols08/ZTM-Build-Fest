@@ -765,8 +765,12 @@ async function pageRemoveCarriedOver(deviceId) {
   const originalConfirm = globalThis.confirm;
   let asked = "";
   globalThis.confirm = (text) => { asked = text; return true; };
+  const wait = async (predicate, label) => {
+    for (let i = 0; i < 400; i++) { if (predicate()) return; await new Promise((r) => setTimeout(r, 25)); }
+    throw new Error("Timed out waiting for " + label + ": " + h.textContent);
+  };
   try {
-    for (let i = 0; i < 400 && h.busy; i++) await new Promise((r) => setTimeout(r, 25));
+    await wait(() => !h.busy, "People & devices to be idle");
     await h.showDevices();
     const row = () => h.querySelector(`li[data-device-id="${deviceId}"]`);
     const rowText = row()?.textContent ?? "";
@@ -775,12 +779,11 @@ async function pageRemoveCarriedOver(deviceId) {
     const offered = Boolean(remove());
     if (!offered) throw new Error("No remove-together button: " + h.textContent);
     remove().click();
-    for (let i = 0; i < 400; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      if (!h.busy && row()?.textContent.includes("Revoked")) break;
+    await wait(() => {
       const alert = h.querySelector(".household-message");
       if (!h.busy && alert?.getAttribute("role") === "alert") throw new Error("Removal failed: " + alert.textContent);
-    }
+      return !h.busy && row()?.textContent.includes("Revoked");
+    }, "the device to show as revoked");
     return { rowText, rowButtons, offered, asked, revoked: Boolean(row()?.textContent.includes("Revoked")), gone: !remove() };
   } finally {
     globalThis.confirm = originalConfirm;
