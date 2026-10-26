@@ -784,7 +784,9 @@ request up within a minute. Installing:
 
 If the trial fails, Kin stops it, puts the backup's database back (the
 trial's is kept as `kin.sqlite.failed-update-<time>`), starts the version it
-was running and says so in the control panel. That release isn't installed
+was running and says so in the control panel. It removes the trial's
+`update-<version>` folder, waiting a moment if Windows still holds one of
+its files; a folder left behind anyway goes the next time Kin starts. That release isn't installed
 by itself again; an admin can still try it. Changes that reached the server
 during the trial are still on the phones that made them, which send them
 again.
