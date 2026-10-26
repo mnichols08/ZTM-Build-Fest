@@ -214,7 +214,11 @@ documentation only.
   them all with one button and one fresh passkey or password: one
   revocation and one new household key. The confirmation names anyone who
   hasn't signed in at the new address yet, and says they still can with
-  their password or backup code, or with a recovery invitation.
+  their password or backup code, or with a recovery invitation. Until
+  they're removed, those devices don't count as a way in for the last
+  household admin or the last trusted Adult, so Kin still refuses to leave
+  the household without one. Before any admin has signed in at the new
+  address, other members can still remove their own devices (#778).
 - **Kin at home: signed, safe updates** (#722; story #718, epic #708,
   [ADR 0025](docs/decisions/0025-kin-at-home.md) §10,
   [HOME-SERVER](docs/HOME-SERVER.md#updates)). Releases carry

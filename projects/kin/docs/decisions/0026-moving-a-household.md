@@ -69,7 +69,13 @@ history still verifies and certificates still endorse a new sign-in. Removal
 isn't held back until everyone has re-joined: the confirmation names who
 hasn't signed in here yet and how they still can (password or backup code,
 or a recovery invitation). A household moved before this has no marks; its
-old devices are removed one at a time.
+old devices are removed one at a time. The last-admin and last-Adult checks
+count a marked device only once it has a token, since until then it can't
+sign in here (#778). Nothing backfills the mark for a household moved
+before it (#779): the move and the mark ship in the same release, so only a
+household moved on a development build has none, and a missing token alone
+can't tell a carried-over device from one that lost its token for another
+reason.
 
 ## Context
 
