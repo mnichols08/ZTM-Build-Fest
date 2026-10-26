@@ -427,9 +427,10 @@ export const membershipMethods = {
   },
 
   // A household that records admins must keep one who can still act.
-  // Legacy households without an admin are unaffected.
-  requireAdminAccessAfterRevocation(household, deviceId) {
-    if (this.hasHouseholdAdmin(household) && !this.hasUsableAdminAccess(household, [deviceId]))
+  // Legacy households without an admin are unaffected. Takes one device ID
+  // or several.
+  requireAdminAccessAfterRevocation(household, deviceIds) {
+    if (this.hasHouseholdAdmin(household) && !this.hasUsableAdminAccess(household, [deviceIds].flat()))
       throw new PairingError(
         "last_household_admin",
         "Keep a household admin with a usable trusted device and passkey before revoking this device.",

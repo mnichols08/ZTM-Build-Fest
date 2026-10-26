@@ -187,6 +187,16 @@ documentation only.
   resumable 8 MiB pieces (at most 4 GB) with the code and a per-transfer
   token, checks it, adds the household and restarts. The sending side on the
   hosted service (#738) comes next.
+- **Moving a household to a home server: devices from the old address**
+  (#769; story #737, [ADR 0026](docs/decisions/0026-moving-a-household.md)
+  §6, [HOME-SERVER](docs/HOME-SERVER.md#moving-a-household-here)). The
+  household's old devices arrive with the move but can't sign in at the new
+  address; the home server marks them, and People & devices shows them as
+  *From the old address · can't sign in here*. A household admin removes
+  them all with one button and one fresh passkey or password: one
+  revocation and one new household key. The confirmation names anyone who
+  hasn't signed in at the new address yet, and says they still can with
+  their password or backup code, or with a recovery invitation.
 - **Kin at home: signed, safe updates** (#722; story #718, epic #708,
   [ADR 0025](docs/decisions/0025-kin-at-home.md) §10,
   [HOME-SERVER](docs/HOME-SERVER.md#updates)). Releases carry

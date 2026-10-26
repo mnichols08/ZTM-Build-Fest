@@ -1346,9 +1346,9 @@ kin-household-defaults kin-appearance .appearance-follow { display: none; }
 .device-list { padding-inline-start: 1.25rem; }
 .device-list li { margin-block: .75rem; }
 .device-name-line { overflow-wrap: anywhere; }
-.people-device-actions { display: grid; gap: var(--space-2); margin-block-start: var(--space-4); }
-.people-device-actions h3, .people-device-actions p { margin: 0; }
-.people-device-actions button { justify-self: start; min-height: var(--tap); max-width: 100%; white-space: normal; }
+.people-device-actions, .carried-over-devices { display: grid; gap: var(--space-2); margin-block-start: var(--space-4); }
+.people-device-actions h3, .people-device-actions p, .carried-over-devices h3, .carried-over-devices p { margin: 0; }
+.people-device-actions button, .carried-over-devices button { justify-self: start; min-height: var(--tap); max-width: 100%; white-space: normal; }
 .security-panel { max-width: none; margin: 0; padding: 0; border: 0; background: transparent; }
 .security-panel h2 { margin-top: 0; }
 kin-app > .security-panel {

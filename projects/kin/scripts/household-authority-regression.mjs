@@ -783,6 +783,40 @@ async function pageRevokeDeviceButton(label) {
   }
 }
 
+// #769: a device carried over from the old address by a move shows as such,
+// and the admin removes it with the real People & devices button and a fresh
+// passkey.
+async function pageRemoveCarriedOver(deviceId) {
+  const app = document.querySelector("kin-app");
+  const h = app.household;
+  const originalConfirm = globalThis.confirm;
+  let asked = "";
+  globalThis.confirm = (text) => { asked = text; return true; };
+  const wait = async (predicate, label) => {
+    for (let i = 0; i < 400; i++) { if (predicate()) return; await new Promise((r) => setTimeout(r, 25)); }
+    throw new Error("Timed out waiting for " + label + ": " + h.textContent);
+  };
+  try {
+    await wait(() => !h.busy, "People & devices to be idle");
+    await h.showDevices();
+    const row = () => h.querySelector(`li[data-device-id="${deviceId}"]`);
+    const rowText = row()?.textContent ?? "";
+    const rowButtons = [...(row()?.querySelectorAll("button") ?? [])].map((b) => b.textContent);
+    const remove = () => [...h.querySelectorAll("button")].find((b) => b.textContent === "Remove the device from the old address");
+    const offered = Boolean(remove());
+    if (!offered) throw new Error("No remove-together button: " + h.textContent);
+    remove().click();
+    await wait(() => {
+      const alert = h.querySelector(".household-message");
+      if (!h.busy && alert?.getAttribute("role") === "alert") throw new Error("Removal failed: " + alert.textContent);
+      return !h.busy && row()?.textContent.includes("Revoked");
+    }, "the device to show as revoked");
+    return { rowText, rowButtons, offered, asked, revoked: Boolean(row()?.textContent.includes("Revoked")), gone: !remove() };
+  } finally {
+    globalThis.confirm = originalConfirm;
+  }
+}
+
 // #78: Adult A publishes the household's home-screen identity through the
 // admin-only Home screen section; the manifest and icons then follow A's
 // device cookie. Non-admins have no section and the service refuses them.
@@ -1832,6 +1866,26 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check((await a.call(pagePhoneApprovalDone)).closed, "the phone closes once the returning computer finishes");
     pass(`${checks} phone sign-in assertions (profile E with A's phone)`);
     await retire(e);
+
+    // ---- Devices from the old address (#769) ------------------------------
+    // What a move leaves of the computer: its record, marked, with no token.
+    const carried = service.devices.get(firstApproval.deviceId);
+    service.deviceTokens.delete(carried.tokenHash);
+    carried.tokenHash = null;
+    carried.carriedOver = true;
+    for (const [sessionHash, session] of service.sessions)
+      if (session.deviceId === carried.id) service.sessions.delete(sessionHash);
+    service.persistHousehold(carried.householdId);
+    const removal = await a.call(pageRemoveCarriedOver, carried.id);
+    check(removal.rowText.includes("From the old address · can't sign in here") &&
+      !removal.rowButtons.some((label) => label === "Verify device" || label === "Replace this device"),
+      "People & devices marks the device from the old address, with nothing to verify or replace: " + JSON.stringify(removal));
+    check(removal.offered && /^Remove the device from the old address\? It can't sign in here\./.test(removal.asked),
+      "the admin is offered one button to remove it, and told what it is first");
+    check(removal.revoked && removal.gone && service.devices.get(carried.id).revokedAt &&
+      service.events.some((event) => event.type === "device_revoked" && event.deviceId === carried.id && event.reason === "carried_over"),
+      "after a fresh passkey the device is revoked and the button goes");
+    pass(`${checks} devices-from-the-old-address assertions (profile A)`);
     console.log(`PASS ${checks} live household authority and recovery assertions across independent browser profiles`);
     return checks;
   } catch (error) {
