@@ -7,6 +7,7 @@ import { once } from "node:events";
 import { Server, connect, createServer } from "node:net";
 import test from "node:test";
 import { Rcode, Type, answerQuery, createDnsServer, encodeName, zoneConfig } from "./dns.mjs";
+import { holdTcpOnly } from "./test-support/ports.mjs";
 
 const config = zoneConfig({ zone: "home.test", relayName: "relay.home.test", addresses: ["192.0.2.10", "2001:db8::10"], serial: 2026102201 });
 const registry = new Map([
@@ -127,14 +128,30 @@ test("port 0 picks again when the number UDP got is taken for TCP (#469)", async
   }
 });
 
-test("a fixed port taken for TCP fails without picking again and frees its UDP port", async () => {
-  const holder = createServer().listen(0, "127.0.0.1");
-  await once(holder, "listening");
-  const taken = holder.address().port;
+test("port 0 picks again when Windows keeps the number UDP got back from TCP (#469)", async () => {
+  // A number in a range Windows keeps back from TCP fails as EACCES.
+  const realListen = Server.prototype.listen;
+  let listens = 0;
+  Server.prototype.listen = function (...rest) {
+    listens += 1;
+    if (listens > 1) return realListen.apply(this, rest);
+    process.nextTick(() => this.emit("error", Object.assign(new Error("listen EACCES: permission denied"), { code: "EACCES", syscall: "listen" })));
+    return this;
+  };
+  let server;
+  try { server = await createDnsServer({ host: "127.0.0.1", port: 0, config, lookup }); } finally { Server.prototype.listen = realListen; }
   try {
-    await assert.rejects(createDnsServer({ host: "127.0.0.1", port: taken, config, lookup }), (error) => error.code === "EADDRINUSE");
+    assert.equal(listens, 2, "a second pair was opened");
+    assert.equal(server.tcpPort, server.udpPort);
+  } finally { await server.close(); }
+});
+
+test("a fixed port taken for TCP fails without picking again and frees its UDP port", async () => {
+  const { taken, release } = await holdTcpOnly();
+  try {
+    await assert.rejects(createDnsServer({ host: "127.0.0.1", port: taken, config, lookup }), (error) => error.code === "EADDRINUSE" && error.syscall === "listen");
     const udp = createSocket("udp4");
     await new Promise((resolve, reject) => { udp.once("error", reject); udp.bind(taken, "127.0.0.1", resolve); });
     await new Promise((resolve) => udp.close(resolve));
-  } finally { await new Promise((resolve) => holder.close(resolve)); }
+  } finally { await release(); }
 });

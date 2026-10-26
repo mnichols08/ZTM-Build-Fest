@@ -174,10 +174,12 @@ export function answerQuery(message, config, lookup, { udp = true } = {}) {
 export async function createDnsServer(options) {
   // Port 0 (tests) lets the system pick a free UDP port, and TCP must then
   // listen on the same number, which may already be taken for TCP (on
-  // Windows a loopback client socket holds its port): pick again (#469).
+  // Windows a loopback client socket holds its port, and that fails as
+  // EADDRINUSE; a number in a range Windows keeps back from TCP fails as
+  // EACCES, and such ranges run to hundreds of numbers): pick again (#469).
   for (let attempt = 1; ; attempt += 1) {
     try { return await openDnsServer(options); }
-    catch (error) { if (options.port !== 0 || error.code !== "EADDRINUSE" || attempt === 5) throw error; }
+    catch (error) { if (options.port !== 0 || !["EADDRINUSE", "EACCES"].includes(error.code) || attempt === 20) throw error; }
   }
 }
 
