@@ -234,6 +234,13 @@ a different key for that epoch or doesn't open. Any other refusal (such as
 `stale_key_epoch`) is handled as before. The request body may be up to about
 344 KB on this route, room for 64 packages and a 64 KiB vault.
 
+A proposal downloads the vault once. When the service refuses the rotation
+for its own reasons (the epoch limit, recipients, capacity), the tab keeps
+the vault change and the next sync pass sends it again; it downloads again
+only after a vault conflict, which means another device wrote the vault. Vault
+downloads share the member's window with a new device's backup-code,
+password or passkey sign-in, so a long refusal must not use it up.
+
 A device whose first sync finds a rotation pending sets up its sync state
 first, then commits the rotation. History it held before joining is queued
 without a key epoch, like a new change, and its identity binding waits too, so

@@ -176,6 +176,69 @@ for (const code of ["vault_not_found", "vault_rate_limited", "vault_invalid", "r
   });
 }
 
+// The member's vault downloads share one window with a new device's sign-in
+// (a backup code, a password or a passkey), so a rotation the service keeps
+// refusing for its own reasons must not download the vault on every pass.
+for (const code of ["provisioning_device_mismatch", "provisioning_capacity", "sync_epoch_limit"]) {
+  test(`a commit refused with ${code} keeps its vault change: later passes resend it without downloading again`, async () => {
+    diagnostics.clear();
+    let refusals = 3;
+    const f = await fixture({ epochs: (body, { commit }) => {
+      if (refusals > 0) {
+        refusals -= 1;
+        throw serviceError(code);
+      }
+      return commit(body);
+    } });
+    for (let pass = 0; pass < 3; pass += 1) await assert.rejects(f.submit(), { code });
+    const result = await f.submit();
+    assert.deepEqual(result.vault, { version: 5 });
+    assert.equal(f.service.requests.filter((line) => line === "GET /api/account/vault").length, 1, "one download for the proposal");
+    assert.equal(f.service.bodies.length, 4);
+    assert.ok(f.service.bodies.every((body) => body === f.service.bodies[0]), "the same proposal and vault change every time");
+    assert.ok(JSON.parse(f.service.bodies[0]).vaultChange);
+    assert.deepEqual(skippedReasons(), []);
+  });
+}
+
+test("a kept vault change that went stale is rebuilt from one fresh download", async () => {
+  diagnostics.clear();
+  let refused = false;
+  const f = await fixture({ epochs: (body, { commit }) => {
+    if (!refused) {
+      refused = true;
+      throw serviceError("provisioning_capacity");
+    }
+    return commit(body);
+  } });
+  await assert.rejects(f.submit(), { code: "provisioning_capacity" });
+  // Another device writes the vault between passes.
+  f.service.vault = { version: 5, ciphertext: await sealVault(f.memberVaultKey, { epochs: [
+    { family: "household", epoch: 1, key: new Uint8Array(32).fill(1) },
+    { family: "household", epoch: 2, key: new Uint8Array(32).fill(2) },
+  ] }, { householdId: HOUSEHOLD, memberId: MEMBER, version: 5 }) };
+  const result = await f.submit();
+  assert.deepEqual(result.vault, { version: 6 });
+  assert.deepEqual(f.service.requests, ["GET /api/account/vault", "POST /api/sync/epochs", "POST /api/sync/epochs",
+    "GET /api/account/vault", "POST /api/sync/epochs"]);
+});
+
+test("a member without a vault downloads once for a proposal the service keeps refusing", async () => {
+  diagnostics.clear();
+  let refusals = 2;
+  const f = await fixture({ vault: false, epochs: (body, { commit }) => {
+    if (refusals > 0) {
+      refusals -= 1;
+      throw serviceError("sync_epoch_limit");
+    }
+    return commit(body);
+  } });
+  for (let pass = 0; pass < 2; pass += 1) await assert.rejects(f.submit(), { code: "sync_epoch_limit" });
+  await f.submit();
+  assert.deepEqual(f.service.bodies, [f.plain, f.plain, f.plain]);
+  assert.equal(f.service.requests.filter((line) => line === "GET /api/account/vault").length, 1);
+});
+
 test("other refusals are the rotation's own and are thrown as before", async () => {
   diagnostics.clear();
   const f = await fixture({ epochs: () => { throw serviceError("stale_key_epoch"); } });

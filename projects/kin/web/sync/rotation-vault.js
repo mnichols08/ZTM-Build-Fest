@@ -82,43 +82,72 @@ export async function rotationVaultChange({ api, vaultKey, householdId, memberId
   }
 }
 
+/** Outcomes kept for the next pass: the vault's own state, not a passing fault. */
+const KEPT_SKIPS = new Set(["no_vault", "current", "vault_epoch_conflict", "vault_unreadable"]);
+
+/** Reasons not worth a diagnostic: nothing was lost. */
+const QUIET_SKIPS = new Set(["no_vault", "current"]);
+
+// The last proposal's vault change (or why it has none), kept in this tab
+// from one pass to the next. Vault downloads share the member's window with
+// a new device's backup-code, password or passkey sign-in, and the service
+// can refuse a rotation for its own reasons for a long time (the epoch limit,
+// capacity, recipients) while each sync pass tries again. So a proposal
+// downloads the vault once, plus once more for each vault conflict, which
+// means another device really wrote the vault. The change is sealed vault
+// ciphertext and holds nothing the device doesn't send anyway.
+let kept = null;
+
 /**
  * POSTs `pending` to /api/sync/epochs and resolves to the service's answer,
  * carrying the member's vault change when this device holds the vault key.
  * `request(path, options)` is SyncCoordinator.request; `vaultKey()` resolves
  * to a fresh copy of the vault key or null (zeroed here). The same proposal
- * (ID, packages, key) is sent every time; only the vault change is rebuilt.
- * Why the vault was left out, when it matters, goes to the diagnostic ring
- * buffer as `rotation_vault_skipped` (a reason from a fixed list, nothing
- * else).
+ * (ID, packages, key) is sent every time, and so is its vault change until
+ * the vault is found to have moved on. Why the vault was left out, when it
+ * matters, goes to the diagnostic ring buffer as `rotation_vault_skipped` (a
+ * reason from a fixed list, nothing else).
  */
 export async function submitRotation({ request, vaultKey: getVaultKey, identity, pending, deviceKeys }) {
   const base = { expectedEpoch: pending.expectedEpoch, packages: pending.packages, proposalId: pending.proposalId };
   const post = (body) => request("/api/sync/epochs", { method: "POST", body: JSON.stringify(body) });
   const vaultKey = await getVaultKey();
   if (!vaultKey) return post(base);
-  const skipped = (reason) => recordDiagnostic("rotation_vault_skipped", { reason });
+  const plain = (reason) => {
+    if (!QUIET_SKIPS.has(reason)) recordDiagnostic("rotation_vault_skipped", { reason });
+    return post(base);
+  };
+  const slot = [identity.householdId, identity.memberId, pending.proposalId, pending.fingerprint].join(":");
   try {
     const api = vaultApi(request);
     for (let attempt = 1; ; attempt += 1) {
-      const change = await rotationVaultChange({ api, vaultKey, householdId: identity.householdId,
-        memberId: identity.memberId, pending, deviceKeys });
+      let change = kept?.slot === slot ? kept.change : null;
+      if (!change) {
+        change = await rotationVaultChange({ api, vaultKey, householdId: identity.householdId,
+          memberId: identity.memberId, pending, deviceKeys });
+        kept = !change.skip || KEPT_SKIPS.has(change.skip) ? { slot, change } : null;
+      }
       if (change.skip) {
-        if (change.skip !== "no_vault" && change.skip !== "current") skipped(change.skip);
-        return post(base);
+        const result = await plain(change.skip);
+        kept = null;
+        return result;
       }
       let result;
       try {
         result = await post({ ...base, vaultChange: { expectedVersion: change.expectedVersion, ciphertext: toBase64Url(change.ciphertext) } });
       } catch (error) {
-        if (error?.code === "vault_version_conflict" && attempt < ROTATION_VAULT_ATTEMPTS) continue;
+        // The service checks the rotation before the vault, so any other
+        // refusal leaves the kept change good for the next pass.
         if (!FALLBACKS.has(error?.code)) throw error;
-        skipped(error.code);
-        return post(base);
+        kept = null;
+        if (error.code === "vault_version_conflict" && attempt < ROTATION_VAULT_ATTEMPTS) continue;
+        return plain(error.code);
       }
+      kept = null;
       // An older service ignores the field and answers without `vault`. A
       // retried answer means an earlier request committed (with its change).
-      if (!result.retried && result.vault?.version !== change.expectedVersion + 1) skipped("not_applied");
+      if (!result.retried && result.vault?.version !== change.expectedVersion + 1)
+        recordDiagnostic("rotation_vault_skipped", { reason: "not_applied" });
       return result;
     }
   } finally {
