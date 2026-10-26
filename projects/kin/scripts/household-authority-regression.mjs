@@ -67,9 +67,30 @@ async function pageUnlock(secret) {
   await app.security.run(() => app.security.unlockRecovery(secret));
   for (let i = 0; i < 400 && !(app.store && !app.busy && !app.security.busy); i++)
     await new Promise((r) => setTimeout(r, 25));
-  if (!app.store) throw new Error("Recovery unlock failed: " + app.security.alert.textContent);
+  if (!app.store) {
+    // The alert is START_ERROR whatever went wrong; the ring says what (#770).
+    const { diagnostics } = await import("/diagnostics/ring-buffer.js");
+    const recent = diagnostics.snapshot().slice(-6).map(({ code, fields }) => ({ code, ...fields }));
+    throw new Error("Recovery unlock failed: " + app.security.alert.textContent + " | diagnostics: " + JSON.stringify(recent));
+  }
   for (let i = 0; i < 400 && !app.household; i++) await new Promise((r) => setTimeout(r, 25));
   return "unlocked";
+}
+
+// Whether this page can start Kin offline (#770): a service worker controls
+// it and its release cache holds the engine. A worker only takes control
+// once its install staged the whole shell (one failed fetch deletes the new
+// cache), so control means the cache is complete. Waits up to 15 s for it.
+async function pageOfflineShell() {
+  for (let i = 0; i < 600 && !navigator.serviceWorker.controller; i++) await new Promise((r) => setTimeout(r, 25));
+  const names = (await caches.keys()).filter((name) => name.startsWith("kin-static-"));
+  const cache = names.length === 1 ? await caches.open(names[0]) : null;
+  return {
+    controlled: Boolean(navigator.serviceWorker.controller),
+    caches: names,
+    entries: cache ? (await cache.keys()).length : 0,
+    engine: Boolean(await cache?.match("/wasm/kin_engine.wasm")),
+  };
 }
 
 async function pageIsLocked() {
@@ -1158,10 +1179,13 @@ async function launchProfile(executable, label, origin) {
       try {
         await callStable(pageWaitReady);
       } catch (error) {
-        const report = { errors: diagnostics.errors.slice(-10), failed: diagnostics.failed.slice(-10), open: [...diagnostics.open.values()].slice(-20) };
-        error.message += ` | page diagnostics: ${JSON.stringify(report)}`;
+        client.addDiagnostics(error);
         throw error;
       }
+    },
+    addDiagnostics(error) {
+      const report = { errors: diagnostics.errors.slice(-10), failed: diagnostics.failed.slice(-10), open: [...diagnostics.open.values()].slice(-20) };
+      error.message += ` | page diagnostics: ${JSON.stringify(report)}`;
     },
     async setOffline(offline) {
       await send("Network.emulateNetworkConditions", { offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
@@ -1484,11 +1508,16 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(simple.simple && simple.flag === "on" && !simple.lists && JSON.stringify(simple.nav) === JSON.stringify(["Today", "Chat", "Fridge"]),
       "Limited C's device switches to Simple view on its next poll: " + JSON.stringify(simple));
     check(await c.call(pageLockNow), "Limited C locks");
+    const shell = await c.callStable(pageOfflineShell);
+    check(shell.controlled && shell.engine, "Limited C's service worker controls the page and holds the shell before going offline: " + JSON.stringify(shell));
     await c.send("Network.emulateNetworkConditions", { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     try {
       await c.call(pageUnlock, c.recovery);
       simple = await c.callStable(pageSimpleState);
       check(simple.unlocked && simple.simple && !simple.lists, "an offline unlock opens Simple view from the cached layout: " + JSON.stringify(simple));
+    } catch (error) {
+      c.addDiagnostics(error);
+      throw error;
     } finally {
       await c.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     }
