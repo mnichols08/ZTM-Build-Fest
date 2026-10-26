@@ -29,7 +29,9 @@ export function carriedOverConfirmation({ count, waiting = [] }) {
     ? "Remove the device from the old address? It can't sign in here."
     : `Remove the ${count} devices from the old address? None of them can sign in here.`];
   if (!waiting.length) {
-    lines.push(`Everyone ${count === 1 ? "it belongs" : "they belong"} to has signed in here on another device.`);
+    lines.push(count === 1
+      ? "The person it belongs to has signed in here on another device."
+      : "Everyone they belong to has signed in here on another device.");
   } else {
     lines.push(`${joinNames(waiting)} ${waiting.length === 1 ? "hasn't" : "haven't"} signed in here yet.`);
     lines.push("This doesn't remove anyone from the household. They can still sign in here with their password or backup code; anyone who has neither needs a recovery invitation from you.");

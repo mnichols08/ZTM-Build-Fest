@@ -403,7 +403,7 @@ them is ever handed to anyone.
 5. The household's old devices arrive too, so its history still checks
    out, but they can't sign in here: *People & devices* shows them as
    *From the old address*. Once everyone has signed in here, a household
-   admin removes them together with **Remove the devices from the old
+   admin removes them together with **Remove the N devices from the old
    address** and a fresh passkey or password. Anyone who hasn't signed in
    yet still can, with their password or backup code, or with a recovery
    invitation from an admin if they have neither.

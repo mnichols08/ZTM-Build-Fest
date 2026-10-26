@@ -20,7 +20,7 @@ test("when everyone has signed in here, the confirmation says so", () => {
   assert.equal(carriedOverConfirmation({ count: 3, waiting: [] }),
     "Remove the 3 devices from the old address? None of them can sign in here. Everyone they belong to has signed in here on another device.");
   assert.equal(carriedOverConfirmation({ count: 1 }),
-    "Remove the device from the old address? It can't sign in here. Everyone it belongs to has signed in here on another device.");
+    "Remove the device from the old address? It can't sign in here. The person it belongs to has signed in here on another device.");
 });
 
 test("members who haven't signed in here are named, with how they still can", () => {

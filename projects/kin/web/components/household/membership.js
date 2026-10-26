@@ -338,6 +338,12 @@ export class HouseholdMembership {
       if (canManageMembers === true && !showingCachedDevices && carried.length) {
         const section = document.createElement("section");
         section.className = "carried-over-devices";
+        // Its own heading, so the button doesn't read as part of the last
+        // member's devices: it removes them for the whole household.
+        const heading = document.createElement("h3");
+        heading.id = "carried-over-devices-heading";
+        heading.textContent = "Devices from the old address";
+        section.setAttribute("aria-labelledby", heading.id);
         const copy = document.createElement("p");
         copy.textContent = "Devices from the old address can't sign in here. Once everyone has signed in here, remove them together.";
         // Members whose only devices are from the old address haven't signed in here yet.
@@ -345,7 +351,7 @@ export class HouseholdMembership {
           carried.some((device) => device.memberId === memberId) &&
           !devices.some((device) => device.memberId === memberId && !device.revokedAt && device.carriedOver !== true))
           .map(([, label]) => label);
-        section.append(copy, this.host.makeButton(
+        section.append(heading, copy, this.host.makeButton(
           carriedOverButtonLabel(carried.length),
           () => this.removeCarriedOver(carried.length, waiting),
           "danger",

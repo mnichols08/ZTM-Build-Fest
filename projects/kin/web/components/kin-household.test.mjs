@@ -315,7 +315,7 @@ test("device revocation refreshes the trusted-device list after the passkey oper
 // After a move (ADR 0026 §6, #769): your old laptop and Sam's phone came
 // from the old address. Only this device is pinned here, so a fall-through
 // to Trusted or Untrusted would show.
-function movedDevicesComponent({ canManageMembers = true, carriedOver = true } = {}) {
+function movedDevicesComponent({ canManageMembers = true, carriedOver = true, others = [] } = {}) {
   const component = new KinHousehold();
   component.identity = { memberId: "adult", deviceId: "self" };
   component.localFingerprint = "SELF";
@@ -331,6 +331,7 @@ function movedDevicesComponent({ canManageMembers = true, carriedOver = true } =
         { id: "self", memberId: "adult", label: "Adult phone", revokedAt: null, carriedOver: false },
         { id: "old-laptop", memberId: "adult", label: "Adult laptop", revokedAt: removed ? 1 : null, ...(carriedOver ? { carriedOver: !removed } : {}) },
         { id: "sam-phone", memberId: "sam", label: "Sam phone", revokedAt: removed ? 1 : null, ...(carriedOver ? { carriedOver: !removed } : {}) },
+        ...others,
       ] };
     if (path === "/api/sync/devices")
       return { devices: [
@@ -386,6 +387,35 @@ test("devices from the old address are marked and removed together by an admin",
   assert.equal(line("sam-phone"), "Sam phone — Revoked");
   assert.equal(button(), undefined, "nothing left to remove");
   assert.equal(component.busy, false);
+});
+
+test("the confirmation names only members with no device here", async () => {
+  // Robin signed in here on a new device; Kit's new device was revoked, so
+  // Kit, like Sam, hasn't signed in here yet.
+  const { component } = movedDevicesComponent({ others: [
+    { id: "robin-old", memberId: "robin", label: "Robin old phone", revokedAt: null, carriedOver: true },
+    { id: "robin-new", memberId: "robin", label: "Robin new phone", revokedAt: null, carriedOver: false },
+    { id: "kit-old", memberId: "kit", label: "Kit old tablet", revokedAt: null, carriedOver: true },
+    { id: "kit-new", memberId: "kit", label: "Kit new tablet", revokedAt: 1, carriedOver: false },
+  ] });
+  await component.showDevices();
+  const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
+  const titles = descendants(component.children).filter((child) => child.tagName === "h3").map((title) => title.textContent);
+  assert.deepEqual(titles.slice(0, 4), ["You", "Household member 1", "Household member 2", "Household member 3"]);
+  const asked = [];
+  globalThis.confirm = (text) => { asked.push(text); return false; };
+  await descendants(component.children).find((child) => child.textContent === "Remove the 4 devices from the old address").listeners.click();
+  assert.match(asked[0], /None of them can sign in here\. Household member 1 and Household member 3 haven't signed in here yet\./);
+});
+
+test("the remove-together section has a heading of its own", async () => {
+  const { component } = movedDevicesComponent();
+  await component.showDevices();
+  const section = component.children.find((child) => child.className === "carried-over-devices");
+  const heading = section.children[0];
+  assert.equal(heading.tagName, "h3");
+  assert.equal(heading.textContent, "Devices from the old address");
+  assert.equal(section.attributes["aria-labelledby"], heading.id);
 });
 
 test("the remove-together button fails closed", async () => {
