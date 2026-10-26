@@ -434,6 +434,13 @@ documentation only.
   to close its tunnel after GOAWAY 8 instead of destroying the socket
   straight after writing it, which could lose the GOAWAY or reset the
   connection (seen on Windows).
+- **Kin loads itself again if its start stops without an error** (#469,
+  follows #594). On Edge for Windows a first start sometimes stopped with a
+  few module requests that never finished and no error, which left only
+  "Skip to content". The start-up guard now also reloads when nothing has
+  finished loading for 8 seconds and Kin still hasn't started, with the same
+  limit of two reloads in a row. A slow start that keeps loading is left
+  alone, and so is one that stopped on a script error.
 
 ## v1.6.0 — Kin for Everyone
 

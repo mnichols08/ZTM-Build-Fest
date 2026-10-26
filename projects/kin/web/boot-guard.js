@@ -15,6 +15,15 @@
 // Exceptions thrown while Kin's modules run are not load failures (they are
 // reported on the window, not the element) and never cause a reload.
 //
+// Edge also sometimes stops part way with no `error` event at all: a dozen
+// module requests never finish, the page stays "interactive", `load` never
+// fires and kin-app is never defined. So the guard also watches for a start
+// that has stopped moving: once nothing has finished loading for STALL_MS
+// (the clock starts again with each finished request and at `load`) while
+// kin-app is still undefined, it takes the same capped reload. A slow start
+// keeps finishing requests, so it is left alone; an exception thrown while
+// Kin's modules run is a bug, not a stall, and doesn't reload either.
+//
 // Refresh-resume (#351) unlocks only a load the browser calls a refresh.
 // This guard's own reload is one, so when the failed load was not a refresh
 // (a new tab, a link, a shortcut) the one-use resume ticket the previous
@@ -25,7 +34,11 @@
   var RETRY_KEY = "kin.boot-retry";
   var TICKET_KEY = "kin.reload-resume";
   var MAX_RETRIES = 2;
+  var STALL_MS = 8000;
   var doc = win.document;
+  var stallTimer = null;
+  var threw = false;
+  var started = false;
 
   function session() {
     try { return win.sessionStorage || null; } catch (error) { return null; }
@@ -78,17 +91,51 @@
     win.location.reload();
   }
 
+  function defined() {
+    try { return Boolean(win.customElements.get("kin-app")); } catch (error) { return true; }
+  }
+  function stopWatching() {
+    if (stallTimer !== null) win.clearTimeout(stallTimer);
+    stallTimer = null;
+  }
+  // Starts the stall clock again; it runs out only if nothing moves.
+  function watch() {
+    if (started || threw) return;
+    stopWatching();
+    stallTimer = win.setTimeout(guard.onStall, STALL_MS);
+  }
+
   var guard = {
     // An `error` event doesn't bubble, but the window sees it while capturing.
     onError: function (event) {
-      if (isEntryScript(event && event.target)) onFailedStart();
+      if (isEntryScript(event && event.target)) return onFailedStart();
+      // An exception reaches the window as an error event aimed at it.
+      if (event && event.target === win) { threw = true; stopWatching(); }
+    },
+    onStall: function () {
+      stallTimer = null;
+      if (started || threw || defined()) return;
+      onFailedStart();
     },
   };
   win.kinBootGuard = guard;
   win.addEventListener("error", guard.onError, true);
-  // Kin started: the next failure starts counting again.
+  win.addEventListener("load", watch);
+  // Each request that finishes is progress: a slow start isn't a stalled one.
+  var progress = null;
+  try {
+    if (typeof win.PerformanceObserver === "function") {
+      progress = new win.PerformanceObserver(watch);
+      progress.observe({ type: "resource" });
+    }
+  } catch (error) { progress = null; /* the clock then runs from here and from load */ }
+  watch();
+  // Kin started: stop watching, and the next failure starts counting again.
   try {
     win.customElements.whenDefined("kin-app").then(function () {
+      started = true;
+      stopWatching();
+      try { if (progress) progress.disconnect(); } catch (error) { /* nothing to stop */ }
       var storage = session();
       try { if (storage) storage.removeItem(RETRY_KEY); } catch (error) { /* nothing to clear */ }
     });
