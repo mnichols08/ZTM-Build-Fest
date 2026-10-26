@@ -140,6 +140,7 @@ export class StatusController {
     // The first run signing up with the service (#557): one calm line, or
     // what went wrong with a way to fix it and try again.
     if (this.app.firstRun) return this.renderFirstRun(card, heading);
+    if (status?.lifecycle === "moved" || status?.lifecycle === "moving") return this.renderMoved(card, heading, status);
     if (status && !status.identity && !status.claimState && status.lifecycle !== "deleted" && status.lifecycle !== "deletion_pending") {
       const details = document.createElement("details");
       details.className = "onboarding-details";
@@ -268,6 +269,25 @@ export class StatusController {
     card.hidden = true;
   }
 
+  /** The household moved, or is moving, to a home server (ADR 0026,
+   * #737): where to go, in plain words; details in the household panel. */
+  renderMoved(card, heading, status) {
+    const moved = status.lifecycle === "moved";
+    heading.textContent = moved ? "Your household moved" : "Your household is moving";
+    const intro = document.createElement("p");
+    intro.setAttribute("role", "status");
+    intro.textContent = moved
+      ? `It's at ${status.movedTo} now. Open it there and sign in with your username and password, or your backup code; then add a passkey there.`
+      : `It's moving to ${status.movedTo}. Changes wait until it's done; this takes a few minutes.`;
+    card.append(heading, intro);
+    if (!moved || !status.movedTo) return;
+    const actions = document.createElement("p");
+    actions.className = "onboarding-actions";
+    const open = Object.assign(document.createElement("a"), { href: status.movedTo, className: "primary-action move-open", textContent: `Open ${status.movedTo}`, rel: "noopener" });
+    const more = Object.assign(document.createElement("a"), { href: "#household/people", className: "link-button", textContent: "More about the move" });
+    actions.append(open, more);
+    card.append(actions);
+  }
   /** Today's account card, if one is due; false when none is shown. The
    * account summary loads once per unlock (security/account.js refresh,
    * which renders this again when it arrives). */

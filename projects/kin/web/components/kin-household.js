@@ -5,6 +5,7 @@ import { HouseholdAccount } from "./household/account.js";
 import { HouseholdApi } from "./household/api.js";
 import { HouseholdAuth } from "./household/auth.js";
 import { HouseholdLifecycle } from "./household/lifecycle.js";
+import { HouseholdMove } from "./household/move.js";
 import { HouseholdLink } from "./household/link.js";
 import { HouseholdLinkApproval } from "./household/link-approval.js";
 import { HouseholdMembership } from "./household/membership.js";
@@ -25,6 +26,7 @@ const PARTS = {
   linkApproval: HouseholdLinkApproval,
   membership: HouseholdMembership,
   lifecycle: HouseholdLifecycle,
+  move: HouseholdMove,
   views: HouseholdViews,
 };
 

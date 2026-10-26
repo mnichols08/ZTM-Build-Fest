@@ -174,6 +174,9 @@ export class SyncController {
     if (!this.app.vault || this.app.vault.locked) return;
     const wasReady = this.app.syncState?.state === "ready";
     if (value.state) { this.app.syncState = value; this.updateSyncChip(); }
+    // The household moved to a home server (#737): the household's status
+    // says where, and the household panel and Today show it.
+    if (value.state === "deleted" && value.lifecycleState === "moved") void this.app.household?.load?.();
     if (value.state === "ready") {
       // For a report's diagnostics; and reports waiting to be sent go out
       // once sync is back (ADR 0021 §3).

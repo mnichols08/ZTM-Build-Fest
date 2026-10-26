@@ -149,6 +149,16 @@ documentation only.
   data as it was and says why. Before a name is chosen, the setup page
   offers a backup copied into the folder, which also brings its `home/`:
   moving a home server to a new computer.
+- **Moving a household to a home server: the app's screens** (#737;
+  [ADR 0026](docs/decisions/0026-moving-a-household.md)). Household access
+  offers household admins *Move to a home server*: who can sign in at the new
+  address (by name, from the household's own history), the address and the
+  move code, a fresh passkey or password, and the move's progress, with
+  every failure in plain words. Once it moved, the household panel and Today
+  say where it went and how to sign in there (password or backup code, then
+  a new passkey); an admin can undo it for a day or close the old household,
+  and is reminded to after a week. Sync stops for good on `household_moved`
+  and waits on `household_moving`.
 - **Moving a household to a home server: the sending side's server**
   (#738; [ADR 0026](docs/decisions/0026-moving-a-household.md)). A
   household admin, with a fresh passkey or password, gives the home server's

@@ -187,7 +187,7 @@ const PRIVATE_PASS_REQUESTS = 13;
 const ACCESS_ERRORS = new Set(["authentication_required", "device_not_trusted", "membership_removed"]);
 // Errors a chat pass leaves to the household sync's own handling: the
 // session or household is gone, so the whole pass must stop.
-const CHAT_PASS_STOPS = new Set([...ACCESS_ERRORS, "household_deleted", "household_deletion_pending"]);
+const CHAT_PASS_STOPS = new Set([...ACCESS_ERRORS, "household_deleted", "household_deletion_pending", "household_moved", "household_moving"]);
 
 /** The live channel for a browser page, or null elsewhere (tests, workers). */
 function browserLiveChannel(options) {
@@ -427,7 +427,14 @@ export class SyncCoordinator {
             : "Kin cannot reach household sync right now. Saved information remains on this device.";
         }
         let lifecycle = null;
-        if (
+        // Moved to a home server (ADR 0026, #737): for good, like a
+        // deletion; the household panel says where. While it is moving,
+        // sync just waits (it pauses below and tries again).
+        if (error.code === "household_moved") {
+          lifecycle = { state: "moved", message };
+        } else if (error.code === "household_moving") {
+          message = "Your household is moving to its home server. Changes are saved here and wait until it's done.";
+        } else if (
           ["household_deleted", "household_deletion_pending"].includes(
             error.code,
           )
@@ -457,7 +464,8 @@ export class SyncCoordinator {
         }
         if (
           lifecycle?.state === "deleted" ||
-          lifecycle?.state === "deletion_pending"
+          lifecycle?.state === "deletion_pending" ||
+          lifecycle?.state === "moved"
         ) {
           this.terminal = true;
           this.catchUp = null;

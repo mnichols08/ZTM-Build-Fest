@@ -592,6 +592,11 @@ export class HouseholdMembership {
             ]
           : []),
         ...(canManage ? [this.host.makeButton(
+          "Move to a home server",
+          () => this.ctx.move.show(),
+          "secondary",
+        )] : []),
+        ...(canManage ? [this.host.makeButton(
           "Delete household",
           () => this.ctx.lifecycle.deleteHousehold(),
           "danger",

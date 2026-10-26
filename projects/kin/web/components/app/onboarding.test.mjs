@@ -164,3 +164,31 @@ test("after a backup-key unlock, a one-time suggestion this device remembers dis
   const next = passkeyRig();
   assert.equal(next.card.dataset.passkeyOffer, undefined, "a later unlock doesn't suggest it again");
 }));
+
+test("Today says where a household moved, or that it is moving (#737)", () => {
+  const card = document.createElement("section");
+  card.classList = { remove() {}, toggle() {} };
+  card.querySelector = () => null;
+  const app = {
+    onboarding: card,
+    vault: { locked: false },
+    state: { items: [] },
+    householdStatus: { identity: false, lifecycle: "moved", movedTo: "https://fern.home.kin.journeytocode.io" },
+    security: { passkeyWrappers: [] },
+    pages: new Map(),
+  };
+  const controller = new StatusController({ app, navigation: { navigate() {} } });
+  controller.renderOnboarding();
+  const all = (items) => items.flatMap((item) => [item, ...all(item.children ?? [])]);
+  const nodes = all(card.children ?? card.childNodes ?? []);
+  const text = nodes.map((node) => node.textContent ?? "").join(" ");
+  assert.match(text, /Your household moved/);
+  assert.match(text, /It's at https:\/\/fern\.home\.kin\.journeytocode\.io now\. Open it there and sign in/);
+  const open = nodes.find((node) => node.tagName?.toLowerCase() === "a" && /^Open /.test(node.textContent));
+  assert.equal(open.href, "https://fern.home.kin.journeytocode.io");
+  assert.doesNotMatch(text, /Get started/, "not the first-run card");
+  app.householdStatus = { identity: false, lifecycle: "moving", movedTo: "https://fern.home.kin.journeytocode.io" };
+  controller.renderOnboarding();
+  const moving = all(card.children ?? card.childNodes ?? []).map((node) => node.textContent ?? "").join(" ");
+  assert.match(moving, /Your household is moving/);
+});

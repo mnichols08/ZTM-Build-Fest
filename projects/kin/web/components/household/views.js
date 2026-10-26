@@ -67,6 +67,11 @@ export class HouseholdViews {
       return this.ctx.lifecycle.renderDeletionPending();
     if (this.host.householdLifecycle?.state === "deleted")
       return this.ctx.lifecycle.renderDeleted();
+    // Moved to a home server (ADR 0026, #737): where to go now.
+    if (this.host.householdLifecycle?.state === "moved")
+      return this.ctx.move.renderMoved();
+    if (this.host.householdLifecycle?.state === "moving")
+      return this.ctx.move.renderMoving();
     // A device set up with a password (#558) doesn't need passkeys here.
     if (!window.PublicKeyCredential && !this.ctx.account?.wrapper())
       return this.host.message(
