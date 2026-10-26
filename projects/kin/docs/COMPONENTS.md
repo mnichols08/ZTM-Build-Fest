@@ -68,6 +68,7 @@ with one shared context `{ host, ...parts }`. A part reaches the element as
 `this.host` and the other parts as `this.ctx.<part>`. A part never holds state
 of its own: fields stay on the element, so the lifecycle callbacks and the
 lock path see all of it in one place.
+`household/carried-over.js` is a plain module, not a part: the wording `membership.js` shows for devices carried over from the old address after a move, and for removing them together (#769).
 
 `<kin-playbook-editor>` (the reusable-checklist form with its validation) and
 `<kin-routine-schedule>` (one Routine's schedule disclosure) are small
