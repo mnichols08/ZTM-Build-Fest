@@ -104,18 +104,19 @@ let kept = null;
  * `request(path, options)` is SyncCoordinator.request; `vaultKey()` resolves
  * to a fresh copy of the vault key or null (zeroed here). The same proposal
  * (ID, packages, key) is sent every time, and so is its vault change until
- * the vault is found to have moved on. Why the vault was left out, when it
- * matters, goes to the diagnostic ring buffer as `rotation_vault_skipped` (a
- * reason from a fixed list, nothing else).
+ * the vault is found to have moved on. Why the vault was left out of a
+ * rotation that then committed goes to the diagnostic ring buffer as
+ * `rotation_vault_skipped` (a reason from a fixed list, nothing else).
  */
 export async function submitRotation({ request, vaultKey: getVaultKey, identity, pending, deviceKeys }) {
   const base = { expectedEpoch: pending.expectedEpoch, packages: pending.packages, proposalId: pending.proposalId };
   const post = (body) => request("/api/sync/epochs", { method: "POST", body: JSON.stringify(body) });
   const vaultKey = await getVaultKey();
   if (!vaultKey) return post(base);
-  const plain = (reason) => {
+  const plain = async (reason) => {
+    const result = await post(base);
     if (!QUIET_SKIPS.has(reason)) recordDiagnostic("rotation_vault_skipped", { reason });
-    return post(base);
+    return result;
   };
   const slot = [identity.householdId, identity.memberId, pending.proposalId, pending.fingerprint].join(":");
   try {

@@ -176,6 +176,21 @@ for (const code of ["vault_not_found", "vault_rate_limited", "vault_invalid", "r
   });
 }
 
+test("rotation_vault_skipped is recorded only once the commit without the vault change lands", async () => {
+  diagnostics.clear();
+  let online = false;
+  const f = await fixture({ epochs: (body, { commit }) => {
+    if (body.vaultChange) throw serviceError("vault_rate_limited");
+    if (!online) throw serviceError("connection_unavailable");
+    return commit(body);
+  } });
+  await assert.rejects(f.submit(), { code: "connection_unavailable" });
+  assert.deepEqual(skippedReasons(), [], "the plain commit was lost: nothing to report yet");
+  online = true;
+  await f.submit();
+  assert.deepEqual(skippedReasons(), ["vault_rate_limited"]);
+});
+
 // The member's vault downloads share one window with a new device's sign-in
 // (a backup code, a password or a passkey), so a rotation the service keeps
 // refusing for its own reasons must not download the vault on every pass.
@@ -259,19 +274,22 @@ test("without a vault key, or without a vault, the body is today's, byte for byt
   assert.deepEqual(skippedReasons(), [], "neither is worth a diagnostic");
 });
 
-test("a vault with a different key for that epoch, or one this key doesn't open, commits without the vault change", async () => {
+test("a vault with a different key for that epoch, or one this key doesn't open, is left out of the commit", async () => {
   diagnostics.clear();
-  const conflicting = await fixture();
+  // A different key for epoch 3 means another proposal committed it, so the
+  // service refuses this one as stale, as the real service does.
+  const conflicting = await fixture({ epochs: () => { throw serviceError("stale_key_epoch"); } });
   conflicting.service.vault = { version: 4, ciphertext: await sealVault(conflicting.memberVaultKey, { epochs: [
     { family: "household", epoch: 3, key: new Uint8Array(32).fill(3) },
   ] }, { householdId: HOUSEHOLD, memberId: MEMBER, version: 4 }) };
-  await conflicting.submit();
+  await assert.rejects(conflicting.submit(), { code: "stale_key_epoch" });
   assert.deepEqual(conflicting.service.bodies, [conflicting.plain]);
+  assert.deepEqual(skippedReasons(), [], "nothing was committed, so no rotation_vault_skipped");
   const unreadable = await fixture();
   unreadable.service.vault = { version: 4, ciphertext: await sealVault(generateVaultKey(), { epochs: [] }, { householdId: HOUSEHOLD, memberId: MEMBER, version: 4 }) };
   await unreadable.submit();
   assert.deepEqual(unreadable.service.bodies, [unreadable.plain]);
-  assert.deepEqual(skippedReasons(), ["vault_epoch_conflict", "vault_unreadable"]);
+  assert.deepEqual(skippedReasons(), ["vault_unreadable"]);
 });
 
 test("a vault download the connection loses stops the pass; other download trouble skips the vault change", async () => {

@@ -98,7 +98,9 @@ export const DIAGNOSTIC_CODES = Object.freeze({
   // The report channel itself (web/feedback/).
   feedback_send_failed: Object.freeze({ status: NUMBER }),
   // A key rotation committed without the account vault change (#791,
-  // web/sync/rotation-vault.js): the vault keeper adds the key afterwards.
+  // web/sync/rotation-vault.js), recorded only after the commit: the vault
+  // keeper adds the key afterwards. "vault_epoch_conflict" stays in the list
+  // (the table only grows) though its rotation is always refused as stale.
   rotation_vault_skipped: Object.freeze({ reason: ROTATION_VAULT_REASONS }),
 });
 

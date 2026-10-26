@@ -78,9 +78,10 @@ become analytics.
   never its message or stack), `alert_shown`, `unlocked` (timing),
   `went_offline`, `went_online` and `feedback_send_failed`. Add a code to the
   registry before recording it; the table only grows.
-  `rotation_vault_skipped` (a reason from a fixed list) says a key rotation
-  was committed without the account vault change (#791), so the vault keeper
-  added the new key afterwards.
+  `rotation_vault_skipped` (a reason from a fixed list) is recorded once a
+  key rotation has committed without the account vault change (#791); the
+  vault keeper adds the new key after the device installs it. A rotation
+  that didn't commit records nothing.
 - **What a report carries** is the table in `web/feedback/format.js`:
   version and build, browser and version, system and device type, screen and
   window size, pixel ratio, text size, installed or tab, the page and section

@@ -230,7 +230,8 @@ the same proposal, at most three requests in all. After that, and on
 `request_too_large`, it sends the proposal once without the vault change,
 which is the older path: the keeper adds the key after it is installed. The
 same happens without a vault key or a vault, or when the vault already holds
-a different key for that epoch or doesn't open. Any other refusal (such as
+a different key for that epoch (another proposal committed, so this one is
+refused as stale) or doesn't open. Any other refusal (such as
 `stale_key_epoch`) is handled as before. The request body may be up to about
 344 KB on this route, room for 64 packages and a 64 KiB vault.
 
