@@ -278,6 +278,27 @@ test("an Adult whose devices are all from the old address isn't another usable t
   assert.equal(service.hasOtherUsableTrustedAdult(record, robin.memberId), true);
 });
 
+test("before any admin re-joins, an Adult can still revoke their own device", async (t) => {
+  const household = await movedHousehold(t);
+  const { service, admin, robin } = household;
+  const request = service.createDevicePairing(robin.sessionToken);
+  const claim = service.claimPairing({ code: request.code, credential: credential("robin-tablet"), deviceLabel: "robin-tablet", rateKey: "robin-tablet" });
+  service.approvePairing(robin.sessionToken, request.pairingId, claim.version);
+  const robinTablet = service.activateClaim(claim.claimToken);
+  // The admin's devices came from the old address too, so no admin has usable
+  // access yet; Robin revoking a device can't take any away.
+  for (const { deviceId } of [admin, household.adminTablet]) {
+    const device = service.devices.get(deviceId);
+    service.deviceTokens.delete(device.tokenHash);
+    device.tokenHash = null;
+    device.carriedOver = true;
+  }
+  const record = service.households.get(admin.householdId);
+  assert.equal(service.hasUsableAdminAccess(record), false);
+  assert.ok(service.deviceRevocationContext(robin.sessionToken, robinTablet.deviceId));
+  assert.ok(service.revokeDevice(robin.sessionToken, robinTablet.deviceId, robin.memberId).revokedAt);
+});
+
 test("an admin with no passkey confirms the removal with their password", { timeout: 60_000 }, async () => {
   const salt = new Uint8Array(16).fill(3);
   const { authKey, passwordKey } = await derivePasswordKeys("four unrelated words", salt);
