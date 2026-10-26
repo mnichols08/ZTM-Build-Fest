@@ -16,7 +16,7 @@ export async function photoAlbumRegressions() {
     for (let index = 0; index < 900; index++) { if (await test()) return; await frame(); }
     check(false, message);
   };
-  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the album work settles");
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "the album work settles");
   const photoFile = async (name, colour) => {
     const canvas = document.createElement("canvas");
     canvas.width = 800; canvas.height = 600;
@@ -87,7 +87,7 @@ export async function photoAlbumRegressions() {
   check((await app.store.album()).removed.some((entry) => entry.photoId === beach.photoId), "the removal is recorded");
   const undo = app.ctx.undo;
   check(!undo.toast.hidden && undo.toastAction.textContent === "Undo", "Undo is offered", undo.toastText.textContent);
-  await until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !undo.running, "Kin is idle before Undo");
+  await until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending && !undo.running, "Kin is idle before Undo");
   undo.toastAction.click();
   await until(() => !undo.running && !app.busy, "Undo finishes");
   let restored = null;

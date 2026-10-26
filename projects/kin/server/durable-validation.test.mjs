@@ -103,6 +103,12 @@ const corruptions = [
     device.syncHistoryFromEpoch = 3;
     store.db.prepare("UPDATE devices SET device_json = ? WHERE id = ?").run(JSON.stringify(device), partner.deviceId);
   }],
+  ...[false, "yes", 1].map((value) => [`device carried-over mark ${JSON.stringify(value)}`, ({ store, partner }) => {
+    const row = store.db.prepare("SELECT device_json FROM devices WHERE id = ?").get(partner.deviceId);
+    const device = JSON.parse(row.device_json);
+    device.carriedOver = value;
+    store.db.prepare("UPDATE devices SET device_json = ? WHERE id = ?").run(JSON.stringify(device), partner.deviceId);
+  }]),
 ];
 
 for (const [name, corrupt] of corruptions) {
@@ -116,6 +122,19 @@ for (const [name, corrupt] of corruptions) {
     assert.equal(hasDatabaseProcessLock(state.path), false);
   });
 }
+
+test("a device carried over from the old address loads with its mark", (t) => {
+  const { store, path, partner } = fixture(t);
+  const row = store.db.prepare("SELECT device_json FROM devices WHERE id = ?").get(partner.deviceId);
+  store.db.prepare("UPDATE devices SET device_json = ? WHERE id = ?").run(JSON.stringify({ ...JSON.parse(row.device_json), carriedOver: true }), partner.deviceId);
+  store.close();
+  const reopened = new DurableStore(path);
+  try {
+    assert.equal(reopened.loadIdentity().devices.get(partner.deviceId).carriedOver, true);
+  } finally {
+    reopened.close();
+  }
+});
 
 test("new adult may enable sync while awaiting the next epoch", (t) => {
   const { store, sync, adult, partner } = fixture(t);

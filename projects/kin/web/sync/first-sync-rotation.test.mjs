@@ -13,7 +13,7 @@ import { SyncCoordinator } from "./sync-coordinator.js";
 const HOUSEHOLD = "a".repeat(32);
 const ME = { householdId: HOUSEHOLD, memberId: "b".repeat(32), deviceId: "c".repeat(32) };
 
-function freshDevice({ rotationPending = true, existingState = null } = {}) {
+function freshDevice({ rotationPending = true, existingState = null, heldEpochs = null } = {}) {
   const calls = [];
   let syncState = existingState;
   let committed = false;
@@ -25,7 +25,10 @@ function freshDevice({ rotationPending = true, existingState = null } = {}) {
   coordinator.onState = () => {};
   coordinator.keyStore = {
     vault: { assertUnlocked() {} },
-    async getEpoch(householdId, keyEpoch) { return keyEpoch === (committed ? 2 : 1) ? { keyEpoch, householdKey: {} } : null; },
+    async getEpoch(householdId, keyEpoch) {
+      const held = heldEpochs ? heldEpochs.includes(keyEpoch) : keyEpoch === (committed ? 2 : 1);
+      return held ? { keyEpoch, householdKey: {} } : null;
+    },
   };
   coordinator.store = {
     async requeueAfterRelayReset() {},
@@ -81,6 +84,24 @@ test("an initialized device still rotates and does not re-create its state", asy
   const { coordinator, calls } = freshDevice({ existingState: { key: "active", currentEpoch: 1 } });
   await coordinator.runOnce();
   assert.deepEqual(calls, ["commitRotation", "provisionMemberHistory", "pushIdentityBindings", "pull"]);
+});
+
+// Each place a pass finds no key for the relay's current epoch says which
+// place it was and which epoch it lacked (#791); the words stay the same.
+
+const KEY_MISSING = "This device needs an authorized household key before sync can continue.";
+
+test("a pass that holds no key for the current epoch says so with its own code", async () => {
+  const { coordinator, calls } = freshDevice({ rotationPending: false, heldEpochs: [] });
+  await assert.rejects(coordinator.runOnce(), { message: KEY_MISSING, code: "household_key_missing", keyEpoch: 1 });
+  assert.deepEqual(calls, []);
+});
+
+test("a key missing after this device's own rotation has a different code", async () => {
+  // Another device committed a newer epoch meanwhile, so this one holds epoch 1 only.
+  const { coordinator, calls } = freshDevice({ heldEpochs: [1] });
+  await assert.rejects(coordinator.runOnce(), { message: KEY_MISSING, code: "household_key_missing_after_rotation", keyEpoch: 2 });
+  assert.deepEqual(calls, ["initializeSync", "commitRotation"]);
 });
 
 // Bindings wait for a pending rotation and are re-sealed under the relay's
@@ -139,6 +160,13 @@ test("a binding sealed under a retired epoch is re-sealed under the current one 
   assert.deepEqual(record.controlEnvelope, posted[0], "the stored envelope is the uploaded one");
   const opened = await decryptIdentityBinding({ envelope: posted[0], householdKey: epochKeys.get(2), signingKey: deviceKeys.signingPublicKey, expectedHouseholdId: HOUSEHOLD });
   assert.deepEqual(opened, BINDING);
+});
+
+test("a binding that can't be re-sealed for lack of the current key has its own code", async () => {
+  const { coordinator, posted } = await bindingPusher(1);
+  await assert.rejects(coordinator.pushIdentityBindings({ currentEpoch: 3, rotationPending: false }),
+    { message: KEY_MISSING, code: "household_key_missing_for_binding", keyEpoch: 3 });
+  assert.equal(posted.length, 0);
 });
 
 test("a binding already at the current epoch is uploaded as it is", async () => {

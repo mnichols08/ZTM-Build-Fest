@@ -7,14 +7,16 @@ export async function handoffRegressions() {
   const check = (value, message) => {
     if (!value) throw new Error(message);
   };
-  const idle = async () => {
+  const idle = async (waitWhile = () => false) => {
     // Controller methods below are invoked directly so failures can be
     // injected. This observes a quiet point but does not reserve it: a peer
     // message can still arrive after idle() resolves. Direct saves therefore
     // use startHandoffSave(), which fails loudly if the busy guard drops one.
-    for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh) && i < 300; i++)
+    // `waitWhile` also keeps waiting, up to the same limit, for state that a
+    // refresh idle() can't see yet is still settling.
+    for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending || waitWhile()) && i < 300; i++)
       await new Promise((resolve) => setTimeout(resolve, 10));
-    check(!app.busy && !app.refreshing && !app.pendingRefresh, "Handoff operation must settle");
+    check(!app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "Handoff operation must settle");
   };
   // A peer message or refresh can take the busy guard between idle() and the
   // save, which then returns without saving (#164). Retry only that case:
@@ -138,7 +140,7 @@ export async function handoffRegressions() {
     app.store.getCatchUpState = getCatchUpState;
   }
   await app.retryAction();
-  for (let i = 0; i < 500 && (app.busy || app.refreshing || app.pendingRefresh || app.retryAction !== originalRetry || app.alert.textContent !== originalMessage); i++)
+  for (let i = 0; i < 500 && (app.busy || app.refreshing || app.pendingRefresh || app.wakePending || app.retryAction !== originalRetry || app.alert.textContent !== originalMessage); i++)
     await new Promise((resolve) => setTimeout(resolve, 10));
   check(
     app.retryAction === originalRetry &&
@@ -154,7 +156,7 @@ export async function handoffRegressions() {
   // above and the click and swallow it; the retry is still exactly-once
   // because the second click lands while the first save is busy.
   for (let attempt = 0; attempt < 3 && (await count()) !== before + 4; attempt++) {
-    for (let i = 0; i < 300 && (app.busy || app.refreshing || app.pendingRefresh || typeof app.retryAction !== "function"); i++)
+    for (let i = 0; i < 300 && (app.busy || app.refreshing || app.pendingRefresh || app.wakePending || typeof app.retryAction !== "function"); i++)
       await new Promise((resolve) => setTimeout(resolve, 10));
     app.retryButton.click();
     app.retryButton.click();
@@ -295,10 +297,15 @@ export async function handoffRegressions() {
     // The failed save's finally runs a waiting peer refresh, which takes the
     // alert while it reads and offers the same Retry again when it finishes
     // (refresh.js). Checking in between saw no Retry (#327): wait for it.
-    await idle();
+    // A wake refresh reads the security epoch before idle() can see it, then
+    // hides Retry while it reads (#469), so wait until Retry is offered and
+    // read it before the awaited count() gives such a refresh room to start.
+    await idle(() => app.retryButton.hidden);
+    const actionState = { hidden: app.retryButton.hidden, busy: app.busy, refreshing: app.refreshing, pendingRefresh: app.pendingRefresh, wakePending: app.wakePending, alert: app.alert.textContent };
+    actionState.count = await count();
     check(
-      (await count()) === beforeAction && !app.retryButton.hidden,
-      "failed Handoff action keeps retry",
+      actionState.count === beforeAction && !actionState.hidden,
+      `failed Handoff action keeps retry ${JSON.stringify({ ...actionState, beforeAction })}`,
     );
     check(
       document.activeElement === capture.input &&

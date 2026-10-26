@@ -291,6 +291,53 @@ test("replacing a device revokes it in the same step; the trusted-device limit c
   }
 });
 
+test("after a move, an old device replaced on sign-in is left out of the removal, and a member can still sign in once the rest are removed", { timeout: 120_000 }, async () => {
+  let clock = Date.now();
+  const server = await startServer({ now: () => clock });
+  const signInLater = (...args) => { clock += PASSWORD_WINDOW_MS + 1; return signIn(server, ...args); };
+  try {
+    const household = await foundHousehold(server);
+    const laptop = await signInLater();
+    assert.equal((await register(laptop.browser, laptop.view, household)).status, 201);
+    const tablet = await signInLater();
+    assert.equal((await register(tablet.browser, tablet.view, household)).status, 201);
+    // What a move leaves behind (ADR 0026 §6): marked, and no token.
+    for (const { view } of [laptop, tablet]) {
+      const device = server.service.devices.get(view.deviceId);
+      server.service.deviceTokens.delete(device.tokenHash);
+      device.tokenHash = null;
+      device.carriedOver = true;
+    }
+    server.service.persistHousehold(household.householdId);
+
+    const phone = await signInLater();
+    // "Which device is this?" says which ones came from the old address (#780).
+    assert.deepEqual(phone.view.devices.map((device) => [device.deviceId, device.carriedOver]),
+      [[household.deviceId, false], [laptop.view.deviceId, true], [tablet.view.deviceId, true]]);
+    const options = await household.founder.call("/api/devices/carried-over/revocation/options");
+    assert.equal(options.status, 200, JSON.stringify(options.body));
+    assert.equal(options.body.devices, 2);
+    // "This replaces Tablet", while the admin is still confirming.
+    const replaced = await register(phone.browser, phone.view, household, { replaceDeviceId: tablet.view.deviceId });
+    assert.equal(replaced.status, 201, JSON.stringify(replaced.body));
+    const finished = await household.founder.call("/api/devices/carried-over/revocation/finish", {
+      body: { flow: options.body.flow, authKey: b64((await passwordKeys()).authKey) },
+    });
+    assert.equal(finished.status, 200, JSON.stringify(finished.body));
+    assert.deepEqual(finished.body.revoked, [laptop.view.deviceId]);
+    assert.equal(server.service.events.filter((event) => event.deviceId === tablet.view.deviceId && event.type === "device_revoked")
+      .map((event) => event.reason).join(), "replacement");
+
+    // The removed devices' certificates still endorse a new sign-in.
+    const later = await signInLater();
+    const added = await register(later.browser, later.view, household);
+    assert.equal(added.status, 201, JSON.stringify(added.body));
+    assert.equal("carriedOver" in server.service.devices.get(later.view.deviceId), false);
+  } finally {
+    await server.close();
+  }
+});
+
 test("endorsing the certification key: once per member, by the member's own device, verified", { timeout: 60_000 }, async () => {
   const server = await startServer();
   try {
@@ -388,6 +435,9 @@ test("passkeys: once added, the password alone no longer signs in; a passkey alo
     // The password first: the capability waits for the passkey.
     const { browser, view } = await signIn(strict);
     assert.equal(view.needsPasskey, true);
+    // The password alone doesn't show the member's devices, or which of them
+    // a move carried over (#780).
+    assert.deepEqual(view.devices, []);
     assert.equal((await browser.call("/api/account/sign-in/vault")).body.error, "passkey_required");
     const options = await browser.call("/api/account/sign-in/passkey/options", { body: {} });
     assert.deepEqual(options.body.publicKey.allowCredentials, [{ id: credentialId }]);
@@ -395,6 +445,7 @@ test("passkeys: once added, the password alone no longer signs in; a passkey alo
     assert.equal(finished.status, 200, JSON.stringify(finished.body));
     assert.equal(finished.body.method, "password-passkey");
     assert.equal(finished.body.needsPasskey, false);
+    assert.deepEqual(finished.body.devices.map((device) => [device.deviceId, device.carriedOver]), [[household.deviceId, false]]);
     const download = await browser.call("/api/account/sign-in/vault");
     assert.deepEqual(download.body.wrappers.map((wrapper) => wrapper.type), ["password-passkey"]);
   } finally {

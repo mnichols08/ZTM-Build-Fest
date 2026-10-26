@@ -19,9 +19,9 @@ server**. A plain guide for households comes with #740.
 | Control panel: first-run setup page and status page (§10, §11) | Built (#719, #720): [below](#setting-it-up-the-control-panel). |
 | Certificates (ACME, §5) | Built (#723), started by home mode (#733): [HOME-CERTIFICATES](HOME-CERTIFICATES.md). |
 | The tunnel to the connection relay (§2) | Built (#733): [below](#reaching-it-from-anywhere-the-tunnel). |
-| Scheduled backups and restore (§10) | Built (#721): [below](#backups-and-restore). The copy to a second folder (a USB drive) is later. |
+| Scheduled backups and restore (§10) | Built (#721): [below](#backups-and-restore). The copy to a second folder, such as a USB drive: built (#763), [below](#copies-to-another-folder). |
 | Signed updates (§10) | Built (#722): [below](#updates). Off until the project's release key is made and built in. |
-| Moving a household here from another Kin server ([ADR 0026](decisions/0026-moving-a-household.md)) | Built (#737, #738, #739): [below](#moving-a-household-here). |
+| Moving a household here from another Kin server ([ADR 0026](decisions/0026-moving-a-household.md)) | Built (#737, #738, #739, #769): [below](#moving-a-household-here). |
 
 With a name set (below), phones reach the home server through the
 connection relay. The setup page on the computer itself chooses the name and
@@ -294,8 +294,9 @@ It shows, in plain words, with every state and error code explained:
   (`acme-*`, or `tunnel-caa-*` when the relay didn't set the CAA record) and
   the daily certificate-log (CT) check.
 - **Backups:** the last and next backup, the daily time, how many are kept
-  and their size, the last failure (`backup-*`) and the last restore
-  ([below](#backups-and-restore)).
+  and their size, the last failure (`backup-*`), the last restore and the
+  second copy, if one is set up (`backup-copy-*`;
+  [below](#backups-and-restore)).
 - **Storage:** the database's size and the disk's free space.
 - **Households and devices:** counts only. The status holds no household
   content, no identifier of a household, member or device, no device label,
@@ -304,13 +305,16 @@ It shows, in plain words, with every state and error code explained:
   that is available and how it installs, and how the last update went
   ([below](#updates)).
 - **Settings:** new households allowed (1–10); back up now, the daily
-  backup time and restore a backup; install an update now, and automatic
-  updates on or off.
+  backup time, the folder backups are copied to (on this computer only)
+  and restore a backup; install an update now, and automatic updates on or
+  off.
 
 `panel.provide(section, () => object)` fills a status section,
-`panel.registerChange(kind, { check, apply })` adds a change that both ways
-in confirm the same way, and `SECTIONS` and `SETTINGS` in `web/control/`
-render them. Backups (#721) and updates (#722) use these seams.
+`panel.registerChange(kind, { check, apply, loopbackOnly })` adds a change
+that both ways in confirm the same way (a `loopbackOnly` change only on the
+home server's own computer), and `SECTIONS` and `SETTINGS` in
+`web/control/` render them. Backups (#721, #763) and updates (#722) use
+these seams.
 
 ### Backups and restore
 
@@ -366,9 +370,79 @@ computer first: only one copy of a home server can be connected at a time
 restore puts back the database only and keeps this computer's home folder.
 
 The schedule runs inside the service, and the backups stay inside its data
-folder, which is all the service may write (the permission model). Copying
-each backup to a second folder, such as a USB drive, is planned and needs
-the launcher, which runs outside that sandbox.
+folder, which is all the service may write (the permission model). The copy
+to another folder, below, is made by the launcher, which runs outside that
+sandbox.
+
+#### Copies to another folder
+
+A backup on the same disk as Kin is lost with that disk. Kin can copy each
+backup to a second folder too, such as a USB drive. Choose it in the
+control panel's settings, *Copy backups to another folder*, by its full
+path (`E:\` on Windows, `/media/usb` on Linux, `/Volumes/KIN` on a Mac).
+Leave it empty to stop copying; copies already there stay.
+
+- **Only on the home server's own computer.** The copies hold every
+  household's data and the home key, so the folder can't be chosen through
+  the household's address, and only this computer's panel shows its path.
+  Keep the drive as private as the computer.
+- **What goes there:** `<your folder>/Kin backups/<this server's name>/`,
+  holding the same `kin-<date>T<time>Z/` folders as `backups/`. Kin keeps
+  the 14 newest there too and never touches anything else on the drive,
+  another home server's folder included. A server whose name changed starts
+  a new folder and leaves the old one.
+- **When:** within a minute of each backup, when Kin starts, and within a
+  minute of plugging the drive in, including another drive plugged in at
+  the same place, which gets every backup. An unplugged drive shows on the
+  status page within a minute. Each copy's database is read back and
+  checked against the backup, which catches a copy that went wrong, though
+  not a faulty drive that only pretends to keep what it's given. Its
+  `backup.json` is written last and flushed to the drive, so a copy cut
+  short (the drive pulled out) has no `backup.json`, isn't used, and is
+  made again once the drive is back. A folder changed or emptied in the
+  panel during a copy gets nothing more.
+- **What Kin refuses:** Kin never makes the folder you chose. If it isn't
+  there (the drive isn't plugged in) the status page says so, and Kin copies
+  once it is. A folder on the same partition as Kin's data is refused, since
+  it wouldn't survive that disk. Kin can't tell another partition of the
+  same disk apart (`D:\` beside `C:\` on one drive), so choose a separate
+  drive. On Linux and macOS, a folder under `/media`, `/mnt`, `/run/media` or
+  `/Volumes` with no drive mounted there is reported as missing too, so an
+  unplugged drive's empty mount point is never filled: the drive must be
+  mounted at the folder you chose or one above it, such as `/Volumes/USB`
+  or `/media/<you>/<label>`. A drive mounted at `/mnt` or `/media` itself is
+  fine. A full drive is
+  reported, never cleared to make room. FAT32 holds no file over 4 GB, so
+  use exFAT or NTFS for a large Kin.
+- **Restoring from a copy:** copy a `kin-…` folder from the drive into Kin's
+  `backups` folder, then restore it in the panel, as when moving to a new
+  computer (above).
+
+On each system:
+
+- **Linux:** mount the drive under `/media`, `/mnt` or `/run/media`; Kin's
+  service may write only there (and not under `/home`). A Kin installed
+  before this version needs `sudo kin --install-service` again to allow it.
+  A desktop's automatic mount (`/media/<you>/<label>`) may not let the `kin`
+  account in; a line in `/etc/fstab` mounting the drive under `/mnt`, owned
+  by `kin`, always works.
+- **Windows:** use a drive letter on this computer, not a mapped network
+  drive, which the service's account (LOCAL SERVICE) can't see. On an NTFS
+  drive, give LOCAL SERVICE permission to write the folder. Kin then lets
+  only LOCAL SERVICE, the account Kin runs as, SYSTEM and Administrators
+  into the `Kin backups` folder for this server, as with its data folder.
+  A FAT32 or exFAT drive can't keep anyone out: every account on any
+  computer it is plugged into can read the copies, so keep that drive
+  locked away. If Kin can't make the copies private (such a drive, or a
+  folder you made or copied there whose permissions Kin isn't allowed to
+  change), it still copies, the status page says so, and Kin tries again
+  with the next backup; giving LOCAL SERVICE full control of the folder
+  fixes the second case.
+- **macOS:** drives appear under `/Volumes`. If the status page says Kin
+  isn't allowed to write there, allow it in System Settings, Privacy &
+  Security.
+- **Container:** mount the drive's folder into the container as a volume
+  separate from `/data`, and choose that path.
 
 ## Moving a household here
 
@@ -400,6 +474,13 @@ them is ever handed to anyone.
    password, or their backup code. Their device downloads the whole
    history, then Kin offers a new passkey: passkeys belong to the old
    address.
+5. The household's old devices arrive too, so its history still checks
+   out, but they can't sign in here: *People & devices* shows them as
+   *From the old address*. Once everyone has signed in here, a household
+   admin removes them together with **Remove the N devices from the old
+   address** and a fresh passkey or password. Anyone who hasn't signed in
+   yet still can, with their password or backup code, or with a recovery
+   invitation from an admin if they have neither.
 
 What arrives has no device tokens and no passkeys, so nothing is signed in
 here until people sign in. The control panel shows when a household last

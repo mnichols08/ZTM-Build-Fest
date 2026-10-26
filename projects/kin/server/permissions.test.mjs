@@ -3,7 +3,9 @@
 // processes, workers, addons or WASI.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { once } from "node:events";
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,13 +16,30 @@ import { canonicalPath } from "./path-safety.mjs";
 
 const NETWORK_TEST = { timeout: 30_000 };
 
+// What each test has to stop before its temporary folders are removed.
+const stopFirst = new WeakMap();
+
 function temporary(t) {
   const directory = canonicalPath(mkdtempSync(join(tmpdir(), "kin-permission-")));
-  // Windows can report a killed process tree as exited just before SQLite's
-  // file handles are released. Keep cleanup bounded while allowing that brief
-  // OS-level delay; other platforms normally succeed on the first attempt.
-  t.after(() => rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
+  t.after(async () => {
+    // node:test runs t.after hooks in the order they were added, and this one
+    // is added before the test starts its service. So it stops the service
+    // itself; otherwise a failing test would remove the folder under it.
+    for (const stop of stopFirst.get(t)?.splice(0) ?? []) await stop();
+    // Windows can report a killed process tree as exited just before SQLite's
+    // file handles are released. Keep cleanup bounded while allowing that brief
+    // OS-level delay; other platforms normally succeed on the first attempt.
+    // The promise rm, not rmSync: on Windows, rmSync in Node 24.18 and earlier
+    // (and 25.1) gives up on the first EPERM without retrying.
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
   return directory;
+}
+
+// Stops a test's service when the test ends, before its folders are removed.
+function stopBeforeCleanup(t, stop) {
+  if (!stopFirst.has(t)) stopFirst.set(t, []);
+  stopFirst.get(t).push(stop);
 }
 
 test("the flags allow reading the app and reading and writing the data directory only", (t) => {
@@ -128,7 +147,7 @@ test("server/start.mjs creates the data directory and serves inside the sandbox"
   const child = spawn(process.execPath, [join(APP_ROOT, "server", "start.mjs")], {
     env: { ...process.env, KIN_DATABASE_PATH: database, KIN_PORT: String(port), KIN_HOST: "127.0.0.1" },
   });
-  t.after(() => stop(child));
+  stopBeforeCleanup(t, () => stop(child));
   await waitForLine(child, /service_ready/);
   const response = await fetch(`http://127.0.0.1:${port}/health`);
   assert.equal(response.status, 200);
@@ -146,7 +165,7 @@ test("Ctrl+C in a terminal stops the service cleanly and releases its lock", { .
     detached: true,
     env: { ...process.env, KIN_DATABASE_PATH: database, KIN_PORT: String(port), KIN_HOST: "127.0.0.1" },
   });
-  t.after(() => { try { process.kill(-child.pid, "SIGKILL"); } catch {} });
+  stopBeforeCleanup(t, () => { try { process.kill(-child.pid, "SIGKILL"); } catch {} });
   await waitForLine(child, /service_ready/);
   const exited = new Promise((resolve) => child.once("exit", (code) => resolve(code)));
   process.kill(-child.pid, "SIGINT");
@@ -162,10 +181,24 @@ test("a symlinked data directory works through the launcher", { ...NETWORK_TEST,
   const child = spawn(process.execPath, [join(APP_ROOT, "server", "start.mjs")], {
     env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "KIN_DATABASE_PATH")), KIN_DATA_DIR: join(root, "link"), KIN_PORT: String(port), KIN_HOST: "127.0.0.1" },
   });
-  t.after(() => stop(child));
+  stopBeforeCleanup(t, () => stop(child));
   await waitForLine(child, /service_ready/);
   assert.ok(existsSync(join(root, "real", "kin.sqlite")));
   await stop(child);
+});
+
+test("a test's service is stopped before its temporary folder is removed, even if the test ends first", NETWORK_TEST, async (t) => {
+  let directory, child, folderWhenStopped;
+  await t.test("a test that ends without stopping its service", async (inner) => {
+    directory = temporary(inner);
+    // Stands in for the service: it holds a file open in the folder until stopped.
+    child = spawn(process.execPath, ["-e", "require('fs').openSync(process.argv[1], 'w'); console.log('open'); setInterval(() => {}, 1000)", join(directory, "held")]);
+    stopBeforeCleanup(inner, async () => { folderWhenStopped = existsSync(directory); await stop(child); });
+    await once(child.stdout, "data");
+  });
+  assert.equal(folderWhenStopped, true, "the service was stopped while its folder was still there");
+  assert.ok(child.exitCode !== null || child.signalCode !== null, "the service has exited");
+  assert.equal(existsSync(directory), false, "the folder is removed");
 });
 
 test("the service refuses to start outside the sandbox unless asked to for development", NETWORK_TEST, (t) => {

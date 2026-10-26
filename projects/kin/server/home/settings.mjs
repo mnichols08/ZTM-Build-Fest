@@ -16,9 +16,13 @@
 // absent for home mode's default of 1), the new-household limit the control
 // panel raises (ADR 0025 §9, #720), which KIN_MAX_HOUSEHOLDS, when set, wins
 // over; `backupHour` (0 to 23, or absent for 3), the local hour of the
-// daily backup (§10, #721); and `autoUpdate` (true or absent, or false), whether
+// daily backup (§10, #721); `autoUpdate` (true or absent, or false), whether
 // patch and minor releases install themselves at night (§10, #722; the
-// launcher reads it from the file).
+// launcher reads it from the file); and `backupCopyFolder` (a full path, or
+// absent for none), the second folder the launcher copies each backup to
+// (§10, #763). That one is read leniently: a path that doesn't suit this
+// computer, as after a restore on another kind of computer, turns the copy
+// off instead of stopping Kin. isBackupCopyFolder is the strict check.
 //
 // `writeHomeSettings` is the only writer: the setup page and the control
 // panel (#718). It merges a change into what the file holds, checks the
@@ -34,7 +38,7 @@
 // server.mjs without the tunnel's code. (It does import the ACME key store,
 // for its private-file writer and the `home/` directory it owns.)
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { CertificateStore, writePrivateFile } from "../acme/keys.mjs";
 
 export const DEFAULT_RELAY = "relay.kin.journeytocode.io";
@@ -121,6 +125,34 @@ function parseBackupHour(value) {
   return value;
 }
 
+/** The longest second backup folder Kin keeps. */
+export const MAX_BACKUP_COPY_FOLDER = 1024;
+
+/** The stored `backupCopyFolder`, or null: a string of 1 to 1024
+ * characters with no NUL. Never throws (see the top of this file). */
+function parseBackupCopyFolder(value) {
+  return typeof value === "string" && value.length >= 1 && value.length <= MAX_BACKUP_COPY_FOLDER && !value.includes("\0") ? value : null;
+}
+
+/**
+ * `value` as a full path to a folder on this kind of computer, tidied, or
+ * null when it isn't one. On Windows that is a drive letter and a
+ * backslash ("E:\" or "E:\Backups"): a bare "E:" means some folder on that
+ * drive, and a network share (\\nas\share) can't be reached by the account
+ * Kin runs as (LOCAL SERVICE). Elsewhere it starts with "/".
+ */
+export function normalizeBackupCopyFolder(value, platform = process.platform) {
+  if (parseBackupCopyFolder(value) === null) return null;
+  if (platform === "win32") {
+    if (!/^[A-Za-z]:[\\/]/.test(value)) return null;
+    return win32.resolve(value);
+  }
+  return posix.isAbsolute(value) ? posix.resolve(value) : null;
+}
+
+/** True when `value` is a full path to a folder on this kind of computer. */
+export const isBackupCopyFolder = (value, platform = process.platform) => normalizeBackupCopyFolder(value, platform) !== null;
+
 /**
  * The effective home settings from `file` (the parsed settings.json, or
  * null) and `env`. `configured` is true when a name is set: only then does
@@ -145,6 +177,7 @@ export function resolveHomeSettings(file, env = process.env) {
     maxHouseholds: parseMaxHouseholds(file?.maxHouseholds),
     backupHour: parseBackupHour(file?.backupHour),
     autoUpdate: file?.autoUpdate === undefined || file?.autoUpdate === null ? true : parseBoolean(file.autoUpdate, "autoUpdate"),
+    backupCopyFolder: parseBackupCopyFolder(file?.backupCopyFolder),
     configured: name !== null,
   });
 }

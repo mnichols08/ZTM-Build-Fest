@@ -99,7 +99,7 @@ try {
   // Synthetic household: long names, duplicates, steps, dates, pins, routines.
   await client.evaluate(`(async () => {
     const app = document.querySelector("kin-app");
-    const idle = async () => { for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh) && i < 400; i++) await new Promise((r) => setTimeout(r, 10)); };
+    const idle = async () => { for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && i < 400; i++) await new Promise((r) => setTimeout(r, 10)); };
     const add = async (command) => { await app.ctx.append.appendCommand(command); await idle(); return app.state.items.at(-1); };
     const today = app.ctx.navigation.currentCivilDate();
     const yesterday = (() => { const d = new Date(); d.setDate(d.getDate() - 3); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); })();

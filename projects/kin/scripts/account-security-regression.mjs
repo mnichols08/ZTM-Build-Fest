@@ -16,7 +16,8 @@
 //
 // "Fresh storage" clears this page's cookies and site data rather than
 // opening another browser context, so the same virtual authenticator (and
-// its passkey) stays attached.
+// its passkey) stays attached. Storage is cleared only once the account vault
+// holds the household's current key, as a device left running would see to.
 //
 // browser-regression.mjs runs this (part 2) with its browser; it can also
 // run alone: node scripts/account-security-regression.mjs <browser executable>
@@ -82,9 +83,10 @@ async function pageClient(webSocketUrl) {
 function helpers() {
   const app = () => document.querySelector("kin-app");
   const security = () => app()?.security;
-  const wait = async (condition, label, ms = 60_000) => {
+  // `detail`, if given, adds what that wait needs to say why it timed out.
+  const wait = async (condition, label, ms = 60_000, detail = () => "") => {
     for (let i = 0, step = 25; i < ms / step; i++) { if (condition()) return; await new Promise((r) => setTimeout(r, step)); }
-    throw new Error(`Wait timed out: ${label}; step=${security()?.dataset.firstRunStep} message=${security()?.message?.textContent} alert=${security()?.alert?.textContent} card=${app()?.onboarding?.textContent?.slice(0, 200)}`);
+    throw new Error(`Wait timed out: ${label}; ${detail()}step=${security()?.dataset.firstRunStep} message=${security()?.message?.textContent} alert=${security()?.alert?.textContent} card=${app()?.onboarding?.textContent?.slice(0, 200)}`);
   };
   const button = (label, root = security()) => [...root.querySelectorAll("button")].find((element) => element.textContent === label);
   const type = (selector, value, root = security()) => {
@@ -94,7 +96,15 @@ function helpers() {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   };
   const today = () => wait(() => app()?.store && app().household?.identity && !app().firstRun && !app().busy, "Today", 120_000);
-  return { app, security, wait, button, type, today };
+  // Once (#469) a new device's items never arrived and the log couldn't say
+  // whether sync never ran, was refused or was paused: this says which.
+  const syncDetail = () => {
+    const coordinator = app()?.syncCoordinator;
+    return `sync=${JSON.stringify({ state: app()?.syncState?.state ?? null, code: app()?.syncState?.code ?? null, message: app()?.syncState?.message?.slice(0, 120) ?? null,
+      coordinator: Boolean(coordinator), running: Boolean(coordinator?.running), lastSyncOk: coordinator?.lastSyncOk ?? null,
+      sinceLastSync: coordinator?.lastSyncEndedAt ? Date.now() - coordinator.lastSyncEndedAt : null, items: app()?.state?.items?.length ?? null })} `;
+  };
+  return { app, security, wait, button, type, today, syncDetail };
 }
 
 async function createHousehold(founder, h) {
@@ -208,7 +218,7 @@ async function passkeySignInHere(founder, h) {
   const manifest = h.security().manifest;
   check(manifest.wrappers.map((wrapper) => wrapper.type).join() === "prf" && manifest.accountRecovery === "backup-code",
     "the passkey alone set this device up, with no backup key for it (the account has a backup code)");
-  await h.wait(() => h.app().state?.items.some((item) => item.text === founder.item), "the household's item arrives", 120_000);
+  await h.wait(() => h.app().state?.items.some((item) => item.text === founder.item), "the household's item arrives", 120_000, h.syncDetail);
   check(true, "the household's items are here");
   return checks.length;
 }
@@ -275,9 +285,28 @@ async function backupCodeSignInHere(founder, code, h) {
   await h.today();
   const wrapper = h.security().manifest.wrappers.find((entry) => entry.type === "password");
   check(wrapper && h.security().manifest.wrappers.length === 1, "this device unlocks with the new password");
-  await h.wait(() => h.app().state?.items.some((item) => item.text === founder.item), "the household's item arrives", 120_000);
+  await h.wait(() => h.app().state?.items.some((item) => item.text === founder.item), "the household's item arrives", 120_000, h.syncDetail);
   check(true, "the household's items are here");
   return checks.length;
+}
+
+/** Whether the member's vault as the service stores it (`version`, and
+ * `ciphertext` in base64url) holds household epoch `epoch`, opened with
+ * this device's vault key. */
+async function vaultHoldsEpoch({ version, ciphertext, epoch }, h) {
+  const { openVault, wipeVaultContents } = await import("/security/account-vault.js");
+  const { fromBase64Url } = await import("/security/local-vault.js");
+  const { householdId, memberId } = h.app().household.identity;
+  const vaultKey = await h.app().household.syncKeyStore.accountVaultKey(householdId);
+  if (!vaultKey) return false;
+  let contents = null;
+  try {
+    contents = await openVault(vaultKey, fromBase64Url(ciphertext), { householdId, memberId, version });
+    return contents.epochs.some((entry) => entry.family === "household" && entry.epoch === epoch);
+  } finally {
+    vaultKey.fill(0);
+    wipeVaultContents(contents);
+  }
 }
 
 // ---- The suite -------------------------------------------------------------------
@@ -312,6 +341,19 @@ export async function accountSecurityRegressions({ endpoint, browserClient }) {
     };
     // Another device: the same page with no cookies and no site data.
     const fresh = async () => {
+      // A device that just signed in commits the key rotation its own
+      // sign-in started, and is then the only device holding the new key
+      // until its vault keeper adds it to the account vault a moment later.
+      // Wiping it before then leaves the next device's vault a key behind,
+      // and that device's sync pauses for a household key (#791). Losing
+      // every device in that moment is the test's doing, not a person's:
+      // wait for the rotation and the vault first.
+      await eventually(async () => {
+        const sync = kin.syncService.state(identity.householdId);
+        const vault = store.accountVault(identity.householdId, identity.memberId);
+        return !sync.rotationPending && vault && run(vaultHoldsEpoch, { version: vault.version,
+          ciphertext: Buffer.from(vault.ciphertext).toString("base64url"), epoch: sync.currentEpoch });
+      }, "the account vault holds the household's current key");
       // Four devices of one member in a few minutes spend the vault
       // download limits (per member and per address in 15 minutes);
       // in real use they'd be hours apart, so each new device starts a
@@ -372,7 +414,16 @@ export async function accountSecurityRegressions({ endpoint, browserClient }) {
     // 5. The backup code: a new device and a new password.
     const before = Buffer.from(member.password.salt).toString("base64url");
     await fresh();
-    checks += await run(backupCodeSignInHere, FOUNDER, made.code);
+    try {
+      checks += await run(backupCodeSignInHere, FOUNDER, made.code);
+    } catch (error) {
+      // The server's view of this new device, for a sync that never brought
+      // the household's item (#469).
+      const deviceId = await client.evaluate(`document.querySelector("kin-app")?.household?.identity?.deviceId ?? null`).catch(() => null);
+      const device = deviceId ? kin.service.devices.get(deviceId) : null;
+      error.message += ` — server: device ${deviceId ? deviceId.slice(0, 8) : "unknown"} ${device ? (device.revokedAt ? "revoked" : "trusted") : "not known"}, ${devices()} active device(s)`;
+      throw error;
+    }
     assert.notEqual(Buffer.from(member.password.salt).toString("base64url"), before, "the backup code replaced the password");
     assert.equal(types(), "backup-code", "the combined wrapper (it needs the passkey) went with the old password");
     assert.equal(devices(), 4);

@@ -149,6 +149,24 @@ documentation only.
   data as it was and says why. Before a name is chosen, the setup page
   offers a backup copied into the folder, which also brings its `home/`:
   moving a home server to a new computer.
+- **Kin at home can copy each backup to a second folder, such as a USB
+  drive** (#763; story #718, epic #708,
+  [ADR 0025](docs/decisions/0025-kin-at-home.md) §10,
+  [HOME-SERVER](docs/HOME-SERVER.md#copies-to-another-folder)). The folder
+  is chosen in the control panel on the home server's own computer only
+  (the copies hold every household's data and the home key), and kept as
+  `backupCopyFolder` in the home settings. The launcher, outside the
+  sandbox, copies every backup the folder lacks into
+  `Kin backups/<name>/` there, within a minute of each backup or of the
+  drive being plugged in, reading the database back to check it and writing
+  the manifest last. It keeps the 14 newest there and touches nothing else.
+  It never makes the chosen folder, refuses one on the same partition as
+  Kin's data or an unplugged drive's empty mount point, and reports a full
+  drive instead of clearing it. On Windows its folder there is kept as
+  private as Kin's data folder (not possible on FAT32 or exFAT). The status page shows the copies and
+  any problem in plain words. The Linux service may now write under
+  `/media`, `/mnt` and `/run/media`; an existing install needs
+  `kin --install-service` again for that.
 - **Moving a household to a home server: the app's screens** (#737;
   [ADR 0026](docs/decisions/0026-moving-a-household.md)). Household access
   offers household admins *Move to a home server*: who can sign in at the new
@@ -187,6 +205,20 @@ documentation only.
   resumable 8 MiB pieces (at most 4 GB) with the code and a per-transfer
   token, checks it, adds the household and restarts. The sending side on the
   hosted service (#738) comes next.
+- **Moving a household to a home server: devices from the old address**
+  (#769; story #737, [ADR 0026](docs/decisions/0026-moving-a-household.md)
+  §6, [HOME-SERVER](docs/HOME-SERVER.md#moving-a-household-here)). The
+  household's old devices arrive with the move but can't sign in at the new
+  address; the home server marks them, and People & devices shows them as
+  *From the old address · can't sign in here*. A household admin removes
+  them all with one button and one fresh passkey or password: one
+  revocation and one new household key. The confirmation names anyone who
+  hasn't signed in at the new address yet, and says they still can with
+  their password or backup code, or with a recovery invitation. Until
+  they're removed, those devices don't count as a way in for the last
+  household admin or the last trusted Adult, so Kin still refuses to leave
+  the household without one. Before any admin has signed in at the new
+  address, other members can still remove their own devices (#778).
 - **Kin at home: signed, safe updates** (#722; story #718, epic #708,
   [ADR 0025](docs/decisions/0025-kin-at-home.md) §10,
   [HOME-SERVER](docs/HOME-SERVER.md#updates)). Releases carry
@@ -422,9 +454,24 @@ documentation only.
   and `SUPPORT.md` are reorganised; the issue forms gain a self-hosting form,
   a privacy checkbox and contact links; and the PR template's checklist
   matches the verification gate.
+- **A sync stopped for want of the household key says where** (#791). The
+  three places that pause sync with "This device needs an authorized
+  household key" now each have their own code (`household_key_missing`,
+  `household_key_missing_after_rotation`, `household_key_missing_for_binding`),
+  and the diagnostic in a problem report also gives the key epoch that was
+  missing. A refused key transfer's `provisioning_grant_refused` is now kept
+  in reports too instead of reading `other`. The words people see are
+  unchanged.
 
 ### Fixed
 
+- **A wake counts as busy until its refresh starts** (#793). Coming back to
+  Kin (window focus, the tab showing again, the Pulse timer) checks whether
+  another tab locked before it refreshes, and until now Kin looked idle
+  while it checked. The wake now shows as pending (`app.wakePending`,
+  `web/components/app/wake.js`) from the focus until its refresh begins or
+  it decides not to refresh, so anything waiting for Kin to settle waits for
+  that refresh too.
 - **Just for me no longer drops a tap made while saving** (#792). Ticking
   an item, saving a note, deleting, sharing or adding straight after
   another change did nothing while that change was still saving. Changes
@@ -444,6 +491,9 @@ documentation only.
   to close its tunnel after GOAWAY 8 instead of destroying the socket
   straight after writing it, which could lose the GOAWAY or reset the
   connection (seen on Windows).
+- **The Home screen panel keeps its Saved message** (#469). A background
+  sync no longer redraws the panel when nothing it shows has changed, so
+  the Saved confirmation or a save error stays visible.
 
 ## v1.6.0 — Kin for Everyone
 
