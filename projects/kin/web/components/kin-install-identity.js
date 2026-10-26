@@ -146,9 +146,16 @@ export class KinInstallIdentity extends HTMLElement {
    * service's copy (without icon bytes) or null. A draft in progress is kept. */
   initialize({ published, householdName, seed, brand = DEFAULT_HOUSEHOLD_BRAND }) {
     if (!this.firstElementChild) this.build();
-    const changed = (published?.rev ?? 0) !== (this.state.published?.rev ?? 0);
+    const previous = this.state;
+    const changed = (published?.rev ?? 0) !== (previous.published?.rev ?? 0);
     this.state = { published: published ?? null, householdName: householdName || DEFAULT_HOUSEHOLD_NAME, seed, brand };
     if (this.dirty && !changed && !this.writing) { this.renderPreview(); return; }
+    // A background sync re-initializes the panel with the same details. A
+    // full render would wipe the "Saved." status or an error the admin has
+    // not read yet, so only redraw when something the panel shows changed.
+    const same = !changed && previous.householdName === this.state.householdName &&
+      previous.seed === seed && sameBrand(previous.brand, brand);
+    if (same && !this.dirty && !this.writing) { this.renderPreview(); return; }
     const otherAdmin = this.dirty && changed && !this.writing;
     this.dirty = false;
     this.render();
@@ -358,6 +365,13 @@ export class KinInstallIdentity extends HTMLElement {
     for (const url of this.objectUrls ?? []) URL.revokeObjectURL(url);
     this.objectUrls = [];
   }
+}
+
+function sameBrand(a, b) {
+  if ((a?.iconSource ?? null) !== (b?.iconSource ?? null)) return false;
+  const x = a?.icon?.bytes, y = b?.icon?.bytes;
+  if (!x || !y) return !x && !y;
+  return x.length === y.length && x.every((byte, index) => byte === y[index]);
 }
 
 function button(label, action, className = "") {
