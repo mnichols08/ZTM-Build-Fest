@@ -434,6 +434,9 @@ documentation only.
   to close its tunnel after GOAWAY 8 instead of destroying the socket
   straight after writing it, which could lose the GOAWAY or reset the
   connection (seen on Windows).
+- **The Home screen panel keeps its Saved message** (#469). A background
+  sync no longer redraws the panel when nothing it shows has changed, so
+  the Saved confirmation or a save error stays visible.
 
 ## v1.6.0 — Kin for Everyone
 
