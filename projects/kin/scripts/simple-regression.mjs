@@ -5,6 +5,7 @@
 // Afterwards the page reloads into the full layout.
 import assert from "node:assert/strict";
 import { setViewport } from "./cdp-viewport.mjs";
+import { setMedia } from "./cdp-media.mjs";
 
 export async function simpleRegressions(client, { until, ready }) {
   const page = (expression) => client.evaluate(expression);
@@ -170,15 +171,19 @@ export async function simpleRegressions(client, { until, ready }) {
     const style = getComputedStyle(card);
     return { surface: style.getPropertyValue("--surface").trim(), border: style.borderTopStyle, width: parseFloat(style.borderTopWidth) };
   })()`);
-  const light = await colours();
+  // Light against dark in the same palette, not the machine's own appearance
+  // or the page's unstyled defaults (#795).
+  await setMedia(client);
   await page(`(() => { const app = document.querySelector("kin-app"); if (!app.currentAppearance) app.ctx.appearance.applyEffectiveAppearance();
-    window.__simpleAppearance = structuredClone(app.currentAppearance); app.ctx.appearance.applyAppearance({ ...window.__simpleAppearance, mode: "dark" }); return true; })()`);
+    window.__simpleAppearance = structuredClone(app.currentAppearance); app.ctx.appearance.applyAppearance({ ...window.__simpleAppearance, mode: "light" }); return true; })()`);
+  const light = await colours();
+  await page(`(() => { document.querySelector("kin-app").ctx.appearance.applyAppearance({ ...window.__simpleAppearance, mode: "dark" }); return true; })()`);
   const dark = await colours();
   await page(`(() => { const app = document.querySelector("kin-app"); app.ctx.appearance.applyAppearance(window.__simpleAppearance); delete window.__simpleAppearance; return true; })()`);
   assert.notEqual(dark.surface, light.surface, "dark mode changes the cards");
-  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "active" }] });
+  await setMedia(client, [{ name: "forced-colors", value: "active" }]);
   const forced = await colours();
-  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "none" }] });
+  await setMedia(client);
   assert.ok(forced.width >= 2 && forced.border !== "none", "forced colours: each card keeps a visible border");
 
   // Keyboard only and names (#350): Tab reaches Done; Enter marks it done;

@@ -1,4 +1,5 @@
 import { setViewport } from "./cdp-viewport.mjs";
+import { setMedia } from "./cdp-media.mjs";
 import assert from "node:assert/strict";
 
 // Bulk selection, complete/reopen, and undo through the real encrypted store
@@ -474,7 +475,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     });
     check(!narrow.overflow && narrow.toolbarFits && narrow.targets, "320px: the toolbar wraps without overflow and targets stay 48px", narrow);
     if (narrow.small.length) metrics.push(`NOTE bulk 320px subpixel targets: ${narrow.small.join(", ")}`);
-    await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "active" }, { name: "prefers-reduced-motion", value: "reduce" }] });
+    await setMedia(client, [{ name: "forced-colors", value: "active" }, { name: "prefers-reduced-motion", value: "reduce" }]);
     const forced = await page(() => {
       const list = document.querySelector("kin-app").needs;
       const toolbar = getComputedStyle(list.bulkBar.toolbar);
@@ -483,7 +484,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
         motion: matchMedia("(prefers-reduced-motion: reduce)").matches && parseFloat(row.transitionDuration || "0") <= 0.0001 };
     });
     check(forced.forced && forced.border && forced.outline && forced.motion, "forced colours keep the toolbar and checked rows visible; reduced motion adds no animation", forced);
-    await client.send("Emulation.setEmulatedMedia", { media: "", features: [] });
+    await setMedia(client);
     await viewport(1280, 900, false);
     await page(() => document.querySelector("kin-app").needs.clearSelection());
 
@@ -597,7 +598,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     await ungate().catch(() => {});
     await restoreReads().catch(() => {});
     await client.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }).catch(() => {});
-    await client.send("Emulation.setEmulatedMedia", { media: "", features: [] }).catch(() => {});
+    await setMedia(client).catch(() => {});
     await client.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
     await page(() => { const app = document.querySelector("kin-app"); for (const list of [app?.needs, app?.shopping]) list?.setSelectionMode?.(false); app?.clearBulkOutcome?.(); window.scrollTo(0, 0); }).catch(() => {});
   }
