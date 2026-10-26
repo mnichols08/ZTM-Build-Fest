@@ -54,6 +54,12 @@ export const PAGES = freeze(["today", "lists", "routines", "updates", "household
 /** Engine stages. */
 export const ENGINE_STAGES = freeze(["load", "instantiate", "call"]);
 
+/** Why a key rotation was committed without the account vault (#791). */
+export const ROTATION_VAULT_REASONS = freeze([
+  "vault_version_conflict", "vault_not_found", "vault_rate_limited", "vault_invalid", "request_too_large",
+  "vault_epoch_conflict", "vault_unreadable", "not_applied",
+]);
+
 /** What an unexpected error was. */
 export const UNEXPECTED_KINDS = freeze(["error", "rejection"]);
 
@@ -91,6 +97,9 @@ export const DIAGNOSTIC_CODES = Object.freeze({
   went_online: Object.freeze({}),
   // The report channel itself (web/feedback/).
   feedback_send_failed: Object.freeze({ status: NUMBER }),
+  // A key rotation committed without the account vault change (#791,
+  // web/sync/rotation-vault.js): the vault keeper adds the key afterwards.
+  rotation_vault_skipped: Object.freeze({ reason: ROTATION_VAULT_REASONS }),
 });
 
 /** Largest number a field keeps; beyond it the value is clamped. */
