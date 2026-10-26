@@ -775,6 +775,9 @@ it again.
   every minute each copy any finished set the folder lacks, newest first.
   That covers the set the updater makes before an update (in the launcher,
   so no line) and a drive plugged in later; a missed line does no harm.
+  The minute's look also checks the folder after a good copy, so a drive
+  unplugged, or another one at the same place, is noticed within a minute.
+  A folder changed during a run gets no more sets.
 - **The folder is `backupCopyFolder` in `home/settings.json`, chosen only in
   the panel on the home server's own computer**, because the copies hold
   every household's data and the home key: a change can be marked
@@ -784,10 +787,15 @@ it again.
   stored path that doesn't suit this computer (after a move to another
   kind of computer) turns the copy off rather than stopping Kin.
 - **Copies go to `<folder>/Kin backups/<name>/kin-<time>/`**, in the set
-  format, the database read back and checked, the manifest written last and
+  format, the database read back and checked (which catches Kin's own
+  mistakes, not a drive that loses writes), the manifest written last and
   each file flushed. Kin never makes the chosen folder and refuses one on the
-  data directory's own disk, so a missing or unmounted drive is reported and
-  never fills the system disk. The 14-newest rule applies there, touching
+  data directory's own partition, or (outside Windows) one under `/media`,
+  `/mnt`, `/run/media` or `/Volumes` on the same partition as that folder,
+  so a missing or unmounted drive is reported and never fills the system
+  disk. Another partition of the same disk can't be told apart. On Windows
+  `Kin backups/<name>` gets the data directory's kind of permissions (SYSTEM,
+  Administrators, the owner); FAT32 and exFAT hold none. The 14-newest rule applies there, touching
   only Kin's own folders (two servers can share a drive), and a full drive
   is reported, not cleared.
 - **The outcome goes to `backups/copy-status.json`**, which only the

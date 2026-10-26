@@ -160,6 +160,8 @@ export const SECTIONS = {
       ]),
       ...(value.lastError ? [el("p", { className: "control-problem", "data-code": value.lastError.code, text: explain(value.lastError.code) })] : []),
       ...(value.copy?.state === "failed" && value.copy.lastError ? [el("p", { className: "control-problem", "data-code": value.copy.lastError.code, text: explain(value.copy.lastError.code) })] : []),
+      // Waiting can last: a Kin started without its launcher never copies.
+      ...(["off", "waiting"].includes(value.copy?.state) ? [el("p", { className: "control-muted", "data-copy": value.copy.state, text: explainBackupCopyState(value.copy.state) })] : []),
       ...[lastRestore(value.lastRestore)].filter(Boolean),
       el("p", { className: "control-muted", text: "A backup holds this home server's keys as well as Kin's data: whoever has a copy could pretend to be your home server. Keep backups, and any drive they're copied to, as private as this computer." }),
     ],

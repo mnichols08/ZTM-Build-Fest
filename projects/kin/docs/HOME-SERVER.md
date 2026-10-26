@@ -392,17 +392,25 @@ Leave it empty to stop copying; copies already there stay.
   another home server's folder included. A server whose name changed starts
   a new folder and leaves the old one.
 - **When:** within a minute of each backup, when Kin starts, and within a
-  minute of plugging the drive in. Each copy's database is read back and
-  checked against the backup, and its `backup.json` is written last and
-  flushed to the drive, so a copy cut short (the drive pulled out) has no
-  `backup.json`, isn't used, and is made again.
+  minute of plugging the drive in, including another drive plugged in at
+  the same place, which gets every backup. An unplugged drive shows on the
+  status page within a minute. Each copy's database is read back and
+  checked against the backup, which catches a copy that went wrong, though
+  not a faulty drive that only pretends to keep what it's given. Its
+  `backup.json` is written last and flushed to the drive, so a copy cut
+  short (the drive pulled out) has no `backup.json`, isn't used, and is
+  made again once the drive is back. A folder changed or emptied in the
+  panel during a copy gets nothing more.
 - **What Kin refuses:** Kin never makes the folder you chose. If it isn't
   there (the drive isn't plugged in) the status page says so, and Kin copies
-  once it is. A folder on the same disk as Kin's data is refused, since it
-  wouldn't survive that disk; this is also how an unplugged drive's empty
-  mount point on Linux is caught. A full drive is reported, never cleared to
-  make room. FAT32 holds no file over 4 GB, so use exFAT or NTFS for a large
-  Kin.
+  once it is. A folder on the same partition as Kin's data is refused, since
+  it wouldn't survive that disk. Kin can't tell another partition of the
+  same disk apart (`D:\` beside `C:\` on one drive), so choose a separate
+  drive. On Linux and macOS, a folder under `/media`, `/mnt`, `/run/media` or
+  `/Volumes` with no drive mounted there is reported as missing too, so an
+  unplugged drive's empty mount point is never filled. A full drive is
+  reported, never cleared to make room. FAT32 holds no file over 4 GB, so
+  use exFAT or NTFS for a large Kin.
 - **Restoring from a copy:** copy a `kin-…` folder from the drive into Kin's
   `backups` folder, then restore it in the panel, as when moving to a new
   computer (above).
@@ -417,7 +425,11 @@ On each system:
   by `kin`, always works.
 - **Windows:** use a drive letter on this computer, not a mapped network
   drive, which the service's account (LOCAL SERVICE) can't see. On an NTFS
-  drive, give LOCAL SERVICE permission to write the folder.
+  drive, give LOCAL SERVICE permission to write the folder. Kin then lets
+  only its own account, SYSTEM and Administrators into the `Kin backups`
+  folder it makes for this server, as with its data folder. A FAT32 or
+  exFAT drive can't keep anyone out: every account on any computer it is
+  plugged into can read the copies, so keep that drive locked away.
 - **macOS:** drives appear under `/Volumes`. If the status page says Kin
   isn't allowed to write there, allow it in System Settings, Privacy &
   Security.

@@ -116,7 +116,7 @@ const BACKUP_COPY_STATES = {
 const BACKUP_ERRORS = {
   "backup-copy-missing": "Kin can't find the second folder. If it's on a USB drive, plug the drive in; Kin copies within a minute. Kin never makes this folder itself.",
   "backup-copy-not-folder": "The second folder's path names a file, not a folder. Choose a folder.",
-  "backup-copy-same-disk": "The second folder is on the same disk as Kin's data, so a copy there wouldn't survive that disk failing. If it's on a USB drive, the drive may not be plugged in; otherwise choose a folder on another disk.",
+  "backup-copy-same-disk": "The second folder is on the same drive as Kin's data, so a copy there wouldn't survive that drive failing. If it's on a USB drive, the drive may not be plugged in; otherwise choose a folder on another drive.",
   "backup-copy-denied": "Kin isn't allowed to write in the second folder. Give the account Kin runs as permission to write there; on Linux, run kin --install-service again if Kin was installed before this version.",
   "backup-copy-full": "The second folder's drive is full, so Kin couldn't copy the newest backup. Free some space there; Kin tries again in an hour and never deletes your files to make room.",
   "backup-copy-too-big": "A backup is too big for the drive's format (FAT32 holds files up to 4 GB). Use a drive formatted as exFAT or NTFS.",

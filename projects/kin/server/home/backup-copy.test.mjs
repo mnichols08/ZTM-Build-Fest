@@ -3,12 +3,13 @@
 // that leave nothing behind, and one copy at a time. Another disk and a full
 // drive are stand-ins (the `files` seam), never real drives.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
-import { BackupCopier, COPIES_FOLDER, copyFileFlushed, copyFolderFor } from "./backup-copy.mjs";
+import { BackupCopier, COPIES_FOLDER, copyFileFlushed, copyFolderFor, protectFolder } from "./backup-copy.mjs";
 import { BACKUPS_KEPT, BACKUP_COPY_ERROR_CODES, BACKUP_COPY_STATUS, BACKUP_MANIFEST, backupsDirectory, listBackups, makeBackupSet } from "./backups.mjs";
 import { HOME_KEY_FILE } from "./home-key.mjs";
 
@@ -52,8 +53,10 @@ const otherDisk = (root) => async (path) => {
   return { ...info, dev: info.dev + 1, isDirectory: () => info.isDirectory() };
 };
 
-function copier(context, { files = {}, events = [] } = {}) {
-  return new BackupCopier({ dataDirectory: context.dataDirectory, env: {}, now: context.clock.now, log: (event) => events.push(event), files: { stat: otherDisk(context.chosen), ...files } });
+/** A copier for `context`; the Windows permissions are a stand-in unless a
+ * test asks for them. */
+function copier(context, { files = {}, events = [], platform } = {}) {
+  return new BackupCopier({ dataDirectory: context.dataDirectory, env: {}, now: context.clock.now, log: (event) => events.push(event), ...(platform ? { platform } : {}), files: { stat: otherDisk(context.chosen), protect: async () => {}, ...files } });
 }
 
 async function writtenStatus(instance, context) {
@@ -302,4 +305,118 @@ test("stopping: a copy under way stops after its file and leaves no half copy", 
   } } });
   assert.deepEqual(await instance.sync(), { state: "stopped" });
   assert.ok(!existsSync(join(context.copies, set.id)));
+});
+
+test("after a good copy, the minute's look notices a drive unplugged, another drive plugged in at the same place, and copies deleted", async (t) => {
+  const context = fixture(t);
+  await context.makeSet();
+  await context.makeSet();
+  const instance = copier(context);
+  assert.equal((await instance.sync()).copied, 2);
+  assert.equal(await instance.tick(), null, "nothing changed: nothing copied");
+  rmSync(context.chosen, { recursive: true, force: true });
+  assert.deepEqual(await instance.tick(), { state: "failed", code: "backup-copy-missing" });
+  // Another, empty drive at the same place gets every set within a minute.
+  mkdirSync(context.chosen);
+  context.clock.advance(60_000);
+  assert.deepEqual(await instance.tick(), { state: "ok", copied: 2, removed: 0 });
+  rmSync(join(context.chosen, COPIES_FOLDER), { recursive: true, force: true });
+  assert.deepEqual(await instance.tick(), { state: "ok", copied: 2, removed: 0 });
+  assert.equal(await instance.tick(), null);
+});
+
+test("a drive pulled out during a write is looked for every minute, and copied to once it is back", async (t) => {
+  const context = fixture(t);
+  await context.makeSet();
+  const disk = otherDisk(context.chosen);
+  let plugged = true;
+  let pulls = 1;
+  const events = [];
+  const instance = copier(context, { events, files: {
+    stat: async (path) => { if (!plugged && path.startsWith(context.chosen)) throw systemError("ENOENT"); return disk(path); },
+    copyFile: async (source, destination) => {
+      if (pulls > 0) { pulls -= 1; plugged = false; throw systemError("EIO"); }
+      return copyFileFlushed(source, destination);
+    },
+  } });
+  assert.deepEqual(await instance.sync(), { state: "failed", code: "backup-copy-missing" });
+  assert.deepEqual(events, [{ event: "home_backup_copy_failed", code: "backup-copy-missing", reason: "EIO" }]);
+  plugged = true;
+  context.clock.advance(60_000);
+  assert.equal(instance.due(), true, "not an hour later");
+  assert.deepEqual(await instance.tick(), { state: "ok", copied: 1, removed: 0 });
+});
+
+test("a folder changed or cleared during a copy gets no more sets after the one under way", async (t) => {
+  const context = fixture(t);
+  await context.makeSet();
+  await context.makeSet();
+  const second = join(context.root, "usb2");
+  mkdirSync(second);
+  const drives = async (path) => {
+    const info = await stat(path);
+    return path.startsWith(context.chosen) || path.startsWith(second) ? { ...info, dev: info.dev + 1, isDirectory: () => info.isDirectory() } : info;
+  };
+  let change = () => context.settings(second);
+  const instance = copier(context, { files: { stat: drives, copyFile: async (source, destination) => {
+    const now = change;
+    change = () => {};
+    now();
+    return copyFileFlushed(source, destination);
+  } } });
+  assert.deepEqual(await instance.sync(), { state: "ok", copied: 2, removed: 0 }, "the run starts again with the new folder");
+  assert.equal(listBackups(context.copies).length, 1, "the old folder got only the set under way");
+  assert.equal(listBackups(join(second, COPIES_FOLDER, NAME)).length, 2);
+  const status = await writtenStatus(instance, context);
+  assert.equal(status.folder, second);
+  assert.equal(status.copies, 2);
+  // Cleared during a copy: the copy is off, and nothing more is written.
+  context.settings(context.chosen);
+  await context.makeSet();
+  change = () => context.settings(null);
+  assert.deepEqual(await instance.sync(), { state: "off" });
+  assert.equal(listBackups(context.copies).length, 2, "one of the two missing sets");
+  assert.equal((await writtenStatus(instance, context)).state, "off");
+});
+
+test("outside Windows, an empty mount point under /mnt is reported as missing, even with the data directory on its own partition", async (t) => {
+  const context = fixture(t);
+  await context.makeSet();
+  context.settings("/mnt/kinusb");
+  // Nothing mounted: /mnt/kinusb is on the same partition as /mnt.
+  const stats = async (path) => (path === "/mnt/kinusb" || path === "/mnt" ? { dev: 7, isDirectory: () => true } : { ...(await stat(path)), dev: 8 });
+  const instance = copier(context, { platform: "linux", files: { stat: stats } });
+  assert.deepEqual(await instance.sync(), { state: "failed", code: "backup-copy-missing" });
+});
+
+test("on Windows, Kin's copies folder is given private permissions: when made, once per launcher, and again on another drive", { skip: process.platform !== "win32" && "Windows permissions" }, async (t) => {
+  const context = fixture(t);
+  await context.makeSet();
+  const given = [];
+  const events = [];
+  const instance = copier(context, { platform: "win32", events, files: { protect: async (folder) => { given.push(folder); } } });
+  await instance.sync();
+  await context.makeSet();
+  await instance.sync();
+  assert.deepEqual(given, [context.copies], "once");
+  rmSync(context.chosen, { recursive: true, force: true });
+  mkdirSync(context.chosen);
+  await instance.sync();
+  assert.deepEqual(given, [context.copies, context.copies], "a folder made anew");
+  // A drive that holds no permissions (exFAT) is copied to all the same.
+  rmSync(context.chosen, { recursive: true, force: true });
+  mkdirSync(context.chosen);
+  const unprotected = copier(context, { platform: "win32", events, files: { protect: async () => { throw systemError("EINVAL"); } } });
+  assert.equal((await unprotected.sync()).state, "ok");
+  assert.deepEqual(events.filter((event) => event.event === "home_backup_copy_not_private"), [{ event: "home_backup_copy_not_private", reason: "EINVAL" }]);
+  // The real permissions: no one but SYSTEM, Administrators and the owner.
+  const real = join(context.root, "real");
+  mkdirSync(join(real, "kin-x"), { recursive: true });
+  await protectFolder(real);
+  const file = join(real, "kin-x", "kin.sqlite");
+  writeFileSync(file, "synthetic\n");
+  const acl = execFileSync("icacls", [file], { encoding: "utf8", windowsHide: true }).replace(file, "");
+  assert.doesNotMatch(acl, /\bUsers\b|Everyone|Authenticated/, acl);
+  assert.match(acl, /OWNER RIGHTS|S-1-3-4/, acl);
+  assert.equal(readFileSync(file, "utf8"), "synthetic\n", "Kin's own account can still read it");
 });

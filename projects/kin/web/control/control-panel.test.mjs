@@ -394,9 +394,14 @@ test("the status page: the second copy of the backups in a row of its own, and i
   const element = document.createElement("kin-control-status");
   const backups = (copy) => { element.status = { ...STATUS, backups: { ...STATUS.backups, copy } }; return element.querySelector('[data-section="backups"]'); };
   const row = (section) => section.querySelectorAll("dt").find((term) => term.textContent === "Second copy")?.parentNode.querySelector("dd").textContent;
-  assert.equal(row(backups({ ...COPY, state: "off", copies: 0 })), "Not set up");
-  assert.equal(row(backups({ ...COPY, state: "waiting" })), "Kin is checking the folder");
+  const off = backups({ ...COPY, state: "off", copies: 0 });
+  assert.equal(row(off), "Not set up");
+  assert.match(off.querySelector('[data-copy="off"]').textContent, /Choose a second folder/);
+  const waiting = backups({ ...COPY, state: "waiting" });
+  assert.equal(row(waiting), "Kin is checking the folder");
+  assert.match(waiting.querySelector('[data-copy="waiting"]').textContent, /started in a way that doesn't copy backups/, "why it may never change");
   const ok = backups(COPY);
+  assert.equal(ok.querySelector("[data-copy]"), null);
   assert.match(row(ok), /^2 copies, the newest from /);
   assert.equal(ok.dataset.tone, "good");
   assert.match(ok.textContent, /any drive they're copied to, as private as this computer/);

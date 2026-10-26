@@ -12,7 +12,9 @@
 // - the launcher starting;
 // - a look every minute, which catches the set the updater makes before an
 //   update (in the launcher, so no line is printed), a drive plugged in
-//   later and a folder just chosen.
+//   later, a folder just chosen, and a drive unplugged, swapped for another
+//   or emptied since the last copy (the folder and its sets are looked at
+//   even when the last copy went well).
 //
 // Each look copies every finished set the folder lacks, newest first, to
 //
@@ -20,29 +22,41 @@
 //
 // in the same form as the set in `backups/`. `kin.sqlite` comes first, and
 // is read back and checked against the original's size and SHA-256 and the
-// manifest; then `home/`; `backup.json` last, so a folder without it is
-// unfinished, as in `backups/`. Each file is flushed to the drive (removable
-// drives hold writes back). Any failure removes that set's folder. The 14
-// newest are kept there too, and only Kin's own folders are touched
-// (pruneBackups): the person's own files, and another home server's folder
-// on the same drive, stay.
+// manifest (the system may answer that read from memory, so this catches a
+// copy Kin got wrong, not a drive that loses what it was given); then
+// `home/`; `backup.json` last, so a folder without it is unfinished, as in
+// `backups/`. Each file is flushed to the drive (removable drives hold
+// writes back). Any failure removes that set's folder. The 14 newest are
+// kept there too, and only Kin's own folders are touched (pruneBackups): the
+// person's own files, and another home server's folder on the same drive,
+// stay. A folder changed or cleared in the panel stops the run before the
+// next set, so the old folder gets no more.
+//
+// On Windows the modes below mean nothing, so `Kin backups/<name>` is given
+// permissions like the data directory's (the installer's icacls): SYSTEM,
+// Administrators and whoever owns each file, which is Kin's account. FAT32
+// and exFAT drives hold no permissions; the guide says so.
 //
 // Kin never makes the chosen folder itself, and refuses one on the same
-// disk as its data directory: a drive that isn't plugged in (or a Linux
-// mount point with nothing mounted) is then reported, instead of filling
-// this computer's own disk with copies that wouldn't survive it failing. A
-// full drive is reported, never cleared to make room.
+// partition as its data directory: a drive that isn't plugged in is then
+// reported, instead of filling this computer's own disk with copies that
+// wouldn't survive it failing. Another partition of the same disk can't be
+// told apart (the guide says so). Outside Windows, a folder under /media,
+// /mnt, /run/media or /Volumes on the same partition as that folder itself
+// is a mount point with nothing mounted, reported as missing. A full drive
+// is reported, never cleared to make room.
 //
 // How it went goes to `backups/copy-status.json`, which only the launcher
 // writes and the control panel reads (backups.mjs). Kin's log gets codes
 // and counts, never a path.
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { createReadStream, readFileSync } from "node:fs";
 import { mkdir, open, readdir, rm, stat, statfs } from "node:fs/promises";
 import { dirname, join, posix, win32 } from "node:path";
 import { writePrivateFile } from "../acme/keys.mjs";
 import {
-  BACKUP_COPY_FORMAT, BACKUP_COPY_STATUS, BACKUP_DATABASE, BACKUP_MANIFEST, BACKUP_RETRY_MS, HOME_FILES,
+  BACKUPS_KEPT, BACKUP_COPY_FORMAT, BACKUP_COPY_STATUS, BACKUP_DATABASE, BACKUP_MANIFEST, BACKUP_RETRY_MS, HOME_FILES,
   backupsDirectory, listBackups, pruneBackups, readBackupCopyStatus,
 } from "./backups.mjs";
 import { homeSettingsPath, normalizeBackupCopyFolder, resolveHomeSettings } from "./settings.mjs";
@@ -57,6 +71,8 @@ const SPARE_BYTES = 1024 * 1024;
 /** Problems with the folder rather than the copy: looked at every minute,
  * so a drive plugged in is copied to within one. */
 const FOLDER_PROBLEMS = Object.freeze(["backup-copy-missing", "backup-copy-not-folder", "backup-copy-same-disk", "backup-copy-denied"]);
+/** Where drives are mounted outside Windows. */
+const MOUNT_AREAS = Object.freeze(["/run/media", "/media", "/mnt", "/Volumes"]);
 
 export class BackupCopyError extends Error {
   constructor(code) {
@@ -69,6 +85,9 @@ export class BackupCopyError extends Error {
 // The launcher is stopping: the copy under way is removed and nothing is
 // reported.
 const STOPPED = new BackupCopyError("stopped");
+// The folder was changed or cleared during a run: it stops before the next
+// set, unreported, and the run starts again with the new setting.
+const CHANGED = new BackupCopyError("changed");
 
 /** Where this server's copies go in `folder`. */
 export function copyFolderFor(folder, name, platform = process.platform) {
@@ -111,7 +130,8 @@ export async function copyFileFlushed(source, destination) {
   return { bytes, sha256: hash.digest("hex") };
 }
 
-/** A file's { bytes, sha256 }, read from the drive. */
+/** A file's { bytes, sha256 }, read back (perhaps from the system's memory
+ * of what was just written, not the drive itself). */
 async function hashFile(path) {
   const hash = createHash("sha256");
   let bytes = 0;
@@ -122,16 +142,26 @@ async function hashFile(path) {
   return { bytes, sha256: hash.digest("hex") };
 }
 
+/** Gives `folder` (and what is made in it) only SYSTEM, Administrators and
+ * each file's owner, as the installer does for the data directory. Windows
+ * only. */
+export function protectFolder(folder) {
+  return new Promise((resolve, reject) => {
+    execFile("icacls", [folder, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "*S-1-3-4:(OI)(CI)F"], { windowsHide: true }, (error) => (error ? reject(error) : resolve()));
+  });
+}
+
 const blank = (folder) => ({ folder, checkedAt: null, lastCopyAt: null, lastCopiedCreatedAt: null, copies: 0, lastError: null });
 
 /**
  * The launcher's copier for one home server. Test seams: `files` replaces
- * `stat`, `statfs` (free space) and `copyFile` (copyFileFlushed).
+ * `stat`, `statfs` (free space), `copyFile` (copyFileFlushed) and `protect`
+ * (protectFolder, on Windows).
  */
 export class BackupCopier {
   constructor({ dataDirectory, env = process.env, platform = process.platform, now = Date.now, log = () => {}, files = {}, pollMs = COPY_POLL_MS }) {
     Object.assign(this, { dataDirectory, env, platform, now, log, pollMs });
-    this.files = { stat, statfs, copyFile: copyFileFlushed, ...files };
+    this.files = { stat, statfs, copyFile: copyFileFlushed, protect: protectFolder, ...files };
     this.source = backupsDirectory(dataDirectory);
     const previous = readBackupCopyStatus(dataDirectory);
     this.state = previous
@@ -141,6 +171,8 @@ export class BackupCopier {
     this.again = false;
     this.timer = null;
     this.stopped = false;
+    // The copies folder this launcher gave its permissions (Windows).
+    this.protectedFolder = null;
     // Settles once the last status written is on disk (see #write).
     this.written = Promise.resolve();
   }
@@ -166,10 +198,33 @@ export class BackupCopier {
     if (!this.stopped) this.sync().catch(() => {});
   }
 
-  /** The minute's look: copies when something may have changed. */
+  /** The minute's look: copies when something may have changed, or when
+   * the folder no longer holds what the last copy left there. */
   async tick() {
-    if (this.stopped || this.running || !this.due()) return null;
+    if (this.stopped || this.running) return null;
+    if (!this.due() && !(await this.#lacking())) return null;
+    if (this.stopped || this.running) return null;
     return this.sync();
+  }
+
+  /** True when the last copy went well but the folder is gone (a drive
+   * unplugged), or lacks a set (another drive plugged in at the same place,
+   * or the copies deleted). Reads only the folder and the manifests. */
+  async #lacking() {
+    const { folder, name } = this.#settings();
+    if (this.state.state !== "ok" || !folder || !name || this.state.folder !== folder) return false;
+    try {
+      const chosen = normalizeBackupCopyFolder(folder, this.platform);
+      if (!chosen) return true;
+      await this.#check(chosen);
+      const kept = listBackups(copyFolderFor(chosen, name, this.platform));
+      const there = new Set(kept.map((set) => set.id));
+      // A set older than the 14 kept there would only be pruned again.
+      const oldest = kept.length >= BACKUPS_KEPT ? kept.at(-1).createdAt : "";
+      return listBackups(this.source).some((set) => !there.has(set.id) && set.createdAt > oldest);
+    } catch {
+      return true;
+    }
   }
 
   /** The folder and server name from the home settings, read as the
@@ -229,12 +284,17 @@ export class BackupCopier {
       if (!chosen) throw new BackupCopyError("backup-copy-missing");
       await this.#check(chosen);
       const destination = copyFolderFor(chosen, name, this.platform);
-      await mkdir(destination, { recursive: true, mode: 0o700 });
+      const made = await mkdir(destination, { recursive: true, mode: 0o700 });
+      await this.#protect(destination, made);
       const there = new Set(listBackups(destination).map((set) => set.id));
       const missing = listBackups(this.source).filter((set) => !there.has(set.id));
       if (missing.length) this.#write({ state: "copying", checkedAt: at });
       let copied = 0;
-      for (const set of missing) if (await this.#copySet(set, destination)) copied += 1;
+      for (const set of missing) {
+        const current = this.#settings();
+        if (current.folder !== folder || current.name !== name) throw CHANGED;
+        if (await this.#copySet(set, destination)) copied += 1;
+      }
       const before = listBackups(destination).length;
       pruneBackups(destination, this.now());
       const kept = listBackups(destination);
@@ -245,7 +305,19 @@ export class BackupCopier {
       return { state: "ok", copied, removed };
     } catch (error) {
       if (error === STOPPED) return { state: "stopped" };
-      const code = copyErrorCode(error);
+      if (error === CHANGED) {
+        this.again = true;
+        return { state: "changed" };
+      }
+      let code = copyErrorCode(error);
+      // A drive pulled out during a write fails with an error of its own
+      // (EIO): if the folder has gone too, that is the problem, looked at
+      // every minute, so the copy is made again once the drive is back.
+      if (code === "backup-copy-failed") {
+        const chosen = normalizeBackupCopyFolder(folder, this.platform);
+        const now = chosen ? await this.#check(chosen).then(() => null, (problem) => copyErrorCode(problem)) : null;
+        if (FOLDER_PROBLEMS.includes(now)) code = now;
+      }
       // Logged when the problem is new, not every minute it lasts.
       if (this.state.state !== "failed" || this.state.lastError?.code !== code) {
         const reason = systemCode(error);
@@ -257,11 +329,30 @@ export class BackupCopier {
   }
 
   /** Throws BackupCopyError (or the system's error) unless `folder` is a
-   * folder on another disk than the data directory. */
+   * folder on another partition than the data directory and, outside
+   * Windows, not an empty mount point (see the top of this file). */
   async #check(folder) {
     const info = await this.files.stat(folder);
     if (!info.isDirectory()) throw new BackupCopyError("backup-copy-not-folder");
     if ((await this.files.stat(this.dataDirectory)).dev === info.dev) throw new BackupCopyError("backup-copy-same-disk");
+    if (this.platform === "win32") return;
+    const area = MOUNT_AREAS.find((root) => folder.startsWith(`${root}/`));
+    if (area && (await this.files.stat(area)).dev === info.dev) throw new BackupCopyError("backup-copy-missing");
+  }
+
+  /** On Windows, gives this server's copies folder its permissions: when
+   * it was just made (perhaps on another drive at the same place), and once
+   * per launcher for one made before. A drive that holds no permissions
+   * (FAT32, exFAT) is logged once and copied to all the same. */
+  async #protect(destination, made) {
+    if (this.platform !== "win32" || (!made && this.protectedFolder === destination)) return;
+    this.protectedFolder = destination;
+    try {
+      await this.files.protect(destination);
+    } catch (error) {
+      const reason = systemCode(error);
+      this.log({ event: "home_backup_copy_not_private", ...(reason ? { reason } : {}) });
+    }
   }
 
   #stopping() {

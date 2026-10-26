@@ -160,9 +160,10 @@ documentation only.
   `Kin backups/<name>/` there, within a minute of each backup or of the
   drive being plugged in, reading the database back to check it and writing
   the manifest last. It keeps the 14 newest there and touches nothing else.
-  It never makes the chosen folder, refuses one on the same disk as Kin's
-  data (which also catches an unplugged drive's mount point), and reports
-  a full drive instead of clearing it. The status page shows the copies and
+  It never makes the chosen folder, refuses one on the same partition as
+  Kin's data or an unplugged drive's empty mount point, and reports a full
+  drive instead of clearing it. On Windows its folder there is kept as
+  private as Kin's data folder (not possible on FAT32 or exFAT). The status page shows the copies and
   any problem in plain words. The Linux service may now write under
   `/media`, `/mnt` and `/run/media`; an existing install needs
   `kin --install-service` again for that.
