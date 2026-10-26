@@ -409,6 +409,38 @@ test("outside Windows, a drive mounted at /mnt itself is used, and a drive mount
   }
 });
 
+test("outside Windows, the folder directly under the mount area decides: empty on a Mac or under /media is missing, a drive mounted there is used", async (t) => {
+  const context = fixture(t);
+  await context.makeSet();
+  // On a Mac /Volumes can be on another partition than / (7 and 6 here)
+  // with nothing mounted at it, so it never counts as a drive itself.
+  // Under /media and /run/media the drive is two levels down, at
+  // <you>/<label>.
+  const cases = [
+    ["darwin", "/Volumes/USB", { "/Volumes/USB": 7, "/Volumes": 7, "/": 6 }, "backup-copy-missing"],
+    ["darwin", "/Volumes/USB/backups", { "/Volumes/USB/backups": 7, "/Volumes/USB": 7, "/Volumes": 7, "/": 6 }, "backup-copy-missing"],
+    ["darwin", "/Volumes/USB", { "/Volumes/USB": 9, "/Volumes": 7, "/": 6 }, "backup-copy-denied"],
+    ["darwin", "/Volumes/USB/backups", { "/Volumes/USB/backups": 9, "/Volumes/USB": 9, "/Volumes": 7, "/": 6 }, "backup-copy-denied"],
+    ["linux", "/mnt/kin-backups", { "/mnt/kin-backups": 9, "/mnt": 9, "/": 7 }, "backup-copy-denied"],
+    ["linux", "/mnt/usb", { "/mnt/usb": 7, "/mnt": 7, "/": 7 }, "backup-copy-missing"],
+    ["linux", "/media/sam/KINUSB", { "/media/sam/KINUSB": 9, "/media/sam": 7, "/media": 7, "/": 7 }, "backup-copy-denied"],
+    ["linux", "/media/sam/KINUSB", { "/media/sam/KINUSB": 7, "/media/sam": 7, "/media": 7, "/": 7 }, "backup-copy-missing"],
+    ["linux", "/run/media/sam/KINUSB/backups", { "/run/media/sam/KINUSB/backups": 9, "/run/media/sam/KINUSB": 9, "/run/media/sam": 7, "/run/media": 7, "/run": 7, "/": 7 }, "backup-copy-denied"],
+    ["linux", "/run/media/sam/KINUSB/backups", { "/run/media/sam/KINUSB/backups": 7, "/run/media/sam/KINUSB": 7, "/run/media/sam": 7, "/run/media": 7, "/run": 7, "/": 7 }, "backup-copy-missing"],
+  ];
+  for (const [platform, folder, devs, code] of cases) {
+    context.settings(folder);
+    const stats = async (path) => (path in devs ? { dev: devs[path], isDirectory: () => true } : { ...(await stat(path)), dev: 8 });
+    const made = [];
+    // A stand-in that refuses to make the copies folder: denied shows the
+    // folder itself was accepted.
+    const instance = copier(context, { platform, files: { stat: stats, mkdir: async (path) => { made.push(path); throw systemError("EROFS"); } } });
+    const label = `${platform} ${folder} ${JSON.stringify(devs)}`;
+    assert.deepEqual(await instance.sync(), { state: "failed", code }, label);
+    assert.deepEqual(made, code === "backup-copy-missing" ? [] : [`${folder}/${COPIES_FOLDER}/${NAME}`], label);
+  }
+});
+
 test("on Windows, the copies folder lets in SYSTEM, Administrators, the owner, the service's account and the account Kin runs as, by SID, never through a shell", async () => {
   assert.equal(parseAccountSid('"desktop-fern\\sam","S-1-5-21-1004336348-1177238915-682003330-1001"\r\n'), "S-1-5-21-1004336348-1177238915-682003330-1001");
   assert.equal(parseAccountSid('"nt authority\\local service","S-1-5-19"'), "S-1-5-19");

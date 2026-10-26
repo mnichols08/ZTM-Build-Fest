@@ -408,8 +408,10 @@ Leave it empty to stop copying; copies already there stay.
   same disk apart (`D:\` beside `C:\` on one drive), so choose a separate
   drive. On Linux and macOS, a folder under `/media`, `/mnt`, `/run/media` or
   `/Volumes` with no drive mounted there is reported as missing too, so an
-  unplugged drive's empty mount point is never filled. A drive mounted at
-  `/mnt` or `/media` itself is fine. A full drive is
+  unplugged drive's empty mount point is never filled: the drive must be
+  mounted at the folder you chose or one above it, such as `/Volumes/USB`
+  or `/media/<you>/<label>`. A drive mounted at `/mnt` or `/media` itself is
+  fine. A full drive is
   reported, never cleared to make room. FAT32 holds no file over 4 GB, so
   use exFAT or NTFS for a large Kin.
 - **Restoring from a copy:** copy a `kin-…` folder from the drive into Kin's

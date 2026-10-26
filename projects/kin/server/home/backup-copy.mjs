@@ -46,11 +46,13 @@
 // reported, instead of filling this computer's own disk with copies that
 // wouldn't survive it failing. Another partition of the same disk can't be
 // told apart (the guide says so). Outside Windows, a folder under /media,
-// /mnt, /run/media or /Volumes on the same partition as that folder, when
-// that folder is no mount point itself (it is on the same partition as the
-// folder above it), is a mount point with nothing mounted, reported as
-// missing; a drive mounted at /mnt itself is used. A full drive is
-// reported, never cleared to make room.
+// /mnt, /run/media or /Volumes is looked at from itself up to the folder
+// directly under that area: when none of them is on another partition than
+// the folder above it, nothing is mounted there and it is reported as
+// missing. A drive mounted at /mnt (or /media, /run/media) itself is used;
+// /Volumes never counts as one, since on a Mac it can be on another
+// partition than / with no drive mounted at it. A full drive is reported,
+// never cleared to make room.
 //
 // How it went goes to `backups/copy-status.json`, which only the launcher
 // writes and the control panel reads (backups.mjs). Kin's log gets codes
@@ -378,10 +380,11 @@ export class BackupCopier {
 
   /** Throws BackupCopyError (or the system's error) unless `folder` is a
    * folder on another partition than the data directory and, outside
-   * Windows, not an empty mount point: refused when it is on the mount
-   * area's partition and the area is on the partition of the folder above
-   * it, so no drive is mounted at the area itself (see the top of this
-   * file). */
+   * Windows, not an empty mount point: walking up from the folder to the
+   * one directly under the mount area (`/Volumes/USB`, or
+   * `/media/<you>/<label>` and the folder between), it is refused when none
+   * of them is on another partition than the folder above it, unless a
+   * drive is mounted at the area itself (see the top of this file). */
   async #check(folder) {
     const info = await this.files.stat(folder);
     if (!info.isDirectory()) throw new BackupCopyError("backup-copy-not-folder");
@@ -389,8 +392,11 @@ export class BackupCopier {
     if (this.platform === "win32") return;
     const area = MOUNT_AREAS.find((root) => folder.startsWith(`${root}/`));
     if (!area) return;
-    const areaDev = (await this.files.stat(area)).dev;
-    if (areaDev === info.dev && (await this.files.stat(posix.dirname(area))).dev === areaDev) throw new BackupCopyError("backup-copy-missing");
+    for (let path = folder; path.length > area.length; path = posix.dirname(path)) {
+      if ((await this.files.stat(posix.dirname(path))).dev !== info.dev) return;
+    }
+    if (area !== "/Volumes" && (await this.files.stat(posix.dirname(area))).dev !== info.dev) return;
+    throw new BackupCopyError("backup-copy-missing");
   }
 
   /** On Windows, gives this server's copies folder its permissions: when
