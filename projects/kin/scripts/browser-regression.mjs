@@ -279,13 +279,29 @@ async function connect(url) {
     }
   };
   const client = {
-    send(method, params = {}) {
+    send(method, params = {}, { timeoutMs = 30000, describeTargets = true } = {}) {
       return new Promise((resolve, reject) => {
         const number = ++id;
-        const timeout = setTimeout(
-          () => reject(new Error(`CDP timeout: ${method}${params.expression ? ` (${params.expression.slice(0, 160)})` : ""}`)),
-          30000,
-        );
+        const timeout = setTimeout(async () => {
+          // Timed out is final: a reply arriving while the browser is asked
+          // below is dropped, as it was before the asking.
+          pending.set(number, { resolve() {}, reject() {} });
+          const error = new Error(`CDP timeout: ${method}${params.expression ? ` (${params.expression.slice(0, 160)})` : ""}`);
+          // Once (#469) Target.createBrowserContext got no reply right after a
+          // suite disposed its context: say what browser contexts and targets
+          // the browser still held, asked briefly so the failure isn't held up.
+          if (method.startsWith("Target.") && describeTargets) {
+            const brief = { timeoutMs: 2000, describeTargets: false };
+            const [contexts, targets] = await Promise.all([
+              client.send("Target.getBrowserContexts", {}, brief)
+                .then((result) => JSON.stringify(result.browserContextIds), (reason) => reason.message),
+              client.send("Target.getTargets", {}, brief)
+                .then((result) => JSON.stringify(result.targetInfos.map(({ type, browserContextId, attached, url }) => ({ type, context: browserContextId, attached, url: url.slice(0, 80) }))), (reason) => reason.message),
+            ]);
+            error.message += ` — browser contexts ${contexts}; targets ${targets}`.slice(0, 1500);
+          }
+          reject(error);
+        }, timeoutMs);
         pending.set(number, {
           resolve: (value) => {
             clearTimeout(timeout);
