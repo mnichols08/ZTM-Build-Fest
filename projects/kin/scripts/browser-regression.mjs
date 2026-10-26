@@ -1941,12 +1941,12 @@ try {
   await pressEnterUntil(first,
     `app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status==='acknowledged'`,
     `!app.busy&&app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status!=='acknowledged'&&document.activeElement?.getAttribute('aria-label')==='Acknowledge Newer handoff draft'&&!document.activeElement.disabled`);
-  assert.equal(
-    await first.evaluate(
-      'document.activeElement === document.querySelector("#handoff-text")',
-    ),
-    true,
-  );
+  // Read focus only while idle (#469): a background refresh that starts after
+  // pressEnterUntil's idle check moves focus to the body until it ends.
+  const composerFocus = `(()=>{const app=document.querySelector('kin-app');return {idle:!app.busy&&!app.refreshing&&!app.pendingRefresh,focused:document.activeElement===document.querySelector('#handoff-text'),active:document.activeElement?.outerHTML?.slice(0,120)};})()`;
+  const restoredFocus = await until(async () => { const state = await first.evaluate(composerFocus); return state.idle && state; })
+    .catch(() => first.evaluate(composerFocus));
+  assert.equal(restoredFocus.focused, true, JSON.stringify(restoredFocus));
   const keyboardHandoffState = await first.evaluate(`(()=>{const app=document.querySelector('kin-app');return {status:app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status,alert:app.alert.textContent,notice:app.status.textContent,button:!!app.querySelector('[aria-label="Acknowledge Newer handoff draft"]'),focus:document.activeElement?.outerHTML?.slice(0,120)}})()`);
   assert.equal(keyboardHandoffState.status, "acknowledged", JSON.stringify(keyboardHandoffState));
   console.log(
