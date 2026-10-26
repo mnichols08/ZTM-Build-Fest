@@ -9,7 +9,29 @@ household export could carry a household to a new server; it can't
 (Context). Built so far: the move package (`server/move-package.mjs`) and
 the home server's receiving side, the move code and `/api/move/*`
 (`server/home/move-receive.mjs`, #739; [HOME-SERVER](../HOME-SERVER.md#moving-a-household-here)).
-The hosted side (#738) and the re-joining guide come next.
+The sending side's server (#738: the move routes, the frozen and moved
+states, the sender, undo and closing; `server/household-move.mjs`,
+`server/move-sender.mjs`) is built too; its screens and the re-joining
+guide come next.
+
+*As built (#738, server).* Three choices this record didn't make:
+
+- **The move's state is its own table**, `household_moves` (schema 30), not
+  new `lifecycle_state` values: that column's CHECK would need the
+  households table rebuilt, and deletion keeps working unchanged (closing a
+  moved household is the existing deletion). The table stays behind when a
+  household moves.
+- **A moved household refuses every session, reads included** (§5 said
+  downloads would still work), as a household pending deletion does: the
+  whole history is at the new address, and a device's changes that never
+  reached the old server stay on it either way. `/api/status` tells the
+  device where the household went (`householdLifecycle.state` `moved`,
+  `movedTo`, `undoUntil`, `remindAt`), so the app can say so; the device
+  cookie is kept for that and for undo and closing, which go through the
+  trusted device with a fresh passkey or password.
+- **While it is being sent**, sessions get `household_moving` (409) and keep
+  their cookies; the admin who started it can follow it. A send cut short by
+  a restart leaves the household in use (`move-interrupted`).
 
 *As built (#739).* The package travels in pieces (§3): `start` with the
 move code returns a bearer token for one transfer (two hours, kept as its

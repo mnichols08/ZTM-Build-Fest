@@ -96,6 +96,8 @@ export class PairingService {
     this.members = identity?.members ?? new Map();
     this.credentials = identity?.credentials ?? new Map();
     this.devices = identity?.devices ?? new Map();
+    // Households moving, or moved, to a home server (ADR 0026 §5, #738).
+    this.householdMoves = store?.loadHouseholdMoves() ?? new Map();
     this.deviceTokens = new Map(
       [...this.devices.values()]
         .filter((device) => device.tokenHash)

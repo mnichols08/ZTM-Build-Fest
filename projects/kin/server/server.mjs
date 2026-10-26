@@ -1,5 +1,6 @@
 import { createReadStream, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { parseAssetLinks, serveAssetLinks } from "./asset-links.mjs";
+import { tmpdir } from "node:os";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
@@ -10,6 +11,7 @@ import { isHouseholdAdmin } from "./pairing-service/shared.mjs";
 import { deviceLabel } from "./pairing-service/device-label.mjs";
 import { configuredDatabasePath, permissionProblem } from "./permissions.mjs";
 import { applyServerMode, RESTART_EXIT_CODE, serverMode } from "./mode.mjs";
+import { HouseholdMoves } from "./household-move.mjs";
 import { builtInManifest, etagMatches, INSTALL_ICONS, publishedManifest } from "./install-identity.mjs";
 import { PushService } from "./push-service.mjs";
 import { ChatBlobService } from "./chat-blob-service.mjs";
@@ -211,6 +213,16 @@ export function createKinServer(options = {}) {
   });
   syncService.liveService = liveService;
   context.liveService = liveService;
+  // Moving a household to a home server (ADR 0026, #738). Packages are
+  // built in the data directory, the one place the sandboxed service writes.
+  context.householdMoves = store ? new HouseholdMoves({
+    service, store, origin,
+    workDirectory: options.moveWorkDirectory ?? (store.databasePath === ":memory:" ? join(tmpdir(), `kin-moves-${process.pid}`) : join(dirname(store.databasePath), "moves")),
+    ...(options.moveSender ? { sender: options.moveSender } : {}),
+    revalidate: (householdId) => liveService.revalidate(householdId),
+    now: options.now ?? (() => Date.now()),
+    log: options.moveLog ?? ((event) => console.log(JSON.stringify(event))),
+  }) : null;
   const server = createServer(async (request, response) => {
     const requestId = randomBytes(12).toString("hex");
     response.setHeader("X-Request-ID", requestId);
@@ -308,6 +320,7 @@ export function createKinServer(options = {}) {
           "membership_removed",
           "household_deletion_pending",
           "household_deleted",
+          "household_moved",
         ].includes(error.code)
       ) {
         clearCookie(response, "kin_session", context.secureCookies);
@@ -315,6 +328,7 @@ export function createKinServer(options = {}) {
           ![
             "authentication_required",
             "household_deletion_pending",
+            "household_moved",
           ].includes(error.code)
         )
           clearCookie(response, "kin_device", context.secureCookies);
@@ -393,6 +407,7 @@ export function createKinServer(options = {}) {
     feedbackService,
     calendarSyncService,
     liveService,
+    householdMoves: context.householdMoves,
     webauthn,
     store,
     flows: context.flows,
@@ -725,15 +740,31 @@ async function api(request, response, url, context) {
         memberId: auth.member.id,
         deviceId: auth.device.id,
       };
-    } catch {
-      if (session) clearCookie(response, "kin_session", secureCookies);
+    } catch (error) {
+      // A household that is moving keeps its session: the move may fail.
+      if (session && error?.code !== "household_moving") clearCookie(response, "kin_session", secureCookies);
       if (deviceToken) {
         try {
           const { member, device } = service.trustedDevice(deviceToken, {
             allowDeletionPending: true,
+            allowMoved: true,
           });
           const household = service.households.get(member.householdId);
-          if (household?.lifecycleState === "deletion_pending")
+          const move = household && service.householdMoves.get(household.id);
+          if (move && household.lifecycleState === "active") {
+            // ADR 0026 §5 (#738): where the household is now.
+            const moveStatus = context.householdMoves.status(household.id);
+            householdLifecycle = {
+              householdId: household.id,
+              state: move.state === "moved" ? "moved" : "moving",
+              movedTo: move.targetOrigin,
+              movedAt: moveStatus.movedAt,
+              undoUntil: moveStatus.undoUntil,
+              remindAt: moveStatus.remindAt,
+              admin: Boolean(member.householdAdmin),
+              message: move.state === "moved" ? `This household moved to ${move.targetOrigin}.` : "This household is moving to its home server.",
+            };
+          } else if (household?.lifecycleState === "deletion_pending")
             householdLifecycle = {
               householdId: household.id,
               state: "deletion_pending",
@@ -744,7 +775,7 @@ async function api(request, response, url, context) {
           else if (!device.revokedAt && !member.active)
             clearCookie(response, "kin_device", secureCookies);
         } catch (error) {
-          if (!["household_deletion_pending", "household_deleted"].includes(error.code))
+          if (!["household_deletion_pending", "household_deleted", "household_moved", "household_moving"].includes(error.code))
             clearCookie(response, "kin_device", secureCookies);
         }
       }
@@ -1865,6 +1896,82 @@ async function api(request, response, url, context) {
   if (request.method === "POST" && url.pathname === "/api/sync/epochs") {
     json(response, 200, syncService.rotateEpoch(session, body));
     return;
+  }
+  // Moving a household to a home server (ADR 0026, #738). Starting it:
+  // a household admin, a fresh passkey or password. After it moved, every
+  // session is refused, so undoing it (within a day) or closing the
+  // household goes through the trusted device, like cancelling a deletion.
+  if (url.pathname === "/api/household/move" || url.pathname.startsWith("/api/household/move/")) {
+    const moves = context.householdMoves;
+    if (!moves) throw new PairingError("not_found", "That endpoint is unavailable.", 404);
+    if (request.method === "GET" && url.pathname === "/api/household/move") {
+      const auth = service.authorize(session, { allowMoving: true });
+      service.requireManagementAuthority(auth.member, auth.household, "move the household");
+      json(response, 200, { readiness: moves.readiness(auth.household.id), move: moves.status(auth.household.id) });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/household/move/options") {
+      const auth = service.authorize(session);
+      service.requireManagementAuthority(auth.member, auth.household, "move the household");
+      const targetOrigin = moves.check(auth.household.id, body?.address);
+      json(response, 200, {
+        targetOrigin,
+        ...issueAuthenticationFlow(
+          { purpose: "move-household", householdId: auth.household.id, memberId: auth.member.id, deviceId: auth.device.id, targetOrigin },
+          [...auth.member.credentials],
+          context,
+        ),
+      });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/household/move/finish") {
+      const flow = consumeFlow(body.flow, context);
+      const auth = service.authorize(session);
+      if (flow.purpose !== "move-household" || flow.householdId !== auth.household.id || flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id)
+        throw badRequest();
+      await confirmFresh(context, request, auth.member, body, () => {
+        const credential = service.credentialForAuthenticatedMember(session, body.credential?.id);
+        webauthn.verifyAuthentication(body.credential, body.flow, credential);
+      });
+      withTransaction(context, () => service.persistHousehold(auth.household.id));
+      json(response, 200, moves.start({ householdId: auth.household.id, memberId: auth.member.id, address: flow.targetOrigin, code: body?.code }));
+      return;
+    }
+    const after = /^\/api\/household\/move\/(undo|close)\/(options|finish)$/.exec(url.pathname);
+    if (request.method === "POST" && after) {
+      const [, action, step] = after;
+      const purpose = `${action}-household-move`;
+      if (step === "options") {
+        const { device, member } = service.trustedDevice(deviceToken, { allowMoved: true });
+        const household = service.households.get(member.householdId);
+        service.requireManagementAuthority(member, household, action === "undo" ? "undo the move" : "close the household");
+        if (service.householdMoves.get(household.id)?.state !== "moved")
+          throw new PairingError("move_unavailable", "This household hasn't moved.", 409);
+        json(response, 200, issueAuthenticationFlow({ purpose, householdId: household.id, memberId: member.id, deviceId: device.id }, [...member.credentials], context));
+        return;
+      }
+      const flow = consumeFlow(body.flow, context);
+      const { device, member } = service.trustedDevice(deviceToken, { allowMoved: true });
+      if (flow.purpose !== purpose || flow.householdId !== member.householdId || flow.memberId !== member.id || flow.deviceId !== device.id)
+        throw badRequest();
+      const credential = await confirmFresh(context, request, member, body, () => {
+        const passkey = service.credentials.get(body.credential?.id);
+        if (!passkey || passkey.memberId !== member.id)
+          throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+        webauthn.verifyAuthentication(body.credential, body.flow, passkey);
+        return passkey;
+      });
+      const confirmed = { passwordConfirmed: !credential };
+      if (action === "undo") {
+        const { household } = service.movedHouseholdAdmin(deviceToken, credential?.id, confirmed, "undo the move");
+        json(response, 200, moves.undo(household.id));
+      } else {
+        const result = withTransaction(context, () => service.closeMovedHousehold(deviceToken, credential?.id, confirmed));
+        json(response, 200, { ...result, message: "The old household is closed. Its data here is deleted after 30 days." });
+      }
+      return;
+    }
+    throw new PairingError("not_found", "That endpoint is unavailable.", 404);
   }
   if (
     request.method === "POST" &&
