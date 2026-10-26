@@ -140,6 +140,13 @@ export async function routineRegressions() {
       cadence: "weekly",
     });
     const weeklyId = app.state.routines.at(-1).routineId;
+    // A wake refresh first awaits the security-epoch read, which idle()
+    // cannot see, so wait for the projected week itself.
+    const weeklyOccurrence = async (key) => {
+      for (let i = 0; app.state.routines.find(r => r.routineId === weeklyId).occurrenceKey !== key && i < 300; i++)
+        await new Promise(resolve => setTimeout(resolve, 10));
+      await idle();
+    };
     await app.ctx.routines.saveRoutine({
       type: "complete-routine-occurrence",
       routineId: weeklyId,
@@ -154,9 +161,7 @@ export async function routineRegressions() {
     );
     now = new Date(2026, 9, 19, 12).getTime();
     document.dispatchEvent(new Event("visibilitychange"));
-    for (let i = 0; app.state.routines.find(r => r.routineId === weeklyId).occurrenceKey !== 20261019 && i < 300; i++)
-      await new Promise(resolve => setTimeout(resolve, 10));
-    await idle();
+    await weeklyOccurrence(20261019);
     check(
       app.state.routines.find((r) => r.routineId === weeklyId).occurrenceKey ===
         20261019,
@@ -169,8 +174,9 @@ export async function routineRegressions() {
     );
     now = new Date(2026, 9, 3, 12).getTime();
     app.onWindowFocus();
-    await new Promise((resolve) => setTimeout(resolve, 180));
-    await idle();
+    // Wait for the replay, not a fixed 180 ms (#469): the 150 ms focus timer
+    // plus the epoch read can outlast it, and idle() then returns early.
+    await weeklyOccurrence(20260928);
     check(
       app.state.routines.find((r) => r.routineId === weeklyId)
         .occurrenceStatus === "completed",
