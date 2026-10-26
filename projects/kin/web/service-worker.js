@@ -42,7 +42,7 @@ const SHELL = [
   // Just for me (#510).
   "/private-items.js", "/components/kin-just-for-me.js", "/components/app/private-items.js", "/components/shared/private-marker.js",
   "/appearance/palette.js", "/appearance/display-prefs.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js", "/appearance/install-icons.js",
-  "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js", "/sync/envelope-wire.js", "/sync/live-channel.js", "/sync/ephemeral-envelope.js",
+  "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js", "/sync/rotation-vault.js", "/sync/envelope-wire.js", "/sync/live-channel.js", "/sync/ephemeral-envelope.js",
   "/components/kin-fridge.js", "/components/kin-meals.js", "/components/kin-tonight.js", "/components/kin-simple.js", "/simple/simple-view.js", "/meals/meals-view.js", "/board/board-room.js", "/board/fridge-view.js", "/board/fridge-magnets.js", "/board/board-archive.js", "/board/board-log-store.js", "/chat/chat-room.js", "/chat/chat-log-store.js", "/chat/chat-records.js", "/chat/chat-attachments.js", "/chat/chat-blobs.js", "/chat/chat-blob-store.js", "/chat/chat-blob-client.js", "/chat/chat-blob-crypto.js", "/chat/emoji.js", "/chat/emoji.json", "/chat/chat-hidden.js", "/chat/chat-presence.js", "/chat/chat-layout.js", "/chat/chat-keys.js", "/chat/chat-reactions.js",
   "/chat/chat-badge.js", "/chat/chat-archive.js", "/chat/chat-voice.js",
   "/chat/chat-mentions.js",

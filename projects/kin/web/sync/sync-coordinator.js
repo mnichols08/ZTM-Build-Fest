@@ -17,6 +17,7 @@ import {
 } from "./crypto.js";
 import { verifyMemberCertificate } from "../security/device-certification.js";
 import { SyncKeyStore } from "./key-store.js";
+import { submitRotation } from "./rotation-vault.js";
 import { LIVE_TYPE, LiveChannel, liveUrl } from "./live-channel.js";
 import { QUARANTINE_MESSAGE, quarantineMessage } from "../storage/quarantine.js";
 import { idToHex } from "../wasm/kin-engine.js";
@@ -1189,14 +1190,7 @@ export class SyncCoordinator {
         expected: pending, packages, issuerFingerprint: this.deviceKeys.fingerprint,
       });
     }
-    const result = await this.request("/api/sync/epochs", {
-      method: "POST",
-      body: JSON.stringify({
-        expectedEpoch: pending.expectedEpoch,
-        packages: pending.packages,
-        proposalId: pending.proposalId,
-      }),
-    });
+    const result = await this.submitRotation(pending);
     if (result.currentEpoch !== pending.epoch || result.proposalId !== pending.proposalId)
       throw new Error("Kin could not match the accepted key rotation.");
     await this.acceptPendingRotation(pending);
@@ -1235,6 +1229,20 @@ export class SyncCoordinator {
       expectedEpoch: pending.expectedEpoch,
       currentEpoch: pending.epoch,
       proposalId: pending.proposalId,
+    });
+  }
+
+  // Commits the pending proposal with this member's vault change in the
+  // same request when this device holds the vault key (#791), so the new
+  // key is never only on this device; rotation-vault.js has the fallbacks.
+  submitRotation(pending) {
+    return submitRotation({
+      request: (path, options) => this.request(path, options),
+      // A coordinator built without the option holds no vault key.
+      vaultKey: async () => (await this.vaultKey?.()) ?? null,
+      identity: this.identity,
+      pending,
+      deviceKeys: this.deviceKeys.keys,
     });
   }
 

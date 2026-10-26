@@ -492,6 +492,11 @@ documentation only.
   executable and the updater remove these folders with `fs.promises.rm`,
   whose retries work in every supported Node.
 
+- **A new household key is saved to your account when it's made** (#791).
+  The device that starts using a new household key now saves it to your
+  account in the same step. Before, if that device was lost or reset right
+  away, signing in on another device with your backup code, password or
+  passkey could leave sync paused for good.
 - **The connection relay frees a tunnel handshake its client aborts**
   (#733). A home server that refused the relay's certificate left the
   connection open on the relay until Node's 120-second default, and the
