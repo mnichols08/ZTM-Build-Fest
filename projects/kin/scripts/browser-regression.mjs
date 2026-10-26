@@ -1925,15 +1925,18 @@ try {
     await first.evaluate('document.querySelector("#handoff-text").value'),
     "",
   );
-  await until(() => first.evaluate(`(()=>{
+  // Check idle and focus in one evaluate (#469): a background refresh that
+  // starts between two evaluates disables the workspace fieldset, so focus()
+  // on Got it does nothing. :disabled also sees a disabled ancestor fieldset.
+  const focusGotIt = `(()=>{
     const app=document.querySelector('kin-app');
     const target=app.querySelector('kin-handoff-list [aria-label="Acknowledge Newer handoff draft"]');
-    return !app.busy && !app.refreshing && !app.pendingRefresh && target && !target.disabled;
-  })()`));
-  const handoffFocus = await first.evaluate(`(()=>{
-    const target=document.querySelector('kin-handoff-list [aria-label="Acknowledge Newer handoff draft"]');
-    target.focus();return {focused:document.activeElement===target,target:target.outerHTML,active:document.activeElement?.outerHTML};
-  })()`);
+    const idle=!app.busy&&!app.refreshing&&!app.pendingRefresh&&!!target&&!target.matches(':disabled');
+    if(idle&&document.activeElement!==target)target.focus();
+    return {idle,focused:!!target&&document.activeElement===target,target:target?.outerHTML,active:document.activeElement?.outerHTML?.slice(0,200)};
+  })()`;
+  const handoffFocus = await until(async () => { const state = await first.evaluate(focusGotIt); return state.idle && state.focused && state; })
+    .catch(() => first.evaluate(focusGotIt));
   assert.equal(handoffFocus.focused,true,JSON.stringify(handoffFocus));
   await pressEnterUntil(first,
     `app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status==='acknowledged'`,
