@@ -13,7 +13,7 @@ export async function routineRegressions() {
       i++
     )
       await new Promise((resolve) => setTimeout(resolve, 10));
-    check(!app.busy && !app.refreshing, "Routine work returns idle");
+    check(!app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "Routine work returns idle");
   };
   const rows = () => app.store.loadEvents();
   const originalNow = Date.now;

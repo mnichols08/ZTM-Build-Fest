@@ -331,7 +331,7 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
     }, changeCount, "Change schedule");
     let versions = await routineByText(title);
     // A wake refresh clears and then restores a pending alert; read it settled.
-    const partial = await until(() => { const app = document.querySelector("kin-app"); return !app.busy && !app.refreshing && app.alert.textContent.includes("still repeating") && app.alert.textContent; }, "partial-save alert");
+    const partial = await until(() => { const app = document.querySelector("kin-app"); return !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending && app.alert.textContent.includes("still repeating") && app.alert.textContent; }, "partial-save alert");
     check(versions.length === 2 && versions.filter((entry) => entry.status === "active").length === 2 && partial.includes("still repeating") &&
       (await eventCount()) === changeCount + 1,
       "a failure after the new schedule is saved says the old one is still repeating", { partial, versions });

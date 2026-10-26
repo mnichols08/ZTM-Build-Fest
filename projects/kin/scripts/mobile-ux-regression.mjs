@@ -14,7 +14,7 @@ export async function mobileUxRegressions(recovery) {
   const idle = async () => {
     for (let index = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && index < 300; index++)
       await new Promise((resolve) => setTimeout(resolve, 10));
-    check(!app.busy && !app.refreshing, "mobile UX work returns idle");
+    check(!app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "mobile UX work returns idle");
   };
   const wait = async (condition, label) => {
     for (let index = 0; index < 400; index++) {

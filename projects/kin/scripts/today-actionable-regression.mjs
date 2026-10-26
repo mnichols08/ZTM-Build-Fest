@@ -15,7 +15,7 @@ export async function todayActionableRegressions(recovery) {
   const idle = async () => {
     for (let index = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && index < 400; index++)
       await new Promise((resolve) => setTimeout(resolve, 10));
-    check(!app.busy && !app.refreshing, "Today work returns idle");
+    check(!app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "Today work returns idle");
   };
   const wait = async (condition, label) => {
     for (let index = 0; index < 400; index++) {
@@ -526,7 +526,7 @@ export async function todayLifecycleRegressions(client, { visit, ready }) {
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       app.detail.stepInput.value = "unsent step draft";
       row(otherId).querySelector(".complete-button").click();
-      for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+      for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && i < 400; i++) await new Promise((resolve) => setTimeout(resolve, 10));
       const result = {
         selection: app.selection?.itemId === draftId,
         draft: app.detail.stepInput.value,

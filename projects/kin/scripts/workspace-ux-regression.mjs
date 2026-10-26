@@ -16,7 +16,7 @@ export async function workspaceUxRegressions(recovery) {
   const idle = async () => {
     for (let index = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && index < 400; index++)
       await new Promise((resolve) => setTimeout(resolve, 10));
-    check(!app.busy && !app.refreshing, "workspace work returns idle");
+    check(!app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "workspace work returns idle");
   };
   const wait = async (condition, label) => {
     for (let index = 0; index < 400; index++) {
@@ -516,7 +516,7 @@ export async function workspaceViewportRegressions(client, { visit }) {
       const composer = app.needs.composer;
       composer.input.value = "Viewport fixture item";
       composer.form.requestSubmit();
-      for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
+      for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
       return app.state.items.find((item) => item.text === "Viewport fixture item").itemId;
     });
     for (const width of [320, 360, 390]) {
@@ -588,7 +588,7 @@ export async function workspaceViewportRegressions(client, { visit }) {
     await shot("360-detail-step-error");
     const stepRetry = await page(async () => {
       const app = document.querySelector("kin-app"); app.detail.querySelector("[data-detail-retry]").click();
-      for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
+      for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
       return { open: app.detailSheet.open, selection: app.selection?.itemId, draft: app.detail.stepInput.value,
         saved: app.state.items.find((item) => item.itemId === app.selection?.itemId)?.steps.some((step) => step.text === "retry checklist step"),
         error: app.detail.querySelector(".item-detail-feedback") };
@@ -610,7 +610,7 @@ export async function workspaceViewportRegressions(client, { visit }) {
     await shot("360-detail-date-error");
     const dateRetry = await page(async () => {
       const app = document.querySelector("kin-app"); app.detail.querySelector("[data-detail-retry]").click();
-      for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
+      for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
       return { open: app.detailSheet.open, selection: app.selection?.itemId, date: app.state.items.find((item) => item.itemId === app.selection?.itemId)?.planningDate,
         error: app.detail.querySelector(".item-detail-feedback") };
     });
@@ -673,7 +673,7 @@ export async function workspaceViewportRegressions(client, { visit }) {
     await client.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
     const keyboardRetry = await page(async (id) => {
       const app = document.querySelector("kin-app");
-      for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
+      for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
       return { count: app.state.items.filter((item) => item.text === "Keyboard partial pin").length,
         sameId: app.state.items.find((item) => item.text === "Keyboard partial pin")?.itemId === id,
         pinned: app.state.pins.some((pin) => pin.targetId === id), input: app.compose.input.value };
@@ -782,7 +782,7 @@ export async function syncMotionRegressions(first, second) {
     await first.evaluate(`(() => document.querySelector("kin-app").ctx.peers.broadcastEventChange())()`);
     await wait(second, `document.querySelector("kin-app").refreshing && document.querySelector("kin-app").busy`, "baseline peer refresh");
     await frames(second, 15);
-    await wait(second, `!document.querySelector("kin-app").refreshing && !document.querySelector("kin-app").busy`, "baseline peer refresh completion");
+    await wait(second, `(() => { const app = document.querySelector("kin-app"); return !app.refreshing && !app.busy && !app.pendingRefresh && !app.wakePending; })()`, "baseline peer refresh completion");
     await frames(second, 4);
     const beforeVideo = await saveVideo(second, "refresh-before");
     await second.evaluate(`window.__kinSyncReadCount = 0`);

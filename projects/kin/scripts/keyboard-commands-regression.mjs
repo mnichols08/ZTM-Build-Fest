@@ -454,7 +454,7 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
       const wasBusy = app.busy;
       app.ctx.append.runWorkspaceCommand("todo", {});
       await save;
-      for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+      for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && i < 400; i++) await new Promise((resolve) => setTimeout(resolve, 10));
       return { wasBusy, hash: location.hash, count: app.state.items.filter((item) => item.text === text).length };
     }, inflight);
     check(during.wasBusy && during.hash === "#lists/todo" && during.count === 1, "navigating by command during a save keeps the save exactly once", during);
