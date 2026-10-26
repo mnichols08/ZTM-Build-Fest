@@ -408,7 +408,8 @@ Leave it empty to stop copying; copies already there stay.
   same disk apart (`D:\` beside `C:\` on one drive), so choose a separate
   drive. On Linux and macOS, a folder under `/media`, `/mnt`, `/run/media` or
   `/Volumes` with no drive mounted there is reported as missing too, so an
-  unplugged drive's empty mount point is never filled. A full drive is
+  unplugged drive's empty mount point is never filled. A drive mounted at
+  `/mnt` or `/media` itself is fine. A full drive is
   reported, never cleared to make room. FAT32 holds no file over 4 GB, so
   use exFAT or NTFS for a large Kin.
 - **Restoring from a copy:** copy a `kin-…` folder from the drive into Kin's
@@ -426,10 +427,15 @@ On each system:
 - **Windows:** use a drive letter on this computer, not a mapped network
   drive, which the service's account (LOCAL SERVICE) can't see. On an NTFS
   drive, give LOCAL SERVICE permission to write the folder. Kin then lets
-  only its own account, SYSTEM and Administrators into the `Kin backups`
-  folder it makes for this server, as with its data folder. A FAT32 or
-  exFAT drive can't keep anyone out: every account on any computer it is
-  plugged into can read the copies, so keep that drive locked away.
+  only LOCAL SERVICE, the account Kin runs as, SYSTEM and Administrators
+  into the `Kin backups` folder for this server, as with its data folder.
+  A FAT32 or exFAT drive can't keep anyone out: every account on any
+  computer it is plugged into can read the copies, so keep that drive
+  locked away. If Kin can't make the copies private (such a drive, or a
+  folder you made or copied there whose permissions Kin isn't allowed to
+  change), it still copies, the status page says so, and Kin tries again
+  with the next backup; giving LOCAL SERVICE full control of the folder
+  fixes the second case.
 - **macOS:** drives appear under `/Volumes`. If the status page says Kin
   isn't allowed to write there, allow it in System Settings, Privacy &
   Security.

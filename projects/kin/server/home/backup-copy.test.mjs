@@ -9,7 +9,7 @@ import { stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
-import { BackupCopier, COPIES_FOLDER, copyFileFlushed, copyFolderFor, protectFolder } from "./backup-copy.mjs";
+import { BackupCopier, COPIES_FOLDER, copyFileFlushed, copyFolderFor, currentAccountSid, parseAccountSid, protectArguments, protectFolder } from "./backup-copy.mjs";
 import { BACKUPS_KEPT, BACKUP_COPY_ERROR_CODES, BACKUP_COPY_STATUS, BACKUP_MANIFEST, backupsDirectory, listBackups, makeBackupSet } from "./backups.mjs";
 import { HOME_KEY_FILE } from "./home-key.mjs";
 
@@ -383,10 +383,43 @@ test("outside Windows, an empty mount point under /mnt is reported as missing, e
   const context = fixture(t);
   await context.makeSet();
   context.settings("/mnt/kinusb");
-  // Nothing mounted: /mnt/kinusb is on the same partition as /mnt.
-  const stats = async (path) => (path === "/mnt/kinusb" || path === "/mnt" ? { dev: 7, isDirectory: () => true } : { ...(await stat(path)), dev: 8 });
-  const instance = copier(context, { platform: "linux", files: { stat: stats } });
+  // Nothing mounted: /mnt/kinusb is on the same partition as /mnt, and /mnt
+  // on the same partition as /.
+  const stats = async (path) => (["/mnt/kinusb", "/mnt", "/"].includes(path) ? { dev: 7, isDirectory: () => true } : { ...(await stat(path)), dev: 8 });
+  const made = [];
+  const instance = copier(context, { platform: "linux", files: { stat: stats, mkdir: async (path) => { made.push(path); } } });
   assert.deepEqual(await instance.sync(), { state: "failed", code: "backup-copy-missing" });
+  assert.deepEqual(made, [], "nothing made on the empty mount point");
+});
+
+test("outside Windows, a drive mounted at /mnt itself is used, and a drive mounted under it too", async (t) => {
+  const context = fixture(t);
+  await context.makeSet();
+  // The drive is /mnt (an fstab line mounting it there): /mnt and the folder
+  // on it are on the drive's partition, / on another.
+  for (const [folder, devs] of [["/mnt/kin-backups", { "/mnt/kin-backups": 9, "/mnt": 9, "/": 7 }], ["/mnt/usb", { "/mnt/usb": 9, "/mnt": 7, "/": 7 }]]) {
+    context.settings(folder);
+    const stats = async (path) => (path in devs ? { dev: devs[path], isDirectory: () => true } : { ...(await stat(path)), dev: 8 });
+    const made = [];
+    // The copies folder is never really made under /mnt: a stand-in that
+    // refuses, which shows the folder itself was accepted.
+    const instance = copier(context, { platform: "linux", files: { stat: stats, mkdir: async (path) => { made.push(path); throw systemError("EROFS"); } } });
+    assert.deepEqual(await instance.sync(), { state: "failed", code: "backup-copy-denied" }, folder);
+    assert.deepEqual(made, [`${folder}/${COPIES_FOLDER}/${NAME}`], folder);
+  }
+});
+
+test("on Windows, the copies folder lets in SYSTEM, Administrators, the owner, the service's account and the account Kin runs as, by SID, never through a shell", async () => {
+  assert.equal(parseAccountSid('"desktop-fern\\sam","S-1-5-21-1004336348-1177238915-682003330-1001"\r\n'), "S-1-5-21-1004336348-1177238915-682003330-1001");
+  assert.equal(parseAccountSid('"nt authority\\local service","S-1-5-19"'), "S-1-5-19");
+  for (const output of ["", "ERROR: no", '"sam","S-1-5-21; del *"', null]) assert.equal(parseAccountSid(output), null, String(output));
+  const folder = "E:\\Kin backups\\fern & co";
+  const grants = (account) => protectArguments(folder, account).slice(3);
+  assert.deepEqual(protectArguments(folder, "S-1-5-21-1-2-3-1001").slice(0, 3), [folder, "/inheritance:r", "/grant:r"], "the path is one argument of its own");
+  assert.deepEqual(grants("S-1-5-21-1-2-3-1001"), ["*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "*S-1-3-4:(OI)(CI)F", "*S-1-5-19:(OI)(CI)F", "*S-1-5-21-1-2-3-1001:(OI)(CI)F"]);
+  assert.deepEqual(grants("S-1-5-19"), grants(null), "running as the service: LOCAL SERVICE once");
+  assert.deepEqual(grants("S-1-5-21:(OI)(CI)F /T"), grants(null), "anything but a SID is left out");
+  if (process.platform === "win32") assert.match(await currentAccountSid(), /^S-1-5-\d+(-\d+)*$/);
 });
 
 test("on Windows, Kin's copies folder is given private permissions: when made, once per launcher, and again on another drive", { skip: process.platform !== "win32" && "Windows permissions" }, async (t) => {
@@ -406,9 +439,32 @@ test("on Windows, Kin's copies folder is given private permissions: when made, o
   // A drive that holds no permissions (exFAT) is copied to all the same.
   rmSync(context.chosen, { recursive: true, force: true });
   mkdirSync(context.chosen);
-  const unprotected = copier(context, { platform: "win32", events, files: { protect: async () => { throw systemError("EINVAL"); } } });
+  // An NTFS folder whose permissions Kin may not change fails the same way.
+  let refuse = true;
+  const tried = [];
+  const unprotected = copier(context, { platform: "win32", events, files: { protect: async (folder) => { tried.push(folder); if (refuse) throw systemError("EINVAL"); } } });
   assert.equal((await unprotected.sync()).state, "ok");
   assert.deepEqual(events.filter((event) => event.event === "home_backup_copy_not_private"), [{ event: "home_backup_copy_not_private", reason: "EINVAL" }]);
+  let status = await writtenStatus(unprotected, context);
+  assert.equal(status.state, "ok");
+  assert.equal(status.notPrivate, true, "the panel says the copies aren't private");
+  // Tried again at the next look, not marked done; logged once.
+  await context.makeSet();
+  await unprotected.sync();
+  assert.equal(tried.length, 2, "tried again");
+  assert.equal(events.filter((event) => event.event === "home_backup_copy_not_private").length, 1, "logged once");
+  assert.equal((await writtenStatus(unprotected, context)).notPrivate, true);
+  // A copier started later reads it back, and clears it once it works.
+  refuse = false;
+  const later = copier(context, { platform: "win32", events, files: { protect: unprotected.files.protect } });
+  assert.equal(later.state.notPrivate, true);
+  await context.makeSet();
+  await later.sync();
+  status = await writtenStatus(later, context);
+  assert.equal(status.notPrivate, false);
+  await context.makeSet();
+  await later.sync();
+  assert.equal(tried.length, 3, "once it worked, once per launcher");
   // The real permissions: no one but SYSTEM, Administrators and the owner.
   const real = join(context.root, "real");
   mkdirSync(join(real, "kin-x"), { recursive: true });
@@ -418,5 +474,8 @@ test("on Windows, Kin's copies folder is given private permissions: when made, o
   const acl = execFileSync("icacls", [file], { encoding: "utf8", windowsHide: true }).replace(file, "");
   assert.doesNotMatch(acl, /\bUsers\b|Everyone|Authenticated/, acl);
   assert.match(acl, /OWNER RIGHTS|S-1-3-4/, acl);
+  assert.match(acl, /LOCAL SERVICE|S-1-5-19/, acl);
+  const account = execFileSync("whoami", { encoding: "utf8", windowsHide: true }).trim();
+  assert.ok(acl.toLowerCase().includes(`${account.toLowerCase()}:`) || acl.includes(await currentAccountSid()), `the account Kin runs as (${account}) by name: ${acl}`);
   assert.equal(readFileSync(file, "utf8"), "synthetic\n", "Kin's own account can still read it");
 });

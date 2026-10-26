@@ -22,7 +22,7 @@ const TIMEOUT = { timeout: 30_000 };
 
 test("every code the home server sends has plain words of its own", TIMEOUT, () => {
   const codes = [
-    ...TUNNEL_ERRORS, ...ACME_ERROR_CODES, ...DOMAIN_PROBLEMS, ...BACKUP_ERROR_CODES, "control-backup-hour-invalid", ...BACKUP_COPY_ERROR_CODES, "control-backup-copy-invalid", ...UPDATE_ERROR_CODES, "control-update-unknown", "control-update-manual", "control-update-busy", "control-move-not-ready", "control-move-limit",
+    ...TUNNEL_ERRORS, ...ACME_ERROR_CODES, ...DOMAIN_PROBLEMS, ...BACKUP_ERROR_CODES, "control-backup-hour-invalid", ...BACKUP_COPY_ERROR_CODES, "control-backup-copy-invalid", "backup-copy-not-private", ...UPDATE_ERROR_CODES, "control-update-unknown", "control-update-manual", "control-update-busy", "control-move-not-ready", "control-move-limit",
     "tunnel-caa-name-taken", "tunnel-caa-name-not-allowed", "tunnel-caa-name-limit", "tunnel-caa-name-unknown", "tunnel-caa-suspended", "tunnel-caa-refused",
     "tunnel-not-ready", "tunnel-timeout", "tunnel-lost", "tunnel-stopped",
     "setup-name-empty", "setup-name-invalid", "setup-name-length", "setup-name-taken", "setup-name-not-allowed",
@@ -409,6 +409,11 @@ test("the status page: the second copy of the backups in a row of its own, and i
   assert.equal(failed.dataset.tone, "attention");
   assert.match(row(failed), /didn't work/);
   assert.match(failed.querySelector('[data-code="backup-copy-missing"]').textContent, /plug the drive in/);
+  assert.equal(ok.querySelector('[data-code="backup-copy-not-private"]'), null);
+  const open = backups({ ...COPY, notPrivate: true });
+  assert.equal(open.dataset.tone, "attention");
+  assert.match(open.querySelector('[data-code="backup-copy-not-private"]').textContent, /couldn't make the copies in the second folder private/);
+  assert.equal(backups({ ...COPY, state: "off", notPrivate: true }).querySelector('[data-code="backup-copy-not-private"]'), null, "nothing said once the copy is off");
   assert.equal(row(backups(undefined)), undefined, "an older server without the copy shows no row");
 });
 

@@ -250,7 +250,7 @@ test("the second backup folder: a full path on this kind of computer; a stored o
 test("status shows the second copy as the launcher last wrote it, without the folder's path", (t) => {
   const { dataDirectory, backups, setSettings } = fixture(t);
   const folder = join(dataDirectory, "..", "usb");
-  assert.deepEqual(backups.status().copy, { state: "off", kept: 14, lastCopyAt: null, lastCopiedCreatedAt: null, copies: 0, lastError: null });
+  assert.deepEqual(backups.status().copy, { state: "off", kept: 14, lastCopyAt: null, lastCopiedCreatedAt: null, copies: 0, lastError: null, notPrivate: false });
   setSettings(resolveHomeSettings({ format: 1, name: "fern.home.kin.journeytocode.io", backupCopyFolder: folder }, {}));
   assert.equal(backups.status().copy.state, "waiting", "before the launcher has looked");
   const write = (value) => {
@@ -262,8 +262,12 @@ test("status shows the second copy as the launcher last wrote it, without the fo
   assert.equal(backups.status().copy.state, "waiting", "the launcher hasn't looked at the folder now chosen");
   write(written);
   const copy = backups.status().copy;
-  assert.deepEqual(copy, { state: "failed", kept: 14, lastCopyAt: written.lastCopyAt, lastCopiedCreatedAt: written.lastCopiedCreatedAt, copies: 3, lastError: written.lastError });
+  assert.deepEqual(copy, { state: "failed", kept: 14, lastCopyAt: written.lastCopyAt, lastCopiedCreatedAt: written.lastCopiedCreatedAt, copies: 3, lastError: written.lastError, notPrivate: false });
   assert.ok(!("folder" in copy));
+  write({ ...written, state: "ok", lastError: null, notPrivate: true });
+  assert.equal(backups.status().copy.notPrivate, true, "copies Kin couldn't make private are shown");
+  write({ ...written, notPrivate: "yes" });
+  assert.equal(backups.status().copy.notPrivate, false);
   assert.ok(!JSON.stringify(backups.status()).includes("usb"), "no path in the status");
   write({ ...written, format: 2 });
   assert.equal(backups.status().copy.state, "waiting", "a format this Kin doesn't know is ignored");

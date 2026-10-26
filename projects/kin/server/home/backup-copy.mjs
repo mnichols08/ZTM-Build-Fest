@@ -34,17 +34,23 @@
 //
 // On Windows the modes below mean nothing, so `Kin backups/<name>` is given
 // permissions like the data directory's (the installer's icacls): SYSTEM,
-// Administrators and whoever owns each file, which is Kin's account. FAT32
-// and exFAT drives hold no permissions; the guide says so.
+// Administrators, whoever owns each file, the service's account (LOCAL
+// SERVICE) and the account Kin runs as now, so a folder first made by a
+// `kin` run as the person still lets the service in. When that fails
+// (FAT32 and exFAT hold no permissions; an NTFS folder the person made may
+// not let Kin change them) the copy goes ahead, the status says the copies
+// aren't private, and the next look tries again.
 //
 // Kin never makes the chosen folder itself, and refuses one on the same
 // partition as its data directory: a drive that isn't plugged in is then
 // reported, instead of filling this computer's own disk with copies that
 // wouldn't survive it failing. Another partition of the same disk can't be
 // told apart (the guide says so). Outside Windows, a folder under /media,
-// /mnt, /run/media or /Volumes on the same partition as that folder itself
-// is a mount point with nothing mounted, reported as missing. A full drive
-// is reported, never cleared to make room.
+// /mnt, /run/media or /Volumes on the same partition as that folder, when
+// that folder is no mount point itself (it is on the same partition as the
+// folder above it), is a mount point with nothing mounted, reported as
+// missing; a drive mounted at /mnt itself is used. A full drive is
+// reported, never cleared to make room.
 //
 // How it went goes to `backups/copy-status.json`, which only the launcher
 // writes and the control panel reads (backups.mjs). Kin's log gets codes
@@ -52,6 +58,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createReadStream, readFileSync } from "node:fs";
+import { userInfo } from "node:os";
 import { mkdir, open, readdir, rm, stat, statfs } from "node:fs/promises";
 import { dirname, join, posix, win32 } from "node:path";
 import { writePrivateFile } from "../acme/keys.mjs";
@@ -142,36 +149,76 @@ async function hashFile(path) {
   return { bytes, sha256: hash.digest("hex") };
 }
 
-/** Gives `folder` (and what is made in it) only SYSTEM, Administrators and
- * each file's owner, as the installer does for the data directory. Windows
- * only. */
-export function protectFolder(folder) {
+/** LOCAL SERVICE, the account the Windows service runs as. */
+const LOCAL_SERVICE = "S-1-5-19";
+const SID = /^S-1-\d+(-\d+)+$/;
+
+/** The SID in `whoami /user /fo csv /nh` output ("name","S-1-…"), or null. */
+export function parseAccountSid(output) {
+  const sid = /"(S-1-[\d-]+)"$/.exec(String(output ?? "").trim())?.[1];
+  return sid && SID.test(sid) ? sid : null;
+}
+
+let accountSid = null;
+/** The account Kin runs as, by SID, looked up once; null when it can't be
+ * told (the copies folder then lets in each file's owner and the service's
+ * account only). Windows only. */
+export function currentAccountSid() {
+  // Windows' own whoami, not another one earlier on the PATH (Git's).
+  const whoami = process.env.SystemRoot ? win32.join(process.env.SystemRoot, "System32", "whoami.exe") : "whoami.exe";
+  accountSid ??= new Promise((resolve) => {
+    execFile(whoami, ["/user", "/fo", "csv", "/nh"], { windowsHide: true }, (error, stdout) => {
+      const sid = error ? null : parseAccountSid(stdout);
+      if (sid) return resolve(sid);
+      let name = "";
+      try { name = userInfo().username; } catch { name = ""; }
+      return resolve(/^local ?service$/i.test(name) ? LOCAL_SERVICE : null);
+    });
+  });
+  return accountSid;
+}
+
+/** icacls's arguments for `folder`: SYSTEM, Administrators, each file's
+ * owner, LOCAL SERVICE and `account` (a SID, or null), nothing inherited.
+ * Given to icacls as they are, never through a shell. */
+export function protectArguments(folder, account = null) {
+  const sids = ["S-1-5-18", "S-1-5-32-544", "S-1-3-4", LOCAL_SERVICE];
+  if (typeof account === "string" && SID.test(account) && !sids.includes(account)) sids.push(account);
+  return [folder, "/inheritance:r", "/grant:r", ...sids.map((sid) => `*${sid}:(OI)(CI)F`)];
+}
+
+/** Gives `folder` (and what is made in it) only the accounts above, as the
+ * installer does for the data directory. `account` defaults to the one Kin
+ * runs as. Windows only. */
+export async function protectFolder(folder, account) {
+  const args = protectArguments(folder, account === undefined ? await currentAccountSid() : account);
   return new Promise((resolve, reject) => {
-    execFile("icacls", [folder, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "*S-1-3-4:(OI)(CI)F"], { windowsHide: true }, (error) => (error ? reject(error) : resolve()));
+    execFile("icacls", args, { windowsHide: true }, (error) => (error ? reject(error) : resolve()));
   });
 }
 
-const blank = (folder) => ({ folder, checkedAt: null, lastCopyAt: null, lastCopiedCreatedAt: null, copies: 0, lastError: null });
+const blank = (folder) => ({ folder, checkedAt: null, lastCopyAt: null, lastCopiedCreatedAt: null, copies: 0, lastError: null, notPrivate: false });
 
 /**
  * The launcher's copier for one home server. Test seams: `files` replaces
- * `stat`, `statfs` (free space), `copyFile` (copyFileFlushed) and `protect`
- * (protectFolder, on Windows).
+ * `stat`, `statfs` (free space), `mkdir` (for the copies folder),
+ * `copyFile` (copyFileFlushed) and `protect` (protectFolder, on Windows).
  */
 export class BackupCopier {
   constructor({ dataDirectory, env = process.env, platform = process.platform, now = Date.now, log = () => {}, files = {}, pollMs = COPY_POLL_MS }) {
     Object.assign(this, { dataDirectory, env, platform, now, log, pollMs });
-    this.files = { stat, statfs, copyFile: copyFileFlushed, protect: protectFolder, ...files };
+    this.files = { stat, statfs, mkdir, copyFile: copyFileFlushed, protect: protectFolder, ...files };
     this.source = backupsDirectory(dataDirectory);
     const previous = readBackupCopyStatus(dataDirectory);
     this.state = previous
-      ? { state: previous.state, folder: previous.folder ?? null, checkedAt: previous.checkedAt ?? null, lastCopyAt: previous.lastCopyAt ?? null, lastCopiedCreatedAt: previous.lastCopiedCreatedAt ?? null, copies: previous.copies ?? 0, lastError: previous.lastError ?? null }
+      ? { state: previous.state, folder: previous.folder ?? null, checkedAt: previous.checkedAt ?? null, lastCopyAt: previous.lastCopyAt ?? null, lastCopiedCreatedAt: previous.lastCopiedCreatedAt ?? null, copies: previous.copies ?? 0, lastError: previous.lastError ?? null, notPrivate: previous.notPrivate === true }
       : { state: "off", ...blank(null) };
     this.running = null;
     this.again = false;
     this.timer = null;
     this.stopped = false;
-    // The copies folder this launcher gave its permissions (Windows).
+    // The copies folder this launcher gave its permissions (Windows), once
+    // that worked.
     this.protectedFolder = null;
     // Settles once the last status written is on disk (see #write).
     this.written = Promise.resolve();
@@ -284,8 +331,9 @@ export class BackupCopier {
       if (!chosen) throw new BackupCopyError("backup-copy-missing");
       await this.#check(chosen);
       const destination = copyFolderFor(chosen, name, this.platform);
-      const made = await mkdir(destination, { recursive: true, mode: 0o700 });
-      await this.#protect(destination, made);
+      const made = await this.files.mkdir(destination, { recursive: true, mode: 0o700 });
+      const notPrivate = !(await this.#protect(destination, made));
+      if (notPrivate !== this.state.notPrivate) this.#write({ notPrivate });
       const there = new Set(listBackups(destination).map((set) => set.id));
       const missing = listBackups(this.source).filter((set) => !there.has(set.id));
       if (missing.length) this.#write({ state: "copying", checkedAt: at });
@@ -330,28 +378,40 @@ export class BackupCopier {
 
   /** Throws BackupCopyError (or the system's error) unless `folder` is a
    * folder on another partition than the data directory and, outside
-   * Windows, not an empty mount point (see the top of this file). */
+   * Windows, not an empty mount point: refused when it is on the mount
+   * area's partition and the area is on the partition of the folder above
+   * it, so no drive is mounted at the area itself (see the top of this
+   * file). */
   async #check(folder) {
     const info = await this.files.stat(folder);
     if (!info.isDirectory()) throw new BackupCopyError("backup-copy-not-folder");
     if ((await this.files.stat(this.dataDirectory)).dev === info.dev) throw new BackupCopyError("backup-copy-same-disk");
     if (this.platform === "win32") return;
     const area = MOUNT_AREAS.find((root) => folder.startsWith(`${root}/`));
-    if (area && (await this.files.stat(area)).dev === info.dev) throw new BackupCopyError("backup-copy-missing");
+    if (!area) return;
+    const areaDev = (await this.files.stat(area)).dev;
+    if (areaDev === info.dev && (await this.files.stat(posix.dirname(area))).dev === areaDev) throw new BackupCopyError("backup-copy-missing");
   }
 
   /** On Windows, gives this server's copies folder its permissions: when
-   * it was just made (perhaps on another drive at the same place), and once
-   * per launcher for one made before. A drive that holds no permissions
-   * (FAT32, exFAT) is logged once and copied to all the same. */
+   * it was just made (perhaps on another drive at the same place), once per
+   * launcher for one made before, and at each look until that works.
+   * Resolves false when it didn't: a drive that holds no permissions
+   * (FAT32, exFAT), or a folder whose permissions Kin may not change. That
+   * is logged once and copied to all the same, and the status says so. */
   async #protect(destination, made) {
-    if (this.platform !== "win32" || (!made && this.protectedFolder === destination)) return;
-    this.protectedFolder = destination;
+    if (this.platform !== "win32" || (!made && this.protectedFolder === destination)) return true;
+    this.protectedFolder = null;
     try {
       await this.files.protect(destination);
+      this.protectedFolder = destination;
+      return true;
     } catch (error) {
-      const reason = systemCode(error);
-      this.log({ event: "home_backup_copy_not_private", ...(reason ? { reason } : {}) });
+      if (!this.state.notPrivate) {
+        const reason = systemCode(error);
+        this.log({ event: "home_backup_copy_not_private", ...(reason ? { reason } : {}) });
+      }
+      return false;
     }
   }
 

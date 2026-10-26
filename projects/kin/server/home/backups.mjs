@@ -378,6 +378,8 @@ export class HomeBackups {
       lastCopyAt: file?.lastCopyAt ?? null, lastCopiedCreatedAt: file?.lastCopiedCreatedAt ?? null,
       copies: Number.isSafeInteger(file?.copies) ? file.copies : 0,
       lastError: typeof file?.lastError?.code === "string" ? { code: file.lastError.code, at: file.lastError.at ?? null } : null,
+      // On Windows: Kin couldn't make the copies folder private.
+      notPrivate: file?.notPrivate === true,
     });
     if (!folder || !settings.configured) return shown("off");
     const file = readBackupCopyStatus(this.dataDirectory);

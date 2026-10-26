@@ -791,11 +791,16 @@ it again.
   mistakes, not a drive that loses writes), the manifest written last and
   each file flushed. Kin never makes the chosen folder and refuses one on the
   data directory's own partition, or (outside Windows) one under `/media`,
-  `/mnt`, `/run/media` or `/Volumes` on the same partition as that folder,
-  so a missing or unmounted drive is reported and never fills the system
+  `/mnt`, `/run/media` or `/Volumes` on the same partition as that folder
+  when that folder is itself on its parent's partition (a drive mounted at
+  `/mnt` itself is used), so a missing or unmounted drive is reported and never fills the system
   disk. Another partition of the same disk can't be told apart. On Windows
   `Kin backups/<name>` gets the data directory's kind of permissions (SYSTEM,
-  Administrators, the owner); FAT32 and exFAT hold none. The 14-newest rule applies there, touching
+  Administrators, the owner, LOCAL SERVICE and the running account by SID,
+  so a folder first made by an interactive run still lets the service in).
+  FAT32 and exFAT hold none, and an NTFS folder Kin may not change fails
+  the same way: the copy goes ahead, `copy-status.json` records
+  `notPrivate` for the panel, and the next look tries again. The 14-newest rule applies there, touching
   only Kin's own folders (two servers can share a drive), and a full drive
   is reported, not cleared.
 - **The outcome goes to `backups/copy-status.json`**, which only the

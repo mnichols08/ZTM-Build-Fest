@@ -148,7 +148,7 @@ export const SECTIONS = {
     title: "Backups",
     notBuilt: "Scheduled backups aren't part of this version yet. Until then, back up with “kin admin backup”, as the home server guide shows.",
     error: "Kin couldn't read the backup status.",
-    tone: (value) => (value.state === "failed" || value.lastRestore?.outcome === "failed" || value.copy?.state === "failed" ? "attention" : value.state === "ok" || value.state === "running" ? "good" : null),
+    tone: (value) => (value.state === "failed" || value.lastRestore?.outcome === "failed" || value.copy?.state === "failed" || (value.copy?.notPrivate && value.copy.state !== "off") ? "attention" : value.state === "ok" || value.state === "running" ? "good" : null),
     render: (value) => [
       el("p", { className: "control-state", text: explainBackupState(value.state) }),
       details([
@@ -160,6 +160,7 @@ export const SECTIONS = {
       ]),
       ...(value.lastError ? [el("p", { className: "control-problem", "data-code": value.lastError.code, text: explain(value.lastError.code) })] : []),
       ...(value.copy?.state === "failed" && value.copy.lastError ? [el("p", { className: "control-problem", "data-code": value.copy.lastError.code, text: explain(value.copy.lastError.code) })] : []),
+      ...(value.copy?.notPrivate && !["off", "waiting"].includes(value.copy.state) ? [el("p", { className: "control-problem", "data-code": "backup-copy-not-private", text: explain("backup-copy-not-private") })] : []),
       // Waiting can last: a Kin started without its launcher never copies.
       ...(["off", "waiting"].includes(value.copy?.state) ? [el("p", { className: "control-muted", "data-copy": value.copy.state, text: explainBackupCopyState(value.copy.state) })] : []),
       ...[lastRestore(value.lastRestore)].filter(Boolean),

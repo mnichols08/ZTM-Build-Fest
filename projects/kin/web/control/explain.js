@@ -121,6 +121,7 @@ const BACKUP_ERRORS = {
   "backup-copy-full": "The second folder's drive is full, so Kin couldn't copy the newest backup. Free some space there; Kin tries again in an hour and never deletes your files to make room.",
   "backup-copy-too-big": "A backup is too big for the drive's format (FAT32 holds files up to 4 GB). Use a drive formatted as exFAT or NTFS.",
   "backup-copy-failed": "Copying to the second folder didn't work, and Kin removed the unfinished copy. Kin tries again in an hour; if it goes on, try another drive.",
+  "backup-copy-not-private": "Kin couldn't make the copies in the second folder private, so other accounts on this computer, and any computer the drive is plugged into, may read them. A FAT32 or exFAT drive can't keep anyone out: use one formatted as NTFS, or keep the drive locked away. On an NTFS drive, give the account Kin runs as full control of the folder. Kin tries again with the next backup.",
   "control-backup-copy-invalid": "Type the folder's full path, such as E:\\ on Windows or /media/usb on Linux. It can't be inside Kin's own data folder.",
   "backup-failed": "Kin couldn't make a backup. Check that this computer's disk is working and has room; Kin tries again in an hour.",
   "backup-disk-full": "The disk is full, so Kin couldn't make a backup. Free some space; Kin tries again in an hour.",
