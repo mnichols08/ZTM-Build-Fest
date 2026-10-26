@@ -590,7 +590,10 @@ test("a start that fails closes what it had opened, so nothing keeps the process
     resolveTxt: async () => [], certificateSeen: async () => null,
   });
   try {
-    await assert.rejects(relay.listen({ host: "127.0.0.1", tlsPort: 0, httpPort: 0, dnsPort: taken }), (error) => error.code === "EADDRINUSE" && error.syscall === "listen");
+    // Should it start after all, it is closed, so the test fails instead of
+    // hanging on an open relay.
+    const started = relay.listen({ host: "127.0.0.1", tlsPort: 0, httpPort: 0, dnsPort: taken }).then(async (ports) => { await relay.close(); return ports; });
+    await assert.rejects(started, (error) => error.code === "EADDRINUSE" && error.syscall === "listen");
     assert.equal(relay.edge.listening, false, "the TLS listener is closed");
     assert.equal(relay.redirect.listening, false, "the HTTP listener is closed");
     // The DNS UDP socket on that number is closed too: it can be bound again.
