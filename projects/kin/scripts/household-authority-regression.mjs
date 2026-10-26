@@ -80,9 +80,15 @@ async function pageUnlock(secret) {
 // Whether this page can start Kin offline (#770): a service worker controls
 // it and its release cache holds the engine. A worker only takes control
 // once its install staged the whole shell (one failed fetch deletes the new
-// cache), so control means the cache is complete. Waits up to 15 s for it.
+// cache), so control means the cache is complete. Waits up to 15 s for the
+// worker to take control.
 async function pageOfflineShell() {
-  for (let i = 0; i < 600 && !navigator.serviceWorker.controller; i++) await new Promise((r) => setTimeout(r, 25));
+  if (!navigator.serviceWorker.controller) {
+    await Promise.race([
+      new Promise((resolve) => navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true })),
+      new Promise((resolve) => setTimeout(resolve, 15_000)),
+    ]);
+  }
   const names = (await caches.keys()).filter((name) => name.startsWith("kin-static-"));
   const cache = names.length === 1 ? await caches.open(names[0]) : null;
   return {
