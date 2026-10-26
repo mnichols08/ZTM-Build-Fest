@@ -20,7 +20,7 @@ const ALLOWED = {
   "handoff-regression.mjs": 6,
   "household-authority-regression.mjs": 44,
   "keyboard-commands-regression.mjs": 7,
-  "mobile-ux-regression.mjs": 3,
+  "mobile-ux-regression.mjs": 2,
   "passkey-regression.mjs": 7,
   "planning-date-regression.mjs": 1,
   "pulse-regression.mjs": 2,

@@ -224,10 +224,19 @@ export async function mobileUxRegressions(recovery) {
   const previousActivity = app.lastActivityAt;
   document.dispatchEvent(new Event("pointerdown"));
   check(app.lastActivityAt >= previousActivity, "actual user activity resets the inactivity deadline");
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  // The clock is stubbed rather than slept on (#469): on Windows, Date.now()
+  // need not advance across a short timer, so a later scroll could store the
+  // same time as the pointerdown.
   const pointerActivity = app.lastActivityAt;
-  document.dispatchEvent(new Event("scroll", { bubbles: true }));
-  check(app.lastActivityAt > pointerActivity, "scroll activity resets the inactivity deadline");
+  const wallNow = Date.now;
+  try {
+    Date.now = () => pointerActivity + 60_000;
+    document.dispatchEvent(new Event("scroll", { bubbles: true }));
+    check(app.lastActivityAt === pointerActivity + 60_000 && app.autoLockTimer !== null,
+      `scroll activity resets the inactivity deadline: ${app.lastActivityAt} vs ${pointerActivity}, timer ${app.autoLockTimer !== null}, locked ${app.vault?.locked}`);
+  } finally {
+    Date.now = wallNow;
+  }
   autoLock.value = "0";
   autoLock.dispatchEvent(new Event("change", { bubbles: true }));
   check(app.autoLockMinutes === 0 && app.autoLockTimer === null, "turning the inactivity lock off clears the timer");
