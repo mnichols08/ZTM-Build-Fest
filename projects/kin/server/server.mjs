@@ -2405,6 +2405,7 @@ async function api(request, response, url, context) {
       // The verified signature counter is kept, as for any passkey use.
       withTransaction(context, () => service.persistHousehold(auth.household.id));
       let result;
+      // No `loopback` here, so loopback-only changes (#763) are refused.
       try { result = await panel.applyChange(flow.change); } catch (error) { throw controlPairingError(error); }
       json(response, 200, result);
       return;
@@ -2484,7 +2485,8 @@ async function api(request, response, url, context) {
   throw new PairingError("not_found", "That endpoint is unavailable.", 404);
 }
 
-/** A control-panel change, checked by the panel; its refusal as a PairingError. */
+/** A control-panel change, checked by the panel; its refusal as a
+ * PairingError. No `loopback`, so loopback-only changes (#763) are refused. */
 function controlChange(panel, change) {
   try { return panel.checkChange(change); } catch (error) { throw controlPairingError(error); }
 }

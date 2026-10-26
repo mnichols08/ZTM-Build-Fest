@@ -149,6 +149,24 @@ documentation only.
   data as it was and says why. Before a name is chosen, the setup page
   offers a backup copied into the folder, which also brings its `home/`:
   moving a home server to a new computer.
+- **Kin at home can copy each backup to a second folder, such as a USB
+  drive** (#763; story #718, epic #708,
+  [ADR 0025](docs/decisions/0025-kin-at-home.md) §10,
+  [HOME-SERVER](docs/HOME-SERVER.md#copies-to-another-folder)). The folder
+  is chosen in the control panel on the home server's own computer only
+  (the copies hold every household's data and the home key), and kept as
+  `backupCopyFolder` in the home settings. The launcher, outside the
+  sandbox, copies every backup the folder lacks into
+  `Kin backups/<name>/` there, within a minute of each backup or of the
+  drive being plugged in, reading the database back to check it and writing
+  the manifest last. It keeps the 14 newest there and touches nothing else.
+  It never makes the chosen folder, refuses one on the same partition as
+  Kin's data or an unplugged drive's empty mount point, and reports a full
+  drive instead of clearing it. On Windows its folder there is kept as
+  private as Kin's data folder (not possible on FAT32 or exFAT). The status page shows the copies and
+  any problem in plain words. The Linux service may now write under
+  `/media`, `/mnt` and `/run/media`; an existing install needs
+  `kin --install-service` again for that.
 - **Moving a household to a home server: the app's screens** (#737;
   [ADR 0026](docs/decisions/0026-moving-a-household.md)). Household access
   offers household admins *Move to a home server*: who can sign in at the new
