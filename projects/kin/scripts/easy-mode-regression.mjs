@@ -9,6 +9,7 @@
 //   colours and reduced motion; then off again, leaving Kin as it was.
 import assert from "node:assert/strict";
 import { setViewport } from "./cdp-viewport.mjs";
+import { setMedia } from "./cdp-media.mjs";
 
 // Every page and tab Help covers (help/help-content.js has a topic for each).
 export const ROUTES = [
@@ -326,7 +327,7 @@ export async function easyModeRegressions(client, { until }) {
     ["dark", [{ name: "prefers-color-scheme", value: "dark" }]],
     ["forced colours, reduced motion", [{ name: "forced-colors", value: "active" }, { name: "prefers-reduced-motion", value: "reduce" }]],
   ]) {
-    await client.send("Emulation.setEmulatedMedia", { features });
+    await setMedia(client, features);
     const look = await page(`(async () => {
       const app = document.querySelector("kin-app");
       const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
@@ -345,7 +346,7 @@ export async function easyModeRegressions(client, { until }) {
     if (look.reduced) assert.equal(look.animation, "none", `${label}: no pulsing`);
     assert.ok(look.sideways <= 0, `${label}: nothing scrolls sideways`);
   }
-  await client.send("Emulation.setEmulatedMedia", { features: [] });
+  await setMedia(client);
 
   // Off again: everything comes back.
   await setViewport(client, { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });

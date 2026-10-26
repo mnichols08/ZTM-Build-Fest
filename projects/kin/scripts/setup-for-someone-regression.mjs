@@ -18,6 +18,7 @@
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { captureFailure, waitForOrigin } from "./cdp-page.mjs";
 import { setViewport } from "./cdp-viewport.mjs";
+import { setMedia } from "./cdp-media.mjs";
 import { approveWithPassword, createHousehold, isolatedPage, pageClient } from "./first-run-regression.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -272,9 +273,9 @@ export async function setupForSomeoneRegressions({ endpoint, browserClient }) {
     checks += prepared.checks;
     assert.equal(store.loadPreparedInvitations(Date.now()).length, 1, "the service keeps the invitation, so the sheet survives a restart");
     // The print stylesheet prints only the sheet.
-    await helper.send("Emulation.setEmulatedMedia", { media: "print" });
+    await setMedia(helper, [], { media: "print" });
     const printed = await helper.evaluate(`(${printedParts.toString()})()`);
-    await helper.send("Emulation.setEmulatedMedia", { media: "" });
+    await setMedia(helper);
     assert.deepEqual({ sheet: printed.sheet, steps: printed.steps, header: printed.header, actions: printed.actions }, { sheet: true, steps: true, header: false, actions: false }, `only the sheet prints: ${JSON.stringify(printed)}`);
     assert.equal(await helper.evaluate(`(${backFromSheet.toString()})()`), `${ROSE.name}'s invitation is ready`);
     checks += 2;

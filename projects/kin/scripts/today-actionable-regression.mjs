@@ -1,4 +1,5 @@
 import { setViewport } from "./cdp-viewport.mjs";
+import { setMedia } from "./cdp-media.mjs";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -540,7 +541,7 @@ export async function todayLifecycleRegressions(client, { visit, ready }) {
       "desktop: completing a task from Today never overwrites an unrelated open editor draft", state);
 
     // Forced colours and reduced motion.
-    await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "active" }, { name: "prefers-reduced-motion", value: "reduce" }] });
+    await setMedia(client, [{ name: "forced-colors", value: "active" }, { name: "prefers-reduced-motion", value: "reduce" }]);
     state = await page(() => {
       const app = document.querySelector("kin-app");
       const entry = app.today.querySelector(".today-summary-entry");
@@ -556,7 +557,7 @@ export async function todayLifecycleRegressions(client, { visit, ready }) {
       "forced colours keep summary boundaries and completion controls visible; reduced motion adds no animation", state);
   } finally {
     await offline(false).catch(() => {});
-    await client.send("Emulation.setEmulatedMedia", { media: "", features: [] }).catch(() => {});
+    await setMedia(client).catch(() => {});
     await client.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
     await page(() => { const app = document.querySelector("kin-app"); app?.closeItemDetail?.({ restoreFocus: false }); window.scrollTo(0, 0); }).catch(() => {});
   }

@@ -5,6 +5,7 @@
 // shorter viewport while the message box has focus); jump to latest works.
 import assert from "node:assert/strict";
 import { setViewport } from "./cdp-viewport.mjs";
+import { setMedia } from "./cdp-media.mjs";
 
 export async function chatLayoutRegressions(client, { until }) {
   const page = (expression) => client.evaluate(expression);
@@ -76,7 +77,7 @@ export async function chatLayoutRegressions(client, { until }) {
     ["dark mode", [{ name: "prefers-color-scheme", value: "dark" }], false],
     ["reduced motion", [{ name: "prefers-reduced-motion", value: "reduce" }], false],
   ]) {
-    await client.send("Emulation.setEmulatedMedia", { features });
+    await setMedia(client, features);
     await page(`(() => { document.documentElement.style.fontSize = ${bigText ? '"200%"' : '""'}; scrollTo(0, 0); return true; })()`);
     await frames();
     await page(`(() => { const s = document.querySelector("kin-app kin-chat .chat-scroll"); s.scrollTop = s.scrollHeight; return true; })()`);
@@ -104,13 +105,13 @@ export async function chatLayoutRegressions(client, { until }) {
     await frames();
   }
   await page(`(() => { document.documentElement.style.fontSize = ""; return true; })()`);
-  await client.send("Emulation.setEmulatedMedia", { features: [] });
+  await setMedia(client);
 
   // A phone with the keyboard open: the message box has focus and the
   // visible height shrinks; the bottom bar steps aside, the list keeps room.
   await setViewport(client, { width: 320, height: 568, deviceScaleFactor: 2, mobile: true });
   await client.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
-  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }] }).catch(() => {});
+  await setMedia(client, [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }]).catch(() => {});
   await page(`(() => { document.querySelector("kin-app kin-chat textarea").focus(); return true; })()`);
   await setViewport(client, { width: 320, height: 300, deviceScaleFactor: 2, mobile: true });
   await frames();
@@ -120,7 +121,7 @@ export async function chatLayoutRegressions(client, { until }) {
   assert.ok(typing.composerBottom <= typing.visible + 1, `keyboard open: the composer stays above it (${typing.composerBottom} of ${typing.visible})`);
   assert.ok(typing.list >= typing.visible * 0.4, `keyboard open: the list keeps at least 40% of the screen (${typing.list} of ${typing.visible})`);
   await page(`(() => { document.activeElement?.blur(); return true; })()`);
-  await client.send("Emulation.setEmulatedMedia", { features: [] }).catch(() => {});
+  await setMedia(client).catch(() => {});
   await client.send("Emulation.setTouchEmulationEnabled", { enabled: false });
 
   // Scrolled up, Jump to latest appears and takes you back.
@@ -173,7 +174,7 @@ export async function chatLayoutRegressions(client, { until }) {
   // down closes it and focus returns to ⋯.
   await setViewport(client, { width: 320, height: 568, deviceScaleFactor: 2, mobile: true });
   await client.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
-  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }] });
+  await setMedia(client, [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }]);
   await frames();
   const touchRow = await page(`(() => {
     const chat = document.querySelector("kin-app kin-chat");
@@ -221,7 +222,7 @@ export async function chatLayoutRegressions(client, { until }) {
     return { width: width <= 480, closed: !sheet.open };
   })()`);
   assert.deepEqual(tablet, { width: true, closed: true }, "touch tablet: the sheet is at most 480px wide");
-  await client.send("Emulation.setEmulatedMedia", { features: [] });
+  await setMedia(client);
   await client.send("Emulation.setTouchEmulationEnabled", { enabled: false });
 
   await client.send("Emulation.clearDeviceMetricsOverride");

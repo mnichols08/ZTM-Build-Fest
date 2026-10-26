@@ -4,6 +4,7 @@
 // layout on a phone, a tablet and a desktop.
 import assert from "node:assert/strict";
 import { setViewport } from "./cdp-viewport.mjs";
+import { setMedia } from "./cdp-media.mjs";
 
 const MEMBER = "a1".repeat(16);
 const HOUSEHOLD = "f1".repeat(16);
@@ -431,6 +432,8 @@ export async function fridgeRegressions(client, until) {
     return { inked, palette: fridge.palette(), door: getComputedStyle(fridge.querySelector(".fridge-door")).getPropertyValue("--fridge-door").trim(), moving };
   })()`);
   await resize({ width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  // Measured against light, not the machine's own appearance (#795).
+  await setMedia(client);
   const light = await inkCheck();
   // Kin's own dark appearance (the page may have pinned light), then back.
   const appearance = await page(`document.documentElement.dataset.kinAppearance ?? null`);
@@ -453,12 +456,16 @@ export async function fridgeRegressions(client, until) {
   assert.notEqual(dark.door, light.door, `dark mode darkens the door (${JSON.stringify(darkFacts)}; was ${JSON.stringify(appearance)})`);
   assert.notDeepEqual(dark.palette, light.palette, "dark mode remaps the ink colours");
   assert.ok(dark.inked > 0, "drawings stay visible in dark mode");
-  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "active" }, { name: "prefers-reduced-motion", value: "reduce" }] });
+  // Going back to light fades the fridge's buttons back (#795); let those
+  // fades end, so the next check counts only motion under reduced motion.
+  await page(`Promise.all(document.getAnimations().filter((animation) => document.querySelector("kin-fridge").contains(animation.effect?.target ?? null))
+    .map((animation) => animation.finished.catch(() => {}))).then(() => true)`);
+  await setMedia(client, [{ name: "forced-colors", value: "active" }, { name: "prefers-reduced-motion", value: "reduce" }]);
   const forced = await inkCheck();
   assert.ok(forced.palette.every((colour) => colour === "CanvasText"), "forced colours draw every ink in the system text colour");
   assert.ok(forced.inked > 0, "drawings stay visible in forced colours");
   assert.equal(forced.moving, 0, "nothing on the fridge moves with reduced motion");
-  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "none" }, { name: "prefers-reduced-motion", value: "no-preference" }, { name: "prefers-color-scheme", value: "light" }] });
+  await setMedia(client);
 
   // Clean up: no room, no fridge database left behind for later checks.
   await page(`(async () => {

@@ -5,6 +5,7 @@
 // its Retry. Runs from Node over CDP; page checks are serialized.
 import assert from "node:assert/strict";
 import { setViewport } from "./cdp-viewport.mjs";
+import { setMedia } from "./cdp-media.mjs";
 
 const LONG_DINNER = "Grandma's slow-cooked Sunday roast with all the trimmings and gravy for everyone";
 const LONG_RECIPE = "Extra-long recipe name to check that wrapping never pushes the page sideways ok";
@@ -139,14 +140,14 @@ export async function mealsAcceptanceRegressions(client, until) {
   for (const [mode, result] of [["light", light], ["dark", dark]])
     assert.ok(result.ratios.every((value) => value >= 4.5), `${mode}: day rows' ink, muted ink and accent have at least 4.5:1 contrast (${result.ratios.join(", ")})`);
   await appearance(null);
-  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "active" }] });
+  await setMedia(client, [{ name: "forced-colors", value: "active" }]);
   await settle();
   const forced = await page(`(() => {
     const today = document.querySelector("kin-meals .meal-day.is-today");
     return { border: parseFloat(getComputedStyle(today).borderTopWidth), style: getComputedStyle(today).borderTopStyle };
   })()`);
   assert.ok(forced.border >= 2 && forced.style !== "none", "forced colours: tonight's row keeps a visible border");
-  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "none" }] });
+  await setMedia(client);
 
   // ---- Offline: planning still saves on this device ---------------------
   // Meals never need the network to save; the browser is told it's offline

@@ -2,6 +2,7 @@
 // Uses a fresh temporary profile and loopback server, never an existing Kin DB.
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { setViewport } from "./cdp-viewport.mjs";
+import { setMedia } from "./cdp-media.mjs";
 import { applyRegressionDefaults, captureFailure, createLoadTrace, printAbortedModules, printLoadTrace as printTrace, KIN_START_TIMEOUT_MS, waitForOrigin } from "./cdp-page.mjs";
 import {
   pulseRegressions,
@@ -2387,11 +2388,11 @@ try {
     await setViewport(first, {width:320,height:720,deviceScaleFactor:1,mobile:false});
     assert.deepEqual(await first.evaluate(`(()=>{const appearance=document.querySelector('kin-app').appearance;const labels=[...appearance.querySelectorAll('.appearance-swatch')],checked=labels.find(label=>label.querySelector('input').checked),radio=checked.querySelector('input');return {overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth,targets:labels.every(label=>label.getBoundingClientRect().height>=44),checked:labels.filter(label=>label.querySelector('input').checked).length,radioClipped:radio.getBoundingClientRect().width===1,marker:getComputedStyle(checked,'::after').content.includes('✓')}})()`),
       {overflow:false,targets:true,checked:1,radioClipped:true,marker:true}, "theme presets keep native radios visually clipped behind fluid 44px swatch targets at 320px");
-    await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"active"}]});
+    await setMedia(first, [{name:"forced-colors",value:"active"}]);
     await first.evaluate("document.querySelector('kin-app').appearance.presetControls.get('slate').focus()");
     assert.deepEqual(await first.evaluate(`(()=>{const input=document.activeElement;return {outline:getComputedStyle(input.closest('.appearance-swatch')).outlineWidth,radioWidth:input.getBoundingClientRect().width,marker:getComputedStyle(input.closest('.appearance-swatch'),'::after').content}})()`),
       {outline:"3px",radioWidth:20,marker:"none"}, "theme presets reveal native radios and keep focus visible in forced colors");
-    await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"none"}]});
+    await setMedia(first);
     await first.evaluate(`(()=>{const appearance=document.querySelector('kin-app').appearance;appearance.initialize(window.__appearanceRadioSaved);delete window.__appearanceRadioSaved})()`);
     console.log("PASS native appearance preset radios, keyboard wrap, narrow reflow and forced colors");
     assert.deepEqual(await first.evaluate(`(async()=>{
@@ -2445,17 +2446,13 @@ try {
       deviceScaleFactor: 1,
       mobile: false,
     });
-    await first.send("Emulation.setEmulatedMedia", {
-      features: [{ name: "prefers-color-scheme", value: "dark" }],
-    });
+    await setMedia(first, [{ name: "prefers-color-scheme", value: "dark" }]);
     assert.equal(
       await first.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()"),
       "#171d19",
       "dark appearance follows the operating-system preference",
     );
-    await first.send("Emulation.setEmulatedMedia", {
-      features: [{ name: "prefers-color-scheme", value: "light" }],
-    });
+    await setMedia(first, [{ name: "prefers-color-scheme", value: "light" }]);
     assert.equal(
       await first.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()"),
       "#f3f1e9",
@@ -2488,12 +2485,10 @@ try {
       })()`),
       { label: "What it is", targetHeight: 48, focusWidth: "3px" },
     );
-    await first.send("Emulation.setEmulatedMedia", {
-      features: [
-        { name: "forced-colors", value: "active" },
-        { name: "prefers-reduced-motion", value: "reduce" },
-      ],
-    });
+    await setMedia(first, [
+      { name: "forced-colors", value: "active" },
+      { name: "prefers-reduced-motion", value: "reduce" },
+    ]);
     assert.deepEqual(
       await first.evaluate(`(()=>{
         const controls=[...document.querySelectorAll('button,select')];
@@ -3025,9 +3020,9 @@ try {
     assert.deepEqual(narrowTodayLayout,{overflow:false,targets:true,rowFits:true,bottomNav:true,headerFits:true,safeArea:true,detailsCollapsed:true,primaryVisible:true},
       `Today at 320px keeps every control reachable: ${JSON.stringify(narrowTodayLayout)}`);
     await visit(first, "household/areas");
-    await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"none"},{name:"prefers-reduced-motion",value:"no-preference"},{name:"prefers-color-scheme",value:"dark"}]});
+    await setMedia(first, [{name:"forced-colors",value:"none"},{name:"prefers-reduced-motion",value:"no-preference"},{name:"prefers-color-scheme",value:"dark"}]);
     assert.equal(await first.evaluate("matchMedia('(prefers-color-scheme: dark)').matches"),true,"Area manager follows dark mode");
-    await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"active"},{name:"prefers-reduced-motion",value:"reduce"}]});
+    await setMedia(first, [{name:"forced-colors",value:"active"},{name:"prefers-reduced-motion",value:"reduce"}]);
     const areaLockReplacement = await first.evaluate(`(async()=>{
       const app=document.querySelector('kin-app'),prior=app.areas,priorNotes=app.notes;
       const create=prior.querySelector('#area-create-name');create.value='Private Area draft';create.dispatchEvent(new Event('input',{bubbles:true}));

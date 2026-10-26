@@ -22,6 +22,7 @@
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { captureFailure, waitForOrigin } from "./cdp-page.mjs";
 import { setViewport } from "./cdp-viewport.mjs";
+import { setMedia } from "./cdp-media.mjs";
 import {
   approveWithPassword, createHousehold, eventually, finishJoining, invite, isolatedPage, joinByInvitation, pageClient,
 } from "./first-run-regression.mjs";
@@ -283,7 +284,7 @@ export async function playScreenshots({ endpoint, browserClient, outDir }) {
     await browserClient.send("Target.disposeBrowserContext", { browserContextId: samPage.browserContextId }).catch(() => {});
     pages.pop();
 
-    await robin.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }, { name: "prefers-reduced-motion", value: "reduce" }] });
+    await setMedia(robin, [{ name: "prefers-color-scheme", value: "light" }, { name: "prefers-reduced-motion", value: "reduce" }]);
     await robin.send("Emulation.setScrollbarsHidden", { hidden: true }).catch(() => {});
     await robin.send("Page.bringToFront").catch(() => {});
     for (const device of DEVICES) {

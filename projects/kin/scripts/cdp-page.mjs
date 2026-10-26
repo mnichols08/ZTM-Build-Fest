@@ -15,6 +15,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setMedia } from "./cdp-media.mjs";
 
 export const PAGE_TIMEOUT_MS = 30_000;
 
@@ -124,6 +125,8 @@ export async function applyRegressionDefaults(send) {
   await send("Page.addScriptToEvaluateOnNewDocument", { source: REGRESSION_DEFAULTS_SCRIPT });
   // The tab may already have loaded Kin before the script existed.
   await send("Runtime.evaluate", { expression: REGRESSION_DEFAULTS_SCRIPT }).catch(() => {});
+  // Light with forced colours off, whatever the machine's appearance (#795).
+  await setMedia({ send });
 }
 
 /**

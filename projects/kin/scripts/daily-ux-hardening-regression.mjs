@@ -1,4 +1,5 @@
 import { setViewport } from "./cdp-viewport.mjs";
+import { setMedia } from "./cdp-media.mjs";
 import assert from "node:assert/strict";
 
 // Daily UX hardening (PR 07): session-lifecycle, offline, accessibility and
@@ -734,13 +735,13 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     await visit("routines");
     await idle();
     for (const forced of ["none", "active"]) {
-      await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: forced }] });
+      await setMedia(client, [{ name: "forced-colors", value: forced }]);
       const markers = await chevrons();
       const shown = (marker) => marker && marker.content !== "none" && marker.border === "solid" && marker.width !== "0px";
       check(shown(markers.schedule) && shown(markers.repeat),
         `the repeating-task Schedule and Repeat disclosures show an open/closed marker by shape, not color alone (forced colors ${forced})`, markers);
     }
-    await client.send("Emulation.setEmulatedMedia", { features: [] });
+    await setMedia(client);
 
     await visit("lists/todo");
     const bulkDescribed = await page(() => {
@@ -949,7 +950,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     await visit("today");
   } finally {
     await client.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }).catch(() => {});
-    await client.send("Emulation.setEmulatedMedia", { features: [] }).catch(() => {});
+    await setMedia(client).catch(() => {});
     await client.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
   }
   for (const [name, value] of metrics) console.log(`METRIC daily-ux-hardening ${name} ${JSON.stringify(value)}`);
