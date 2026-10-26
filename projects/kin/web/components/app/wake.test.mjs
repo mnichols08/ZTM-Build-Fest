@@ -6,6 +6,7 @@ import test, { mock } from "node:test";
 globalThis.window = {};
 globalThis.document = { visibilityState: "visible" };
 const { installWakeHandlers } = await import("./wake.js");
+const { RefreshController } = await import("./refresh.js");
 
 /** An element with just what the wake reads, and a security-epoch check the test settles. */
 function wakingApp() {
@@ -130,4 +131,40 @@ test("locking drops a focus wake that has not run", (t) => {
   assert.equal(app.pendingWakes, 0, "cancelling twice changes nothing");
   mock.timers.tick(150);
   assert.equal(checks.length, 0);
+});
+
+// wake.js lets go of wakePending as soon as refreshFromEvents() returns, so
+// the real controller must set refreshing (or pendingRefresh) before its
+// first await; the stub above cannot catch an await added ahead of it.
+/** The real refresh controller, its history read held open by the test. */
+function refreshingApp() {
+  let release;
+  const read = new Promise((resolve, reject) => { release = () => reject(Object.assign(new Error("stop"), { code: "locked" })); });
+  const store = { getCatchUpState: () => read };
+  const app = {
+    vault: { locked: false }, store, engine: {}, busy: false, refreshing: false, pendingRefresh: false,
+    alert: { textContent: "" }, contains: () => false,
+  };
+  app.ctx = {
+    app,
+    session: { captureSession: () => ({ store }), isCurrentSession: () => true },
+    status: { setBusy: (busy) => { app.busy = busy; }, clearAlert() {}, setStatus() {} },
+    peers: { flushPeerRefresh() {} },
+  };
+  return { app, refresh: new RefreshController(app.ctx), release };
+}
+
+test("the real refresh is busy before its first await, so a wake can let go", async () => {
+  const idle = refreshingApp();
+  const running = idle.refresh.refreshFromEvents();
+  assert.equal(idle.app.refreshing, true, "refreshing is set before refreshFromEvents returns");
+  idle.release();
+  await running;
+  assert.equal(idle.app.refreshing, false);
+
+  const busy = refreshingApp();
+  busy.app.busy = true;
+  const deferred = busy.refresh.refreshFromEvents();
+  assert.equal(busy.app.pendingRefresh, true, "a refresh asked for while busy is deferred, not dropped");
+  await deferred;
 });
