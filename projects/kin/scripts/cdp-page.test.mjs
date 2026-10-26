@@ -1,7 +1,7 @@
 // Issue #164: a new tab is used only once it has loaded Kin's origin.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLoadTrace, waitForOrigin } from "./cdp-page.mjs";
+import { createLoadTrace, waitForKinStart, waitForOrigin } from "./cdp-page.mjs";
 
 test("waitForOrigin waits through about:blank and a lost context until the page has loaded", async () => {
   const answers = [false, new Error("Execution context was destroyed."), false, true];
@@ -28,6 +28,28 @@ test("waitForOrigin re-navigates a tab stuck on about:blank", async () => {
     return navigated > 0;
   }, "http://127.0.0.1:1", { renavigateAfterMs: 60, navigate: async () => { navigated += 1; } });
   assert.equal(navigated, 1);
+});
+
+// #469: the start-up guard can reload a stalled start after the page is
+// "interactive"; the wait asks again until the reloaded page defines kin-app.
+test("waitForKinStart waits through a start-up guard reload until kin-app is defined", async () => {
+  const answers = [false, new Error('{"code":-32000,"message":"Execution context was destroyed."}'), false, true];
+  const asked = [];
+  await waitForKinStart(async (expression) => {
+    if (expression.startsWith("`")) return "http://127.0.0.1:1/ (interactive)";
+    asked.push(expression);
+    const next = answers[Math.min(asked.length - 1, answers.length - 1)];
+    if (next instanceof Error) throw next;
+    return next;
+  }, "http://127.0.0.1:1");
+  assert.equal(asked.length, 4);
+  assert.match(asked[0], /document\.readyState !== "loading" && \(Boolean\(customElements\.get\("kin-app"\)\)\)$/);
+});
+
+test("waitForKinStart says Kin didn't start when kin-app never appears", async () => {
+  await assert.rejects(
+    waitForKinStart(async (expression) => expression.startsWith("`") ? "http://127.0.0.1:1/ (interactive)" : false, "http://127.0.0.1:1", { timeoutMs: 120 }),
+    /did not finish loading http:\/\/127\.0\.0\.1:1 or start Kin within 120 ms; last seen: http:\/\/127\.0\.0\.1:1\/ \(interactive\)/);
 });
 
 // #594: a start that stopped part way says which scripts it still waits for.

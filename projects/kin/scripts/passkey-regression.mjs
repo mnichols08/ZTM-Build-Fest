@@ -1,7 +1,7 @@
 // Real WebAuthn through a virtual authenticator and the production Kin server.
 // https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/WebAuthn.pdl
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
-import { applyRegressionDefaults, captureFailure, createLoadTrace, printAbortedModules, printLoadTrace, waitForOrigin } from "./cdp-page.mjs";
+import { applyRegressionDefaults, captureFailure, createLoadTrace, printAbortedModules, printLoadTrace, waitForKinStart } from "./cdp-page.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -663,7 +663,9 @@ if (
     await send("ServiceWorker.enable").catch(() => {});
     await applyRegressionDefaults(send);
     await send("Page.navigate", { url: origin });
-    await waitForOrigin(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
+    // Kin must have started before setupPasskey waits inside the page: a
+    // start-up guard reload during that one call would end it (#469).
+    await waitForKinStart(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
     await passkeyRegressions(client, service, syncService);
   } catch (error) {
     // Before the browser closes: what each page showed (#328), and how the

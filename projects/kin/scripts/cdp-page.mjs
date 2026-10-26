@@ -20,8 +20,8 @@ export const PAGE_TIMEOUT_MS = 30_000;
 
 export const RENAVIGATE_AFTER_MS = 5_000;
 
-export async function waitForOrigin(evaluate, origin, { timeoutMs = PAGE_TIMEOUT_MS, navigate, renavigateAfterMs = RENAVIGATE_AFTER_MS } = {}) {
-  const expression = `location.origin === ${JSON.stringify(origin)} && document.readyState !== "loading"`;
+export async function waitForOrigin(evaluate, origin, { timeoutMs = PAGE_TIMEOUT_MS, navigate, renavigateAfterMs = RENAVIGATE_AFTER_MS, ready, readyText = "" } = {}) {
+  const expression = `location.origin === ${JSON.stringify(origin)} && document.readyState !== "loading"${ready ? ` && (${ready})` : ""}`;
   const started = Date.now();
   const deadline = started + timeoutMs;
   let nextNavigation = started + renavigateAfterMs;
@@ -39,9 +39,19 @@ export async function waitForOrigin(evaluate, origin, { timeoutMs = PAGE_TIMEOUT
       await navigate().catch(() => {});
     }
     if (Date.now() >= deadline)
-      throw new Error(`The browser tab did not finish loading ${origin} within ${timeoutMs} ms; last seen: ${last}`);
+      throw new Error(`The browser tab did not finish loading ${origin}${readyText} within ${timeoutMs} ms; last seen: ${last}`);
     await delay(50);
   }
+}
+
+// Waits, from Node, until the tab has loaded Kin and defined kin-app (#469).
+// The start-up guard (web/boot-guard.js) reloads a start that has stopped,
+// which destroys the context of any call still running in the page. A suite
+// that waits for Kin inside one long in-page call would fail on that reload
+// even when the reloaded page starts; these short calls just ask again. Once
+// kin-app is defined the guard has stopped, so later calls are safe.
+export function waitForKinStart(evaluate, origin, options = {}) {
+  return waitForOrigin(evaluate, origin, { ...options, ready: 'Boolean(customElements.get("kin-app"))', readyText: " or start Kin" });
 }
 
 // Browser regressions reload pages and expect the lock screen, so every

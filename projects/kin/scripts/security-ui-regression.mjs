@@ -1,6 +1,6 @@
 // Real browser IndexedDB + Web Crypto regressions; no third-party harness.
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
-import { applyRegressionDefaults, captureFailure, createLoadTrace, printAbortedModules, printLoadTrace, waitForOrigin } from "./cdp-page.mjs";
+import { applyRegressionDefaults, captureFailure, createLoadTrace, printAbortedModules, printLoadTrace, waitForKinStart } from "./cdp-page.mjs";
 import assert from "node:assert/strict";
 import { householdLifecycleChecks } from "./security-household-regression.mjs";
 import { householdLeaveChecks } from "./household-leave-regression.mjs";
@@ -1046,7 +1046,9 @@ if (
     await send("ServiceWorker.enable").catch(() => {});
     await applyRegressionDefaults(send);
     await send("Page.navigate", { url: origin });
-    await waitForOrigin(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
+    // Kin must have started before browserUiChecks waits inside the page: a
+    // start-up guard reload during that one call would end it (#469).
+    await waitForKinStart(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
     await send("Page.enable");
     await securityUiRegressions(client);
   } catch (error) {
