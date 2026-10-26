@@ -30,7 +30,10 @@ function page({ navigation = "navigate", stored = {}, storageThrows = false } = 
     appendChild(child) { this.children.push(child); },
     addEventListener(type, callback) { this.listeners[type] = callback; },
   });
-  const body = { appendChild(child) { appended.push(child); } };
+  const body = {
+    appendChild(child) { child.parentNode = body; appended.push(child); },
+    removeChild(child) { appended.splice(appended.indexOf(child), 1); child.parentNode = null; },
+  };
   const win = {
     reloads: 0,
     location: { reload() { win.reloads += 1; } },
@@ -109,6 +112,19 @@ test("a stalled start shares the error path's cap, so it never loops", () => {
   }
   assert.equal(stored["kin.boot-retry"], "2");
   assert.equal(load.appended.length, 1, "after two reloads it explains instead");
+});
+
+test("a slow start that passes the stall clock at the cap drops the message once Kin starts", async () => {
+  // One large module can take longer than the stall clock with nothing else
+  // finishing; on the third such load the guard explains, then Kin starts.
+  const slow = page({ navigation: "reload", stored: { "kin.boot-retry": "2" } });
+  slow.wait(8_000);
+  assert.equal(slow.win.reloads, 0);
+  assert.equal(slow.appended.length, 1, "at the cap it explains");
+  slow.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(slow.appended.length, 0, "a started Kin removes the message");
+  assert.equal(slow.items.has("kin.boot-retry"), false);
 });
 
 test("a slow start that keeps finishing requests is left alone", async () => {

@@ -138,6 +138,10 @@
       try { if (progress) progress.disconnect(); } catch (error) { /* nothing to stop */ }
       var storage = session();
       try { if (storage) storage.removeItem(RETRY_KEY); } catch (error) { /* nothing to clear */ }
+      // A slow start can pass the stall clock at the cap and show the message,
+      // then finish: a working Kin doesn't keep saying it didn't load.
+      var box = doc.querySelector("[data-kin-boot-failed]");
+      if (box && box.parentNode) box.parentNode.removeChild(box);
     });
   } catch (error) { /* no custom elements: Kin can't start here anyway */ }
 })(typeof window === "undefined" ? null : window);

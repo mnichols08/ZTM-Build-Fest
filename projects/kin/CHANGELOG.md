@@ -440,7 +440,9 @@ documentation only.
   "Skip to content". The start-up guard now also reloads when nothing has
   finished loading for 8 seconds and Kin still hasn't started, with the same
   limit of two reloads in a row. A slow start that keeps loading is left
-  alone, and so is one that stopped on a script error.
+  alone, and so is one that stopped on a script error. If a slow third
+  start shows "Kin didn't finish loading" and then finishes, the message
+  goes away.
 
 ## v1.6.0 — Kin for Everyone
 
