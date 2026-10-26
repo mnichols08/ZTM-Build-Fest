@@ -1,9 +1,10 @@
 // The relay's authoritative DNS (ADR 0025 §4, §5): answers by hand-built
 // query, and over UDP and TCP through Node's own resolver.
 import assert from "node:assert/strict";
+import { Socket, createSocket } from "node:dgram";
 import { Resolver } from "node:dns/promises";
 import { once } from "node:events";
-import { connect } from "node:net";
+import { Server, connect, createServer } from "node:net";
 import test from "node:test";
 import { Rcode, Type, answerQuery, createDnsServer, encodeName, zoneConfig } from "./dns.mjs";
 
@@ -96,4 +97,44 @@ test("over UDP and TCP with Node's resolver", async () => {
     assert.equal(parse(chunk.subarray(2)).answers, 1);
     socket.destroy();
   } finally { await server.close(); }
+});
+
+test("port 0 picks again when the number UDP got is taken for TCP (#469)", async () => {
+  const holder = createServer().listen(0, "127.0.0.1");
+  await once(holder, "listening");
+  const taken = holder.address().port;
+  // The first TCP listen goes to the taken port, as when a loopback client
+  // socket holds the number the system just gave UDP.
+  const realListen = Server.prototype.listen;
+  const realClose = Socket.prototype.close;
+  let listens = 0;
+  let udpCloses = 0;
+  Server.prototype.listen = function (port, ...rest) { listens += 1; return realListen.call(this, listens === 1 ? taken : port, ...rest); };
+  Socket.prototype.close = function (...rest) { udpCloses += 1; return realClose.apply(this, rest); };
+  let server;
+  try { server = await createDnsServer({ host: "127.0.0.1", port: 0, config, lookup }); } finally {
+    Server.prototype.listen = realListen;
+    Socket.prototype.close = realClose;
+  }
+  try {
+    assert.equal(listens, 2, "a second pair was opened");
+    assert.equal(udpCloses, 1, "the first UDP socket was closed");
+    assert.equal(server.tcpPort, server.udpPort);
+    assert.notEqual(server.tcpPort, taken);
+  } finally {
+    await server.close();
+    await new Promise((resolve) => holder.close(resolve));
+  }
+});
+
+test("a fixed port taken for TCP fails without picking again and frees its UDP port", async () => {
+  const holder = createServer().listen(0, "127.0.0.1");
+  await once(holder, "listening");
+  const taken = holder.address().port;
+  try {
+    await assert.rejects(createDnsServer({ host: "127.0.0.1", port: taken, config, lookup }), (error) => error.code === "EADDRINUSE");
+    const udp = createSocket("udp4");
+    await new Promise((resolve, reject) => { udp.once("error", reject); udp.bind(taken, "127.0.0.1", resolve); });
+    await new Promise((resolve) => udp.close(resolve));
+  } finally { await new Promise((resolve) => holder.close(resolve)); }
 });

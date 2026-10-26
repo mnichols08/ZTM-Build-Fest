@@ -171,7 +171,17 @@ export function answerQuery(message, config, lookup, { udp = true } = {}) {
  * length-prefixed (RFC 1035 §4.2.2), idle-closed after 10 seconds, and
  * limited in number. Nothing about a query is logged or kept.
  */
-export async function createDnsServer({ host, port, config, lookup, maxTcpConnections = 512, onError = () => {} }) {
+export async function createDnsServer(options) {
+  // Port 0 (tests) lets the system pick a free UDP port, and TCP must then
+  // listen on the same number, which may already be taken for TCP (on
+  // Windows a loopback client socket holds its port): pick again (#469).
+  for (let attempt = 1; ; attempt += 1) {
+    try { return await openDnsServer(options); }
+    catch (error) { if (options.port !== 0 || error.code !== "EADDRINUSE" || attempt === 5) throw error; }
+  }
+}
+
+async function openDnsServer({ host, port, config, lookup, maxTcpConnections = 512, onError = () => {} }) {
   const udp = createSocket({ type: host?.includes(":") ? "udp6" : "udp4", reuseAddr: false });
   udp.on("message", (message, peer) => {
     let response = null;
@@ -206,7 +216,12 @@ export async function createDnsServer({ host, port, config, lookup, maxTcpConnec
       }
     });
   });
-  await new Promise((resolve, reject) => { tcp.once("error", reject); tcp.listen(port === 0 ? udp.address().port : port, host, () => { tcp.off("error", reject); resolve(); }); });
+  await new Promise((resolve, reject) => {
+    // A failed start leaves no UDP socket open to keep the process alive.
+    const failed = (error) => { udp.close(); reject(error); };
+    tcp.once("error", failed);
+    tcp.listen(port === 0 ? udp.address().port : port, host, () => { tcp.off("error", failed); resolve(); });
+  });
   return {
     udpPort: udp.address().port,
     tcpPort: tcp.address().port,

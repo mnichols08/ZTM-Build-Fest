@@ -5,10 +5,11 @@
 // registration and refusals.
 import assert from "node:assert/strict";
 import { X509Certificate, generateKeyPairSync } from "node:crypto";
+import { createSocket } from "node:dgram";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { request } from "node:http";
-import { connect as netConnect } from "node:net";
+import { connect as netConnect, createServer as createNetServer } from "node:net";
 import test from "node:test";
 import { connect } from "node:tls";
 import { Code, ControlOp, encodeData, encodeFrame, keyHash, keyHashText, rawEd25519PublicKey, signEd25519, transferMessage } from "./ktun.mjs";
@@ -578,4 +579,27 @@ test("on shutdown every home server reads GOAWAY 8 before its tunnel closes", as
   const started = Date.now();
   await closing;
   assert.ok(Date.now() - started < 1500, "close() doesn't wait the full two seconds once the home servers have gone");
+});
+
+test("a start that fails closes what it had opened, so nothing keeps the process alive (#469)", async () => {
+  // DNS on a port TCP already has: TLS and HTTP listen first, then DNS fails.
+  const holder = createNetServer().listen(0, "127.0.0.1");
+  await once(holder, "listening");
+  const taken = holder.address().port;
+  const relay = new ConnectionRelay({
+    zone: "home.test", relayName: "relay.home.test", tls: RELAY_TLS, addresses: ["127.0.0.1"],
+    resolveTxt: async () => [], certificateSeen: async () => null,
+  });
+  try {
+    await assert.rejects(relay.listen({ host: "127.0.0.1", tlsPort: 0, httpPort: 0, dnsPort: taken }), (error) => error.code === "EADDRINUSE");
+    assert.equal(relay.edge.listening, false, "the TLS listener is closed");
+    assert.equal(relay.redirect.listening, false, "the HTTP listener is closed");
+    // The DNS UDP socket on that number is closed too: it can be bound again.
+    const udp = createSocket("udp4");
+    await new Promise((resolve, reject) => { udp.once("error", reject); udp.bind(taken, "127.0.0.1", resolve); });
+    await new Promise((resolve) => udp.close(resolve));
+  } finally {
+    relay.registry.close();
+    await new Promise((resolve) => holder.close(resolve));
+  }
 });

@@ -122,13 +122,23 @@ export class ConnectionRelay {
       server.once("error", reject);
       server.listen(port, host, () => { server.off("error", reject); resolve(server.address().port); });
     });
-    this.ports = { tls: await listen(this.edge, tlsPort) };
-    if (httpPort !== null) this.ports.http = await listen(this.redirect, httpPort);
-    if (dnsPort !== null) {
-      this.dns = await createDnsServer({
-        host, port: dnsPort, config: this.dnsConfig, lookup: (name) => this.registry.dnsInfo(name), onError: (code) => this.error(code),
-      });
-      this.ports.dns = this.dns.udpPort;
+    try {
+      this.ports = { tls: await listen(this.edge, tlsPort) };
+      if (httpPort !== null) this.ports.http = await listen(this.redirect, httpPort);
+      if (dnsPort !== null) {
+        this.dns = await createDnsServer({
+          host, port: dnsPort, config: this.dnsConfig, lookup: (name) => this.registry.dnsInfo(name), onError: (code) => this.error(code),
+        });
+        this.ports.dns = this.dns.udpPort;
+      }
+    } catch (error) {
+      // A failed start closes whatever already listens, so nothing is left
+      // open to keep the process alive (#469).
+      const closing = [this.edge, this.redirect].filter((server) => server.listening).map((server) => new Promise((resolve) => server.close(resolve)));
+      if (this.dns) closing.push(this.dns.close());
+      this.dns = null;
+      await Promise.all(closing);
+      throw error;
     }
     this.minuteTimer = setInterval(() => this.minuteTick(), MINUTE);
     this.minuteTimer.unref?.();
