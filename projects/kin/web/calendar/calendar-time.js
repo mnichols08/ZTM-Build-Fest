@@ -112,6 +112,19 @@ export function viewRange(view, focus, today) {
   return { from: start, to: addDays(start, 6) };
 }
 
+/** Whether a view is on today's own day, week or month, so Today has
+ * nowhere to go. A month's grid also shows days of the months either side;
+ * those don't count. */
+export function showsToday(view, focus, today) {
+  if (view === "month") {
+    const shown = civilParts(focus);
+    const now = civilParts(today);
+    return shown.year === now.year && shown.month === now.month;
+  }
+  const { from, to } = viewRange(view, focus, today);
+  return today >= from && today <= to;
+}
+
 /** Moves the focus one view's step: a day, a week or a month. */
 export function stepFocus(view, focus, direction) {
   if (view === "day") return addDays(focus, direction);
