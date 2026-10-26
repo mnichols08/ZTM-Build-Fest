@@ -509,6 +509,15 @@ documentation only.
 - **The Home screen panel keeps its Saved message** (#469). A background
   sync no longer redraws the panel when nothing it shows has changed, so
   the Saved confirmation or a save error stays visible.
+- **Kin loads itself again if its start stops without an error** (#469,
+  follows #594). On Edge for Windows a first start sometimes stopped with a
+  few module requests that never finished and no error, which left only
+  "Skip to content". The start-up guard now also reloads when nothing has
+  finished loading for 8 seconds and Kin still hasn't started, with the same
+  limit of two reloads in a row. A slow start that keeps loading is left
+  alone, and so is one that stopped on a script error. If a slow third
+  start shows "Kin didn't finish loading" and then finishes, the message
+  goes away.
 
 ## v1.6.0 — Kin for Everyone
 

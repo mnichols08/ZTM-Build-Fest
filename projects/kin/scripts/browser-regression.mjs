@@ -2,7 +2,7 @@
 // Uses a fresh temporary profile and loopback server, never an existing Kin DB.
 import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { setViewport } from "./cdp-viewport.mjs";
-import { applyRegressionDefaults, captureFailure } from "./cdp-page.mjs";
+import { applyRegressionDefaults, captureFailure, createLoadTrace, printAbortedModules, printLoadTrace as printTrace, KIN_START_TIMEOUT_MS, waitForOrigin } from "./cdp-page.mjs";
 import {
   pulseRegressions,
   pulsePeerRegressions,
@@ -188,65 +188,12 @@ async function connect(url) {
   // say what it waits for (#469).
   const inFlight = new Map();
   const failedRequests = [];
-  // The tab's recent navigations, document loads, service worker states and
-  // failed requests, in order, so a page whose modules stopped loading shows
-  // what started or stopped around it (#594).
-  const timeline = [];
-  const loaders = new Map();
-  const short = (value) => String(value ?? "").replace(/^https?:\/\/[^/]+/, "").slice(0, 70);
-  const tag = (loaderId) => (loaderId ? String(loaderId).slice(-5) : "-");
-  const mark = (text) => {
-    timeline.push({ at: Date.now(), text });
-    if (timeline.length > 60) timeline.shift();
-  };
-  const loader = (loaderId) => {
-    if (!loaders.has(loaderId)) loaders.set(loaderId, { scripts: 0, done: 0, fromWorker: 0, failed: 0, at: Date.now() });
-    if (loaders.size > 6) loaders.delete(loaders.keys().next().value);
-    return loaders.get(loaderId);
-  };
-  let workerStates = "";
-  const trace = (message) => {
-    const params = message.params ?? {};
-    switch (message.method) {
-      case "Page.frameRequestedNavigation": mark(`requested ${params.reason}/${params.disposition} ${short(params.url)}`); break;
-      case "Page.frameStartedNavigating": mark(`starting ${params.navigationType} L${tag(params.loaderId)} ${short(params.url)}`); break;
-      case "Page.frameNavigated": if (!params.frame?.parentId) mark(`committed ${params.type ?? ""} L${tag(params.frame?.loaderId)} ${short(params.frame?.url)}`); break;
-      case "Page.frameStartedLoading": mark("loading"); break;
-      case "Page.frameStoppedLoading": mark("stopped loading"); break;
-      case "Page.domContentEventFired": mark("DOMContentLoaded"); break;
-      case "Page.loadEventFired": mark("load"); break;
-      case "Inspector.targetCrashed": mark("renderer crashed"); break;
-      case "ServiceWorker.workerVersionUpdated": {
-        const states = (params.versions ?? []).map((version) => `v${version.versionId}:${version.runningStatus}/${version.status}${version.controlledClients?.length ? `(${version.controlledClients.length})` : ""}`).join(" ");
-        if (states !== workerStates) mark(`worker ${(workerStates = states)}`);
-        break;
-      }
-      case "Network.requestWillBeSent":
-        if (params.type === "Document") mark(`document request L${tag(params.loaderId)} ${short(params.request?.url)}`);
-        if (params.type === "Script") loader(params.loaderId).scripts += 1;
-        break;
-      case "Network.loadingFailed": {
-        const request = inFlight.get(params.requestId);
-        if (request?.type === "Script") {
-          loader(request.loaderId).failed += 1;
-          if (params.canceled) abortedModuleLoads.set(request.loaderId, short(request.url));
-        }
-        mark(`failed ${params.type ?? request?.type} L${tag(request?.loaderId)} ${params.errorText}${params.canceled ? " canceled" : ""}${params.blockedReason ? ` blocked:${params.blockedReason}` : ""} ${short(request?.url)} by ${request?.initiator ?? "?"} after ${request ? Date.now() - request.at : "?"} ms, response ${request?.status ?? "none"}${request?.sw ? " from worker" : ""}`);
-        break;
-      }
-      case "Network.loadingFinished": {
-        const request = inFlight.get(params.requestId);
-        if (request?.type === "Script") {
-          loader(request.loaderId).done += 1;
-          if (request.sw) loader(request.loaderId).fromWorker += 1;
-        }
-        break;
-      }
-    }
-  };
+  // The tab's load trace (#594), shared with the other suites through
+  // cdp-page.mjs; every tab adds its lost module requests to one map.
+  const loadTrace = createLoadTrace({ aborted: abortedModuleLoads });
   socket.onmessage = ({ data }) => {
     const message = JSON.parse(data);
-    if (message.method) trace(message);
+    if (message.method) loadTrace.observe(message);
     if (message.method)
       for (const listener of [...(eventListeners.get(message.method) ?? [])]) listener(message.params);
     if (message.id) {
@@ -262,9 +209,7 @@ async function connect(url) {
         problems.push(entry);
     } else if (message.method === "Network.requestWillBeSent") {
       requests.push(message.params.request.url);
-      const initiator = message.params.initiator;
-      inFlight.set(message.params.requestId, { url: message.params.request.url, type: message.params.type ?? null, at: Date.now(),
-        loaderId: message.params.loaderId, initiator: `${initiator?.type ?? "?"}${initiator?.url ? ` ${short(initiator.url)}` : ""}` });
+      inFlight.set(message.params.requestId, { url: message.params.request.url, type: message.params.type ?? null, at: Date.now() });
     }
     if (message.method === "Network.responseReceived") {
       const request = inFlight.get(message.params.requestId);
@@ -354,20 +299,7 @@ async function connect(url) {
       const now = Date.now();
       return failedRequests.slice(-limit).map(({ at, ...rest }) => ({ ...rest, ageMs: now - at }));
     },
-    // The timeline as short lines (ms before now), each fit for one CI
-    // annotation line, with script counts per document load (#594).
-    loadTrace() {
-      const now = Date.now();
-      const lines = [`scripts per load: ${[...loaders].map(([id, counts]) => `L${tag(id)} ${counts.scripts} sent/${counts.done} done (${counts.fromWorker} by the worker)/${counts.failed} failed, ${now - counts.at} ms ago`).join("; ")}`];
-      let line = "";
-      for (const { at, text } of timeline) {
-        const entry = `-${now - at}ms ${text}`;
-        if (line.length + entry.length > 1300) { lines.push(line); line = ""; }
-        line += (line ? " | " : "") + entry;
-      }
-      if (line) lines.push(line);
-      return lines;
-    },
+    loadTrace,
     close: () => socket.close(),
   };
   clients.push(client);
@@ -1346,13 +1278,22 @@ try {
     await applyRegressionDefaults((method, params) => client.send(method, params));
     await client.send("Page.navigate", { url: origin });
     // A new tab on the Windows runner sometimes never runs Kin's modules
-    // (kin-app stays undefined, no error; #327). Load it once more then.
-    const defined = () => client.evaluate('Boolean(customElements.get("kin-app"))').catch(() => false);
-    for (let attempt = 0; attempt < 150 && !(await defined()); attempt += 1) await delay(100);
-    if (!(await defined())) {
-      console.log(`NOTE new tab had not defined kin-app after 15 s (${JSON.stringify(await tabFacts(client))}); loading it again (#327)`);
+    // (kin-app stays undefined, no error; #327). The start-up guard
+    // (web/boot-guard.js) loads such a start again itself, so the tab waits
+    // for it: a reload from here would cancel the guard's own (#469). Only
+    // when the guard has given up and says Kin didn't finish loading does the
+    // tab press its Try again, once.
+    const evaluate = (expression) => client.evaluate(expression);
+    await waitForOrigin(evaluate, origin, {
+      timeoutMs: KIN_START_TIMEOUT_MS,
+      navigate: () => client.send("Page.navigate", { url: origin }),
+      ready: 'Boolean(customElements.get("kin-app") || document.querySelector("[data-kin-boot-failed] button"))',
+      readyText: " or start Kin (or give up)",
+    });
+    if (!(await evaluate('Boolean(customElements.get("kin-app"))').catch(() => false))) {
+      console.log(`NOTE new tab had not defined kin-app after the start-up guard's reloads (${JSON.stringify(await tabFacts(client))}); trying again (#327)`);
       printLoadTrace(client);
-      await client.send("Page.reload", { ignoreCache: true });
+      await evaluate('document.querySelector("[data-kin-boot-failed] button").click()').catch(() => {});
     }
     await ready(client);
     return client;
@@ -1360,10 +1301,7 @@ try {
   // The tab's load trace (#594). In GitHub Actions each line is a warning
   // annotation, so it is readable even when the retry passes.
   function printLoadTrace(client) {
-    for (const line of client.loadTrace()) {
-      if (process.env.GITHUB_ACTIONS) console.log(`::warning title=Kin load trace (#594)::${line.replace(/%/g, "%25")}`);
-      else console.error(`load trace: ${line}`);
-    }
+    printTrace(client.loadTrace);
   }
   // What a tab was doing, so a slow start can be told from a stuck one (#327).
   function tabFacts(client) {
@@ -3233,10 +3171,7 @@ try {
   await captureFailure("browser regression");
   throw error;
 } finally {
-  if (abortedModuleLoads.size) {
-    const summary = `${abortedModuleLoads.size} page load(s) lost a module request (${[...abortedModuleLoads.values()].join(", ")}); the start-up guard loads such a page again`;
-    console.log(process.env.GITHUB_ACTIONS ? `::warning title=Kin aborted module loads (#594)::${summary}` : `NOTE ${summary}`);
-  }
+  printAbortedModules(createLoadTrace({ aborted: abortedModuleLoads }));
   if (browserClient) await browserClient.send("Browser.close").catch(() => {});
   for (const client of clients) client.close();
   browser.kill();
