@@ -274,7 +274,7 @@ export class SessionController {
     this.app.starting = null;
     this.app.startingGeneration = null;
     clearTimeout(this.app.pulseTimer);
-    clearTimeout(this.app.focusTimer);
+    this.app.cancelFocusWake();
     this.ctx.status.clearAlert();
     clearLegacyDrafts();
     this.ctx.simple?.reset();

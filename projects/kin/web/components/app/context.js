@@ -58,6 +58,7 @@ import { FeaturesController } from "./features.js";
 import { PeerChannel } from "./peer-channel.js";
 import { RecordCommands } from "./commands/records.js";
 import { RefreshController } from "./refresh.js";
+import { installWakeHandlers } from "./wake.js";
 import { RenderController } from "./render.js";
 import { RoutineCommands } from "./commands/routines.js";
 import { SessionController } from "./session.js";
@@ -421,43 +422,10 @@ export function initializeAppState(app) {
         expiresAt: timestamp + hours * 3_600_000,
       });
     };
-    app.onWindowFocus = () => {
-      // Let the interaction that activated the window finish before disabling controls.
-      clearTimeout(app.focusTimer);
-      app.focusTimer = setTimeout(app.onTimeWake, 150);
-    };
     app.onClearPulse = () => app.ctx.conversations.savePulse({ type: "clear-pulse" });
-    // Runs on window focus, visibility changes and the Pulse/midnight timer.
-    // Three duties, in order: lock if the auto-lock time passed while away;
-    // lock if another tab locked (the durable security epoch moved); otherwise
-    // refresh from the event log and re-check household authorization.
-    app.onTimeWake = async (event) => {
-      if (event?.type === "focus" && event.target !== window) return;
-      if (document.visibilityState === "hidden") return;
-      const vault = app.vault;
-      const generation = app.securityGeneration;
-      if (app.autoLockMinutes && app.lastActivityAt !== null &&
-        Date.now() - app.lastActivityAt >= app.autoLockMinutes * 60_000) {
-        app.ctx.session.lockHousehold();
-        app.ctx.status.setStatus("Kin locked after inactivity. Unlock to continue.");
-        return;
-      }
-      // The vault becomes visible just before EventStore.open binds its durable
-      // epoch. A focus/visibility event in that window must not compare an
-      // unbound vault against storage and revoke an otherwise valid unlock.
-      if (!vault || vault.locked || !app.store) return;
-      try {
-        await EventStore.checkSecurityEpoch(vault);
-      } catch {
-        if (vault === app.vault && generation === app.securityGeneration)
-          app.ctx.session.lockHousehold(false);
-        return;
-      }
-      if (vault !== app.vault || generation !== app.securityGeneration)
-        return;
-      app.ctx.refresh.refreshFromEvents();
-      void app.ctx.sync.checkHouseholdAuthorization();
-    };
+    // Window focus, visibility and the Pulse timer (wake.js): onWindowFocus,
+    // onTimeWake and `wakePending`, which counts a wake as busy (#793).
+    installWakeHandlers(app, (vault) => EventStore.checkSecurityEpoch(vault));
     app.onPeerMessage = (event) => app.ctx.peers.handlePeerMessage(event);
     // Count on the app icon (#476): <kin-app-badge> asks; the answer says
     // whether the choice could be kept on this device.

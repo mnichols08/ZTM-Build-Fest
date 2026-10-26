@@ -117,6 +117,13 @@ the refresh it restores focus to the same control if it survived. Otherwise
 the owning list or the routines view restores the equivalent control through
 its own `restoreFocus`, and a composer puts focus back in its input.
 
+A wake (window focus, a visibility change, the Pulse/midnight timer) runs
+from `app/wake.js`: `onWindowFocus` waits 150 ms for the activating click,
+then `onTimeWake` checks the security epoch before it calls
+`refreshFromEvents()`. From the focus until the refresh sets
+`app.refreshing` (or the wake decides not to refresh), `app.wakePending` is
+true, so a wake never looks idle while its refresh is still coming (#793).
+
 ## Household workspace candidate (unversioned)
 
 The desktop-first workspace revision keeps every boundary below and changes

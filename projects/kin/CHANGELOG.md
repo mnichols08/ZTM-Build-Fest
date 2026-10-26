@@ -425,6 +425,13 @@ documentation only.
 
 ### Fixed
 
+- **A wake counts as busy until its refresh starts** (#793). Coming back to
+  Kin (window focus, the tab showing again, the Pulse timer) checks whether
+  another tab locked before it refreshes, and until now Kin looked idle
+  while it checked. The wake now shows as pending (`app.wakePending`,
+  `web/components/app/wake.js`) from the focus until its refresh begins or
+  it decides not to refresh, so anything waiting for Kin to settle waits for
+  that refresh too.
 - **The connection relay frees a tunnel handshake its client aborts**
   (#733). A home server that refused the relay's certificate left the
   connection open on the relay until Node's 120-second default, and the
