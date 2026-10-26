@@ -231,7 +231,7 @@ export async function pulseResilienceRegressions() {
   };
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const idle = async () => {
-    for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh) && i < 300; i++) await pause(10);
+    for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && i < 300; i++) await pause(10);
     check(!app.busy, "Pulse operation settled");
   };
   const count = async () => (await app.store.loadEvents()).length;

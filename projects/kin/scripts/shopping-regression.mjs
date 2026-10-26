@@ -6,7 +6,7 @@ export async function shoppingRegressions() {
   const idle = async () => {
     for (
       let i = 0;
-      (app.busy || app.refreshing || app.pendingRefresh) && i < 300;
+      (app.busy || app.refreshing || app.pendingRefresh || app.wakePending) && i < 300;
       i++
     )
       await new Promise((resolve) => setTimeout(resolve, 10));

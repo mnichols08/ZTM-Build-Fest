@@ -18,7 +18,7 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
     throw new Error(`Keyboard commands timed out: ${label}`);
   };
   const settle = () => page(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)))));
-  const idle = () => until(() => { const app = document.querySelector("kin-app"); return Boolean(app?.state) && !app.busy && !app.refreshing && !app.pendingRefresh; }, "idle");
+  const idle = () => until(() => { const app = document.querySelector("kin-app"); return Boolean(app?.state) && !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending; }, "idle");
   const KEYS = {
     k: { key: "k", code: "KeyK", windowsVirtualKeyCode: 75 },
     n: { key: "n", code: "KeyN", windowsVirtualKeyCode: 78, text: "n" },

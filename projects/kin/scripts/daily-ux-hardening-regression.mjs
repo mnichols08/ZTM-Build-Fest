@@ -19,7 +19,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     throw new Error(`Daily UX hardening timed out: ${label}`);
   };
   const settle = () => page(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)))));
-  const idle = () => until(() => { const app = document.querySelector("kin-app"); return Boolean(app?.state) && !app.busy && !app.bulkRunning && !app.refreshing && !app.pendingRefresh; }, "idle");
+  const idle = () => until(() => { const app = document.querySelector("kin-app"); return Boolean(app?.state) && !app.busy && !app.bulkRunning && !app.refreshing && !app.pendingRefresh && !app.wakePending; }, "idle");
   const KEYS = {
     escape: { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
     n: { key: "n", code: "KeyN", windowsVirtualKeyCode: 78, text: "n" },

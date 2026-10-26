@@ -4,7 +4,7 @@
 
 /** Runs with both tabs unlocked on Today. */
 export async function incrementalRenderPeerRegressions(first, second, until) {
-  const idle = "(() => { const app = document.querySelector('kin-app'); return !app.busy && !app.refreshing && !app.pendingRefresh; })()";
+  const idle = "(() => { const app = document.querySelector('kin-app'); return !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending; })()";
   await until(() => second.evaluate(idle));
   await second.evaluate(`(() => {
     const app = document.querySelector('kin-app');

@@ -13,7 +13,7 @@ export async function storeSectionsRegressions() {
     for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
     check(false, message);
   };
-  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.ctx.sections.reading, "section work settles");
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending && !app.ctx.sections.reading, "section work settles");
   const tag = crypto.randomUUID().slice(0, 6);
   const milk = `Milk ${tag}`, bread = `Bread ${tag}`, foil = `Foil ${tag}`, butter = `Butter ${tag}`;
   for (const [text, classification] of [[milk, "shopping"], [bread, "shopping"], [foil, "shopping"], [butter, "staple"]]) {

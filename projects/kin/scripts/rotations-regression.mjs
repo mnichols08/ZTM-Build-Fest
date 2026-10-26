@@ -13,7 +13,7 @@ export async function rotationsRegressions() {
     for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
     check(false, message);
   };
-  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the turn work settles");
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "the turn work settles");
   const me = app.ctx.detail.responsibilityContext().memberId;
   check(me, "this device knows its member");
   const other = "ab".repeat(16);
