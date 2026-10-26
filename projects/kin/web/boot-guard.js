@@ -22,7 +22,10 @@
 // (the clock starts again with each finished request and at `load`) while
 // kin-app is still undefined, it takes the same capped reload. A slow start
 // keeps finishing requests, so it is left alone; an exception thrown while
-// Kin's modules run is a bug, not a stall, and doesn't reload either.
+// Kin's modules run is a bug, not a stall, and doesn't reload either. Only a
+// finished request counts, so on a very slow link one large module can pass
+// the clock while it is still arriving: each reload in a row waits longer
+// (STALL_MS), so the next load, with a warm cache, has time to finish.
 //
 // Refresh-resume (#351) unlocks only a load the browser calls a refresh.
 // This guard's own reload is one, so when the failed load was not a refresh
@@ -34,11 +37,13 @@
   var RETRY_KEY = "kin.boot-retry";
   var TICKET_KEY = "kin.reload-resume";
   var MAX_RETRIES = 2;
-  var STALL_MS = 8000;
+  // How long nothing may finish, by how many reloads in a row came before.
+  var STALL_MS = [8000, 20000, 45000];
   var doc = win.document;
   var stallTimer = null;
   var threw = false;
   var started = false;
+  var stallMs = STALL_MS[0];
 
   function session() {
     try { return win.sessionStorage || null; } catch (error) { return null; }
@@ -102,7 +107,7 @@
   function watch() {
     if (started || threw) return;
     stopWatching();
-    stallTimer = win.setTimeout(guard.onStall, STALL_MS);
+    stallTimer = win.setTimeout(guard.onStall, stallMs);
   }
 
   var guard = {
@@ -119,6 +124,9 @@
     },
   };
   win.kinBootGuard = guard;
+  var previous = session();
+  var reloaded = previous ? retries(previous) : null;
+  if (reloaded) stallMs = STALL_MS[Math.min(reloaded, STALL_MS.length - 1)];
   win.addEventListener("error", guard.onError, true);
   win.addEventListener("load", watch);
   // Each request that finishes is progress: a slow start isn't a stalled one.

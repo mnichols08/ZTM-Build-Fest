@@ -104,9 +104,9 @@ test("a start that stops moving without an error loads the page again", () => {
 test("a stalled start shares the error path's cap, so it never loops", () => {
   let stored = {};
   let load;
-  for (const expected of [1, 1, 0]) {
+  for (const [expected, stall] of [[1, 8_000], [1, 20_000], [0, 45_000]]) {
     load = page({ navigation: "reload", stored });
-    load.wait(8_000);
+    load.wait(stall);
     assert.equal(load.win.reloads, expected);
     stored = Object.fromEntries(load.items);
   }
@@ -118,13 +118,53 @@ test("a slow start that passes the stall clock at the cap drops the message once
   // One large module can take longer than the stall clock with nothing else
   // finishing; on the third such load the guard explains, then Kin starts.
   const slow = page({ navigation: "reload", stored: { "kin.boot-retry": "2" } });
-  slow.wait(8_000);
+  slow.wait(45_000);
   assert.equal(slow.win.reloads, 0);
   assert.equal(slow.appended.length, 1, "at the cap it explains");
   slow.start();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(slow.appended.length, 0, "a started Kin removes the message");
   assert.equal(slow.items.has("kin.boot-retry"), false);
+});
+
+// On a very slow link one large module can be the only open request for
+// longer than 8 s; it is still arriving, so each reload waits longer.
+test("each stall reload in a row waits longer, so a warm second load has time", () => {
+  const second = page({ navigation: "reload", stored: { "kin.boot-retry": "1" } });
+  second.finishRequest();
+  second.wait(19_999);
+  assert.equal(second.win.reloads, 0, "the second load gets 20 s");
+  second.wait(1);
+  assert.equal(second.win.reloads, 1);
+  assert.equal(second.items.get("kin.boot-retry"), "2");
+
+  const third = page({ navigation: "reload", stored: { "kin.boot-retry": "2" } });
+  third.wait(44_999);
+  assert.equal(third.appended.length, 0, "the third load gets 45 s");
+  third.wait(1);
+  assert.equal(third.appended.length, 1);
+  assert.equal(third.win.reloads, 0);
+});
+
+test("a warm second load that finishes its last module after 8 s still starts", async () => {
+  const warm = page({ navigation: "reload", stored: { "kin.boot-retry": "1" } });
+  warm.wait(15_000);
+  warm.finishRequest();
+  warm.wait(3_000);
+  warm.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  warm.wait(60_000);
+  assert.equal(warm.win.reloads, 0);
+  assert.equal(warm.items.has("kin.boot-retry"), false);
+});
+
+test("a first load, or one with an unreadable count, keeps the 8 s clock", () => {
+  const blocked = page({ storageThrows: true });
+  blocked.wait(8_000);
+  assert.equal(blocked.appended.length, 1, "no counter: it explains at 8 s");
+  const fresh = page({ stored: { "kin.boot-retry": "nonsense" } });
+  fresh.wait(8_000);
+  assert.equal(fresh.win.reloads, 1);
 });
 
 test("a slow start that keeps finishing requests is left alone", async () => {
