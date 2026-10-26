@@ -422,6 +422,14 @@ documentation only.
   and `SUPPORT.md` are reorganised; the issue forms gain a self-hosting form,
   a privacy checkbox and contact links; and the PR template's checklist
   matches the verification gate.
+- **A sync stopped for want of the household key says where** (#791). The
+  three places that pause sync with "This device needs an authorized
+  household key" now each have their own code (`household_key_missing`,
+  `household_key_missing_after_rotation`, `household_key_missing_for_binding`),
+  and the diagnostic in a problem report also gives the key epoch that was
+  missing. A refused key transfer's `provisioning_grant_refused` is now kept
+  in reports too instead of reading `other`. The words people see are
+  unchanged.
 
 ### Fixed
 
