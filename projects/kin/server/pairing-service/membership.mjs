@@ -398,9 +398,16 @@ export const membershipMethods = {
     return { ...household.choreChart, changed: true };
   },
 
+  // A usable device is unrevoked and can sign in here. One carried over from
+  // the old address (ADR 0026 §6) has no token until it re-joins, so it
+  // doesn't count (#778).
+  canSignInHere(device) {
+    return !device.revokedAt && (device.carriedOver !== true || Boolean(device.tokenHash));
+  },
+
   hasUsableTrustedDevice(memberId) {
     return [...this.devices.values()].some((device) =>
-      device.memberId === memberId && !device.revokedAt,
+      device.memberId === memberId && this.canSignInHere(device),
     );
   },
 
@@ -415,21 +422,25 @@ export const membershipMethods = {
 
   // Usable admin access needs a recorded admin who can confirm freshly (a
   // passkey, or a password until they add one, #558) and an unrevoked
-  // trusted device; the admin flag alone is not enough.
+  // trusted device that can sign in here; the admin flag alone is not enough.
   hasUsableAdminAccess(household, excludingDeviceIds = []) {
     return [...household.members].some((memberId) => {
       const admin = this.members.get(memberId);
       return isHouseholdAdmin(admin, this.now()) && this.canConfirmFreshly(admin) &&
         [...this.devices.values()].some((device) =>
-          device.memberId === memberId && !device.revokedAt &&
+          device.memberId === memberId && this.canSignInHere(device) &&
           !excludingDeviceIds.includes(device.id));
     });
   },
 
   // A household that records admins must keep one who can still act.
-  // Legacy households without an admin are unaffected.
-  requireAdminAccessAfterRevocation(household, deviceId) {
-    if (this.hasHouseholdAdmin(household) && !this.hasUsableAdminAccess(household, [deviceId]))
+  // Legacy households without an admin are unaffected. Takes one device ID
+  // or several. Only a revocation that takes the last usable admin access
+  // away is refused: right after a move no admin may have re-joined yet, and
+  // other devices can still be revoked then (#778).
+  requireAdminAccessAfterRevocation(household, deviceIds) {
+    if (this.hasHouseholdAdmin(household) && this.hasUsableAdminAccess(household) &&
+      !this.hasUsableAdminAccess(household, [deviceIds].flat()))
       throw new PairingError(
         "last_household_admin",
         "Keep a household admin with a usable trusted device and passkey before revoking this device.",

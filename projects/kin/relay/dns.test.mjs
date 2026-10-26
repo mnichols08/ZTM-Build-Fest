@@ -1,11 +1,13 @@
 // The relay's authoritative DNS (ADR 0025 §4, §5): answers by hand-built
 // query, and over UDP and TCP through Node's own resolver.
 import assert from "node:assert/strict";
+import { Socket, createSocket } from "node:dgram";
 import { Resolver } from "node:dns/promises";
 import { once } from "node:events";
-import { connect } from "node:net";
+import { Server, connect, createServer } from "node:net";
 import test from "node:test";
 import { Rcode, Type, answerQuery, createDnsServer, encodeName, zoneConfig } from "./dns.mjs";
+import { holdTcpOnly } from "./test-support/ports.mjs";
 
 const config = zoneConfig({ zone: "home.test", relayName: "relay.home.test", addresses: ["192.0.2.10", "2001:db8::10"], serial: 2026102201 });
 const registry = new Map([
@@ -96,4 +98,163 @@ test("over UDP and TCP with Node's resolver", async () => {
     assert.equal(parse(chunk.subarray(2)).answers, 1);
     socket.destroy();
   } finally { await server.close(); }
+});
+
+test("port 0 picks again when the number UDP got is taken for TCP (#469)", async () => {
+  const holder = createServer().listen(0, "127.0.0.1");
+  // The holder closes however the test ends, so a failed start fails the
+  // test instead of leaving a listener that keeps the process alive.
+  try {
+    await once(holder, "listening");
+    const taken = holder.address().port;
+    // The first TCP listen goes to the taken port, as when a loopback client
+    // socket holds the number the system just gave UDP. A later pick can
+    // land on a taken number for real (#469), so there may be more than two.
+    const realListen = Server.prototype.listen;
+    const realBind = Socket.prototype.bind;
+    const realClose = Socket.prototype.close;
+    const failures = [];
+    let listens = 0;
+    let udpBinds = 0;
+    let udpCloses = 0;
+    Server.prototype.listen = function (port, ...rest) {
+      const listen = (listens += 1);
+      this.once("error", (error) => failures.push({ listen, code: error.code }));
+      return realListen.call(this, listens === 1 ? taken : port, ...rest);
+    };
+    Socket.prototype.bind = function (...rest) { udpBinds += 1; return realBind.apply(this, rest); };
+    Socket.prototype.close = function (...rest) { udpCloses += 1; return realClose.apply(this, rest); };
+    let server;
+    try { server = await createDnsServer({ host: "127.0.0.1", port: 0, config, lookup }); } finally {
+      Server.prototype.listen = realListen;
+      Socket.prototype.bind = realBind;
+      Socket.prototype.close = realClose;
+    }
+    try {
+      assert.ok(listens >= 2, "another pair was opened");
+      assert.deepEqual(failures[0], { listen: 1, code: "EADDRINUSE" }, "the first listen was the one sent to the taken port");
+      assert.equal(failures.length, listens - 1, "only the last listen worked");
+      assert.equal(udpCloses, udpBinds - 1, "each UDP socket from a failed pick was closed");
+      assert.equal(server.tcpPort, server.udpPort);
+      assert.notEqual(server.tcpPort, taken);
+    } finally { await server.close(); }
+  } finally { await new Promise((resolve) => holder.close(resolve)); }
+});
+
+test("port 0 picks again when Windows keeps the number UDP got back from TCP (#469)", async () => {
+  // A number in a range Windows keeps back from TCP fails as EACCES.
+  // A later pick can land in such a range for real, so there may be more
+  // than two listens.
+  const realListen = Server.prototype.listen;
+  let listens = 0;
+  let forced = 0;
+  Server.prototype.listen = function (...rest) {
+    listens += 1;
+    if (listens > 1) return realListen.apply(this, rest);
+    forced += 1;
+    process.nextTick(() => this.emit("error", Object.assign(new Error("listen EACCES: permission denied"), { code: "EACCES", syscall: "listen" })));
+    return this;
+  };
+  let server;
+  try { server = await createDnsServer({ host: "127.0.0.1", port: 0, config, lookup }); } finally { Server.prototype.listen = realListen; }
+  try {
+    assert.ok(listens >= 2, "another pair was opened");
+    assert.equal(forced, 1, "the first listen was the one refused");
+    assert.equal(server.tcpPort, server.udpPort);
+  } finally { await server.close(); }
+});
+
+test("port 0 leaves the system's run of numbers when its picks keep being refused (#469)", async () => {
+  // Windows gives out port numbers in order, and keeps back whole blocks of
+  // a hundred or more from TCP, so asking the system again only steps one
+  // number further into the same block. Every number UDP gets from the
+  // system is refused here, as if each one fell inside such a block.
+  const realBind = Socket.prototype.bind;
+  const realListen = Server.prototype.listen;
+  let fromSystem = false;
+  let refused = 0;
+  Socket.prototype.bind = function (port, ...rest) {
+    fromSystem = port === 0;
+    return realBind.call(this, port, ...rest);
+  };
+  Server.prototype.listen = function (...rest) {
+    if (!fromSystem) return realListen.apply(this, rest);
+    refused += 1;
+    process.nextTick(() => this.emit("error", Object.assign(new Error("listen EACCES: permission denied"), { code: "EACCES", syscall: "listen" })));
+    return this;
+  };
+  let server;
+  try { server = await createDnsServer({ host: "127.0.0.1", port: 0, config, lookup }); } finally {
+    Socket.prototype.bind = realBind;
+    Server.prototype.listen = realListen;
+  }
+  try {
+    assert.equal(refused, 1, "only the system's own pick was refused");
+    assert.equal(server.tcpPort, server.udpPort);
+  } finally { await server.close(); }
+});
+
+test("a random pick UDP already has closes its socket and isn't counted as a DNS error (#469)", async () => {
+  // The system's own pick is refused for TCP, and the first random pick
+  // lands on a number held for UDP.
+  const held = createSocket("udp4");
+  await new Promise((resolve, reject) => { held.once("error", reject); held.bind(0, "127.0.0.1", resolve); });
+  try {
+    const heldPort = held.address().port;
+    const realRandom = Math.random;
+    const realListen = Server.prototype.listen;
+    const realBind = Socket.prototype.bind;
+    const realClose = Socket.prototype.close;
+    const errors = [];
+    let picks = 0;
+    let listens = 0;
+    let binds = 0;
+    let closes = 0;
+    Math.random = () => (picks++ === 0 ? (heldPort - 49152 + 0.5) / 16384 : realRandom());
+    Server.prototype.listen = function (...rest) {
+      listens += 1;
+      if (listens > 1) return realListen.apply(this, rest);
+      process.nextTick(() => this.emit("error", Object.assign(new Error("listen EACCES: permission denied"), { code: "EACCES", syscall: "listen" })));
+      return this;
+    };
+    Socket.prototype.bind = function (...rest) { binds += 1; return realBind.apply(this, rest); };
+    Socket.prototype.close = function (...rest) { closes += 1; return realClose.apply(this, rest); };
+    let server;
+    try { server = await createDnsServer({ host: "127.0.0.1", port: 0, config, lookup, onError: (code) => errors.push(code) }); } finally {
+      Math.random = realRandom;
+      Server.prototype.listen = realListen;
+      Socket.prototype.bind = realBind;
+      Socket.prototype.close = realClose;
+    }
+    try {
+      assert.ok(picks >= 1 && binds >= 3, "the held number was tried");
+      assert.equal(closes, binds - 1, "each UDP socket from a failed pick was closed");
+      assert.deepEqual(errors, [], "a refused pick is not a DNS error");
+      assert.notEqual(server.udpPort, heldPort);
+    } finally { await server.close(); }
+  } finally { await new Promise((resolve) => held.close(resolve)); }
+});
+
+test("a port TCP can't take at all fails without leaving its UDP socket open", async () => {
+  // dgram cuts 70000 to 16 bits and binds, but net refuses it outright.
+  const realClose = Socket.prototype.close;
+  let closes = 0;
+  Socket.prototype.close = function (...rest) { closes += 1; return realClose.apply(this, rest); };
+  try {
+    await assert.rejects(createDnsServer({ host: "127.0.0.1", port: 70000, config, lookup }), (error) => error.code === "ERR_SOCKET_BAD_PORT");
+  } finally { Socket.prototype.close = realClose; }
+  assert.equal(closes, 1, "the UDP socket was closed");
+});
+
+test("a fixed port taken for TCP fails without picking again and frees its UDP port", async () => {
+  const { taken, release } = await holdTcpOnly();
+  try {
+    // Should it start after all, it is closed, so the test fails instead of
+    // hanging on an open server.
+    const started = createDnsServer({ host: "127.0.0.1", port: taken, config, lookup }).then(async (server) => { await server.close(); return server; });
+    await assert.rejects(started, (error) => error.code === "EADDRINUSE" && error.syscall === "listen");
+    const udp = createSocket("udp4");
+    await new Promise((resolve, reject) => { udp.once("error", reject); udp.bind(taken, "127.0.0.1", resolve); });
+    await new Promise((resolve) => udp.close(resolve));
+  } finally { await release(); }
 });

@@ -121,7 +121,7 @@ async function justForMeFlow() {
     for (let index = 0; index < 1200; index++) { if (test()) return; await new Promise((resolve) => setTimeout(resolve, step)); }
     check(false, message, detail?.());
   };
-  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh, "the work settles");
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending, "the work settles");
   // Asks for sync passes until nothing private waits to send (or 15 s).
   const sent = async (step = 250) => {
     for (let tries = 0; tries < 60 && app.ctx.privateItems.log?.waiting; tries++) {
@@ -131,6 +131,10 @@ async function justForMeFlow() {
   };
   const tag = crypto.randomUUID().slice(0, 6);
   const view = () => app.justForMe;
+  // A change shows from the private log's notify before perform() has
+  // finished, and Just for me ignores a click while it runs; wait for the
+  // change itself to finish before the next click or check that follows it.
+  const settled = () => until(() => !view().running, "the private change finishes");
   const row = (text, root = view()) => [...root.querySelectorAll(".private-row")].find((node) => node.querySelector(".private-text")?.textContent === text) ?? null;
   const items = () => app.ctx.privateItems.view.items;
   const privateItem = (text) => items().find((item) => item.text === text) ?? null;
@@ -165,11 +169,13 @@ async function justForMeFlow() {
   view().querySelector(".just-for-me-add input[type=date]").value = dateInput(today);
   view().querySelector(".just-for-me-add").requestSubmit();
   await until(() => row(dentist), "the dated item is listed");
+  await settled();
   check(log.ring.available && log.reason === "ready", "the first private change created the member key");
   check(document.activeElement === input && input.value === "", "the field is ready for the next one");
   input.value = gift;
   view().querySelector(".just-for-me-add").requestSubmit();
   await until(() => row(gift), "an undated item is listed");
+  await settled();
   check(privateItem(dentist)?.date === today && privateItem(gift)?.date === null, "dates are kept", items());
   check(!app.state.items.some((item) => item.text.includes(tag)), "nothing private is in the household");
   // They count at once and go out on the private stream with the next pass.
@@ -179,8 +185,10 @@ async function justForMeFlow() {
   // Complete and reopen.
   row(gift).querySelector("input[type=checkbox]").click();
   await until(() => privateItem(gift)?.completed && row(gift, view().querySelector(".completed-disclosure")), "completing moves it to Completed");
+  await settled();
   row(gift).querySelector("input[type=checkbox]").click();
   await until(() => privateItem(gift) && !privateItem(gift).completed, "reopening brings it back");
+  await settled();
 
   // A short note.
   const more = () => row(gift).querySelector(".private-more");
@@ -189,11 +197,13 @@ async function justForMeFlow() {
   more().querySelector('button[aria-label^="Save the note"]').click();
   await until(() => privateItem(gift)?.note === "Second-hand is fine\nunder 20", "the note is saved");
   await until(() => row(gift)?.querySelector(".private-note")?.textContent === "Second-hand is fine\nunder 20", "and shown");
+  await settled();
 
   // Delete, with Undo that stays until the next change.
   more().open = true;
   more().querySelector(".danger-action").click();
   await until(() => !privateItem(gift) && !row(gift), "deleting removes it");
+  await settled();
   const undo = view().querySelector(".just-for-me-feedback button");
   check(!undo.hidden && document.activeElement === undo, "Undo is offered and focused", undo.outerHTML);
   undo.click();
@@ -231,12 +241,14 @@ async function justForMeFlow() {
   check(setting.checked, "the setting is on by default");
   setting.click();
   await until(() => app.ctx.privateItems.view.onToday === false, "the setting is saved privately");
+  await settled();
   app.ctx.navigation.navigate("#today");
   await until(() => !app.pages.get("today").hidden && !row(dentist, app.today), "Today leaves it out with the setting off");
   app.ctx.navigation.navigate("#lists/mine");
   await until(() => !view().hidden, "back again");
   view().querySelector(".just-for-me-setting input[type=checkbox]").click();
   await until(() => app.ctx.privateItems.view.onToday === true, "and back on");
+  await settled();
 
   // Share with the household… (#517): a confirmation naming who sees it;
   // keeping it private changes nothing.

@@ -23,7 +23,7 @@ export async function householdFeaturesRegressions() {
     for (let index = 0; index < 900; index++) { if (test()) return; await frame(); }
     check(false, `Timed out: ${message}`, typeof detail === "function" ? detail() : detail);
   };
-  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.ctx.meals.loading, "the work settles");
+  const idle = () => until(() => !app.busy && !app.refreshing && !app.pendingRefresh && !app.wakePending && !app.ctx.meals.loading, "the work settles");
   const visible = (node) => Boolean(node) && node.isConnected && node.getClientRects().length > 0;
   const segments = (page) => [...(app.segmentNavs.get(page)?.querySelectorAll(".segment-link") ?? [])].map((link) => link.dataset.segment);
   const features = app.ctx.features;

@@ -76,6 +76,7 @@ become analytics.
   `storage_failed`, `render_failed`, `render_slow`, `route_failed`,
   `unexpected_error` (error or rejection, and the error's constructor name,
   never its message or stack), `alert_shown`, `unlocked` (timing),
+  `unlock_failed` (the error's name when a household didn't start),
   `went_offline`, `went_online` and `feedback_send_failed`. Add a code to the
   registry before recording it; the table only grows.
 - **What a report carries** is the table in `web/feedback/format.js`:

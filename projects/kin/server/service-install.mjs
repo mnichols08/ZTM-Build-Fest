@@ -106,6 +106,10 @@ RestartSec=5
 TimeoutStopSec=40
 NoNewPrivileges=yes
 ProtectSystem=strict
+# The launcher copies each backup to a second folder, such as a USB drive
+# mounted under one of these (#763). The service itself still writes only
+# its data folder: Node's permission model keeps it there.
+ReadWritePaths=-/media -/mnt -/run/media
 ProtectHome=${sea ? "yes" : "read-only"}
 PrivateTmp=yes
 PrivateDevices=yes

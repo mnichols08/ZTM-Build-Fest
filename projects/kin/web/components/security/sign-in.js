@@ -32,6 +32,7 @@ import {
   wipeSignIn,
 } from "../../security/new-device.js";
 import { EventStore } from "../../storage/event-store.js";
+import { CARRIED_OVER_ORIGIN } from "../household/carried-over.js";
 
 export const REPLACE_WARNING = "The device you choose is signed out for good: it can't open your household again, even if it turns up. Choose this only for a device that's lost, broken or wiped.";
 
@@ -179,8 +180,13 @@ export class SecuritySignIn {
       return input;
     };
     option("new", "Add this as a new device");
-    for (const device of view.devices)
-      option(`replace:${device.deviceId}`, `This replaces ${device.label}`, `added ${new Date(device.trustedAt).toLocaleDateString()}`);
+    // A device carried over from the old address (#780) stays a choice: it
+    // may well be the one this replaces. It says where it came from, as
+    // People & devices does.
+    for (const device of view.devices) {
+      const added = `added ${new Date(device.trustedAt).toLocaleDateString()}`;
+      option(`replace:${device.deviceId}`, `This replaces ${device.label}`, device.carriedOver === true ? `${added} · ${CARRIED_OVER_ORIGIN}` : added);
+    }
     warning.hidden = this.state.choice === "new";
     fieldset.append(warning);
     form.append(fieldset);

@@ -17,7 +17,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     throw new Error(`Bulk actions timed out: ${label}`);
   };
   const settle = () => page(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)))));
-  const idle = () => until(() => { const app = document.querySelector("kin-app"); return Boolean(app?.state) && !app.busy && !app.bulkRunning && !app.refreshing && !app.pendingRefresh; }, "idle");
+  const idle = () => until(() => { const app = document.querySelector("kin-app"); return Boolean(app?.state) && !app.busy && !app.bulkRunning && !app.refreshing && !app.pendingRefresh && !app.wakePending; }, "idle");
   const KEYS = {
     space: { key: " ", code: "Space", windowsVirtualKeyCode: 32, text: " " },
     enter: { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" },
