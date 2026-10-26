@@ -398,6 +398,7 @@ test("new-member history starts at the post-join epoch and rotation uses compare
       rotationPending: false,
       retried: false,
       proposalId: "f".repeat(32),
+      vault: null,
     },
   );
   const grant = sync.createProvisioningGrant(adult.sessionToken, {

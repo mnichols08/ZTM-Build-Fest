@@ -278,9 +278,7 @@ export class AccountVaultService {
    */
   upload(auth, body) {
     this.spendWrite(auth);
-    const expectedVersion = body?.expectedVersion;
-    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) throw invalid();
-    const ciphertext = decodeVault(body.ciphertext);
+    const { expectedVersion, ciphertext } = parseSealed(body, 0);
     let wrappers = [];
     if (expectedVersion === 0) {
       if (!Array.isArray(body.wrappers) || body.wrappers.length < 1 || body.wrappers.length > MAX_ACCOUNT_VAULT_WRAPPERS) throw invalid();
@@ -294,6 +292,34 @@ export class AccountVaultService {
     const version = this.guard(() => this.storage.putAccountVault(auth.household.id, auth.member.id,
       { expectedVersion, ciphertext, wrappers, now: this.now() }));
     return { version };
+  }
+
+  /**
+   * Checks the vault change a key rotation carries (POST /api/sync/epochs,
+   * #791): exactly `{ expectedVersion, ciphertext }`, a version of at least 1
+   * (creating a vault needs wrappers and goes through `upload`) and a sealed
+   * vault in bounds. Returns `{ expectedVersion, ciphertext }` with the bytes
+   * decoded; 400 `vault_invalid` otherwise. Nothing is stored.
+   */
+  parseVaultChange(body) {
+    if (!body || typeof body !== "object" || Array.isArray(body) ||
+        Object.keys(body).sort().join() !== "ciphertext,expectedVersion") throw invalid();
+    return parseSealed(body, 1);
+  }
+
+  /**
+   * Stores a parsed vault change for `auth`'s member compare-and-set, as one
+   * vault write (the rotation's transaction makes it all or nothing with the
+   * epoch commit, #791). Returns the new version. 404 `vault_not_found`
+   * without a vault, 429 `vault_rate_limited`, 409 `vault_version_conflict`
+   * when another device wrote first.
+   */
+  applyVaultChange(auth, { expectedVersion, ciphertext }) {
+    if (!this.storage.accountVault(auth.household.id, auth.member.id))
+      throw new PairingError("vault_not_found", "There is no vault to add this to.", 404);
+    this.spendWrite(auth);
+    return this.guard(() => this.storage.putAccountVault(auth.household.id, auth.member.id,
+      { expectedVersion, ciphertext, wrappers: [], now: this.now() }));
   }
 
   /** Adds (version 1) or replaces (its version plus one) one wrapper, if
@@ -383,6 +409,14 @@ function parseChange(body) {
   if (remove.some((wrapperId) => !ID.test(wrapperId ?? "")) ||
       new Set([...parsed.map((wrapper) => wrapper.wrapperId), ...remove]).size !== parsed.length + remove.length) throw invalid();
   return { put: parsed, remove: [...remove] };
+}
+
+/** `{ expectedVersion, ciphertext }` from a body: a safe integer of at
+ * least `minimum` and a sealed vault, decoded. */
+function parseSealed(body, minimum) {
+  const expectedVersion = body?.expectedVersion;
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < minimum) throw invalid();
+  return { expectedVersion, ciphertext: decodeVault(body.ciphertext) };
 }
 
 /** A sealed vault: canonical base64url of "KVLT" format-1 bytes in bounds.

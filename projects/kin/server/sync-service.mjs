@@ -806,7 +806,18 @@ export class EncryptedSyncService {
     return { acknowledged: true, grantId };
   }
 
-  rotateEpoch(sessionToken, { expectedEpoch, packages, proposalId }) {
+  /**
+   * Commits household epoch `expectedEpoch + 1` with its key packages. An
+   * optional `vaultChange` (`{ expectedVersion, ciphertext }`, #791) is the
+   * committer's own account vault re-sealed with the new key: it is stored
+   * compare-and-set in the same step, after every check below and before
+   * anything else changes, so the caller's transaction (server.mjs) keeps
+   * both or neither. Every existing refusal comes first. A retried proposal
+   * never touches the vault. Without a linked vault service the field is
+   * ignored, as an older service would. The answer's `vault` is
+   * `{ version }` when the change was stored, otherwise null.
+   */
+  rotateEpoch(sessionToken, { expectedEpoch, packages, proposalId, vaultChange }) {
     const auth = this.authorize(sessionToken);
     requireTrustAuthority(auth.member, "change household key access");
     const state = this.state(auth.household.id);
@@ -831,6 +842,7 @@ export class EncryptedSyncService {
           rotationPending: state.rotationPending,
           retried: true,
           proposalId,
+          vault: null,
         };
       throw new PairingError(
         "stale_key_epoch",
@@ -901,8 +913,14 @@ export class EncryptedSyncService {
         "Too many unacknowledged rotation key transfers.",
         503,
       );
+    const vaults = vaultChange === undefined ? null : this.accountVaultService ?? null;
+    const change = vaults ? vaults.parseVaultChange(vaultChange) : null;
     const canonical = canonicalJson(packages);
     const rotationId = randomBytes(16).toString("hex");
+    // The vault change is the first write and only touches the database: a
+    // conflict, a missing vault or a full write window refuses the whole
+    // commit before the in-memory state below changes.
+    const vault = change ? { version: vaults.applyVaultChange(auth, change) } : null;
     state.currentEpoch = nextEpoch;
     state.rotationPending = false;
     state.lastRotation = { expectedEpoch, canonical, rotationId, proposalId };
@@ -931,6 +949,7 @@ export class EncryptedSyncService {
       rotationPending: false,
       retried: false,
       proposalId,
+      vault,
     };
   }
 

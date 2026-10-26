@@ -143,6 +143,8 @@ export function createKinServer(options = {}) {
   };
   // Members' encrypted key vaults (ADR 0018, #564).
   const accountVaultService = options.accountVaultService ?? new AccountVaultService({ store, now: options.now ?? (() => Date.now()) });
+  // A key rotation stores the committer's re-sealed vault with it (#791).
+  syncService.accountVaultService = accountVaultService;
   // A removed member's account vault and password verifier go with them.
   service.onAccountRemoved = (householdId, memberId) => accountVaultService.removeMember(householdId, memberId);
   const webauthn =
@@ -636,6 +638,8 @@ async function api(request, response, url, context) {
     ? await readJsonBody(request, response, MAX_CHAT_RECEIPT_BYTES + 1024)
     : request.method === "PUT" && url.pathname.startsWith("/api/account/vault")
     ? await readJsonBody(request, response, MAX_ACCOUNT_VAULT_BODY_BYTES)
+    : request.method === "POST" && url.pathname === "/api/sync/epochs"
+    ? await readJsonBody(request, response, MAX_EPOCH_COMMIT_BODY_BYTES)
     : feedbackPost
     ? await readJsonBody(request, response, MAX_FEEDBACK_REQUEST_BYTES)
     : ["POST", "PUT", "DELETE"].includes(request.method)
@@ -1894,7 +1898,9 @@ async function api(request, response, url, context) {
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/sync/epochs") {
-    json(response, 200, syncService.rotateEpoch(session, body));
+    // One transaction: the epoch, its grants and the committer's vault
+    // change (#791) are stored together or not at all.
+    json(response, 200, withTransaction(context, () => syncService.rotateEpoch(session, body)));
     return;
   }
   // Moving a household to a home server (ADR 0026, #738). Starting it:
@@ -2666,6 +2672,8 @@ function cookies(request) {
 const MAX_JSON_BODY_BYTES = 256_000;
 // A sealed vault in base64url plus its first wrappers and JSON framing.
 const MAX_ACCOUNT_VAULT_BODY_BYTES = Math.ceil(MAX_ACCOUNT_VAULT_BYTES * 4 / 3) + 16_384;
+/** A rotation's packages plus the committer's sealed vault (#791). */
+const MAX_EPOCH_COMMIT_BODY_BYTES = MAX_JSON_BODY_BYTES + Math.ceil(MAX_ACCOUNT_VAULT_BYTES * 4 / 3) + 1_024;
 // Four base64url PNGs of at most 512 KB each, plus the names.
 const MAX_INSTALL_IDENTITY_BODY_BYTES = 2_850_000;
 
