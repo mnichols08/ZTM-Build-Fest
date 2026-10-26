@@ -227,6 +227,8 @@ export class HomeUpdater {
     this.manifest = null;
     this.installing = null;
     this.timers = [];
+    // Settles once the last status written is on disk (see #write).
+    this.written = Promise.resolve();
   }
 
   /** Starts the daily check and the minute's look at requests. */
@@ -479,11 +481,14 @@ export class HomeUpdater {
     };
   }
 
+  // One write at a time, in order, so an older status never lands over a
+  // newer one. A failed write leaves the panel the last status it could read.
   #write(state = null, stage = null) {
-    try {
+    const text = `${JSON.stringify(this.status(state, stage))}\n`;
+    this.written = this.written.then(() => {
       mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-      writePrivateFile(join(this.directory, STATUS_FILE), `${JSON.stringify(this.status(state, stage))}\n`).catch(() => {});
-    } catch { /* the panel shows the last status it could read */ }
+      return writePrivateFile(join(this.directory, STATUS_FILE), text);
+    }).catch(() => {});
   }
 }
 

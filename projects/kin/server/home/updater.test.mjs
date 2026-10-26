@@ -110,7 +110,7 @@ test("without a release key nothing is fetched and the panel says updates are of
   context.updater.stop();
   await context.updater.tick();
   assert.deepEqual(context.fetched, []);
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await context.updater.written;
   assert.equal(readUpdateStatus(context.data).state, "off");
 });
 
@@ -144,7 +144,7 @@ test("a patch release installs at night: download, backup, trial, then it takes 
   assert.equal(after.current, "1.6.1");
   assert.equal(after.available, null);
   assert.deepEqual({ from: after.lastUpdate.from, to: after.lastUpdate.to, outcome: after.lastUpdate.outcome }, { from: "1.6.0", to: "1.6.1", outcome: "updated" });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await context.updater.written;
   assert.equal(readUpdateStatus(context.data).lastUpdate.outcome, "updated", "written for the panel");
 });
 
