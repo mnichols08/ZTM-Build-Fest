@@ -22,6 +22,34 @@ context object from `app/context.js`:
 | `appearance` | `appearance.js` | personal and household appearance |
 | `status`, `render` | `status.js`, `render.js` | busy/status/alerts, onboarding, update notice; rendering |
 | `shell`, `views` | `shell.js`, `views.js` | building the persistent shell and pages |
+| `meals` | `meals.js` | the Meals view and Tonight on Today |
+| `simple` | `simple.js` | Simple view, the calm layout for a Limited member |
+| `chatShare` | `chat-share.js` | turning a chat message into an item or note |
+| `share` | `share.js` | what another app shared into Kin, and home-screen shortcuts |
+| `badge` | `badge.js` | the count on the app icon |
+| `privatePrefs` | `private-prefs.js` | reminders and settings that follow the member |
+| `easy` | `easy.js` | Easy mode: bigger text and buttons, fewer things on screen |
+| `help` | `help.js` | Help on every screen, and the first week's tips on Today |
+| `week` | `week.js` | This week, the Calendar's Week view |
+| `calendar` | `calendar.js` | the family calendar's views, Today's events, colours and import |
+| `chores` | `chores.js` | the chore chart |
+| `sitter` | `sitter.js` | the sitter page |
+| `album` | `album.js` | family photos, the slideshow and the photo frame |
+| `journal` | `journal.js` | the member's private journal |
+| `rotations` | `rotations.js` | taking turns on routines |
+| `importList` | `import.js` | bringing lists into Kin |
+| `sections` | `sections.js` | store sections for the Shopping list |
+| `privateItems` | `private-items.js` | Just for me, the member's private list |
+| `features` | `features.js` | the parts of Kin this household switched off |
+| `firstRun` | `first-run.js` | finishing the first run once this device's storage is open |
+| `undo` | `undo.js` | undo and redo, and the toast that offers them |
+| `report` | `report.js` | reports and suggestions to the Kin team |
+| `calendarSync` | `calendar-sync.js` | outside calendars synced through the service |
+| `display` | `display.js` | kitchen display mode |
+
+Two modules in `app/` are not controllers: `constants.js` (shared messages
+and preferences) and `feedback.js` (the plain feedback after an item action,
+saying how far a change has gone).
 
 The element keeps the state and DOM references (`app.store`, `app.state`,
 `app.today`, …). `initializeAppState(app)` sets them and the bound handler
@@ -45,7 +73,10 @@ Shared component helpers live in `web/components/shared/`: `dom.js`
 (`captureFocus` / `restoreFocus`), `props.js` (`defineProps`: generated
 setters with microtask-coalesced rendering, identity skipping and
 `flushRender`), `operation.js` (`OperationGuard`, the guarded single-operation
-runner used by `<kin-household>` and `<kin-security>`) and `session-guard.js`.
+runner used by `<kin-household>` and `<kin-security>`), `session-guard.js`,
+`assignee-label.js` (how an assignee is named), `help-button.js` (the Help
+button on every page and major dialog) and `private-marker.js` (the "Private"
+marker beside a member's private things).
 
 ### Large components: element shell plus parts (refactor track, Slice 5)
 
@@ -57,8 +88,8 @@ lives in part classes in a folder named after the element:
 
 | Element | Parts |
 | --- | --- |
-| `<kin-household>` | `household/`: `api.js` (connection, requests, sync status), `auth.js` (passkey registration and login, WebAuthn helpers), `pairing.js`, `membership.js` (devices, members, invitations), `lifecycle.js` (deletion, leaving), `views.js` |
-| `<kin-security>` | `security/`: `views.js`, `protection.js` (setup, replacement, passkeys), `unlock.js`, `archive.js` (export and restore, with a labelled `<progress>` bar under the status message while one runs) |
+| `<kin-household>` | `household/`: `api.js` (connection, requests, sync status), `auth.js` (passkey registration and login, WebAuthn helpers), `account.js` (username and password accounts: creating, joining, signing in again, the account vault), `pairing.js`, `prepared.js` ("Set up Kin for someone": the invitation, its QR code and printable sheet), `link.js` (signing in on a computer with a phone: the computer's side), `link-approval.js` (the phone's side), `membership.js` (devices, members, invitations), `lifecycle.js` (deletion, leaving), `move.js` (moving the household to a home server, and what the old address shows afterwards), `views.js` |
+| `<kin-security>` | `security/`: `views.js`, `protection.js` (setup, replacement, passkeys), `unlock.js`, `archive.js` (export and restore, with a labelled `<progress>` bar under the status message while one runs), `first-run.js` (the first run, from opening Kin to Today), `sign-in.js` (signing in on a new device), `account.js` (a password account's passkey, password and backup code), `private-export.js` (saving and restoring "Your private things") |
 | `<kin-today>` | `today/`: `sections.js` (the Today composition), `selection.js` (bulk selection), `focus.js` (keeping focus across re-renders) |
 | `<kin-item-detail>` | `item-detail/`: `sections.js` (checklist, files, planning, responsibility, Area, reminder, pin, archive) |
 | `<kin-notes>` | `notes/`: `notes.js` (the Note form and list), `references.js` (reference records and their maintenance log) |
@@ -70,6 +101,12 @@ with one shared context `{ host, ...parts }`. A part reaches the element as
 `this.host` and the other parts as `this.ctx.<part>`. A part never holds state
 of its own: fields stay on the element, so the lifecycle callbacks and the
 lock path see all of it in one place.
+
+`household/` also holds plain modules that the parts import; they are not parts:
+
+- `fresh-confirmation.js`: confirming a sensitive action with a passkey, or with the password for a member who has no passkey yet.
+- `member-labels.js`: how Kin names household members ("You", or their kind and number), shared with chat authors.
+- `pairing-path.js`: which pairing path a code is on and how to say so; it grants no authority.
 
 `<kin-playbook-editor>` (the reusable-checklist form with its validation) and
 `<kin-routine-schedule>` (one Routine's schedule disclosure) are small
@@ -95,6 +132,19 @@ presses to its list as a non-bubbling `bulk-bar-action` event. The list keeps
 the selection and sends the `kin:bulk-*` commands, so `<kin-app>` sees the
 same events as before. Its controls stay reachable as `list.bulkBar.undo`,
 `.toolbar` and so on.
+
+Two folders group small elements by feature instead of holding parts:
+
+- `calendar/kin-calendar.js`: `<kin-calendar>`, the family calendar's Day, Week and Month views.
+- `calendar/kin-calendar-today.js`: `<kin-calendar-today>`, today's events and the next countdown on Today, also used on the kitchen display.
+- `calendar/kin-event-editor.js`: `<kin-event-editor>`, the dialog for adding and changing a calendar event.
+- `calendar/kin-calendar-import.js`: `<kin-calendar-import>`, importing a calendar (.ics) file.
+- `calendar/kin-member-colour.js`: `<kin-member-colour>`, "My calendar colour" in Identity & appearance.
+- `calendar/event-chip.js`: one calendar occurrence drawn as a chip, shared by the views, Today and the kitchen display.
+- `display/kin-display-setup.js`: `<kin-display-setup>`, "Use this device as a kitchen display", for Adults.
+- `display/kin-display-shopping.js`: `<kin-display-shopping>`, the shopping list on the kitchen display.
+- `display/kin-display-chat.js`: `<kin-display-chat>`, the household chat's newest messages on the kitchen display, read-only.
+- `display/leave-dialog.js`: the "is this the adult?" dialog for leaving display mode or changing a child's reward there.
 
 ### Incremental rendering (refactor track, Slice 4)
 
