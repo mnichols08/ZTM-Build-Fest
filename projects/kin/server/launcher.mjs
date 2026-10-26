@@ -23,6 +23,11 @@
 // In home mode it also runs the updater (server/home/updater.mjs, #722),
 // which may stop the service, try a new release as the service, and keep it
 // or go back, through the controller runService hands it.
+//
+// And it copies each backup to the second folder the person chose
+// (server/home/backup-copy.mjs, #763): the service may write only its data
+// directory. The service's `home_backup_created` line tells the copier to
+// look at once; it also looks every minute.
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -69,6 +74,17 @@ const RESTART_MAX_MS = 60_000;
 const RESTART_RESET_MS = 60_000;
 const CODE_EVENT = '"event":"home_control_code"';
 const PANEL_URL = /^http:\/\/localhost:\d{1,5}\/control\/$/;
+const BACKUP_EVENT = '"event":"home_backup_created"';
+
+/** True for the line the service prints when it made a backup
+ * (server/home/backups.mjs). It only says "look now": the copier finds
+ * the sets itself. */
+export function describeBackupLine(line) {
+  if (!line.includes(BACKUP_EVENT)) return false;
+  let event;
+  try { event = JSON.parse(line); } catch { return false; }
+  return event?.event === "home_backup_created";
+}
 
 /** What the launcher shows for a control-panel code the service printed
  * (server/home/control-panel.mjs), or null for any other line. */
@@ -193,7 +209,7 @@ function openLog(path) {
  * (1 second, doubling to 1 minute, reset after a minute up). With
  * `stopOnStdinClose`, the end of `stdin` stops the service as SIGTERM does.
  */
-export function runService({ serviceProcess, env = process.env, supervise = false, stopOnStdinClose = false, logFile = null, spawnImpl = spawn, signals = process, stdin = process.stdin, platform = process.platform, stdout = process.stdout, stderr = process.stderr, interactive = Boolean(process.stdout.isTTY), open = openBrowser, updater = null }) {
+export function runService({ serviceProcess, env = process.env, supervise = false, stopOnStdinClose = false, logFile = null, spawnImpl = spawn, signals = process, stdin = process.stdin, platform = process.platform, stdout = process.stdout, stderr = process.stderr, interactive = Boolean(process.stdout.isTTY), open = openBrowser, updater = null, backupCopy = null }) {
   let log = null;
   const write = (stream, line) => {
     if (log !== null) writeSync(log, `${line}\n`);
@@ -204,6 +220,8 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
   const watchCodes = String(env.KIN_MODE ?? "").trim().toLowerCase() === "home";
   let browserOpened = false;
   let pending = "";
+  // The copier (#763), once its factory has made it.
+  let copier = null;
   const watch = (chunk) => {
     pending += chunk.toString("utf8");
     if (pending.length > 65_536) pending = pending.slice(-65_536);
@@ -211,6 +229,7 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
     while ((end = pending.indexOf("\n")) >= 0) {
       const line = pending.slice(0, end);
       pending = pending.slice(end + 1);
+      if (describeBackupLine(line)) { copier?.backupMade(); continue; }
       const code = describeCodeLine(line);
       if (!code) continue;
       if (interactive || log === null) stderr.write(`\n${code.text}\n\n`);
@@ -291,8 +310,11 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
       /** How the service is started from now on (the release that passed). */
       adopt(next) { spec = next; },
     };
+    let finished = false;
     const finish = (code) => {
+      finished = true;
       update?.stop();
+      copier?.stop();
       if (stopOnStdinClose) {
         stdin.removeListener("end", onStdinClosed);
         stdin.removeListener("error", onStdinClosed);
@@ -402,6 +424,16 @@ export function runService({ serviceProcess, env = process.env, supervise = fals
         })
         .catch((error) => write(stderr, JSON.stringify({ event: "home_update_unavailable", message: error?.message ?? String(error) })));
     }
+    // Home mode only: elsewhere nothing reads the service's backup lines.
+    if (backupCopy && watchCodes) {
+      Promise.resolve(backupCopy({ databasePath, env, log: (event) => write(stderr, JSON.stringify(event)) }))
+        .then((created) => {
+          copier = created;
+          if (stopping || finished) created?.stop();
+          else created?.start();
+        })
+        .catch((error) => write(stderr, JSON.stringify({ event: "home_backup_copy_unavailable", message: error?.message ?? String(error) })));
+    }
   });
 }
 
@@ -462,7 +494,12 @@ export async function runLauncher(argv, { serviceProcess, program, version, env 
         const { homeUpdater } = await import("./home/updater.mjs");
         return homeUpdater({ controller, program, version, databasePath, env: serviceEnv, log, health: () => checkHealth(env) });
       } : null;
-      return runService({ serviceProcess, env, supervise: options.supervise, stopOnStdinClose: options.stopOnStdinClose, logFile: options.logFile, platform, updater });
+      // And the copy to a second folder (#763), however Kin was started.
+      const backupCopy = home ? async ({ databasePath, env: copyEnv, log }) => {
+        const { homeBackupCopier } = await import("./home/backup-copy.mjs");
+        return homeBackupCopier({ databasePath, env: copyEnv, log });
+      } : null;
+      return runService({ serviceProcess, env, supervise: options.supervise, stopOnStdinClose: options.stopOnStdinClose, logFile: options.logFile, platform, updater, backupCopy });
     }
   }
 }

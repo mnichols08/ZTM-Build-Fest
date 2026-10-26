@@ -18,7 +18,8 @@
 // write, and the service already holds the database, a clock and the
 // control panel the status and changes go through. A copy outside the data
 // directory (the optional second folder, a USB drive) is the one thing that
-// needs the launcher, and it is left for later.
+// needs the launcher: backup-copy.mjs (#763) makes it, and writes how it went
+// to `backups/copy-status.json`, which this file reads for the panel.
 //
 // The schedule is a local hour (default 03:00). A backup is due when the
 // newest set is older than the latest such hour, so a computer that was
@@ -71,7 +72,22 @@ const UNFINISHED_MS = 60 * 60_000;
 export const BACKUP_ERROR_CODES = Object.freeze(["backup-failed", "backup-disk-full", "backup-busy", "backup-restore-pending", "backup-unknown", "backup-unreadable", "restore-failed", "restore-deletion-pending", "restore-newer-household"]);
 export const BACKUP_STATES = Object.freeze(["ok", "none", "running", "failed", "restoring", "off"]);
 
+/** The copy to a second folder (#763, backup-copy.mjs): the file only the
+ * launcher writes, its states and its codes (explain.js has words for each). */
+export const BACKUP_COPY_STATUS = "copy-status.json";
+export const BACKUP_COPY_FORMAT = 1;
+export const BACKUP_COPY_STATES = Object.freeze(["off", "waiting", "copying", "ok", "failed"]);
+export const BACKUP_COPY_ERROR_CODES = Object.freeze([
+  "backup-copy-missing", "backup-copy-not-folder", "backup-copy-same-disk", "backup-copy-denied", "backup-copy-full", "backup-copy-too-big", "backup-copy-failed",
+]);
+
 export const backupsDirectory = (dataDirectory) => join(dataDirectory, "backups");
+
+/** What the launcher last wrote about the second copy, or null. */
+export function readBackupCopyStatus(dataDirectory) {
+  const status = readJson(join(backupsDirectory(dataDirectory), BACKUP_COPY_STATUS));
+  return status?.format === BACKUP_COPY_FORMAT ? status : null;
+}
 
 export class BackupError extends Error {
   constructor(code, message) {
@@ -346,7 +362,27 @@ export class HomeBackups {
       lastRestore: restore && typeof restore.outcome === "string"
         ? { outcome: restore.outcome, at: restore.at ?? null, backupCreatedAt: restore.backupCreatedAt ?? null, code: restore.code ?? null, homeRestored: restore.homeRestored === true }
         : null,
+      copy: this.#copy(),
     };
+  }
+
+  /** The second copy (#763), as the launcher last wrote it, without the
+   * folder's path (a path can hold an account name). "waiting" until the
+   * launcher has looked at the folder now chosen; Kin started without the
+   * launcher never does. */
+  #copy() {
+    const settings = this.getSettings();
+    const folder = settings.backupCopyFolder ?? null;
+    const shown = (state, file = null) => ({
+      state, kept: BACKUPS_KEPT,
+      lastCopyAt: file?.lastCopyAt ?? null, lastCopiedCreatedAt: file?.lastCopiedCreatedAt ?? null,
+      copies: Number.isSafeInteger(file?.copies) ? file.copies : 0,
+      lastError: typeof file?.lastError?.code === "string" ? { code: file.lastError.code, at: file.lastError.at ?? null } : null,
+    });
+    if (!folder || !settings.configured) return shown("off");
+    const file = readBackupCopyStatus(this.dataDirectory);
+    if (!file || file.folder !== folder || !BACKUP_COPY_STATES.includes(file.state) || file.state === "off") return shown("waiting");
+    return shown(file.state, file);
   }
 }
 

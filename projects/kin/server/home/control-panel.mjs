@@ -34,18 +34,22 @@
 //
 // Seams: `provide(section, fn)` fills a status section, and
 // `registerChange(kind, handler)` adds a change, which both ways of
-// reaching the panel then confirm and apply the same way. Backups (#721,
-// backups.mjs) add the "backups" section and the changes "backup-now",
-// "backup-hour" and "restore"; updates (#722, updater.mjs) the "updates"
-// section, read from the file the launcher writes, and the changes
-// "update-install" and "auto-update".
+// reaching the panel then confirm and apply the same way; a change marked
+// `loopbackOnly` is refused unless it came through the loopback panel.
+// Backups (#721, backups.mjs) add the "backups" section and the changes
+// "backup-now", "backup-hour" and "restore", and the copy to a second
+// folder (#763) the loopback-only "backup-copy-folder": the copy holds
+// every household's data and the home key, so only someone at the home
+// server's own computer chooses where it goes. Updates (#722, updater.mjs)
+// add the "updates" section, read from the file the launcher writes, and
+// the changes "update-install" and "auto-update".
 //
 // Moving a household here (ADR 0026, #739): on loopback, after setup, the
 // panel prints a one-time move code ("move-code"); the old server sends the
 // household to /api/move/* on this server's address with it
 // (move-receive.mjs), and the status shows the last move received.
 import { readFileSync, statSync, statfsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { isIP } from "node:net";
 import { parseHouseholdPolicy } from "../pairing-service/bootstrap-limits.mjs";
 import { tunnelPeer } from "../client-key.mjs";
@@ -56,7 +60,7 @@ import { BackupError, isBackupHour } from "./backups.mjs";
 import { releasePublicKey } from "./release.mjs";
 import { readUpdateStatus, writeUpdateRequest } from "./updater.mjs";
 import { MoveReceiver, RECEIPT_FILE, moveDirectory } from "./move-receive.mjs";
-import { MAX_HOUSEHOLDS_LIMIT, writeHomeSettings } from "./settings.mjs";
+import { MAX_HOUSEHOLDS_LIMIT, normalizeBackupCopyFolder, writeHomeSettings } from "./settings.mjs";
 import { SetupError } from "./setup.mjs";
 
 export const PANEL_API_PREFIX = "/control/api/";
@@ -74,6 +78,14 @@ export class ControlError extends Error {
 }
 
 const isSet = (value) => value !== undefined && value !== null && String(value).trim() !== "";
+
+/** True when `folder` is `directory` or inside it, by their text alone
+ * (the service may not look outside its data directory). */
+function isWithin(folder, directory, platform = process.platform) {
+  const fold = platform === "win32" || platform === "darwin" ? (value) => value.toLowerCase() : (value) => value;
+  const inside = relative(fold(directory), fold(folder));
+  return inside === "" || (inside !== ".." && !inside.startsWith(`..${sep}`) && !isAbsolute(inside));
+}
 
 export function isLoopbackAddress(address) {
   const value = String(address ?? "").toLowerCase().replace(/^::ffff:/, "");
@@ -245,6 +257,24 @@ export class ControlPanel {
         return { hour };
       },
     });
+    // The second folder (#763): only its form is checked here. Whether it
+    // exists, can be written and is on another disk is the launcher's to
+    // find out, since the service may not look outside its data directory.
+    this.registerChange("backup-copy-folder", {
+      loopbackOnly: true,
+      check: (change) => {
+        const value = change?.folder;
+        if (value === null) return { kind: "backup-copy-folder", folder: null };
+        const folder = normalizeBackupCopyFolder(value);
+        if (!folder || isWithin(folder, this.dataDirectory))
+          throw new ControlError("control-backup-copy-invalid", "Choose a folder by its full path, outside Kin's own data folder.");
+        return { kind: "backup-copy-folder", folder };
+      },
+      apply: async ({ folder }) => {
+        this.setSettings(await writeHomeSettings(this.dataDirectory, { backupCopyFolder: folder }, this.env));
+        return { folder, checking: folder !== null };
+      },
+    });
     this.registerChange("restore", {
       check: (change) => {
         try { backups.checkRestore(change?.id); } catch (error) { throw asControlError(error); }
@@ -297,20 +327,25 @@ export class ControlPanel {
 
   /** Adds a change: `check(change)` returns the normalized change or throws
    * ControlError; `apply(normalized)` makes it. Both ways of reaching the
-   * panel confirm it freshly before `apply`. */
-  registerChange(kind, { check, apply }) {
-    this.changes.set(kind, { check, apply });
+   * panel confirm it freshly before `apply`. A `loopbackOnly` change is
+   * refused unless the caller says it came through the loopback panel. */
+  registerChange(kind, { check, apply, loopbackOnly = false }) {
+    this.changes.set(kind, { check, apply, loopbackOnly });
   }
 
-  checkChange(change) {
+  /** Checks `change`. Only the loopback panel's route passes `loopback`, so
+   * a caller that leaves it out can't make a loopback-only change. */
+  checkChange(change, { loopback = false } = {}) {
     const handler = this.changes.get(change?.kind);
     if (!handler) throw new ControlError("control-change-unknown", "Kin doesn't know that change.");
+    if (handler.loopbackOnly && loopback !== true)
+      throw new ControlError("control-loopback-only", "This works only on the home server's own computer.", 403);
     return handler.check(change);
   }
 
   /** Applies a change that has been checked and freshly confirmed. */
-  async applyChange(change) {
-    const normalized = this.checkChange(change);
+  async applyChange(change, options = {}) {
+    const normalized = this.checkChange(change, options);
     const result = await this.changes.get(normalized.kind).apply(normalized);
     this.log({ event: "home_control_change", kind: normalized.kind });
     return { kind: normalized.kind, ...result };
@@ -432,8 +467,16 @@ export class ControlPanel {
       configured: this.settings.configured,
       codeExpiresAt: access.active ? new Date(access.expiresAt).toISOString() : null,
       ...(signedIn ? { moveCodeExpiresAt: this.codes.move.active ? new Date(this.codes.move.expiresAt).toISOString() : null } : {}),
-      ...(signedIn ? { setup: this.setup.view(), status: this.status() } : {}),
+      ...(signedIn ? { setup: this.setup.view(), status: this.#localStatus() } : {}),
     };
+  }
+
+  /** The status, with what only this computer's own panel shows: the
+   * second backup folder's path (#763), which can hold an account name. */
+  #localStatus() {
+    const status = this.status();
+    if (status.backups?.copy) status.backups = { ...status.backups, copy: { ...status.backups.copy, folder: this.settings.backupCopyFolder ?? null } };
+    return status;
   }
 
   /**
@@ -503,13 +546,13 @@ export class ControlPanel {
       }
       case "change": {
         // Checked before the code is spent, so a wrong value doesn't cost one.
-        this.checkChange(body.change);
+        this.checkChange(body.change, { loopback: true });
         const answer = this.codes.confirm.verify(body.code);
         if (answer !== "ok") {
           const [code, status] = CODE_ANSWERS[answer];
           throw new ControlError(code.replace("control-code", "control-confirm"), "That confirmation code didn't work.", status, answer === "wrong" ? { attemptsLeft: this.codes.confirm.attemptsLeft } : {});
         }
-        return this.applyChange(body.change);
+        return this.applyChange(body.change, { loopback: true });
       }
       default:
         throw new ControlError("control-not-found", "That isn't part of the control panel.", 404);

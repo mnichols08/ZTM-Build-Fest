@@ -2,8 +2,10 @@
 // needs a fresh confirmation: on this computer a code Kin prints in its
 // window and log, through the household's address the admin's passkey or
 // password (control-api.js). Each entry in SETTINGS is one change: the
-// new-household limit; backups (#721): back up now, the daily time and
-// restore; and updates (#722): install now, and automatic updates. An entry without a
+// new-household limit; backups (#721): back up now, the daily time, the
+// second folder (#763, on this computer only: `available` and
+// `unavailable` are given the API as well) and restore; and updates
+// (#722): install now, and automatic updates. An entry without a
 // `field` is a button alone; `action` names the button and `done(result)`
 // says what happened.
 //
@@ -56,6 +58,22 @@ export const SETTINGS = [
     change: (control) => ({ kind: "backup-hour", hour: Number(control.value) }),
   },
   {
+    // #763: chosen on the home server's own computer only. The copies hold
+    // every household's data and the home key, and only that panel is
+    // shown the folder's path.
+    kind: "backup-copy-folder",
+    title: "Copy backups to another folder",
+    describe: () => "Kin copies each backup to this folder too, such as a USB drive, so a broken disk doesn't take your backups with it. It keeps the 14 newest there, in a folder called “Kin backups”, and never touches your other files. Leave it empty to stop copying.",
+    available: (status, api) => Boolean(api?.loopback) && Boolean(status.backups?.copy) && backupsReady(status),
+    unavailable: (status, api) => (api?.loopback ? "Backups aren't available right now." : "Choose this folder on the home server's own computer."),
+    field: (status) => {
+      const input = el("input", { id: "control-setting-backup-copy-folder", name: "folder", type: "text", value: status.backups.copy.folder ?? "", spellcheck: false, autocomplete: "off" });
+      return { label: "Folder, by its full path (such as E:\\ or /media/usb)", control: input };
+    },
+    change: (control) => ({ kind: "backup-copy-folder", folder: control.value.trim() === "" ? null : control.value.trim() }),
+    done: (result) => (result?.folder ? "Kin checks the folder and copies your backups there within a minute." : "Kin doesn't copy backups to another folder now. Copies already there stay."),
+  },
+  {
     kind: "restore",
     title: "Restore a backup",
     describe: () => "Puts Kin back as it was when the backup was made. Kin stops for a moment and starts again. Anything added since then comes back from people's phones and computers when they next connect, and households deleted since then stay deleted. Kin keeps the data it replaces in its folder.",
@@ -102,7 +120,7 @@ export const SETTINGS = [
 
 /** What, in the status, the settings show: they redraw only when it changes. */
 const shown = (status) => JSON.stringify([
-  status?.limits, status?.backups?.state === "restoring", status?.backups?.hour, status?.backups?.backups?.map((backup) => backup.id),
+  status?.limits, status?.backups?.state === "restoring", status?.backups?.hour, status?.backups?.backups?.map((backup) => backup.id), status?.backups?.copy?.folder,
   status?.updates?.state === "installing", status?.updates?.state === "off", status?.updates?.autoUpdate, status?.updates?.available?.version, status?.updates?.available?.install,
 ]);
 
@@ -150,8 +168,8 @@ export class KinControlSettings extends HTMLElement {
     const section = el("section", { className: "control-card", "data-setting": setting.kind, "aria-labelledby": `setting-${setting.kind}` },
       el("h3", { id: `setting-${setting.kind}`, text: setting.title }),
       el("p", { text: setting.describe(status) }));
-    if (!setting.available(status)) {
-      section.append(el("p", { className: "control-muted", text: setting.unavailable(status) }));
+    if (!setting.available(status, this.api)) {
+      section.append(el("p", { className: "control-muted", text: setting.unavailable(status, this.api) }));
       return section;
     }
     const { label, control } = setting.field?.(status) ?? {};

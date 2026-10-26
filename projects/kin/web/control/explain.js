@@ -104,7 +104,24 @@ const BACKUP_STATES = {
   off: "Backups start once this home server is set up.",
 };
 
+// The copy to a second folder (#763), which the launcher makes.
+const BACKUP_COPY_STATES = {
+  off: "Backups aren't copied anywhere else. Choose a second folder, such as a USB drive, in the settings below.",
+  waiting: "Kin looks at the folder within a minute. If this doesn't change after a few minutes, Kin was started in a way that doesn't copy backups: start it as kin, or as a service.",
+  copying: "Copying backups to the second folder now…",
+  ok: "Each backup is copied to the second folder too.",
+  failed: "The last copy to the second folder didn't work.",
+};
+
 const BACKUP_ERRORS = {
+  "backup-copy-missing": "Kin can't find the second folder. If it's on a USB drive, plug the drive in; Kin copies within a minute. Kin never makes this folder itself.",
+  "backup-copy-not-folder": "The second folder's path names a file, not a folder. Choose a folder.",
+  "backup-copy-same-disk": "The second folder is on the same disk as Kin's data, so a copy there wouldn't survive that disk failing. If it's on a USB drive, the drive may not be plugged in; otherwise choose a folder on another disk.",
+  "backup-copy-denied": "Kin isn't allowed to write in the second folder. Give the account Kin runs as permission to write there; on Linux, run kin --install-service again if Kin was installed before this version.",
+  "backup-copy-full": "The second folder's drive is full, so Kin couldn't copy the newest backup. Free some space there; Kin tries again in an hour and never deletes your files to make room.",
+  "backup-copy-too-big": "A backup is too big for the drive's format (FAT32 holds files up to 4 GB). Use a drive formatted as exFAT or NTFS.",
+  "backup-copy-failed": "Copying to the second folder didn't work, and Kin removed the unfinished copy. Kin tries again in an hour; if it goes on, try another drive.",
+  "control-backup-copy-invalid": "Type the folder's full path, such as E:\\ on Windows or /media/usb on Linux. It can't be inside Kin's own data folder.",
   "backup-failed": "Kin couldn't make a backup. Check that this computer's disk is working and has room; Kin tries again in an hour.",
   "backup-disk-full": "The disk is full, so Kin couldn't make a backup. Free some space; Kin tries again in an hour.",
   "backup-busy": "Another backup or restore was using Kin's data at the same time. Kin tries again in an hour.",
@@ -229,6 +246,7 @@ export const explainTunnelState = (state) => TUNNEL_STATES[state] ?? "The connec
 export const explainCertificateState = (state) => CERTIFICATE_STATES[state] ?? "The certificate's state isn't known.";
 export const explainTransparency = (state) => TRANSPARENCY[state] ?? TRANSPARENCY["not-checked"];
 export const explainBackupState = (state) => BACKUP_STATES[state] ?? "The backups' state isn't known.";
+export const explainBackupCopyState = (state) => BACKUP_COPY_STATES[state] ?? "The second copy's state isn't known.";
 
 /** Every state with words of its own, for tests. */
 export const KNOWN = Object.freeze({
@@ -236,4 +254,5 @@ export const KNOWN = Object.freeze({
   certificateStates: Object.keys(CERTIFICATE_STATES),
   transparency: Object.keys(TRANSPARENCY),
   backupStates: Object.keys(BACKUP_STATES),
+  backupCopyStates: Object.keys(BACKUP_COPY_STATES),
 });

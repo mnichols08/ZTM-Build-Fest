@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ACME_ERROR_CODES } from "../../server/acme/client.mjs";
-import { BACKUP_ERROR_CODES, BACKUP_STATES } from "../../server/home/backups.mjs";
+import { BACKUP_COPY_ERROR_CODES, BACKUP_COPY_STATES, BACKUP_ERROR_CODES, BACKUP_STATES } from "../../server/home/backups.mjs";
 import { DOMAIN_PROBLEMS } from "../../server/home/domain-records.mjs";
 import { TUNNEL_ERRORS } from "../../server/home/tunnel-client.mjs";
 import { UPDATE_ERROR_CODES } from "../../server/home/updater.mjs";
@@ -22,7 +22,7 @@ const TIMEOUT = { timeout: 30_000 };
 
 test("every code the home server sends has plain words of its own", TIMEOUT, () => {
   const codes = [
-    ...TUNNEL_ERRORS, ...ACME_ERROR_CODES, ...DOMAIN_PROBLEMS, ...BACKUP_ERROR_CODES, "control-backup-hour-invalid", ...UPDATE_ERROR_CODES, "control-update-unknown", "control-update-manual", "control-update-busy", "control-move-not-ready", "control-move-limit",
+    ...TUNNEL_ERRORS, ...ACME_ERROR_CODES, ...DOMAIN_PROBLEMS, ...BACKUP_ERROR_CODES, "control-backup-hour-invalid", ...BACKUP_COPY_ERROR_CODES, "control-backup-copy-invalid", ...UPDATE_ERROR_CODES, "control-update-unknown", "control-update-manual", "control-update-busy", "control-move-not-ready", "control-move-limit",
     "tunnel-caa-name-taken", "tunnel-caa-name-not-allowed", "tunnel-caa-name-limit", "tunnel-caa-name-unknown", "tunnel-caa-suspended", "tunnel-caa-refused",
     "tunnel-not-ready", "tunnel-timeout", "tunnel-lost", "tunnel-stopped",
     "setup-name-empty", "setup-name-invalid", "setup-name-length", "setup-name-taken", "setup-name-not-allowed",
@@ -39,6 +39,7 @@ test("every code the home server sends has plain words of its own", TIMEOUT, () 
   for (const state of ["connected", "connecting", "waiting", "stopped"]) assert.ok(KNOWN.tunnelStates.includes(state), state);
   for (const state of ["none", "valid", "renewing", "valid-retrying", "failed", "expired"]) assert.ok(KNOWN.certificateStates.includes(state), state);
   assert.deepEqual([...KNOWN.backupStates].sort(), [...BACKUP_STATES].sort(), "every backups state has words");
+  assert.deepEqual([...KNOWN.backupCopyStates].sort(), [...BACKUP_COPY_STATES].sort(), "every state of the second copy has words");
   assert.match(explain("acme-something-new"), /Let's Encrypt/, "an unknown code still gets its family's sentence");
   assert.match(explain("replaced"), /Only one copy of a home server can run at a time/);
   assert.match(explainTunnelState("connected"), /Phones can reach/);
@@ -384,6 +385,68 @@ test("settings, backups: back up now is a button, the time a choice, restore nam
     assert.match(settings.querySelector('[data-setting="restore"]').textContent, /restoring a backup now/);
   } finally {
     settings.remove();
+  }
+});
+
+const COPY = Object.freeze({ state: "ok", kept: 14, lastCopyAt: "2026-10-22T03:01:00.000Z", lastCopiedCreatedAt: "2026-10-22T03:00:00.000Z", copies: 2, lastError: null });
+
+test("the status page: the second copy of the backups in a row of its own, and its problem in plain words", TIMEOUT, () => {
+  const element = document.createElement("kin-control-status");
+  const backups = (copy) => { element.status = { ...STATUS, backups: { ...STATUS.backups, copy } }; return element.querySelector('[data-section="backups"]'); };
+  const row = (section) => section.querySelectorAll("dt").find((term) => term.textContent === "Second copy")?.parentNode.querySelector("dd").textContent;
+  assert.equal(row(backups({ ...COPY, state: "off", copies: 0 })), "Not set up");
+  assert.equal(row(backups({ ...COPY, state: "waiting" })), "Kin is checking the folder");
+  const ok = backups(COPY);
+  assert.match(row(ok), /^2 copies, the newest from /);
+  assert.equal(ok.dataset.tone, "good");
+  assert.match(ok.textContent, /any drive they're copied to, as private as this computer/);
+  const failed = backups({ ...COPY, state: "failed", lastError: { code: "backup-copy-missing", at: "2026-10-22T12:00:00.000Z" } });
+  assert.equal(failed.dataset.tone, "attention");
+  assert.match(row(failed), /didn't work/);
+  assert.match(failed.querySelector('[data-code="backup-copy-missing"]').textContent, /plug the drive in/);
+  assert.equal(row(backups(undefined)), undefined, "an older server without the copy shows no row");
+});
+
+test("settings, the second backup folder: typed on this computer, emptied to stop; through the household's address it says where to choose it", TIMEOUT, async () => {
+  const answers = { "confirm-code": { expiresAt: "2026-10-22T13:00:00.000Z" }, change: { kind: "backup-copy-folder", folder: "E:\\", checking: true } };
+  const api = fakeApi(answers);
+  const settings = document.createElement("kin-control-settings");
+  settings.api = api;
+  document.body.append(settings);
+  try {
+    settings.status = { ...STATUS, backups: { ...STATUS.backups, copy: { ...COPY, folder: "E:\\Kin" } } };
+    const input = settings.querySelector("#control-setting-backup-copy-folder");
+    assert.equal(input.value, "E:\\Kin", "the folder chosen, on this computer");
+    assert.ok(settings.querySelector('label[for="control-setting-backup-copy-folder"]'));
+    const confirmWith = async () => {
+      settings.querySelector('[data-setting="backup-copy-folder"] form').submit();
+      await settle();
+      const confirm = settings.querySelector(".control-confirm");
+      confirm.querySelector("input").value = "ABCDE-23456";
+      confirm.submit();
+      await settle();
+    };
+    input.value = "  E:\\  ";
+    await confirmWith();
+    assert.deepEqual(api.calls.at(-1), ["change", { kind: "backup-copy-folder", folder: "E:\\" }, { code: "ABCDE-23456" }]);
+    assert.match(settings.querySelector(".control-message").textContent, /copies your backups there within a minute/);
+    answers.change = { kind: "backup-copy-folder", folder: null, checking: false };
+    settings.querySelector("#control-setting-backup-copy-folder").value = "";
+    await confirmWith();
+    assert.deepEqual(api.calls.at(-1)[1], { kind: "backup-copy-folder", folder: null }, "empty stops the copies");
+    assert.match(settings.querySelector(".control-message").textContent, /Copies already there stay/);
+  } finally {
+    settings.remove();
+  }
+  const remote = document.createElement("kin-control-settings");
+  remote.api = { ...fakeApi(), loopback: false };
+  document.body.append(remote);
+  try {
+    remote.status = { ...STATUS, backups: { ...STATUS.backups, copy: COPY } };
+    assert.equal(remote.querySelector("#control-setting-backup-copy-folder"), null);
+    assert.match(remote.querySelector('[data-setting="backup-copy-folder"]').textContent, /Choose this folder on the home server's own computer/);
+  } finally {
+    remote.remove();
   }
 });
 

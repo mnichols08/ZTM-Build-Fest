@@ -9,11 +9,11 @@ import test from "node:test";
 import { DurableStore } from "../durable-store.mjs";
 import { PairingService } from "../pairing-service.mjs";
 import {
-  BACKUPS_KEPT, BACKUP_MANIFEST, BACKUP_RETRY_MS, HomeBackups, RESTORE_REQUEST, RESTORE_RESULT,
+  BACKUPS_KEPT, BACKUP_COPY_STATUS, BACKUP_MANIFEST, BACKUP_RETRY_MS, HomeBackups, RESTORE_REQUEST, RESTORE_RESULT,
   backupsDirectory, lastScheduled, listBackups, nextScheduled, runPendingRestore,
 } from "./backups.mjs";
 import { HOME_KEY_FILE } from "./home-key.mjs";
-import { resolveHomeSettings } from "./settings.mjs";
+import { isBackupCopyFolder, loadHomeSettings, resolveHomeSettings, writeHomeSettings } from "./settings.mjs";
 
 const HOUR = 60 * 60_000;
 const credential = (id) => ({ id, publicKey: `key-${id}`, algorithm: -7 });
@@ -222,4 +222,51 @@ test("on a new computer (no home key yet) a restore brings the home files: the s
   assert.equal(result.homeRestored, true);
   assert.equal(readFileSync(join(target.dataDirectory, "home", HOME_KEY_FILE), "utf8"), "synthetic home key\n");
   assert.match(readFileSync(join(target.dataDirectory, "home", "settings.json"), "utf8"), /fern\.home\.kin\.journeytocode\.io/);
+});
+
+test("the second backup folder: a full path on this kind of computer; a stored one that doesn't suit it never stops Kin", async (t) => {
+  for (const good of ["E:\\", "E:\\Backups", "e:/Kin copies"]) assert.equal(isBackupCopyFolder(good, "win32"), true, good);
+  for (const bad of ["E:", "E:foo", "\\\\nas\\share", "//nas/share", "\\Backups", "rel", "/media/usb", "E:\\a\0b", `E:\\${"a".repeat(1022)}`, "", 42, null])
+    assert.equal(isBackupCopyFolder(bad, "win32"), false, String(bad).slice(0, 20));
+  assert.equal(isBackupCopyFolder("/media/usb", "linux"), true);
+  assert.equal(isBackupCopyFolder("/Volumes/KIN", "darwin"), true);
+  for (const bad of ["media/usb", "E:\\Backups", "/media/\0usb"]) assert.equal(isBackupCopyFolder(bad, "linux"), false, bad);
+  // Read leniently: a Windows path restored on Linux (or the reverse), or a
+  // value that isn't a path at all, turns the copy off instead of stopping
+  // Kin from starting.
+  assert.equal(resolveHomeSettings({ format: 1, backupCopyFolder: "E:\\Backups" }, {}).backupCopyFolder, "E:\\Backups");
+  assert.equal(resolveHomeSettings({ format: 1, backupCopyFolder: 7 }, {}).backupCopyFolder, null);
+  assert.equal(resolveHomeSettings({ format: 1, backupCopyFolder: "x".repeat(1025) }, {}).backupCopyFolder, null);
+  assert.equal(resolveHomeSettings(null, {}).backupCopyFolder, null);
+  const { dataDirectory } = fixture(t);
+  assert.equal((await writeHomeSettings(dataDirectory, { backupCopyFolder: "/media/usb" }, {})).backupCopyFolder, "/media/usb");
+  assert.equal((await writeHomeSettings(dataDirectory, { backupCopyFolder: null }, {})).backupCopyFolder, null);
+  assert.ok(!("backupCopyFolder" in JSON.parse(readFileSync(join(dataDirectory, "home", "settings.json"), "utf8"))), "null removes the field");
+  writeFileSync(join(dataDirectory, "home", "settings.json"), JSON.stringify({ format: 1, name: "fern.home.kin.journeytocode.io", backupCopyFolder: { not: "a path" } }));
+  assert.equal((await loadHomeSettings(dataDirectory, {})).backupCopyFolder, null);
+  assert.equal((await writeHomeSettings(dataDirectory, { backupHour: 4 }, {})).backupHour, 4, "and other changes still save");
+});
+
+test("status shows the second copy as the launcher last wrote it, without the folder's path", (t) => {
+  const { dataDirectory, backups, setSettings } = fixture(t);
+  const folder = join(dataDirectory, "..", "usb");
+  assert.deepEqual(backups.status().copy, { state: "off", kept: 14, lastCopyAt: null, lastCopiedCreatedAt: null, copies: 0, lastError: null });
+  setSettings(resolveHomeSettings({ format: 1, name: "fern.home.kin.journeytocode.io", backupCopyFolder: folder }, {}));
+  assert.equal(backups.status().copy.state, "waiting", "before the launcher has looked");
+  const write = (value) => {
+    mkdirSync(backupsDirectory(dataDirectory), { recursive: true });
+    writeFileSync(join(backupsDirectory(dataDirectory), BACKUP_COPY_STATUS), JSON.stringify(value));
+  };
+  const written = { format: 1, state: "failed", folder, checkedAt: "2026-10-25T12:00:00.000Z", lastCopyAt: "2026-10-25T03:01:00.000Z", lastCopiedCreatedAt: "2026-10-25T03:00:00.000Z", copies: 3, lastError: { code: "backup-copy-full", at: "2026-10-25T12:00:00.000Z" } };
+  write({ ...written, folder: "/somewhere/else" });
+  assert.equal(backups.status().copy.state, "waiting", "the launcher hasn't looked at the folder now chosen");
+  write(written);
+  const copy = backups.status().copy;
+  assert.deepEqual(copy, { state: "failed", kept: 14, lastCopyAt: written.lastCopyAt, lastCopiedCreatedAt: written.lastCopiedCreatedAt, copies: 3, lastError: written.lastError });
+  assert.ok(!("folder" in copy));
+  assert.ok(!JSON.stringify(backups.status()).includes("usb"), "no path in the status");
+  write({ ...written, format: 2 });
+  assert.equal(backups.status().copy.state, "waiting", "a format this Kin doesn't know is ignored");
+  setSettings(resolveHomeSettings({ format: 1, backupCopyFolder: folder }, {}));
+  assert.equal(backups.status().copy.state, "off", "no copies before setup");
 });

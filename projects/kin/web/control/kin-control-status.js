@@ -7,7 +7,7 @@
 // "updates" (#722) come from the server's sections; `SECTIONS` below says
 // how each renders.
 import { el, details } from "./dom.js";
-import { explain, explainBackupState, explainCertificateState, explainTransparency, explainTunnelState } from "./explain.js";
+import { explain, explainBackupCopyState, explainBackupState, explainCertificateState, explainTransparency, explainTunnelState } from "./explain.js";
 import { countOf, formatBytes, formatDate, formatDateTime, formatHour } from "./format.js";
 
 const tone = (good) => (good ? "good" : "attention");
@@ -126,6 +126,15 @@ function lastUpdate(update) {
   return el("p", { className: "control-problem", "data-update": "failed", "data-code": update.code, text: `Kin ${update.to} wasn't installed. ${explain(update.code)}` });
 }
 
+/** The copy to a second folder (#763), in a few words for its row. */
+function copyRow(copy) {
+  if (!copy) return null;
+  if (copy.state === "off") return "Not set up";
+  if (copy.state === "waiting") return "Kin is checking the folder";
+  if (copy.state === "ok") return copy.copies > 0 && copy.lastCopiedCreatedAt ? `${countOf(copy.copies, "copy", "copies")}, the newest from ${formatDateTime(copy.lastCopiedCreatedAt)}` : "No backups to copy yet";
+  return explainBackupCopyState(copy.state);
+}
+
 function lastRestore(restore) {
   if (!restore) return null;
   if (restore.outcome === "restored")
@@ -139,7 +148,7 @@ export const SECTIONS = {
     title: "Backups",
     notBuilt: "Scheduled backups aren't part of this version yet. Until then, back up with “kin admin backup”, as the home server guide shows.",
     error: "Kin couldn't read the backup status.",
-    tone: (value) => (value.state === "failed" || value.lastRestore?.outcome === "failed" ? "attention" : value.state === "ok" || value.state === "running" ? "good" : null),
+    tone: (value) => (value.state === "failed" || value.lastRestore?.outcome === "failed" || value.copy?.state === "failed" ? "attention" : value.state === "ok" || value.state === "running" ? "good" : null),
     render: (value) => [
       el("p", { className: "control-state", text: explainBackupState(value.state) }),
       details([
@@ -147,10 +156,12 @@ export const SECTIONS = {
         ["Next backup", backupNext(value)],
         ["Every day at", Number.isInteger(value.hour) ? formatHour(value.hour) : null],
         ["Kept", Array.isArray(value.backups) ? `${countOf(value.backups.length, "backup", "backups")} of the newest ${value.kept ?? 14}, ${formatBytes(value.totalBytes)} in all` : null],
+        ["Second copy", copyRow(value.copy)],
       ]),
       ...(value.lastError ? [el("p", { className: "control-problem", "data-code": value.lastError.code, text: explain(value.lastError.code) })] : []),
+      ...(value.copy?.state === "failed" && value.copy.lastError ? [el("p", { className: "control-problem", "data-code": value.copy.lastError.code, text: explain(value.copy.lastError.code) })] : []),
       ...[lastRestore(value.lastRestore)].filter(Boolean),
-      el("p", { className: "control-muted", text: "A backup holds this home server's keys as well as Kin's data: whoever has a copy could pretend to be your home server. Keep backups as private as this computer." }),
+      el("p", { className: "control-muted", text: "A backup holds this home server's keys as well as Kin's data: whoever has a copy could pretend to be your home server. Keep backups, and any drive they're copied to, as private as this computer." }),
     ],
   },
   updates: {
