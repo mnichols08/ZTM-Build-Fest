@@ -115,21 +115,21 @@ export async function applyRegressionDefaults(send) {
 }
 
 /**
- * A tab's load trace (#594), the same one browser-regression.mjs prints: the
+ * A tab's load trace (#594), which every browser suite prints: the
  * recent navigations, document loads, service worker states, failed requests
  * and uncaught exceptions, in order, with how many scripts each document load
  * sent, finished and lost, and which loads lost a module request. Pass every
  * CDP event to observe(). It sees a load only if the Page, Network and
  * Runtime domains (and ServiceWorker, for worker states) are on before the
- * tab navigates to Kin.
+ * tab navigates to Kin. Tabs that pass one `aborted` map share it, so one
+ * summary can cover them all.
  */
-export function createLoadTrace({ now = Date.now } = {}) {
+export function createLoadTrace({ now = Date.now, aborted = new Map() } = {}) {
   const timeline = [];
   const loaders = new Map();
   const inFlight = new Map();
-  // Document loads that lost a module request, by load: the start-up guard
-  // (web/boot-guard.js) should have loaded each again.
-  const aborted = new Map();
+  // Document loads that lost a module request, by load (in `aborted`): the
+  // start-up guard (web/boot-guard.js) should have loaded each again.
   let workerStates = "";
   const short = (value) => String(value ?? "").replace(/^https?:\/\/[^/]+/, "").slice(0, 70);
   const tag = (loaderId) => (loaderId ? String(loaderId).slice(-5) : "-");

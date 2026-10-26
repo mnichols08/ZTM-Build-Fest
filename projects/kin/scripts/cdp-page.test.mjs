@@ -77,3 +77,13 @@ test("createLoadTrace has no aborted summary when nothing was cancelled", () => 
   assert.equal(trace.abortedSummary(), "");
   assert.match(trace.lines().at(-1), /exception Error: boom/);
 });
+
+test("createLoadTrace can share one aborted map across tabs, for one summary", () => {
+  const aborted = new Map();
+  for (const [tab, path] of [["TAB1", "/a.js"], ["TAB2", "/b.js"]]) {
+    const trace = createLoadTrace({ aborted });
+    trace.observe({ method: "Network.requestWillBeSent", params: { requestId: "1", loaderId: tab, type: "Script", request: { url: `http://127.0.0.1:1${path}` } } });
+    trace.observe({ method: "Network.loadingFailed", params: { requestId: "1", type: "Script", errorText: "net::ERR_ABORTED", canceled: true } });
+  }
+  assert.equal(createLoadTrace({ aborted }).abortedSummary(), "2 page load(s) lost a module request (/a.js, /b.js); the start-up guard loads such a page again");
+});
