@@ -472,6 +472,16 @@ documentation only.
   `web/components/app/wake.js`) from the focus until its refresh begins or
   it decides not to refresh, so anything waiting for Kin to settle waits for
   that refresh too.
+- **Just for me no longer drops a tap made while saving** (#792). Ticking
+  an item, saving a note, deleting, sharing or adding straight after
+  another change did nothing while that change was still saving. Changes
+  now wait their turn and run in order. Added words leave the field at
+  once, so pressing Enter twice adds them once; if the add can't be saved,
+  they come back; if the field is in use by then, the message names the
+  words that weren't added. While a change waits, the list shows it as
+  tapped, and a second tap that would change nothing more (Delete, Undo or
+  Save twice) is ignored instead of showing "That changed meanwhile". Focus
+  moves after a change only when nothing was tapped after it.
 - **The connection relay frees a tunnel handshake its client aborts**
   (#733). A home server that refused the relay's certificate left the
   connection open on the relay until Node's 120-second default, and the
