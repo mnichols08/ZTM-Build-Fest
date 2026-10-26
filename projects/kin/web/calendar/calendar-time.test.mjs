@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  addDays, addMonths, daysBetween, fromIsoDate, fromTimeText, instantToWall, isoDate, monthGrid, startOfWeek, stepFocus,
+  addDays, addMonths, daysBetween, fromIsoDate, fromTimeText, instantToWall, isoDate, monthGrid, showsToday, startOfWeek, stepFocus,
   timeText, toViewerWall, viewRange, wallToInstant, weekAnchor, weekday, zoneOffsetMinutes,
 } from "./calendar-time.js";
 
@@ -41,6 +41,18 @@ test("view ranges: a week from today, a day, six weeks for a month", () => {
   assert.equal(stepFocus("week", 20261007, 1), 20261014);
   assert.equal(stepFocus("month", 20261031, 1), 20261130);
   assert.equal(stepFocus("day", 20261007, -1), 20261006);
+});
+
+test("Today goes back to today's own month, even when the month shown has today in its grid", () => {
+  const today = 20261026;
+  assert.equal(viewRange("month", 20261126, today).from, today, "November's grid starts on Monday 26 October");
+  assert.equal(showsToday("month", 20261126, today), false);
+  assert.equal(showsToday("month", 20261003, today), true);
+  assert.equal(showsToday("month", 20251026, today), false, "the same month a year earlier");
+  assert.equal(showsToday("week", 20261030, today), true);
+  assert.equal(showsToday("week", 20261102, today), false);
+  assert.equal(showsToday("day", today, today), true);
+  assert.equal(showsToday("day", 20261027, today), false);
 });
 
 test("form values", () => {

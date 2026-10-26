@@ -19,7 +19,7 @@
 // start and end of the week, Page Up and Page Down to the previous or next
 // week (month in the Month view). Enter opens the day. One button in each
 // group is in the tab order (a roving tabindex).
-import { addDays, addMonths, civilParts, dateSpan, monthGrid, startOfWeek, stepFocus, viewRange, weekAnchor } from "../../calendar/calendar-time.js";
+import { addDays, addMonths, civilParts, dateSpan, monthGrid, showsToday, startOfWeek, stepFocus, viewRange, weekAnchor } from "../../calendar/calendar-time.js";
 import { dayLabel, isWeekend, layoutDay, monthLabel, shortDayLabel, timeLabel, weekdayNames } from "../../calendar/calendar-layout.js";
 import { eventChip, extraLine, swatches } from "./event-chip.js";
 
@@ -172,7 +172,7 @@ class KinCalendar extends HTMLElement {
     this.previous.textContent = "‹ Previous";
     this.next.textContent = "Next ›";
     const { from, to } = this.range();
-    this.todayButton.disabled = this.isDisabled || (this.today >= from && this.today <= to && (this.view !== "day" || focus === this.today));
+    this.todayButton.disabled = this.isDisabled || showsToday(this.view, focus, this.today);
     if (this.view === "month") this.period.textContent = monthLabel(focus);
     else if (this.view === "day") this.period.textContent = dayLabel(focus, { year: civilParts(focus).year !== civilParts(this.today).year });
     else this.period.textContent = from === this.today ? "This week" : `Week of ${dayLabel(from)}`;
