@@ -432,7 +432,11 @@ compare-and-set. On a conflict it downloads, merges and retries once. A
 merge only adds keys; the same epoch with different key bytes is refused.
 A device keeps VK in its bound device record (above, "Creating it"); each
 unlocked household panel runs the keeper once (for keys installed while it
-was offline or locked) and then on every install.
+was offline or locked) and then on every install. The device that commits a
+household key rotation updates its own member's vault in the same request
+as the commit (#791, [SYNC](SYNC.md#rotation-and-the-account-vault-791)), so
+the new key is in the vault before any device installs it; the keeper covers
+every other install.
 
 **Service storage (server schema 21; usernames in 23).** `account_vaults` (member, household,
 version, update time, sealed bytes), `account_vault_wrappers` (wrapper ID,

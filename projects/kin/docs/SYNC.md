@@ -209,6 +209,31 @@ the proposal's expected epoch. Rotation runs under a cross-tab Web Lock
 check and the discard; a tab that finds the lock held skips that pass. A recipient set that is unchanged or grows keeps the
 pending key.
 
+### Rotation and the account vault (#791)
+
+The device that commits a rotation would otherwise be the only holder of the
+new key until its vault keeper ran ([ADR 0018](decisions/0018-account-key-vault.md)).
+If it holds the member's vault key, it downloads the member's vault, merges
+in the pending proposal's key (opened from the proposal's self-sealed copy,
+not installed) and sends the result sealed for the next vault version with
+the commit: `vaultChange: { expectedVersion, ciphertext }`. The service runs
+every rotation check first (epoch limit, retry, stale epoch, recipients,
+packages, capacity), then stores the vault compare-and-set, then advances the
+epoch, all in one database transaction; a refused vault change commits
+nothing, and a refused rotation stores no vault change. A retried proposal
+never touches the vault. The answer's `vault` is `{ version }` when the vault
+was stored, otherwise null; an older service leaves it out.
+
+On `vault_version_conflict` the device downloads again, merges and resends
+the same proposal, at most three requests in all. After that, and on
+`vault_not_found`, `vault_rate_limited`, `vault_invalid` or
+`request_too_large`, it sends the proposal once without the vault change,
+which is the older path: the keeper adds the key after it is installed. The
+same happens without a vault key or a vault, or when the vault already holds
+a different key for that epoch or doesn't open. Any other refusal (such as
+`stale_key_epoch`) is handled as before. The request body may be up to about
+344 KB on this route, room for 64 packages and a 64 KiB vault.
+
 A device whose first sync finds a rotation pending sets up its sync state
 first, then commits the rotation. History it held before joining is queued
 without a key epoch, like a new change, and its identity binding waits too, so

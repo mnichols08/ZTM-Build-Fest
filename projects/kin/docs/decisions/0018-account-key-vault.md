@@ -77,6 +77,19 @@ usable form. A trusted device updates the vault whenever the member's keys
 change (a new epoch after a revocation, a new private-storage epoch); updates
 are compare-and-set on the version, like local `configRevision`.
 
+*As built (#791).* A device that commits a household key rotation sends its
+vault, re-sealed with the new key, in the same request (POST
+/api/sync/epochs `vaultChange`, `{ expectedVersion, ciphertext }`), and the
+service stores both in one transaction or neither. The new key is never only
+on a device that might be lost. Sealing the key into the vault before the
+commit was rejected: a proposal that loses would leave a wrong key for that
+epoch. On a vault conflict the device downloads, merges and retries the same
+proposal (at most three requests carry the change). Without a vault key or
+a vault, or when the vault change is refused for another reason, it commits
+as before and the keeper adds the key afterwards. Each request with the
+change counts as one vault write, and a member without a vault gets 404
+`vault_not_found`.
+
 ### 2. Signing in: a password, with a passkey as the second step
 
 - **Username and password.** The person picks a username (unique on the
