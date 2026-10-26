@@ -371,6 +371,37 @@ for (const durable of [true, false]) {
   });
 }
 
+test("a rotation that fails after its vault change was stored rolls the vault back with it", { timeout: 60_000 }, async () => {
+  // The vault is written first and the epoch saved last, so only the one
+  // transaction keeps a failed commit from leaving the vault holding a key
+  // for an epoch that never committed (later refused as vault_epoch_conflict).
+  const server = await startServer({ durable: true });
+  try {
+    const household = await oneDevice(server);
+    const before = household.stored();
+    const saveSyncState = server.store.saveSyncState.bind(server.store);
+    let fail = true;
+    server.store.saveSyncState = (...args) => {
+      if (fail) {
+        fail = false;
+        assert.equal(household.stored().version, 2, "the vault change was stored before the epoch");
+        throw new Error("The disk is full.");
+      }
+      return saveSyncState(...args);
+    };
+    const failed = await household.commit({ vaultChange: { expectedVersion: 1, ciphertext: sealedVault(140, 8) } });
+    assert.equal(failed.status, 500, JSON.stringify(failed.body));
+    assert.equal(fail, false, "the save was reached");
+    assert.equal(household.stored().version, before.version, "the vault change is rolled back");
+    assert.ok(same(household.stored().ciphertext, before.ciphertext));
+    const reloaded = household.reloaded();
+    assert.equal(reloaded.currentEpoch, 1, "and the epoch never committed");
+    assert.equal(reloaded.rotationPending, true);
+  } finally {
+    await server.close();
+  }
+});
+
 test("a rotation with a full-size vault fits the request limit; a bigger body is refused", { timeout: 60_000 }, async () => {
   const server = await startServer();
   try {
