@@ -228,6 +228,56 @@ test("the admin check takes several devices at once", async (t) => {
     { code: "last_household_admin" });
 });
 
+// #778: a device from the old address can't sign in here, so it doesn't keep
+// a household admin's access usable.
+test("an admin's devices from the old address don't count as usable access", async (t) => {
+  const household = await movedHousehold(t);
+  const { service, admin, adminTablet, adminLaptop } = household;
+  const record = service.households.get(admin.householdId);
+  // Only the old laptop would be left.
+  assert.throws(() => service.requireAdminAccessAfterRevocation(record, [admin.deviceId, adminTablet.deviceId]),
+    { code: "last_household_admin" });
+  // One that still has a token can sign in here, so it counts.
+  const laptop = service.devices.get(adminLaptop.deviceId);
+  laptop.tokenHash = "a-token-hash";
+  laptop.carriedOver = true;
+  assert.doesNotThrow(() => service.requireAdminAccessAfterRevocation(record, [admin.deviceId, adminTablet.deviceId]));
+});
+
+test("an admin whose devices are all from the old address isn't another usable admin", async (t) => {
+  const household = await movedHousehold(t);
+  const { service, admin, sam } = household;
+  // Sam is an admin, but both of Sam's devices came from the old address.
+  service.members.get(sam.memberId).householdAdmin = true;
+  assert.throws(() => service.setHouseholdAdmin(admin.sessionToken, admin.memberId, false, admin.memberId),
+    { code: "last_household_admin" });
+  assert.throws(() => service.leaveHousehold(admin.sessionToken, admin.memberId),
+    { code: "last_household_admin" });
+  assert.equal(service.members.get(admin.memberId).householdAdmin, true);
+  assert.equal(service.members.get(admin.memberId).active, true);
+
+  // The removal itself still goes ahead: the admin keeps devices signed in here.
+  assert.deepEqual([...service.carriedOverRevocationContext(admin.sessionToken).deviceIds].sort(), [...household.carriedIds].sort());
+
+  // Once Sam's tablet re-joins, Sam has usable access and the admin may step down.
+  service.issueDeviceToken(service.devices.get(household.samTablet.deviceId));
+  assert.equal(service.setHouseholdAdmin(admin.sessionToken, admin.memberId, false, admin.memberId).changed, true);
+});
+
+test("an Adult whose devices are all from the old address isn't another usable trusted Adult", async (t) => {
+  const household = await movedHousehold(t);
+  const { service, admin, robin, sam } = household;
+  const record = service.households.get(admin.householdId);
+  assert.equal(service.hasUsableTrustedDevice(sam.memberId), false);
+  // Leave the admin with only the old laptop: then the other Adults besides
+  // Robin have only devices from the old address, and neither counts.
+  for (const { deviceId } of [admin, household.adminTablet]) service.devices.get(deviceId).revokedAt = service.now();
+  assert.equal(service.hasOtherUsableTrustedAdult(record, robin.memberId), false);
+  assert.throws(() => service.leaveHousehold(robin.sessionToken, robin.memberId), { code: "last_adult" });
+  service.issueDeviceToken(service.devices.get(household.samTablet.deviceId));
+  assert.equal(service.hasOtherUsableTrustedAdult(record, robin.memberId), true);
+});
+
 test("an admin with no passkey confirms the removal with their password", { timeout: 60_000 }, async () => {
   const salt = new Uint8Array(16).fill(3);
   const { authKey, passwordKey } = await derivePasswordKeys("four unrelated words", salt);

@@ -398,9 +398,16 @@ export const membershipMethods = {
     return { ...household.choreChart, changed: true };
   },
 
+  // A usable device is unrevoked and can sign in here. One carried over from
+  // the old address (ADR 0026 §6) has no token until it re-joins, so it
+  // doesn't count (#778).
+  canSignInHere(device) {
+    return !device.revokedAt && (device.carriedOver !== true || Boolean(device.tokenHash));
+  },
+
   hasUsableTrustedDevice(memberId) {
     return [...this.devices.values()].some((device) =>
-      device.memberId === memberId && !device.revokedAt,
+      device.memberId === memberId && this.canSignInHere(device),
     );
   },
 
@@ -415,13 +422,13 @@ export const membershipMethods = {
 
   // Usable admin access needs a recorded admin who can confirm freshly (a
   // passkey, or a password until they add one, #558) and an unrevoked
-  // trusted device; the admin flag alone is not enough.
+  // trusted device that can sign in here; the admin flag alone is not enough.
   hasUsableAdminAccess(household, excludingDeviceIds = []) {
     return [...household.members].some((memberId) => {
       const admin = this.members.get(memberId);
       return isHouseholdAdmin(admin, this.now()) && this.canConfirmFreshly(admin) &&
         [...this.devices.values()].some((device) =>
-          device.memberId === memberId && !device.revokedAt &&
+          device.memberId === memberId && this.canSignInHere(device) &&
           !excludingDeviceIds.includes(device.id));
     });
   },
