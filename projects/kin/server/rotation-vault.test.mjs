@@ -6,6 +6,7 @@
 // that device in the window left a backup-code (or password, or passkey)
 // sign-in on a new device without the key, with sync paused for good.
 import assert from "node:assert/strict";
+import { request as httpRequest } from "node:http";
 import test from "node:test";
 import { derivePasswordKeys, generateCertificationKey, generateVaultKey, openVault, sealVault, wipeVaultContents } from "../web/security/account-vault.js";
 import { backupCodeChange, makeWrapper, passwordParams, wrapperChangeBody } from "../web/security/account-wrappers.js";
@@ -41,6 +42,24 @@ async function deviceKeys() {
   const keys = await generateDeviceKeys();
   const publicKeys = await exportDevicePublicKeys(keys);
   return { keys, publicKeys, fingerprint: await deviceKeyFingerprint(publicKeys) };
+}
+
+// Sends only the headers of a body `length` bytes long and reads the answer.
+// A body over the limit is refused by its declared length and the connection
+// closed, so a client still uploading it may see a reset instead of the 413.
+function declareBody(url, path, length, jar) {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(`${url}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": String(length), Cookie: [...jar].map(([name, value]) => `${name}=${value}`).join("; ") },
+    }, (response) => {
+      let text = "";
+      response.on("data", (data) => { text += data; });
+      response.on("end", () => { request.destroy(); resolve({ status: response.statusCode, body: JSON.parse(text) }); });
+    });
+    request.on("error", reject);
+    request.flushHeaders();
+  });
 }
 
 async function startServer({ durable = true, options = {} } = {}) {
@@ -414,7 +433,8 @@ test("a rotation with a full-size vault fits the request limit; a bigger body is
     const large = await household.commit({ packages, vaultChange: { expectedVersion: 1, ciphertext } });
     assert.equal(large.status, 409, JSON.stringify(large.body).slice(0, 200));
     assert.equal(large.body.error, "provisioning_device_mismatch");
-    const tooLarge = await household.commit({ packages: [...packages, ...packages], vaultChange: { expectedVersion: 1, ciphertext } });
+    const oversized = JSON.stringify({ expectedEpoch: 1, packages: [...packages, ...packages], proposalId: "f".repeat(32), vaultChange: { expectedVersion: 1, ciphertext } });
+    const tooLarge = await declareBody(server.url, "/api/sync/epochs", Buffer.byteLength(oversized), household.founder.jar);
     assert.equal(tooLarge.status, 413);
     assert.equal(tooLarge.body.error, "request_too_large");
     const committed = await household.commit({ vaultChange: { expectedVersion: 1, ciphertext } });
