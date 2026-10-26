@@ -16,6 +16,8 @@
 // which stays until the next change (WCAG 2.2.1); nothing here times out.
 // Changes save one at a time: a tap made while one saves waits its turn and
 // runs after it (#792), so nothing tapped is lost and no control changes.
+// Until then the list shows what it will be once saved, and a repeat tap that
+// would change nothing more is ignored rather than refused as a conflict.
 import { button } from "./shared/dom.js";
 import { privateMarker } from "./shared/private-marker.js";
 import { formatCivilDate } from "../today-view.js";
@@ -43,6 +45,8 @@ class KinJustForMe extends HTMLElement {
     // The changes tapped so far, run in order, and how many haven't finished.
     this.queue = Promise.resolve();
     this.waiting = 0;
+    // The changes waiting or saving, in tap order: `{ command, item }`.
+    this.pending = [];
     this.openIds = new Set();
     this.completedOpen = false;
     this.undo = null;
@@ -178,8 +182,10 @@ class KinJustForMe extends HTMLElement {
     for (const details of this.querySelectorAll(".private-more")) {
       if (details.open) this.openIds.add(details.dataset.privateId); else this.openIds.delete(details.dataset.privateId);
     }
-    const open = this.items.filter((item) => !item.completed).sort((left, right) => (left.date ?? 99999999) - (right.date ?? 99999999) || left.addedAt - right.addedAt);
-    const completed = this.items.filter((item) => item.completed);
+    // A deleted item keeps its row until the delete is saved.
+    const items = this.items.map((item) => this.expected(item.id) ?? item);
+    const open = items.filter((item) => !item.completed).sort((left, right) => (left.date ?? 99999999) - (right.date ?? 99999999) || left.addedAt - right.addedAt);
+    const completed = items.filter((item) => item.completed);
     this.list.replaceChildren(...open.map((item) => this.row(item)));
     this.list.hidden = !open.length;
     this.empty.hidden = open.length > 0;
@@ -190,7 +196,7 @@ class KinJustForMe extends HTMLElement {
     this.doneSummary.textContent = `Completed (${completed.length})`;
     this.doneList.replaceChildren(...completed.map((item) => this.row(item)));
     this.done.open = this.completedOpen;
-    this.settingBox.checked = this.onToday;
+    this.settingBox.checked = this.expectedOnToday();
     if (focusKey) this.findByKey(focusKey)?.focus({ preventScroll: true });
   }
 
@@ -285,7 +291,7 @@ class KinJustForMe extends HTMLElement {
     textInput.autocomplete = "off";
     const saveText = button("Save", () => {
       const value = textInput.value.trim();
-      if (!value || value === item.text) return;
+      if (!value) return;
       void this.perform({ type: "edit-private-item", itemId: item.id, text: value }, `Saved ${quoted(value)}.`);
     });
     saveText.setAttribute("aria-label", `Save the new wording of ${item.text}`);
@@ -295,7 +301,6 @@ class KinJustForMe extends HTMLElement {
     dateInput.value = inputFromCivil(item.date);
     const saveDate = button("Save date", () => {
       const date = civilFromInput(dateInput.value);
-      if (date === (item.date ?? null)) return;
       void this.perform({ type: "date-private-item", itemId: item.id, date }, date ? `Date saved for ${quoted(item.text)}.` : `Date cleared for ${quoted(item.text)}.`);
     });
     saveDate.setAttribute("aria-label", `Save the date of ${item.text}`);
@@ -306,7 +311,6 @@ class KinJustForMe extends HTMLElement {
     note.value = item.note ?? "";
     const saveNote = button("Save note", () => {
       const value = note.value.trim();
-      if (value === (item.note ?? "")) return;
       void this.perform({ type: "set-private-item-note", itemId: item.id, note: value }, value ? "Note saved." : "Note removed.");
     });
     saveNote.setAttribute("aria-label", `Save the note on ${item.text}`);
@@ -339,17 +343,24 @@ class KinJustForMe extends HTMLElement {
     // The words leave the field now, so a second Enter can't add them twice.
     this.input.value = "";
     this.dateInput.value = "";
-    const done = await this.perform({ type: "add-private-item", itemId: newId(), text, date }, `Added ${quoted(text)}. Only you can see it.`, {
+    await this.perform({ type: "add-private-item", itemId: newId(), text, date }, `Added ${quoted(text)}. Only you can see it.`, {
       onSaved: () => { if (this.lastInLine) this.input.focus(); },
+      // The words come back to an empty field; one in use keeps what's in
+      // it, and the message says which words weren't added.
+      onFailed: (message) => {
+        if (this.input.value) {
+          this.say(`${quoted(text)} wasn't added. ${message}`);
+          return;
+        }
+        this.input.value = text;
+        this.dateInput.value = dateValue;
+      },
     });
-    if (!done && !this.input.value) {
-      this.input.value = text;
-      this.dateInput.value = dateValue;
-    }
   }
 
   async remove(item) {
     await this.perform({ type: "delete-private-item", itemId: item.id }, `Deleted ${quoted(item.text)}.`, {
+      item,
       keepUndo: true,
       // Before the next change starts, which ends this Undo.
       onSaved: () => {
@@ -365,6 +376,7 @@ class KinJustForMe extends HTMLElement {
     const item = this.undo;
     if (!item) return;
     await this.perform({ type: "restore-private-item", itemId: item.id }, `Restored ${quoted(item.text)}.`, {
+      item,
       onSaved: () => { if (this.lastInLine) this.findByKey(`${item.id}:done`)?.focus(); },
     });
   }
@@ -390,22 +402,72 @@ class KinJustForMe extends HTMLElement {
   }
 
   /** Runs one private command in its turn. Resolves true when it was saved;
-   * `onSaved` runs then, before the next change starts. */
-  perform(command, message, { keepUndo = false, onSaved = null } = {}) {
-    if (!this.controller) return Promise.resolve(false);
+   * `onSaved` (or `onFailed`, given the message shown) runs then, before the
+   * next change starts. A command that would change nothing once the changes
+   * before it are saved, such as a second tap on Delete, isn't run. */
+  perform(command, message, { item = null, keepUndo = false, onSaved = null, onFailed = null } = {}) {
+    if (!this.controller || this.changesNothing(command)) return Promise.resolve(false);
+    const entry = { command, item };
+    this.pending.push(entry);
     return this.enqueue(async () => {
       if (!keepUndo) this.clearUndo();
       try {
         await this.controller.run(command);
       } catch (error) {
-        this.say(error?.userMessage ?? "Kin couldn't save that private change. Try again.");
+        this.pending.splice(this.pending.indexOf(entry), 1);
+        const shown = error?.userMessage ?? "Kin couldn't save that private change. Try again.";
+        this.say(shown);
+        onFailed?.(shown);
         this.render();
         return false;
       }
+      this.pending.splice(this.pending.indexOf(entry), 1);
       this.say(message);
       onSaved?.();
       return true;
     });
+  }
+
+  /** The item as it will be once the changes waiting for it are saved; null
+   * when it won't be in the list. */
+  expected(id) {
+    let item = this.items.find((entry) => entry.id === id) ?? null;
+    for (const { command, item: before } of this.pending) {
+      if (command.itemId !== id) continue;
+      if (command.type === "restore-private-item") { item = item ?? before; continue; }
+      if (!item) continue;
+      switch (command.type) {
+        case "delete-private-item": item = null; break;
+        case "complete-private-item": item = { ...item, completed: true }; break;
+        case "reopen-private-item": item = { ...item, completed: false }; break;
+        case "edit-private-item": item = { ...item, text: command.text }; break;
+        case "date-private-item": item = { ...item, date: command.date }; break;
+        case "set-private-item-note": item = { ...item, note: command.note }; break;
+      }
+    }
+    return item;
+  }
+
+  expectedOnToday() {
+    return this.pending.reduce((on, { command }) => (command.type === "set-private-items-on-today" ? command.on : on), this.onToday);
+  }
+
+  /** True when `command` repeats what the changes already tapped will do
+   * (Rust refuses a change that changes nothing). */
+  changesNothing(command) {
+    if (command.type === "set-private-items-on-today") return command.on === this.expectedOnToday();
+    if (command.type === "add-private-item") return false;
+    const item = this.expected(command.itemId);
+    switch (command.type) {
+      case "restore-private-item": return item != null;
+      case "delete-private-item": return item == null;
+      case "complete-private-item": return item?.completed !== false;
+      case "reopen-private-item": return item?.completed !== true;
+      case "edit-private-item": return item?.text === command.text;
+      case "date-private-item": return (item?.date ?? null) === command.date;
+      case "set-private-item-note": return (item?.note ?? "") === command.note;
+      default: return false;
+    }
   }
 
   clearUndo() {
