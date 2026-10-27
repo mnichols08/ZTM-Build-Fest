@@ -125,6 +125,12 @@ async function receiveShare(request) {
 
 self.addEventListener("message", (event) => {
   if (event.data?.type === "KIN_SKIP_WAITING") void self.skipWaiting();
+  // A page whose load began before this worker activated missed the claim
+  // below and asks for one (#770); otherwise it starts offline without it.
+  // Only a page of this worker's own release: a newer page (after a hard
+  // reload while an older tab keeps this worker) would get this release's
+  // cached files, such as an older engine for its newer kin-engine.js.
+  if (event.data?.type === "KIN_CLAIM" && event.data.release === RELEASE) event.waitUntil(self.clients.claim());
   if (event.data?.type === "kin-share-take" && event.ports?.[0]) {
     forgetOldShares();
     const share = shares.get(event.data.id) ?? null;

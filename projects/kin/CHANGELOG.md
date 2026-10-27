@@ -465,6 +465,14 @@ documentation only.
 
 ### Fixed
 
+- **A page opened while Kin first saves its offline copy works offline**
+  (#770). The service worker takes over the open pages when it finishes
+  installing, but a page whose load had already started missed that and
+  stayed without it until the next load, so locking and then unlocking it
+  offline failed with "Kin could not start its household engine". The page
+  now asks the worker to take it over (`KIN_CLAIM`, `web/service-worker.js`,
+  `web/components/app/status.js`); `scripts/worker-claim-regression.mjs`
+  checks it in its own CI job.
 - **A wake counts as busy until its refresh starts** (#793). Coming back to
   Kin (window focus, the tab showing again, the Pulse timer) checks whether
   another tab locked before it refreshes, and until now Kin looked idle

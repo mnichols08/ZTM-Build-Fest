@@ -1242,6 +1242,8 @@ async function launchProfile(executable, label, origin) {
       const report = { errors: diagnostics.errors.slice(-10), failed: diagnostics.failed.slice(-10), open: [...diagnostics.open.values()].slice(-20) };
       error.message += ` | page diagnostics: ${JSON.stringify(report)}`;
     },
+    // How the tab loaded Kin, with its service worker's states (#594, #770).
+    printTrace() { printLoadTrace(loadTrace, label); },
     async setOffline(offline) {
       await send("Network.emulateNetworkConditions", { offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     },
@@ -1564,6 +1566,8 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "Limited C's device switches to Simple view on its next poll: " + JSON.stringify(simple));
     check(await c.call(pageLockNow), "Limited C locks");
     const shell = await c.callStable(pageOfflineShell);
+    // The trace shows whether C's last load began before its worker activated (#770).
+    if (!(shell.controlled && shell.engine)) c.printTrace();
     check(shell.controlled && shell.engine, "Limited C's service worker controls the page and holds the shell before going offline: " + JSON.stringify(shell));
     await c.send("Network.emulateNetworkConditions", { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     try {
@@ -1572,6 +1576,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       check(simple.unlocked && simple.simple && !simple.lists, "an offline unlock opens Simple view from the cached layout: " + JSON.stringify(simple));
     } catch (error) {
       c.addDiagnostics(error);
+      c.printTrace();
       throw error;
     } finally {
       await c.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });

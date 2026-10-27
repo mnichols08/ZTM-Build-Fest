@@ -636,6 +636,22 @@ Results and limits are recorded in
 Separate browser profiles on one machine are not physical devices, different
 networks or independent people; those drills remain manual.
 
+## A page that loads while the service worker installs (#770)
+
+The worker takes over open pages when it activates. A page whose load had
+already left for the network missed that and stayed without a worker until
+its next load, so it could not start offline. In the household drill this
+was a joining device's first reload, and it failed now and then on Edge.
+`scripts/worker-claim-regression.mjs` (its own CI job) makes it happen every
+time: its server holds one shell file, which keeps the install open, and
+the reloaded page's document until the worker has activated. It then checks
+that the page comes under the worker anyway (the page asks with
+`KIN_CLAIM`).
+
+```sh
+node scripts/verify.mjs --browser-only --suite worker-claim-regression
+```
+
 ## The home server's control panel (#718)
 
 The control panel's setup and status ([HOME-SERVER](HOME-SERVER.md#setting-it-up-the-control-panel),

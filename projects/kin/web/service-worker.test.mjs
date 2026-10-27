@@ -6,14 +6,15 @@ import vm from "node:vm";
 async function worker({ failPath, offline = false, release = '0.38.2' } = {}) {
   const listeners = new Map(); const stored = new Map([['kin-static-v0.38.1', new Map([['/index.html', new Response('old')]])]]);
   const clients = [{ postMessage() {} }];
+  const claims = [];
   const cacheApi = {
     async open(name) { if (!stored.has(name)) stored.set(name, new Map()); const entries = stored.get(name); return { async put(key, value) { entries.set(key, value); }, async match(key) { return entries.get(key); }, async delete(key) { return entries.delete(key); } }; },
     async keys() { return [...stored.keys()]; }, async delete(name) { return stored.delete(name); },
   };
-  const self = { registration: { active: true }, clients: { async matchAll() { return clients; }, async claim() {} }, location: { origin: 'https://kin.test', href: `https://kin.test/service-worker.js?v=${encodeURIComponent(release)}` }, addEventListener(type, callback) { listeners.set(type, callback); }, async skipWaiting() {} };
+  const self = { registration: { active: true }, clients: { async matchAll() { return clients; }, async claim() { claims.push(Date.now()); } }, location: { origin: 'https://kin.test', href: `https://kin.test/service-worker.js?v=${encodeURIComponent(release)}` }, addEventListener(type, callback) { listeners.set(type, callback); }, async skipWaiting() {} };
   const context = { self, caches: cacheApi, URL, Response, Promise, crypto, File, Date, fetch: async (request) => { const path = typeof request === 'string' ? request : new URL(request.url).pathname; if (offline || path === failPath) throw new Error('offline'); return new Response(`asset:${path}`); } };
   vm.runInNewContext(await readFile(new URL('./service-worker.js', import.meta.url), 'utf8'), context);
-  return { listeners, stored };
+  return { listeners, stored, claims };
 }
 
 test('complete new shell stages all assets while retaining prior cache until activation', async () => {
@@ -158,4 +159,26 @@ test('a share POST is answered by the worker, held in memory once, and never cac
   assert.deepEqual(shared.files.map((file) => file.name), ['photo.jpg'], 'empty files are dropped');
   assert.equal(await take(), null, 'taken once');
   for (const entries of stored.values()) assert.ok(![...entries.keys()].some((key) => String(key).includes('share')), 'nothing shared is cached');
+});
+
+test('a page that missed the activation claim can ask the worker for one (#770)', async () => {
+  const { listeners, claims } = await worker();
+  let claimed;
+  listeners.get('message')({ data: { type: 'KIN_CLAIM', release: '0.38.2' }, waitUntil(value) { claimed = value; } });
+  await claimed;
+  assert.equal(claims.length, 1, 'the worker claims the open pages and keeps running until it has');
+  listeners.get('message')({ data: { type: 'something-else' }, waitUntil() { throw new Error('not for other messages'); } });
+  assert.equal(claims.length, 1);
+});
+
+test('the worker claims only a page of its own release, so files never mix releases', async () => {
+  // A hard reload loads a newer release from the network while an older
+  // worker is still active for another tab. That worker would answer the
+  // page's later engine fetch from its own cache: a newer kin-engine.js
+  // with an older kin_engine.wasm.
+  const { listeners, claims } = await worker({ release: '0.38.1' });
+  for (const data of [{ type: 'KIN_CLAIM', release: '0.38.2' }, { type: 'KIN_CLAIM', release: '0.38.1+abc' }, { type: 'KIN_CLAIM' }]) {
+    listeners.get('message')({ data, waitUntil() { throw new Error(`no claim for ${JSON.stringify(data)}`); } });
+  }
+  assert.equal(claims.length, 0);
 });
