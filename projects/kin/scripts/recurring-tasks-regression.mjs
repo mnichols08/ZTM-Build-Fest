@@ -32,15 +32,21 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
     await client.send("Input.dispatchKeyEvent", { type: "keyUp", ...rest });
     await settle();
   };
-  // Headless Edge occasionally drops an insert sent in the same frame a modal
-  // dialog focused its field; retry only when the field is still unchanged.
+  // A wake refresh disables every control while it runs (the app's busy
+  // guard), and a disabled field drops typed text. Type only while idle, so
+  // the text is never sent into a refresh (#801). Headless Edge also
+  // occasionally drops an insert sent in the same frame a modal dialog
+  // focused its field; retry only when the field is still unchanged.
   const type = async (text) => {
+    await idle();
     const before = await page(() => document.activeElement?.value ?? null);
     for (let attempt = 0; attempt < 3; attempt++) {
       await client.send("Input.insertText", { text });
       await settle();
-      if ((await page(() => document.activeElement?.value ?? null)) !== before) return;
+      if ((await page(() => document.activeElement?.value ?? null)) !== before) break;
     }
+    const typed = await page(() => ({ value: document.activeElement?.value ?? null, focus: document.activeElement?.id || document.activeElement?.tagName }));
+    assert.ok(typed.value?.endsWith(text), `Repeating tasks: the typed text "${text}" is not in the field ${JSON.stringify(typed)}`);
   };
   const viewport = async (width, height, mobile) => {
     await setViewport(client, { width, height, deviceScaleFactor: 1, mobile });
