@@ -70,6 +70,10 @@ Exactly what ADR 0025 §4 allows:
 
 ## Running it
 
+On Oracle Cloud's free tier (or any Ubuntu server), [deploy/ORACLE.md](deploy/ORACLE.md)
+walks through the whole setup, and `deploy/install-ubuntu.sh` does the
+server's part of what follows.
+
 ### What you need
 
 - A machine with public IPv4 (and ideally IPv6) addresses, and Node.js
