@@ -125,6 +125,9 @@ async function receiveShare(request) {
 
 self.addEventListener("message", (event) => {
   if (event.data?.type === "KIN_SKIP_WAITING") void self.skipWaiting();
+  // A page whose load began before this worker activated missed the claim
+  // below and asks for one (#770); otherwise it starts offline without it.
+  if (event.data?.type === "KIN_CLAIM") event.waitUntil(self.clients.claim());
   if (event.data?.type === "kin-share-take" && event.ports?.[0]) {
     forgetOldShares();
     const share = shares.get(event.data.id) ?? null;
