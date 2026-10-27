@@ -70,6 +70,10 @@ Exactly what ADR 0025 §4 allows:
 
 ## Running it
 
+On Oracle Cloud's free tier (or any Ubuntu server), [deploy/ORACLE.md](deploy/ORACLE.md)
+walks through the whole setup, and `deploy/install-ubuntu.sh` does the
+server's part of what follows.
+
 ### What you need
 
 - A machine with public IPv4 (and ideally IPv6) addresses, and Node.js
@@ -121,7 +125,7 @@ HUP kin-relay"`); it reloads the files without dropping tunnels.
 | `KIN_RELAY_TLS_PORT`, `KIN_RELAY_HTTP_PORT`, `KIN_RELAY_DNS_PORT` | 443, 80, 53 | Ports; `off` turns port 80 or 53 off |
 | `KIN_RELAY_NAME_SERVERS` | `ns1.<zone>,ns2.<zone>` | The zone's NS names |
 | `KIN_RELAY_HOSTMASTER` | `hostmaster.<zone>` | The SOA contact, as a domain name |
-| `KIN_RELAY_ABUSE` | `abuse@<zone>` | The abuse address on the status page; make sure it is read |
+| `KIN_RELAY_ABUSE` | `abuse@<zone>` | The abuse address on the status page; make sure it is read. Set it to a mailbox outside the zone: the relay serves no mail records, so the default can't receive mail |
 | `KIN_RELAY_RESERVED` | | More reserved names, comma-separated (the built-in list is in `registry.mjs`) |
 | `KIN_RELAY_NEW_NAMES_PER_WEEK` | 20 | The cap on new free names across the relay while the zone's Public Suffix List entry isn't used by Let's Encrypt; `0` for no cap |
 | `KIN_RELAY_CT_URL` | `https://crt.sh/` | The Certificate Transparency search used once a day to free names that never got a certificate within 7 days; `off` never frees one |
