@@ -18,6 +18,8 @@ const BROWSER_RUNNERS = [
   ["security UI regression", "security-ui-regression.mjs"],
   ["passkey regression", "passkey-regression.mjs"],
   ["household authority regression", "household-authority-regression.mjs"],
+  // A page that loads while the service worker installs still comes under it (#770).
+  ["worker claim regression", "worker-claim-regression.mjs"],
   // The home server's control panel (#718): setup through the real relay.
   ["control panel regression", "control-panel-regression.mjs"],
 ];
