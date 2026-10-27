@@ -164,9 +164,21 @@ test('a share POST is answered by the worker, held in memory once, and never cac
 test('a page that missed the activation claim can ask the worker for one (#770)', async () => {
   const { listeners, claims } = await worker();
   let claimed;
-  listeners.get('message')({ data: { type: 'KIN_CLAIM' }, waitUntil(value) { claimed = value; } });
+  listeners.get('message')({ data: { type: 'KIN_CLAIM', release: '0.38.2' }, waitUntil(value) { claimed = value; } });
   await claimed;
   assert.equal(claims.length, 1, 'the worker claims the open pages and keeps running until it has');
   listeners.get('message')({ data: { type: 'something-else' }, waitUntil() { throw new Error('not for other messages'); } });
   assert.equal(claims.length, 1);
+});
+
+test('the worker claims only a page of its own release, so files never mix releases', async () => {
+  // A hard reload loads a newer release from the network while an older
+  // worker is still active for another tab. That worker would answer the
+  // page's later engine fetch from its own cache: a newer kin-engine.js
+  // with an older kin_engine.wasm.
+  const { listeners, claims } = await worker({ release: '0.38.1' });
+  for (const data of [{ type: 'KIN_CLAIM', release: '0.38.2' }, { type: 'KIN_CLAIM', release: '0.38.1+abc' }, { type: 'KIN_CLAIM' }]) {
+    listeners.get('message')({ data, waitUntil() { throw new Error(`no claim for ${JSON.stringify(data)}`); } });
+  }
+  assert.equal(claims.length, 0);
 });

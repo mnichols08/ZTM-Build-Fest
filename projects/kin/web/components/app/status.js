@@ -454,8 +454,9 @@ export class StatusController {
     // A load that began while the worker installed is not one of the pages
     // the worker claims when it activates, so it would stay uncontrolled
     // and could not start offline until its next load (#770). Ask for it.
+    // The worker claims only a page of its own release, so files never mix.
     void navigator.serviceWorker.ready.then((registration) => {
-      if (!navigator.serviceWorker.controller) registration.active?.postMessage({ type: "KIN_CLAIM" });
+      if (!navigator.serviceWorker.controller) registration.active?.postMessage({ type: "KIN_CLAIM", release });
     });
   }
 }
