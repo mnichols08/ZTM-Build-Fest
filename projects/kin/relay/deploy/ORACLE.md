@@ -30,25 +30,51 @@ server. The steps below are the parts only the account owner can do.
 4. **Compute → Instances → Create instance**:
    - Image: **Canonical Ubuntu 24.04** (or 22.04).
    - Shape: **VM.Standard.E2.1.Micro** (AMD, "Always Free-eligible").
-     Don't use the Ampere A1 shape for the relay: Oracle reclaims an A1
-     instance that stays under 20% CPU, network and memory for a week, and
-     a relay is idle most of the time.
    - Networking: the public subnet above, with a **public IPv4 address**.
    - Add your SSH public key.
 5. Note the instance's **public IP address**.
+6. **Keep Oracle from reclaiming it.** Oracle may reclaim *any* idle Always
+   Free instance, this shape included: one whose CPU (95th percentile) and
+   network use both stay under 20% for 7 days (for A1 shapes, memory too).
+   A relay is idle most of the time, so it would qualify, and if it is
+   stopped every home server loses its tunnel and every name in the zone
+   stops resolving. The usual way out is to upgrade the account to **Pay As
+   You Go** (Billing → Upgrade and manage payment): Oracle still doesn't
+   charge for Always Free resources, and reclamation is commonly reported
+   not to apply to paid accounts. Set a budget alert at a small amount so
+   a mistake shows up. Check Oracle's "Always Free Resources" page for the
+   current rules before relying on this.
+7. Consider making the public IP a **reserved public IP** (Networking → IP
+   management), so the address stays the same if the instance has to be
+   recreated: the A and glue records below point at it.
 
 ## 2. Run the script (first time)
 
 ```sh
 ssh ubuntu@<public IP>
 curl -fsSLO https://raw.githubusercontent.com/mnichols08/ZTM-Build-Fest/kin-development/projects/kin/relay/deploy/install-ubuntu.sh
-sudo RELAY_EMAIL=you@example.org bash install-ubuntu.sh
+sudo RELAY_EMAIL=you@example.org RELAY_ABUSE=abuse@example.org bash install-ubuntu.sh
 ```
 
+That URL works once `relay/deploy/` is on `kin-development`. Before then,
+copy the script from a checkout of the branch that has it instead:
+`scp projects/kin/relay/deploy/install-ubuntu.sh ubuntu@<public IP>:`.
+
 `RELAY_EMAIL` is the address Let's Encrypt writes to about the relay's own
-certificate. The first run installs Node.js, the relay, its service, the
-server's firewall rules and a daily copy of the name registry, then stops
-and prints the DNS records to add, because the certificate needs them.
+certificate. `RELAY_ABUSE` is the abuse address the relay shows on every
+name's status page: use a mailbox someone reads, **outside**
+`home.kin.journeytocode.io` (for example one at `journeytocode.io`). The
+relay answers every name in its zone and has no mail records there, so an
+address in the zone can't receive mail, and the script refuses one.
+
+The first run installs Node.js, the relay, its service, the server's
+firewall rules and a daily copy of the name registry, then stops and prints
+the DNS records to add, because the certificate needs them.
+
+On a VM that has just booted, Ubuntu's automatic updates often hold apt for
+a few minutes. The script waits for them (it says "apt is busy"); if it
+still stops with "Could not get lock", run it again a little later. It is
+safe to run again at any point.
 
 ## 3. DNS records (Google Cloud DNS, zone `journeytocode.io`)
 
@@ -70,7 +96,7 @@ there. Use a short TTL (300) while testing.
 ## 4. Run the script again
 
 ```sh
-sudo RELAY_EMAIL=you@example.org bash install-ubuntu.sh
+sudo RELAY_EMAIL=you@example.org RELAY_ABUSE=abuse@example.org bash install-ubuntu.sh
 ```
 
 Once `relay.kin.journeytocode.io` points at the VM, it gets the relay's

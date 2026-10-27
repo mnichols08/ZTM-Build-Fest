@@ -3,13 +3,14 @@
 # (written for an Oracle Cloud Always Free VM; relay/deploy/ORACLE.md).
 # Run it as root; running it again updates the relay and keeps its data.
 #
-#   sudo RELAY_EMAIL=you@example.org bash install-ubuntu.sh
+#   sudo RELAY_EMAIL=you@example.org RELAY_ABUSE=abuse@example.org bash install-ubuntu.sh
 #
 # Settings (environment), with their defaults:
 #   RELAY_NAME     relay.kin.journeytocode.io  the relay's own name
 #   RELAY_ZONE     home.kin.journeytocode.io   the zone for free names
 #   RELAY_EMAIL    (required)                  Let's Encrypt account e-mail
-#   RELAY_ABUSE    abuse@<zone>                address on the status page
+#   RELAY_ABUSE    (required)                  abuse address on the status page;
+#                                              a read mailbox outside RELAY_ZONE
 #   RELAY_IP       found from the internet     the VM's public IPv4
 #   RELAY_REPO     https://github.com/mnichols08/ZTM-Build-Fest.git
 #   RELAY_REF      kin-development             branch or tag to install from
@@ -22,7 +23,7 @@ set -euo pipefail
 RELAY_NAME=${RELAY_NAME:-relay.kin.journeytocode.io}
 RELAY_ZONE=${RELAY_ZONE:-home.kin.journeytocode.io}
 RELAY_EMAIL=${RELAY_EMAIL:-}
-RELAY_ABUSE=${RELAY_ABUSE:-abuse@${RELAY_ZONE}}
+RELAY_ABUSE=${RELAY_ABUSE:-}
 RELAY_REPO=${RELAY_REPO:-https://github.com/mnichols08/ZTM-Build-Fest.git}
 RELAY_REF=${RELAY_REF:-kin-development}
 NODE_VERSION=${NODE_VERSION:-24.22.0}
@@ -39,14 +40,28 @@ fail() { printf 'install-ubuntu.sh: %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || fail "run it as root (sudo)."
 [ -n "$RELAY_EMAIL" ] || fail "set RELAY_EMAIL to the e-mail for Let's Encrypt."
+[[ "$RELAY_ABUSE" == ?*@?* ]] || fail "set RELAY_ABUSE to the abuse address shown on the status page."
+# The relay answers every name in its zone and has no mail records there,
+# so an address in the zone (the relay's old default) can't receive mail.
+case "${RELAY_ABUSE##*@}" in
+  "$RELAY_ZONE"|*".$RELAY_ZONE") fail "RELAY_ABUSE can't be in $RELAY_ZONE: mail there can't be delivered. Use a mailbox outside it." ;;
+esac
 command -v apt-get >/dev/null || fail "this script is for Ubuntu (apt-get not found)."
 
 say "Packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
-apt-get install -y -q ca-certificates curl git xz-utils certbot sqlite3 dnsutils
+# On a new VM, apt-daily and unattended-upgrades run within minutes of the
+# first boot and hold apt's locks; apt-get would give up at once.
+apt_install() { apt-get -o DPkg::Lock::Timeout=900 install -y -q "$@"; }
+for try in $(seq 90); do
+  apt-get -o DPkg::Lock::Timeout=900 update -q && break
+  [ "$try" -lt 90 ] || fail "apt-get update kept failing (is another apt still running?)."
+  echo "apt is busy (often the first boot's automatic updates); trying again in 10 seconds."
+  sleep 10
+done
+apt_install ca-certificates curl git xz-utils certbot sqlite3 dnsutils
 
-RELAY_IP=${RELAY_IP:-$(curl -fsS4 --max-time 10 https://checkip.amazonaws.com | tr -d '[:space:]')}
+RELAY_IP=${RELAY_IP:-$(curl -fsS4 --max-time 10 https://checkip.amazonaws.com | tr -d '[:space:]' || true)}
 [[ "$RELAY_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "could not find the public IPv4; set RELAY_IP."
 echo "Public IPv4: $RELAY_IP"
 
@@ -70,7 +85,9 @@ if [ "$("$NODE" --version 2>/dev/null || true)" != "v$NODE_VERSION" ]; then
   curl -fsSL -o "$tmp/SHASUMS256.txt" "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt"
   (cd "$tmp" && grep " $tarball\$" SHASUMS256.txt | sha256sum -c -) || fail "the Node.js download did not match its checksum."
   rm -rf /opt/node && mkdir -p /opt/node
-  tar -xJf "$tmp/$tarball" -C /opt/node --strip-components=1
+  # The tarball's files belong to uid 1001; root must own the runtime.
+  tar --no-same-owner -xJf "$tmp/$tarball" -C /opt/node --strip-components=1
+  chown -R root:root /opt/node
   ln -sf /opt/node/bin/node "$NODE"
   rm -rf "$tmp"
 fi
@@ -121,7 +138,7 @@ else
   # Oracle's images keep their rules with netfilter-persistent. Installing it
   # where ufw is installed would remove ufw, so only do that without ufw.
   if ! command -v netfilter-persistent >/dev/null && ! command -v ufw >/dev/null; then
-    apt-get install -y -q iptables-persistent
+    apt_install iptables-persistent
   fi
   for tool in iptables ip6tables; do
     open_port "$tool" tcp 80
@@ -229,7 +246,7 @@ systemctl daemon-reload
 systemctl enable --now kin-relay-backup.timer >/dev/null
 
 say "DNS"
-resolved=$(dig +short A "$RELAY_NAME" @8.8.8.8 | tail -n 1)
+resolved=$(dig +short +time=5 +tries=2 A "$RELAY_NAME" @8.8.8.8 2>/dev/null | grep -E '^[0-9.]+$' | tail -n 1 || true)
 if [ "$resolved" != "$RELAY_IP" ]; then
   cat <<EOF
 
