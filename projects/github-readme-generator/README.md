@@ -6,9 +6,32 @@ A local-first workspace for creating GitHub profile and repository READMEs. Buil
 
 ![README Studio workspace](docs/screenshots/studio-desktop.png)
 
-## Start locally
+## The problem it solves
+
+A good README is one of the most valuable things a project can have, yet most people either skip it, write it once and let it rot, or copy a template that doesn't fit. Profile READMEs, repository READMEs and multilingual editions all need different structure, and it is hard to tell what a README is missing or whether it has drifted from the code.
+
+README Studio makes this easier. It helps you build, review, audit and maintain READMEs locally, in your browser, and exports an ordinary `README.md` that has no dependency on Studio. Your drafts stay on your machine unless you explicitly choose to fetch public GitHub data or publish.
+
+## Install and run
 
 Requires Node.js 22.12 or newer.
+
+```sh
+git clone https://github.com/zero-to-mastery/ZTM-Build-Fest.git
+cd ZTM-Build-Fest/projects/github-readme-generator
+npm ci
+npm run dev
+```
+
+Open the local URL that Vite prints (usually `http://localhost:5173`). To produce a production build, run `npm run build` and serve `dist/` with any static HTTP server. See [Build and verify](#build-and-verify) for tests.
+
+## How AI is used
+
+- **In the product (optional):** The [Writing assistant](docs/writing-assistant.md) can draft or improve selected README text through a chat-completions endpoint that you configure. It is off by default, needs your own endpoint and key (held in memory only), shows exactly what will be sent, and never changes your draft until you approve an Original → Proposed → Diff → Apply review. Everything else works with no AI account. See [AI safety](docs/ai-safety.md).
+- **Everything else is deterministic:** Analysis, audits, compatibility checks and dependency detection use explicit rules, not AI.
+- **In development:** AI was used extensively to build this project. I used spec-driven development: AI helped plan the work as written specs (see [roadmap.md](roadmap.md)), implement each spec, and write and run the tests that verify it. The code, docs and tests were produced with AI assistance, and the automated test suite (see [Build and verify](#build-and-verify)) is the check on the result.
+
+## Start locally
 
 ```sh
 npm ci
