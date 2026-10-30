@@ -9,22 +9,47 @@
       href="/static/screen.css"
       media="screen"
     />
-    <title>Minimal To-Do App</title>
+    <title>MusicFeed</title>
   </head>
   <body>
     <header>
-      <h1>Minimal To-Do App</h1>
+      <h1>MusicFeed</h1>
     </header>
 
     <main>
-      <form id="add-form" data-on:submit__prevent="@post('/items')">
-        <label for="item-input">Add item:</label>
-        <input id="item-input" type="text" data-bind:item required autofocus />
-        <button type="submit">Add</button>
+      <form id="rotation-form" data-on:submit__prevent="@post('/rotation')">
+        <div class="field">
+          <label for="artist">Artist</label>
+          <input id="artist" type="text" data-bind:artist required autofocus />
+        </div>
+
+        <div class="field">
+          <label for="album">Album</label>
+          <input id="album" type="text" data-bind:album required />
+        </div>
+
+        <div class="field field-full">
+          <label for="note">Note</label>
+          <input id="note" type="text" data-bind:note />
+        </div>
+
+        <button type="submit" class="submit">Add to rotation</button>
       </form>
 
-      <ul id="item-list">
-        {% for item in items %}{% include "item.html" %}{% endfor %}
+      <!-- Populated only when a lookup fails. The entry is still saved; this
+           just says why it arrived without a cover. -->
+      <p id="metadata-status" class="metadata-status" data-text="$metadata_status"></p>
+
+      <ul id="rotation-list">
+        {% for rotation_entry in rotation_entries %}{% include "rotation.html" %}{% endfor %}
+        <!--
+        The empty-state message lives INSIDE the list so that the append patch targets
+        the same element every time. When the first entry arrives the handler also
+        removes this node, so it cannot survive as stale text below the list.
+        -->
+        <li id="rotation-empty" class="rotation-empty" {% if rotation_entries | length > 0 %}hidden{% endif %}>
+          Nothing spinning yet. Add the first entry above.
+        </li>
       </ul>
     </main>
 

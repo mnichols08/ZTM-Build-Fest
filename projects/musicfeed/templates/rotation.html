@@ -1,0 +1,12 @@
+<div class="rotation-widget">
+  <p class="rotation-label">Currently Spinning</p>
+  <div class="rotation-content">
+    {% if rotation_entry.cover %}<img src="{{ rotation_entry.cover }}" alt="{{ rotation_entry.artist }} - {{ rotation_entry.album }}">{% endif %}
+    <div class="rotation-details">
+      <p class="rotation-artist">{{ rotation_entry.artist }}</p>
+      <p class="rotation-album">{{ rotation_entry.album }}</p>
+      {% if rotation_entry.year %}<p class="rotation-year">{{ rotation_entry.year }}</p>{% endif %}
+      {% if rotation_entry.note %}<p class="rotation-note">{{ rotation_entry.note }}</p>{% endif %}
+    </div>
+  </div>
+</div>

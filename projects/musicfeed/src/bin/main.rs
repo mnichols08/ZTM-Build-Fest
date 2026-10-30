@@ -11,11 +11,12 @@ async fn main() -> anyhow::Result<()> {
     let subscriber = get_subscriber("musicfeed".into(), "info".into(), std::io::stdout);
     init_subscriber(subscriber);
 
-    // construct the application state
-    let app_state = AppState::default();
-
     // read the application settings
     let settings = get_configuration()?;
+
+    // construct the application state
+    let app_state = AppState::new(&settings.metadata, &settings.basicauth);
+
     let app_address = format!(
         "{}:{}",
         settings.application.host, settings.application.port

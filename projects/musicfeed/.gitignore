@@ -5,6 +5,9 @@ logs
 # IDE configuration
 .zed
 
+# Agent configuration
+AGENTS.md
+
 # Environment variables
 .env
 
