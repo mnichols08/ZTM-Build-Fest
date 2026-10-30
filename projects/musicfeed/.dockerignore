@@ -1,0 +1,16 @@
+# Version control and local build output. The build stage compiles from source;
+# the runtime stage needs only the binary plus the files listed in the Dockerfile.
+.git
+.github
+.gitignore
+.rho
+logs
+
+target
+.bacon-logs
+
+# Scratch files from working sessions.
+.git-commit-msg.txt
+tests/probe.rs
+tests/browser_probe.rs
+src/probe_variants.rs

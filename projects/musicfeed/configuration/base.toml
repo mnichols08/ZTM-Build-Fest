@@ -1,3 +1,15 @@
 [application]
 host = "127.0.0.1"
 port = 8000
+
+[metadata]
+# MusicBrainz requires a User-Agent identifying the application and returns 403
+# without one. See https://musicbrainz.org/doc/XML_Web_Service/Rate_Limiting
+# It also asks for ~1 request/second, so the metadata lookup should not sit on a
+# hot path until that is accounted for.
+musicbrainz_base_url = "https://musicbrainz.org/ws/2"
+cover_art_base_url = "https://coverartarchive.org"
+
+[basicauth]
+username = "test"
+password = "test"
